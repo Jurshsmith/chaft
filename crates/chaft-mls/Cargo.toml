@@ -1,0 +1,17 @@
+[package]
+name = "chaft-mls"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chaft-types = { path = "../chaft-types" }
+openmls = "0.8.1"
+openmls_basic_credential = "0.5.0"
+openmls_rust_crypto = "0.5.1"
+openmls_traits = "0.5.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

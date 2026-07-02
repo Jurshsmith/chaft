@@ -1,0 +1,16 @@
+[package]
+name = "chaft-app"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chaft-core = { path = "../chaft-core" }
+chaft-identity = { path = "../chaft-identity" }
+chaft-types = { path = "../chaft-types" }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

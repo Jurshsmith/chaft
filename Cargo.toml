@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/chaft-cli",
+    "apps/chaft-node",
+    "crates/chaft-app",
+    "crates/chaft-core",
+    "crates/chaft-crypto",
+    "crates/chaft-ffi",
+    "crates/chaft-identity",
+    "crates/chaft-media",
+    "crates/chaft-mls",
+    "crates/chaft-net",
+    "crates/chaft-net-direct",
+    "crates/chaft-net-iroh",
+    "crates/chaft-runtime",
+    "crates/chaft-search",
+    "crates/chaft-store",
+    "crates/chaft-sync",
+    "crates/chaft-types",
+    "crates/chaft-wire",
+]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://example.invalid/chaft"
+rust-version = "1.92"
+version = "0.1.0"
+
+[workspace.dependencies]
+aes-gcm-siv = "0.11"
+anyhow = "1"
+argon2 = "0.5"
+async-trait = "0.1"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+prost = "0.14"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = { version = "1", features = ["derive"] }

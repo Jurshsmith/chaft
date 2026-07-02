@@ -1,0 +1,371 @@
+syntax = "proto3";
+
+package chaft.v1;
+
+message EventEnvelope {
+  string event_id = 1;
+  string workspace_id = 2;
+  optional string channel_id = 3;
+  string author_device_id = 4;
+  int64 physical_ms = 5;
+  uint32 logical = 6;
+  repeated bytes parent_ids = 7;
+  // Legacy fallback for bootstrap peers that predate typed EventBody envelopes.
+  bytes body_json = 8;
+  bytes signature = 9;
+  bytes author_public_key = 10;
+  EventBody body = 11;
+}
+
+enum WorkspaceRole {
+  WORKSPACE_ROLE_UNSPECIFIED = 0;
+  WORKSPACE_ROLE_OWNER = 1;
+  WORKSPACE_ROLE_ADMIN = 2;
+  WORKSPACE_ROLE_MEMBER = 3;
+  WORKSPACE_ROLE_GUEST = 4;
+}
+
+enum PayloadEncryption {
+  PAYLOAD_ENCRYPTION_UNSPECIFIED = 0;
+  PAYLOAD_ENCRYPTION_DEVELOPMENT_PLAINTEXT = 1;
+  PAYLOAD_ENCRYPTION_AES_256_GCM_SIV = 2;
+  PAYLOAD_ENCRYPTION_OPEN_MLS_PENDING = 3;
+}
+
+message WorkspaceScope {}
+
+message ContentKeyScope {
+  oneof kind {
+    WorkspaceScope workspace = 1;
+    string channel_id = 2;
+  }
+}
+
+message EncryptedBlobRef {
+  PayloadEncryption mode = 1;
+  string key_id = 2;
+  bytes nonce = 3;
+  bytes aad = 4;
+  uint64 plaintext_byte_len = 5;
+}
+
+message SealedPayload {
+  PayloadEncryption mode = 1;
+  string key_id = 2;
+  bytes nonce = 3;
+  bytes aad = 4;
+  bytes bytes = 5;
+}
+
+message AttachmentRef {
+  string blob_hash = 1;
+  string media_type = 2;
+  uint64 byte_len = 3;
+  string display_name = 4;
+  EncryptedBlobRef encryption = 5;
+  string attachment_id = 6;
+}
+
+message WorkspaceCreated {
+  string name = 1;
+}
+
+message MemberInvited {
+  string invitee_device_id = 1;
+  WorkspaceRole role = 2;
+}
+
+message MemberRemoved {
+  string removed_device_id = 1;
+}
+
+message ChannelCreated {
+  string channel_id = 1;
+  string name = 2;
+  bool is_private = 3;
+}
+
+message ChannelMemberChanged {
+  string channel_id = 1;
+  string member_device_id = 2;
+}
+
+message DeviceProfileUpdated {
+  string display_name = 1;
+}
+
+message DeviceKeyPackagePublished {
+  string key_package_id = 1;
+  string protocol = 2;
+  bytes key_package = 3;
+}
+
+message PeerEndpointPublished {
+  string endpoint_id = 1;
+  string endpoint = 2;
+  string transport = 3;
+  bool is_backup_peer = 4;
+  optional int64 expires_at_ms = 5;
+}
+
+message OpenMlsWorkspaceGroupMemberAdded {
+  string invitee_device_id = 1;
+  string invitee_key_package_id = 2;
+  string invitee_key_package_ref = 3;
+  string protocol = 4;
+  string ciphersuite = 5;
+  string group_id = 6;
+  uint64 epoch = 7;
+  bytes commit = 8;
+  bytes welcome = 9;
+  bytes ratchet_tree = 10;
+}
+
+message OpenMlsWorkspaceGroupMemberRemoved {
+  string removed_device_id = 1;
+  string protocol = 2;
+  string ciphersuite = 3;
+  string group_id = 4;
+  uint64 epoch = 5;
+  bytes commit = 6;
+  bytes ratchet_tree = 7;
+}
+
+message OpenMlsChannelGroupMemberAdded {
+  string channel_id = 1;
+  string invitee_device_id = 2;
+  string invitee_key_package_id = 3;
+  string invitee_key_package_ref = 4;
+  string protocol = 5;
+  string ciphersuite = 6;
+  string group_id = 7;
+  uint64 epoch = 8;
+  bytes commit = 9;
+  bytes welcome = 10;
+  bytes ratchet_tree = 11;
+}
+
+message OpenMlsChannelGroupMemberRemoved {
+  string channel_id = 1;
+  string removed_device_id = 2;
+  string protocol = 3;
+  string ciphersuite = 4;
+  string group_id = 5;
+  uint64 epoch = 6;
+  bytes commit = 7;
+  bytes ratchet_tree = 8;
+}
+
+message OpenMlsWorkspaceGroupSelfUpdated {
+  string protocol = 1;
+  string ciphersuite = 2;
+  string group_id = 3;
+  uint64 epoch = 4;
+  bytes commit = 5;
+  bytes ratchet_tree = 6;
+}
+
+message OpenMlsChannelGroupSelfUpdated {
+  string channel_id = 1;
+  string protocol = 2;
+  string ciphersuite = 3;
+  string group_id = 4;
+  uint64 epoch = 5;
+  bytes commit = 6;
+  bytes ratchet_tree = 7;
+}
+
+message ContentKeyEpochPublished {
+  ContentKeyScope scope = 1;
+  uint64 epoch = 2;
+  string key_id = 3;
+  optional string previous_key_id = 4;
+  string algorithm = 5;
+}
+
+message MessageCreated {
+  string message_id = 1;
+  string markdown = 2;
+  repeated AttachmentRef attachments = 3;
+}
+
+message MessageReplyCreated {
+  string message_id = 1;
+  string reply_to_message_id = 2;
+  string markdown = 3;
+  repeated AttachmentRef attachments = 4;
+}
+
+message MessageCreatedEncrypted {
+  string message_id = 1;
+  SealedPayload sealed_markdown = 2;
+  repeated AttachmentRef attachments = 3;
+}
+
+message MessageReplyCreatedEncrypted {
+  string message_id = 1;
+  string reply_to_message_id = 2;
+  SealedPayload sealed_markdown = 3;
+  repeated AttachmentRef attachments = 4;
+}
+
+message MessageEdited {
+  string message_id = 1;
+  string markdown = 2;
+}
+
+message MessageEditedEncrypted {
+  string message_id = 1;
+  SealedPayload sealed_markdown = 2;
+}
+
+message MessageDeleted {
+  string message_id = 1;
+}
+
+message ReactionAdded {
+  string message_id = 1;
+  string reaction = 2;
+}
+
+message ReactionRemoved {
+  string message_id = 1;
+  string reaction = 2;
+}
+
+message ReadMarkerUpdated {
+  string channel_id = 1;
+  string event_id = 2;
+}
+
+message EventBody {
+  oneof kind {
+    WorkspaceCreated workspace_created = 1;
+    MemberInvited member_invited = 2;
+    MemberRemoved member_removed = 3;
+    ChannelCreated channel_created = 4;
+    ChannelMemberChanged channel_member_added = 5;
+    ChannelMemberChanged channel_member_removed = 6;
+    DeviceProfileUpdated device_profile_updated = 7;
+    DeviceKeyPackagePublished device_key_package_published = 8;
+    OpenMlsWorkspaceGroupMemberAdded open_mls_workspace_group_member_added = 9;
+    OpenMlsWorkspaceGroupMemberRemoved open_mls_workspace_group_member_removed = 10;
+    OpenMlsChannelGroupMemberAdded open_mls_channel_group_member_added = 11;
+    OpenMlsChannelGroupMemberRemoved open_mls_channel_group_member_removed = 12;
+    OpenMlsWorkspaceGroupSelfUpdated open_mls_workspace_group_self_updated = 13;
+    OpenMlsChannelGroupSelfUpdated open_mls_channel_group_self_updated = 14;
+    ContentKeyEpochPublished content_key_epoch_published = 15;
+    MessageCreated message_created = 16;
+    MessageCreatedEncrypted message_created_encrypted = 17;
+    MessageEdited message_edited = 18;
+    MessageEditedEncrypted message_edited_encrypted = 19;
+    MessageDeleted message_deleted = 20;
+    ReactionAdded reaction_added = 21;
+    ReadMarkerUpdated read_marker_updated = 22;
+    MessageReplyCreated message_reply_created = 23;
+    MessageReplyCreatedEncrypted message_reply_created_encrypted = 24;
+    ReactionRemoved reaction_removed = 25;
+    PeerEndpointPublished peer_endpoint_published = 26;
+  }
+}
+
+message TrustSnapshotRole {
+  string device_id = 1;
+  WorkspaceRole role = 2;
+}
+
+message TrustSnapshotChannel {
+  string channel_id = 1;
+  bool is_private = 2;
+  string creator_device_id = 3;
+  repeated string member_device_ids = 4;
+}
+
+message TrustSnapshotMessage {
+  string message_id = 1;
+  string channel_id = 2;
+}
+
+message TrustSnapshotEventChannel {
+  string event_id = 1;
+  string channel_id = 2;
+}
+
+message TrustSnapshot {
+  uint32 schema_version = 1;
+  string workspace_id = 2;
+  string root_event_id = 3;
+  string root_author_device_id = 4;
+  repeated TrustSnapshotRole roles = 5;
+  repeated TrustSnapshotChannel channels = 6;
+  repeated TrustSnapshotMessage messages = 7;
+  repeated TrustSnapshotEventChannel event_channels = 8;
+}
+
+message SignedTrustSnapshot {
+  TrustSnapshot snapshot = 1;
+  EventEnvelope root_event = 2;
+  bytes author_public_key = 3;
+  bytes signature = 4;
+}
+
+enum SyncRequestKind {
+  SYNC_REQUEST_KIND_UNSPECIFIED = 0;
+  SYNC_REQUEST_KIND_INVENTORY = 1;
+  SYNC_REQUEST_KIND_FETCH_EVENTS = 2;
+  SYNC_REQUEST_KIND_PUBLISH_EVENTS = 3;
+  SYNC_REQUEST_KIND_PUT_BLOBS = 4;
+  SYNC_REQUEST_KIND_FETCH_BLOBS = 5;
+}
+
+message BlobEnvelope {
+  string hash = 1;
+  bytes bytes = 2;
+}
+
+message BlobDescriptor {
+  string hash = 1;
+  uint64 byte_len = 2;
+  uint64 chunk_size = 3;
+  repeated string chunk_hashes = 4;
+}
+
+message BlobAvailability {
+  string hash = 1;
+  bool has_whole_blob = 2;
+  optional BlobDescriptor descriptor = 3;
+  repeated string available_chunk_hashes = 4;
+  repeated string missing_chunk_hashes = 5;
+}
+
+message SyncRequest {
+  SyncRequestKind kind = 1;
+  repeated string event_ids = 2;
+  // Legacy fallback: each entry is an encoded EventEnvelope.
+  repeated bytes events = 3;
+  // Legacy fallback: each entry is an encoded EventEnvelope proof.
+  repeated bytes authorization_events = 4;
+  repeated string blob_hashes = 5;
+  repeated BlobEnvelope blobs = 6;
+  repeated BlobDescriptor blob_descriptors = 7;
+  optional string workspace_id = 8;
+  // Legacy fallback: each entry is an encoded SignedTrustSnapshot proof.
+  repeated bytes authorization_snapshots = 9;
+  repeated EventEnvelope event_envelopes = 10;
+  repeated EventEnvelope authorization_event_envelopes = 11;
+  repeated SignedTrustSnapshot authorization_snapshot_envelopes = 12;
+  optional uint64 inventory_start_index = 13;
+  optional uint64 inventory_limit = 14;
+}
+
+message SyncResponse {
+  repeated string event_ids = 1;
+  // Legacy fallback: each entry is an encoded EventEnvelope.
+  repeated bytes events = 2;
+  optional string error = 3;
+  repeated BlobEnvelope blobs = 4;
+  repeated BlobDescriptor blob_descriptors = 5;
+  repeated BlobAvailability blob_availability = 6;
+  repeated EventEnvelope event_envelopes = 7;
+  optional uint64 inventory_total_count = 8;
+}

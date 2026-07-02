@@ -1,0 +1,26 @@
+[package]
+name = "chaft-sync"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chaft-core = { path = "../chaft-core" }
+chaft-identity = { path = "../chaft-identity" }
+chaft-net = { path = "../chaft-net" }
+chaft-store = { path = "../chaft-store" }
+chaft-types = { path = "../chaft-types" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+chaft-crypto = { path = "../chaft-crypto" }
+chaft-identity = { path = "../chaft-identity" }
+chaft-net-direct = { path = "../chaft-net-direct" }
+chaft-store = { path = "../chaft-store" }
+rusqlite.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

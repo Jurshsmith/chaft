@@ -1,0 +1,17 @@
+[package]
+name = "chaft-store"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chaft-identity = { path = "../chaft-identity" }
+chaft-types = { path = "../chaft-types" }
+rusqlite.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
