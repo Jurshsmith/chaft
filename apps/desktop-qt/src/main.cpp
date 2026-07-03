@@ -19,16 +19,22 @@
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QPixmap>
 #include <QSaveFile>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QThread>
+#include <QTimer>
 #include <QVariant>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QWindow>
 #include <QtGlobal>
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -776,8 +782,15 @@ QStringList ffiLibraryCandidates() {
       QDir(currentDir).filePath(QStringLiteral("target/debug/") + libraryName));
   appendDesktopPathCandidate(
       &candidates,
+      QDir(currentDir).filePath(QStringLiteral("target/release/") + libraryName));
+  appendDesktopPathCandidate(
+      &candidates,
       QDir(currentDir)
           .filePath(QStringLiteral("../../target/debug/") + libraryName));
+  appendDesktopPathCandidate(
+      &candidates,
+      QDir(currentDir)
+          .filePath(QStringLiteral("../../target/release/") + libraryName));
   return candidates;
 }
 
@@ -1366,6 +1379,21 @@ int boundedBackupPeerStatusInt(const QVariant &value, int maxValue) {
   return qBound(0, parsed, maxValue);
 }
 
+bool variantBoolValue(const QVariant &value, bool defaultValue = false) {
+  if (!value.isValid() || value.isNull()) {
+    return defaultValue;
+  }
+  return value.toBool();
+}
+
+QString variantStringValue(const QVariant &value,
+                           const QString &defaultValue = QString()) {
+  if (!value.isValid() || value.isNull()) {
+    return defaultValue;
+  }
+  return value.toString();
+}
+
 QVariantMap sanitizeBackupPeerStatus(const QVariantMap &status) {
   QVariantMap sanitized;
 
@@ -1434,10 +1462,10 @@ QVariantMap sanitizeBackupPeerStatus(const QVariantMap &status) {
     sanitized.insert(QStringLiteral("suspectScore"), suspectScore);
   }
 
-  if (status.value(QStringLiteral("lastPartial")).toBool(false)) {
+  if (variantBoolValue(status.value(QStringLiteral("lastPartial")))) {
     sanitized.insert(QStringLiteral("lastPartial"), true);
   }
-  if (status.value(QStringLiteral("lastSuspectPeer")).toBool(false)) {
+  if (variantBoolValue(status.value(QStringLiteral("lastSuspectPeer")))) {
     sanitized.insert(QStringLiteral("lastSuspectPeer"), true);
   }
 
@@ -1571,7 +1599,8 @@ int backupPeerSuspectScore(const QVariantMap &status) {
     return boundedBackupPeerStatusInt(explicitScore,
                                       kMaxBackupPeerStatusSuspectScore);
   }
-  return status.value(QStringLiteral("lastSuspectPeer")).toBool(false) ? 1 : 0;
+  return variantBoolValue(status.value(QStringLiteral("lastSuspectPeer"))) ? 1
+                                                                            : 0;
 }
 
 struct RetryPeerCandidate {
@@ -1613,7 +1642,7 @@ QStringList orderedBlobRetryPeerEndpoints(
     candidates.append(RetryPeerCandidate{
         endpoint,
         backupPeerStatusInCooldown(status, now),
-        status.value(QStringLiteral("lastPartial")).toBool(false),
+        variantBoolValue(status.value(QStringLiteral("lastPartial"))),
         backupPeerSuspectScore(status),
         status.value(QStringLiteral("failureCount")).toInt(0),
         status.value(QStringLiteral("lastMissingBlobCount")).toInt(0),
@@ -4084,10 +4113,10 @@ private:
         clipboard->ownsSelection()) {
       clipboard->clear(QClipboard::Selection);
     }
-    const auto messageSearchChanged =
+    const auto messageSearchStateChanged =
         !m_messageSearchQuery.isEmpty() || !m_messageSearchHits.isEmpty() ||
         m_messageSearchHitCount != 0 || m_messageSearchHasMoreHits;
-    const auto channelSearchChanged =
+    const auto channelSearchStateChanged =
         !m_channelSearchQuery.isEmpty() || !m_channelSearchResults.isEmpty();
     m_messageSearchQuery.clear();
     m_messageSearchHits.clear();
@@ -4095,10 +4124,10 @@ private:
     m_messageSearchHasMoreHits = false;
     m_channelSearchQuery.clear();
     m_channelSearchResults.clear();
-    if (messageSearchChanged) {
+    if (messageSearchStateChanged) {
       emit messageSearchChanged();
     }
-    if (channelSearchChanged) {
+    if (channelSearchStateChanged) {
       emit channelSearchChanged();
     }
     setKeyTransferJson(QString());
@@ -5257,7 +5286,7 @@ private:
       seenBlobPeerPairs.append(seenKey);
 
       auto status = statuses.value(peerEndpoint).toMap();
-      if (!status.value(QStringLiteral("lastPartial")).toBool(false)) {
+      if (!variantBoolValue(status.value(QStringLiteral("lastPartial")))) {
         continue;
       }
 
@@ -5318,7 +5347,8 @@ private:
 
       auto failure = peerFailures.value(peerEndpoint).toMap();
       const auto existingSuspect =
-          failure.value(QStringLiteral("suspectProtocolError")).toBool(false);
+          variantBoolValue(
+              failure.value(QStringLiteral("suspectProtocolError")));
       failure.insert(QStringLiteral("suspectProtocolError"),
                      existingSuspect ||
                          peerError.value(QStringLiteral("suspectProtocolError"))
@@ -5335,10 +5365,11 @@ private:
       const auto failure = it.value().toMap();
       recordBackupResult(
           it.key(), false,
-          failure.value(QStringLiteral("message"))
-              .toString(QStringLiteral("blob retry failed")),
+          variantStringValue(failure.value(QStringLiteral("message")),
+                             QStringLiteral("blob retry failed")),
           0, 0,
-          failure.value(QStringLiteral("suspectProtocolError")).toBool(false));
+          variantBoolValue(
+              failure.value(QStringLiteral("suspectProtocolError"))));
     }
   }
 
@@ -9879,7 +9910,182 @@ private:
   qsizetype m_nextBackupPeerIndex = 0;
 };
 
+bool desktopSmokeFlagEnabled() {
+  const auto value = qEnvironmentVariable("CHAFT_DESKTOP_SMOKE")
+                         .trimmed()
+                         .toLower();
+  return value == QStringLiteral("1") || value == QStringLiteral("true") ||
+         value == QStringLiteral("yes") || value == QStringLiteral("on");
+}
+
+int desktopSmokeTimeoutMs() {
+  const auto value =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_TIMEOUT_MS").trimmed();
+  bool ok = false;
+  const auto parsed = value.toInt(&ok);
+  if (!ok) {
+    return 15000;
+  }
+  return qBound(1000, parsed, 60000);
+}
+
+bool desktopSmokeSnapshotContainsText(const QVariantMap &snapshot,
+                                      const QString &expectedText) {
+  if (expectedText.isEmpty()) {
+    return !snapshot.value(QStringLiteral("workspaceId")).toString().isEmpty();
+  }
+
+  const auto timeline = snapshot.value(QStringLiteral("timeline")).toList();
+  for (const auto &itemValue : timeline) {
+    const auto item = itemValue.toMap();
+    if (item.value(QStringLiteral("body")).toString() == expectedText) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool saveDesktopSmokeScreenshot(const QString &path, QString *errorMessage) {
+  if (path.isEmpty()) {
+    return true;
+  }
+
+  QWindow *window = nullptr;
+  const auto windows = QGuiApplication::topLevelWindows();
+  for (auto *candidate : windows) {
+    if (candidate != nullptr && candidate->isVisible()) {
+      window = candidate;
+      break;
+    }
+  }
+  if (window == nullptr && !windows.isEmpty()) {
+    window = windows.first();
+  }
+  if (window == nullptr) {
+    if (errorMessage != nullptr) {
+      *errorMessage = QStringLiteral("no desktop window to capture");
+    }
+    return false;
+  }
+
+  auto *screen = window->screen();
+  if (screen == nullptr) {
+    screen = QGuiApplication::primaryScreen();
+  }
+  if (screen == nullptr) {
+    if (errorMessage != nullptr) {
+      *errorMessage = QStringLiteral("no screen available for desktop capture");
+    }
+    return false;
+  }
+
+  const QFileInfo fileInfo(path);
+  const auto outputDir = fileInfo.absoluteDir();
+  if (!outputDir.exists() && !QDir().mkpath(outputDir.absolutePath())) {
+    if (errorMessage != nullptr) {
+      *errorMessage =
+          QStringLiteral("failed to create screenshot directory: %1")
+              .arg(outputDir.absolutePath());
+    }
+    return false;
+  }
+
+  const auto pixmap = screen->grabWindow(window->winId());
+  if (pixmap.isNull()) {
+    if (errorMessage != nullptr) {
+      *errorMessage = QStringLiteral("desktop screenshot capture returned null");
+    }
+    return false;
+  }
+
+  if (!pixmap.save(path, "PNG")) {
+    if (errorMessage != nullptr) {
+      *errorMessage = QStringLiteral("failed to write desktop screenshot: %1")
+                          .arg(path);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+void configureDesktopSmoke(QCoreApplication *app,
+                           ChaftController *controller) {
+  if (!desktopSmokeFlagEnabled()) {
+    return;
+  }
+
+  const auto expectedText =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_TEXT").trimmed();
+  const auto screenshotPath =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_SCREENSHOT").trimmed();
+  const auto timeoutMs = desktopSmokeTimeoutMs();
+  const auto completed = std::make_shared<bool>(false);
+
+  const auto checkSnapshot = [app, controller, expectedText, screenshotPath,
+                              completed]() {
+    if (*completed) {
+      return;
+    }
+    const auto snapshot = controller->workspaceSnapshot();
+    if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+      return;
+    }
+
+    *completed = true;
+    const auto workspaceId =
+        snapshot.value(QStringLiteral("workspaceId")).toString().toUtf8();
+    if (screenshotPath.isEmpty()) {
+      std::fprintf(stderr, "desktop smoke passed: workspace=%s\n",
+                   workspaceId.constData());
+      QCoreApplication::exit(0);
+      return;
+    }
+
+    QTimer::singleShot(250, app, [screenshotPath, workspaceId]() {
+      QString errorMessage;
+      if (!saveDesktopSmokeScreenshot(screenshotPath, &errorMessage)) {
+        const auto error = errorMessage.toUtf8();
+        std::fprintf(stderr, "desktop smoke screenshot failed: %s\n",
+                     error.constData());
+        QCoreApplication::exit(125);
+        return;
+      }
+
+      const auto screenshot = screenshotPath.toUtf8();
+      std::fprintf(stderr,
+                   "desktop smoke passed: workspace=%s screenshot=%s\n",
+                   workspaceId.constData(), screenshot.constData());
+      QCoreApplication::exit(0);
+    });
+  };
+
+  QObject::connect(controller, &ChaftController::workspaceSnapshotChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
+  QTimer::singleShot(0, app, checkSnapshot);
+  QTimer::singleShot(timeoutMs, app, [controller, expectedText, completed]() {
+    if (*completed) {
+      return;
+    }
+    *completed = true;
+    const auto snapshot = controller->workspaceSnapshot();
+    const auto workspaceId =
+        snapshot.value(QStringLiteral("workspaceId")).toString().toUtf8();
+    const auto syncStatus = controller->syncStatus().toUtf8();
+    const auto expected = expectedText.toUtf8();
+    std::fprintf(stderr,
+                 "desktop smoke timed out: workspace=%s expected=%s status=%s\n",
+                 workspaceId.constData(), expected.constData(),
+                 syncStatus.constData());
+    QCoreApplication::exit(124);
+  });
+}
+
 int main(int argc, char *argv[]) {
+  if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
+  }
+
   QGuiApplication app(argc, argv);
 
   ChaftController chaftController(initialWorkspaceSnapshot());
@@ -9891,6 +10097,7 @@ int main(int argc, char *argv[]) {
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
       []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
   engine.loadFromModule("Chaft", "App");
+  configureDesktopSmoke(&app, &chaftController);
 
   return app.exec();
 }

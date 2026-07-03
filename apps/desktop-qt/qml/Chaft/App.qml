@@ -43,8 +43,11 @@ ApplicationWindow {
     readonly property bool searchHasTerms: chaftController.searchQueryHasTerms(trimmedSearchQuery)
     readonly property string normalizedSearchQuery: searchHasTerms ? trimmedSearchQuery.toLowerCase() : ""
     readonly property var selectedChannel: root.channelById(root.selectedChannelId)
+    readonly property string selectedChannelKey: String(selectedChannel.channelId || "")
+    readonly property string selectedChannelName: String(selectedChannel.name || "general")
+    readonly property bool selectedChannelPrivate: Boolean(selectedChannel.isPrivate)
     readonly property bool selectedChannelTimelineReady: timelineChannelId.length > 0
-        && timelineChannelId === String(selectedChannel.channelId || "")
+        && timelineChannelId === selectedChannelKey
     readonly property bool channelSearchReady: root.runtimeWorkReady
         && normalizedSearchQuery.length > 0
         && chaftController.channelSearchQuery === root.trimmedSearchQuery
@@ -81,6 +84,7 @@ ApplicationWindow {
         channelTimeline,
         recentChannelAttachmentLimit
     )
+    readonly property var channelAttachments: recentChannelAttachments || []
     property string editingMessageId: ""
     property var replyTarget: ({})
     readonly property string replyTargetMessageId: String(replyTarget.messageId || "")
@@ -2407,7 +2411,6 @@ ApplicationWindow {
                         color: Tokens.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.WrapAnywhere
-                        textInteractionFlags: Qt.TextSelectableByMouse
                     }
 
                     RowLayout {
@@ -2497,7 +2500,7 @@ ApplicationWindow {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannel.isPrivate
+                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannelPrivate
                         spacing: 6
 
                         TextField {
@@ -2512,7 +2515,7 @@ ApplicationWindow {
                             }
                             onAccepted: {
                                 if (root.runtimeWorkReady
-                                        && chaftController.addChannelMember(root.selectedChannel.channelId, text)) {
+                                        && chaftController.addChannelMember(root.selectedChannelKey, text)) {
                                     text = ""
                                 }
                             }
@@ -2522,9 +2525,9 @@ ApplicationWindow {
                             text: "Grant"
                             enabled: root.runtimeWorkReady
                                 && channelMemberDeviceField.text.trim().length > 0
-                                && root.selectedChannel.channelId.length > 0
+                                && root.selectedChannelKey.length > 0
                             onClicked: {
-                                if (chaftController.addChannelMember(root.selectedChannel.channelId, channelMemberDeviceField.text)) {
+                                if (chaftController.addChannelMember(root.selectedChannelKey, channelMemberDeviceField.text)) {
                                     channelMemberDeviceField.text = ""
                                 }
                             }
@@ -2534,9 +2537,9 @@ ApplicationWindow {
                             text: "Revoke"
                             enabled: root.runtimeWorkReady
                                 && channelMemberDeviceField.text.trim().length > 0
-                                && root.selectedChannel.channelId.length > 0
+                                && root.selectedChannelKey.length > 0
                             onClicked: {
-                                if (chaftController.removeChannelMember(root.selectedChannel.channelId, channelMemberDeviceField.text)) {
+                                if (chaftController.removeChannelMember(root.selectedChannelKey, channelMemberDeviceField.text)) {
                                     channelMemberDeviceField.text = ""
                                 }
                             }
@@ -2609,7 +2612,6 @@ ApplicationWindow {
                                             color: Tokens.textMuted
                                             font.pixelSize: 12
                                             elide: Text.ElideMiddle
-                                            textInteractionFlags: Qt.TextSelectableByMouse
                                         }
 
                                         Text {
@@ -2712,38 +2714,38 @@ ApplicationWindow {
 
                         Button {
                             Layout.fillWidth: true
-                            visible: root.selectedChannel.isPrivate
+                            visible: root.selectedChannelPrivate
                             text: "MLS channel"
                             enabled: root.runtimeWorkReady
-                                && root.selectedChannel.channelId.length > 0
-                            onClicked: chaftController.createOpenMlsChannelGroup(root.selectedChannel.channelId)
+                                && root.selectedChannelKey.length > 0
+                            onClicked: chaftController.createOpenMlsChannelGroup(root.selectedChannelKey)
                         }
 
                         Button {
                             Layout.fillWidth: true
-                            visible: root.selectedChannel.isPrivate
+                            visible: root.selectedChannelPrivate
                             text: "Join channel"
                             enabled: root.runtimeWorkReady
-                                && root.selectedChannel.channelId.length > 0
-                            onClicked: chaftController.joinOpenMlsChannelGroup(root.selectedChannel.channelId, "")
+                                && root.selectedChannelKey.length > 0
+                            onClicked: chaftController.joinOpenMlsChannelGroup(root.selectedChannelKey, "")
                         }
 
                         Button {
                             Layout.fillWidth: true
-                            visible: root.selectedChannel.isPrivate
+                            visible: root.selectedChannelPrivate
                             text: "Apply channel"
                             enabled: root.runtimeWorkReady
-                                && root.selectedChannel.channelId.length > 0
-                            onClicked: chaftController.applyOpenMlsChannelGroupCommits(root.selectedChannel.channelId, "")
+                                && root.selectedChannelKey.length > 0
+                            onClicked: chaftController.applyOpenMlsChannelGroupCommits(root.selectedChannelKey, "")
                         }
 
                         Button {
                             Layout.fillWidth: true
-                            visible: root.selectedChannel.isPrivate
+                            visible: root.selectedChannelPrivate
                             text: "Update channel"
                             enabled: root.runtimeWorkReady
-                                && root.selectedChannel.channelId.length > 0
-                            onClicked: chaftController.updateOpenMlsChannelGroup(root.selectedChannel.channelId)
+                                && root.selectedChannelKey.length > 0
+                            onClicked: chaftController.updateOpenMlsChannelGroup(root.selectedChannelKey)
                         }
                     }
 
@@ -2912,7 +2914,7 @@ ApplicationWindow {
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannel.isPrivate
+                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannelPrivate
                         spacing: 6
 
                         RowLayout {
@@ -2923,9 +2925,9 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Export channel"
                                 enabled: root.runtimeWorkReady
-                                    && root.selectedChannel.channelId.length > 0
+                                    && root.selectedChannelKey.length > 0
                                     && !chaftController.keyTransferInFlight
-                                onClicked: chaftController.exportChannelKey(root.selectedChannel.channelId)
+                                onClicked: chaftController.exportChannelKey(root.selectedChannelKey)
                             }
 
                             Button {
@@ -2943,9 +2945,9 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             text: "Rotate channel"
                             enabled: root.runtimeWorkReady
-                                && root.selectedChannel.channelId.length > 0
+                                && root.selectedChannelKey.length > 0
                                 && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.rotateChannelKey(root.selectedChannel.channelId)
+                            onClicked: chaftController.rotateChannelKey(root.selectedChannelKey)
                             ToolTip.visible: hovered
                             ToolTip.text: "Rotate this private channel key"
                         }
@@ -2984,7 +2986,7 @@ ApplicationWindow {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "# " + root.selectedChannel.name
+                                text: "# " + root.selectedChannelName
                                 color: Tokens.textStrong
                                 font.pixelSize: 18
                                 font.weight: Font.DemiBold
@@ -3063,7 +3065,6 @@ ApplicationWindow {
                                     color: Tokens.textMuted
                                     font.pixelSize: 12
                                     elide: Text.ElideMiddle
-                                    textInteractionFlags: Qt.TextSelectableByMouse
                                 }
 
                                 Button {
@@ -3335,26 +3336,26 @@ ApplicationWindow {
                 ComposerBar {
                     id: composer
                     Layout.fillWidth: true
-                    channelName: root.selectedChannel.name
+                    channelName: root.selectedChannelName
                     editMode: root.editingMessageId.length > 0
                     replyMode: root.replyTargetMessageId.length > 0
                     replyLabel: root.replyTargetMessageId.length > 0
                         ? root.replyTargetLabel(root.replyTarget)
                         : ""
-                    enabled: root.runtimeWorkReady && root.selectedChannel.channelId.length > 0
+                    enabled: root.runtimeWorkReady && root.selectedChannelKey.length > 0
                     onDraftChanged: function(text) {
                         root.saveSelectedDraftText(text)
                     }
                     onSendRequested: function(text) {
                         var sent = root.replyTargetMessageId.length > 0
                             ? chaftController.sendMessageReply(
-                                root.selectedChannel.channelId,
+                                root.selectedChannelKey,
                                 root.replyTargetMessageId,
                                 text
                             )
-                            : chaftController.sendMessage(root.selectedChannel.channelId, text)
+                            : chaftController.sendMessage(root.selectedChannelKey, text)
                         if (sent) {
-                            root.clearDraftForChannel(root.selectedChannel.channelId)
+                            root.clearDraftForChannel(root.selectedChannelKey)
                             composer.clearDraft()
                             root.cancelReplyMessage()
                         }
@@ -3362,7 +3363,7 @@ ApplicationWindow {
                     onAttachRequested: function(text) {
                         attachmentDialog.pendingText = text
                         attachmentDialog.pendingWorkspaceId = root.currentWorkspaceId()
-                        attachmentDialog.pendingChannelId = root.selectedChannel.channelId
+                        attachmentDialog.pendingChannelId = root.selectedChannelKey
                         attachmentDialog.pendingReplyToMessageId = root.replyTargetMessageId
                         attachmentDialog.open()
                     }
@@ -3412,8 +3413,8 @@ ApplicationWindow {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: String(root.selectedChannel.name || "").length > 0
-                                        ? "# " + root.selectedChannel.name
+                                    text: root.selectedChannelName.length > 0
+                                        ? "# " + root.selectedChannelName
                                         : "Details"
                                     color: Tokens.textStrong
                                     font.pixelSize: 17
@@ -3434,14 +3435,14 @@ ApplicationWindow {
                                 Layout.preferredWidth: Math.max(64, channelKindText.implicitWidth + 18)
                                 Layout.preferredHeight: 24
                                 radius: Tokens.radiusSm
-                                color: root.selectedChannel.isPrivate ? Tokens.secureSurface : Tokens.surfaceBase
+                                color: root.selectedChannelPrivate ? Tokens.secureSurface : Tokens.surfaceBase
                                 border.color: Tokens.borderSubtle
 
                                 Text {
                                     id: channelKindText
                                     anchors.centerIn: parent
-                                    text: root.selectedChannel.isPrivate ? "Private" : "Open"
-                                    color: root.selectedChannel.isPrivate ? Tokens.secure : Tokens.textMuted
+                                    text: root.selectedChannelPrivate ? "Private" : "Open"
+                                    color: root.selectedChannelPrivate ? Tokens.secure : Tokens.textMuted
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold
                                 }
@@ -3738,7 +3739,6 @@ ApplicationWindow {
                                         color: Tokens.textMuted
                                         font.pixelSize: 11
                                         elide: Text.ElideMiddle
-                                        textInteractionFlags: Qt.TextSelectableByMouse
                                     }
 
                                     Text {
@@ -3755,7 +3755,6 @@ ApplicationWindow {
                                         color: Tokens.textMuted
                                         font.pixelSize: 11
                                         elide: Text.ElideMiddle
-                                        textInteractionFlags: Qt.TextSelectableByMouse
                                     }
 
                                     Text {
@@ -4352,7 +4351,6 @@ ApplicationWindow {
                                             font.pixelSize: 12
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideMiddle
-                                            textInteractionFlags: Qt.TextSelectableByMouse
                                         }
 
                                         Text {
@@ -4449,7 +4447,6 @@ ApplicationWindow {
                                             font.pixelSize: 12
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideMiddle
-                                            textInteractionFlags: Qt.TextSelectableByMouse
                                         }
 
                                         Text {
@@ -4553,7 +4550,6 @@ ApplicationWindow {
                                             color: Tokens.textMuted
                                             font.pixelSize: 10
                                             elide: Text.ElideMiddle
-                                            textInteractionFlags: Qt.TextSelectableByMouse
                                         }
                                     }
 
@@ -4634,7 +4630,7 @@ ApplicationWindow {
 
                             delegate: Rectangle {
                                 width: ListView.view.width
-                                height: root.selectedChannel.isPrivate ? 96 : 76
+                                height: root.selectedChannelPrivate ? 96 : 76
                                 radius: Tokens.radiusSm
                                 color: Tokens.surfaceBase
                                 border.color: Tokens.borderSubtle
@@ -4659,7 +4655,6 @@ ApplicationWindow {
                                                 font.pixelSize: 12
                                                 font.weight: Font.DemiBold
                                                 elide: Text.ElideMiddle
-                                                textInteractionFlags: Qt.TextSelectableByMouse
                                             }
 
                                             Text {
@@ -4668,7 +4663,6 @@ ApplicationWindow {
                                                 color: Tokens.textMuted
                                                 font.pixelSize: 10
                                                 elide: Text.ElideMiddle
-                                                textInteractionFlags: Qt.TextSelectableByMouse
                                             }
                                         }
 
@@ -4695,13 +4689,13 @@ ApplicationWindow {
 
                                         Button {
                                             Layout.fillWidth: true
-                                            visible: root.selectedChannel.isPrivate
+                                            visible: root.selectedChannelPrivate
                                             text: "Channel MLS"
                                             enabled: root.runtimeWorkReady
                                                 && root.isOpenMlsKeyPackage(modelData)
-                                                && root.selectedChannel.channelId.length > 0
+                                                && root.selectedChannelKey.length > 0
                                                 && String(modelData.keyPackageId || "").length > 0
-                                            onClicked: chaftController.addOpenMlsChannelGroupMember(root.selectedChannel.channelId, modelData.keyPackageId)
+                                            onClicked: chaftController.addOpenMlsChannelGroupMember(root.selectedChannelKey, modelData.keyPackageId)
                                         }
                                     }
                                 }
