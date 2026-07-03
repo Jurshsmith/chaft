@@ -1,0 +1,178 @@
+#!/usr/bin/env sh
+
+chaft_desktop_path_prepend() {
+  dir="$1"
+  if [ -d "$dir" ]; then
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *)
+        PATH="$dir:$PATH"
+        export PATH
+        ;;
+    esac
+  fi
+}
+
+chaft_desktop_add_tool_paths() {
+  if [ -n "${QT_ROOT_DIR:-}" ]; then
+    chaft_desktop_path_prepend "$QT_ROOT_DIR/bin"
+  fi
+
+  if [ -n "${Qt6_DIR:-}" ]; then
+    qt6_prefix="$(CDPATH= cd "$(dirname "$Qt6_DIR")/../.." 2>/dev/null && pwd || true)"
+    if [ -n "$qt6_prefix" ]; then
+      chaft_desktop_path_prepend "$qt6_prefix/bin"
+    fi
+  fi
+
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      if [ -n "${VCToolsInstallDir:-}" ] && command -v cygpath >/dev/null 2>&1; then
+        msvc_tools_dir="$(cygpath -u "$VCToolsInstallDir")"
+        chaft_desktop_path_prepend "$msvc_tools_dir/bin/Hostx64/x64"
+      fi
+      ;;
+  esac
+
+  chaft_desktop_path_prepend /opt/homebrew/bin
+  chaft_desktop_path_prepend /usr/local/bin
+
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    if [ -n "$brew_prefix" ]; then
+      chaft_desktop_path_prepend "$brew_prefix/bin"
+    fi
+
+    for formula in qtbase qt qt@6; do
+      formula_prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+      if [ -n "$formula_prefix" ]; then
+        chaft_desktop_path_prepend "$formula_prefix/bin"
+      fi
+    done
+  fi
+
+  for prefix in \
+    /opt/homebrew/opt/qtbase \
+    /opt/homebrew/opt/qt \
+    /opt/homebrew/opt/qt@6 \
+    /usr/local/opt/qtbase \
+    /usr/local/opt/qt \
+    /usr/local/opt/qt@6
+  do
+    chaft_desktop_path_prepend "$prefix/bin"
+  done
+}
+
+chaft_desktop_qt_prefix() {
+  if command -v qmake6 >/dev/null 2>&1; then
+    qmake6 -query QT_INSTALL_PREFIX 2>/dev/null && return 0
+  fi
+
+  if command -v qt-cmake >/dev/null 2>&1; then
+    qt_cmake="$(command -v qt-cmake)"
+    qt_bin_dir="$(dirname "$qt_cmake")"
+    (CDPATH= cd "$qt_bin_dir/.." && pwd) && return 0
+  fi
+
+  for prefix in \
+    /opt/homebrew/opt/qtbase \
+    /opt/homebrew/opt/qt \
+    /opt/homebrew/opt/qt@6 \
+    /usr/local/opt/qtbase \
+    /usr/local/opt/qt \
+    /usr/local/opt/qt@6
+  do
+    if [ -x "$prefix/bin/qmake6" ] || [ -x "$prefix/bin/qt-cmake" ]; then
+      printf '%s\n' "$prefix"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+chaft_desktop_ffi_library_name() {
+  case "$(uname -s)" in
+    Darwin) printf 'libchaft_ffi.dylib\n' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'chaft_ffi.dll\n' ;;
+    *) printf 'libchaft_ffi.so\n' ;;
+  esac
+}
+
+chaft_desktop_cli_binary_name() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf 'chaft-cli.exe\n' ;;
+    *) printf 'chaft-cli\n' ;;
+  esac
+}
+
+chaft_desktop_binary_candidates() {
+  repo_root="$1"
+  preset="$2"
+
+  for base in \
+    "$repo_root/build/$preset/apps/desktop-qt" \
+    "$repo_root/build/$preset"
+  do
+    printf '%s\n' \
+      "$base/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+      "$base/ChaftDesktop.exe" \
+      "$base/ChaftDesktop"
+  done
+}
+
+chaft_desktop_installed_binary_candidates() {
+  repo_root="$1"
+  preset="$2"
+  install_root="$repo_root/build/$preset/install"
+
+  printf '%s\n' \
+    "$install_root/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+    "$install_root/bin/ChaftDesktop.exe" \
+    "$install_root/bin/ChaftDesktop" \
+    "$install_root/ChaftDesktop.exe" \
+    "$install_root/ChaftDesktop"
+}
+
+chaft_desktop_find_binary() {
+  repo_root="$1"
+  preset="$2"
+
+  for base in \
+    "$repo_root/build/$preset/apps/desktop-qt" \
+    "$repo_root/build/$preset"
+  do
+    for candidate in \
+      "$base/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+      "$base/ChaftDesktop.exe" \
+      "$base/ChaftDesktop"
+    do
+      if [ -x "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
+
+chaft_desktop_find_installed_binary() {
+  repo_root="$1"
+  preset="$2"
+
+  for candidate in \
+    "$repo_root/build/$preset/install/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+    "$repo_root/build/$preset/install/bin/ChaftDesktop.exe" \
+    "$repo_root/build/$preset/install/bin/ChaftDesktop" \
+    "$repo_root/build/$preset/install/ChaftDesktop.exe" \
+    "$repo_root/build/$preset/install/ChaftDesktop"
+  do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}

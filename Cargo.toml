@@ -24,7 +24,7 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "AGPL-3.0-or-later"
-repository = "https://example.invalid/chaft"
+repository = "https://github.com/Jurshsmith/chaft"
 rust-version = "1.92"
 version = "0.1.0"
 

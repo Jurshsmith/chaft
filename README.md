@@ -92,6 +92,20 @@ The Qt app is scaffolded but requires Qt 6 and CMake to build. Its first paint
 uses a built-in `WorkspaceSnapshot` with the production JSON shape, then the
 controller replaces it with runtime or raw-store data on background workers.
 
+Recommended public checks:
+
+```sh
+tools/ci/rust-gates.sh --offline
+tools/smoke/local-p2p.sh --offline
+tools/smoke/visual-workspace.sh --offline
+tools/desktop/preflight.sh
+tools/desktop/build.sh debug
+tools/desktop/smoke.sh debug
+tools/desktop/screenshot-smoke.sh debug
+tools/desktop/package.sh release
+tools/desktop/package-smoke.sh release
+```
+
 ```sh
 cargo test --workspace
 cargo build -p chaft-ffi
@@ -178,6 +192,13 @@ cargo run -p chaft-cli -- inventory --peer 127.0.0.1:7777
 
 For desktop runs, either set `CHAFT_FFI_LIBRARY` to the built dynamic library or
 launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
+`tools/smoke/visual-workspace.sh` creates a deterministic public UI smoke
+runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
+temporary runtime and use the printed `runtimeDir`, `workspaceId`, and
+`desktopExpectedText` values for manual desktop hydration or screenshot work.
+`tools/desktop/screenshot-smoke.sh debug` runs the same desktop smoke and writes
+a verified PNG under `build/desktop-debug/smoke/` for local visual regression
+review.
 To hydrate the shell from a real local runtime with decrypted local message
 bodies, set `CHAFT_RUNTIME_DIR` and `CHAFT_WORKSPACE_ID`; optionally set
 `CHAFT_IDENTITY_FILE` when using a non-default identity path, and set

@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CHAFT_QT_VERSION: 6.7.3
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Rust gates
+        run: tools/ci/rust-gates.sh --locked
+
+      - name: Run local P2P smoke
+        run: tools/smoke/local-p2p.sh --locked
+
+      - name: Run visual workspace smoke
+        run: tools/smoke/visual-workspace.sh --locked
+
+  desktop:
+    name: Desktop ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            qt-host: linux
+            qt-arch: gcc_64
+          - name: macOS
+            os: macos-latest
+            qt-host: mac
+            qt-arch: clang_64
+          - name: Windows
+            os: windows-latest
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.CHAFT_QT_VERSION }}
+          host: ${{ matrix.qt-host }}
+          target: desktop
+          arch: ${{ matrix.qt-arch }}
+          archives: qtbase qtdeclarative qttools
+          cache: true
+
+      - name: Run desktop preflight
+        shell: bash
+        run: tools/desktop/preflight.sh
+
+      - name: Run desktop smoke
+        shell: bash
+        run: tools/desktop/smoke.sh debug
+
+      - name: Build macOS release package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: tools/desktop/package-smoke.sh release
+
+      - name: Upload macOS release package
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaft-macos-dmg
+          path: build/desktop-release/package/*.dmg
+          if-no-files-found: error
