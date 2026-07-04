@@ -924,6 +924,13 @@ ApplicationWindow {
         return String(value) + " B"
     }
 
+    function attachmentDetailLabel(attachment) {
+        return String((attachment && attachment.mediaType) || "application/octet-stream")
+            + " | "
+            + root.byteSizeLabel(Number((attachment && attachment.byteLen) || 0))
+            + ((attachment && attachment.localBlobAvailable === false) ? " | missing locally" : "")
+    }
+
     function timelineItemKey(item) {
         if (!item) {
             return ""
@@ -3978,59 +3985,17 @@ ApplicationWindow {
                             spacing: 6
                             model: root.recentChannelAttachments
 
-                            delegate: Rectangle {
+                            delegate: AttachmentRow {
                                 width: ListView.view.width
-                                height: 58
-                                radius: Tokens.radiusSm
-                                color: Tokens.surfaceBase
-                                border.color: modelData.localBlobAvailable === false ? Tokens.warning : Tokens.borderSubtle
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 8
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 2
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: modelData.displayName
-                                            color: modelData.localBlobAvailable === false ? Tokens.warningText : Tokens.textStrong
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideMiddle
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: modelData.mediaType
-                                                + " | "
-                                                + root.byteSizeLabel(modelData.byteLen)
-                                                + (modelData.localBlobAvailable === false ? " | missing locally" : "")
-                                            color: modelData.localBlobAvailable === false ? Tokens.warningText : Tokens.textMuted
-                                            font.pixelSize: 11
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-
-                                    Button {
-                                        text: "Save"
-                                        Layout.preferredWidth: 56
-                                        enabled: root.runtimeWorkReady
-                                            && modelData.localBlobAvailable !== false
-                                            && (String(modelData.attachmentId || "").length > 0
-                                                || String(modelData.blobHash || "").length > 0)
-                                        onClicked: root.openSaveAttachmentDialog(modelData.messageId, modelData)
-                                    }
-
-                                    Button {
-                                        text: String(modelData.attachmentId || "").length > 0 ? "Copy ID" : "Copy hash"
-                                        Layout.preferredWidth: 82
-                                        enabled: root.attachmentSelectorFor(modelData).length > 0
-                                        onClicked: root.copyAttachmentSelector(modelData)
-                                    }
+                                attachment: modelData
+                                detailText: root.attachmentDetailLabel(modelData)
+                                selector: root.attachmentSelectorFor(modelData)
+                                runtimeReady: root.runtimeWorkReady
+                                onSaveRequested: function(messageId, attachment) {
+                                    root.openSaveAttachmentDialog(messageId, attachment)
+                                }
+                                onCopyRequested: function(attachment) {
+                                    root.copyAttachmentSelector(attachment)
                                 }
                             }
                         }

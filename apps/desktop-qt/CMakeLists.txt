@@ -48,6 +48,7 @@ qt_add_qml_module(ChaftDesktop
     QML_FILES
         qml/Chaft/App.qml
         qml/Chaft/tokens/Tokens.qml
+        qml/Chaft/components/AttachmentRow.qml
         qml/Chaft/components/SidebarItem.qml
         qml/Chaft/components/WorkspaceRailItem.qml
         qml/Chaft/features/timeline/TimelineView.qml
