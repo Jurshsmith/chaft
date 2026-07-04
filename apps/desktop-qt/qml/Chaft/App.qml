@@ -887,7 +887,7 @@ ApplicationWindow {
     }
 
     function replyTargetLabel(item) {
-        var author = root.authorLabel(item.authorDisplayName, item.authorDeviceId)
+        var author = root.itemAuthorLabel(item)
         var body = root.compactInlineText(item.body, "message")
         return author.length > 0 ? author + ": " + body : body
     }
@@ -3810,103 +3810,14 @@ ApplicationWindow {
                             }
                         }
 
-                        ColumnLayout {
+                        InspectorThreadPanel {
                             Layout.fillWidth: true
-                            visible: root.inspectorThreadReplyCount > 0
-                            spacing: 8
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Thread"
-                                    color: Tokens.textStrong
-                                    font.pixelSize: 15
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Rectangle {
-                                    Layout.preferredWidth: Math.max(70, inspectorThreadCountText.implicitWidth + 16)
-                                    Layout.preferredHeight: 22
-                                    radius: Tokens.radiusSm
-                                    color: Tokens.secureSurface
-                                    border.color: Tokens.borderSubtle
-
-                                    Text {
-                                        id: inspectorThreadCountText
-                                        anchors.centerIn: parent
-                                        text: root.threadReplyCountLabel(root.inspectorThreadReplyCount)
-                                        color: Tokens.secure
-                                        font.pixelSize: 11
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-                            }
-
-                            ListView {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Math.min(230, contentHeight)
-                                clip: true
-                                interactive: contentHeight > height
-                                spacing: 6
-                                model: root.inspectorThreadReplyPreviews
-
-                                delegate: Rectangle {
-                                    width: ListView.view.width
-                                    height: 58
-                                    radius: Tokens.radiusSm
-                                    color: Tokens.surfaceBase
-                                    border.color: Tokens.borderSubtle
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 8
-                                        spacing: 2
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.authorLabel(modelData.authorDisplayName, modelData.authorDeviceId)
-                                            color: Tokens.textStrong
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.compactInlineText(modelData.body, "message")
-                                            color: modelData.deleted ? Tokens.textMuted : Tokens.textStrong
-                                            font.pixelSize: 12
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: root.threadReplyOverflowLabel(root.inspectorThreadReplyCount, root.inspectorThreadReplyPreviews)
-                                    visible: text.length > 0
-                                    color: Tokens.textMuted
-                                    font.pixelSize: 11
-                                    elide: Text.ElideRight
-                                }
-
-                                Button {
-                                    text: "Reply"
-                                    Layout.preferredWidth: 70
-                                    enabled: root.runtimeWorkReady
-                                        && String(root.inspectorItem.messageId || "").length > 0
-                                        && !root.inspectorItem.deleted
-                                    onClicked: root.beginReplyMessage(root.inspectorItem)
-                                }
-                            }
+                            replyCount: root.inspectorThreadReplyCount
+                            replyPreviews: root.inspectorThreadReplyPreviews
+                            runtimeReady: root.runtimeWorkReady
+                            messageId: String(root.inspectorItem.messageId || "")
+                            messageDeleted: Boolean(root.inspectorItem.deleted)
+                            onReplyRequested: root.beginReplyMessage(root.inspectorItem)
                         }
 
                         Rectangle {
