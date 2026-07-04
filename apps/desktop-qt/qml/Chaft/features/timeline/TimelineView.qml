@@ -490,24 +490,15 @@ ListView {
             height: Math.max(36, contentColumn.implicitHeight)
             spacing: 12
 
-            Rectangle {
+            TimelineAuthorMark {
                 Layout.preferredWidth: 36
                 Layout.preferredHeight: 36
                 Layout.alignment: Qt.AlignTop
-                radius: 7
-                color: row.warningRow
-                    ? Tokens.warning
-                    : (row.modelData.encrypted ? Tokens.secure : Tokens.accent)
-
-                Text {
-                    anchors.centerIn: parent
-                    text: row.warningRow
-                        ? "!"
-                        : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
-                    color: "white"
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                }
+                warning: row.warningRow
+                encrypted: row.modelData.encrypted
+                label: row.warningRow
+                    ? ""
+                    : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
             }
 
             ColumnLayout {
