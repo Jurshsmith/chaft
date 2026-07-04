@@ -4118,73 +4118,21 @@ ApplicationWindow {
                             spacing: 6
                             model: root.members
 
-                            delegate: Rectangle {
+                            delegate: MemberRow {
+                                id: memberRowDelegate
+                                required property var modelData
+
                                 width: ListView.view.width
-                                height: 50
-                                radius: Tokens.radiusSm
-                                color: modelData.deviceId === chaftController.deviceId
-                                    ? Tokens.secureSurface
-                                    : Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 8
-
-                                    Rectangle {
-                                        Layout.preferredWidth: 30
-                                        Layout.preferredHeight: 30
-                                        radius: 7
-                                        color: modelData.role === "owner" ? Tokens.accent : Tokens.secure
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: root.memberInitial(modelData)
-                                            color: "white"
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.memberLabel(modelData)
-                                            color: Tokens.textStrong
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: modelData.deviceId
-                                            color: Tokens.textMuted
-                                            font.pixelSize: 10
-                                            elide: Text.ElideMiddle
-                                        }
-                                    }
-
-                                    Text {
-                                        text: root.roleLabel(modelData.role)
-                                        color: Tokens.textMuted
-                                        font.pixelSize: 11
-                                        font.weight: Font.DemiBold
-                                    }
-
-                                    Button {
-                                        text: "x"
-                                        visible: chaftController.hasRuntimeWorkspace
-                                            && modelData.deviceId !== chaftController.deviceId
-                                        Layout.preferredWidth: 28
-                                        onClicked: chaftController.removeMember(modelData.deviceId)
-                                        ToolTip.visible: hovered
-                                        ToolTip.text: "Remove member"
-                                    }
+                                deviceId: String(memberRowDelegate.modelData.deviceId || "")
+                                displayLabel: root.memberLabel(memberRowDelegate.modelData)
+                                initial: root.memberInitial(memberRowDelegate.modelData)
+                                roleLabel: root.roleLabel(memberRowDelegate.modelData.role)
+                                owner: memberRowDelegate.modelData.role === "owner"
+                                localDevice: memberRowDelegate.deviceId === chaftController.deviceId
+                                canRemove: chaftController.hasRuntimeWorkspace
+                                    && memberRowDelegate.deviceId !== chaftController.deviceId
+                                onRemoveRequested: function (deviceId) {
+                                    chaftController.removeMember(deviceId)
                                 }
                             }
                         }
