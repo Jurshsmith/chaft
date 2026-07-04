@@ -1470,7 +1470,7 @@ pub fn fetch_events_error_may_be_oversized_response(error: &NetError) -> bool {
 
 pub fn response_error_may_be_oversized_response(error: &NetError) -> bool {
     match error {
-        NetError::Protocol(message) => message.contains("frame length"),
+        NetError::Protocol(message) => protocol_error_may_be_oversized_response_frame(message),
         NetError::Io(message) => {
             let message = message.to_ascii_lowercase();
             message.contains("early eof")
@@ -1481,6 +1481,15 @@ pub fn response_error_may_be_oversized_response(error: &NetError) -> bool {
         }
         NetError::Unavailable(_) => false,
     }
+}
+
+fn protocol_error_may_be_oversized_response_frame(message: &str) -> bool {
+    let message = message.strip_prefix("protocol error: ").unwrap_or(message);
+    if !message.contains(" exceeds max ") {
+        return false;
+    }
+
+    message.starts_with("frame length ") || message.contains(" response frame length ")
 }
 
 pub async fn request_sync_stream<S>(
@@ -3005,6 +3014,45 @@ mod tests {
         assert!(error.contains("peer error message length"));
         assert!(error.contains(&MAX_SYNC_RESPONSE_ERROR_BYTES.to_string()));
         assert!(!error.contains(&"x".repeat(128)));
+    }
+
+    #[test]
+    fn oversized_response_classifier_accepts_frame_reader_limit_errors() {
+        let error = NetError::Protocol(format!(
+            "frame length {} exceeds max {}",
+            MAX_FRAME_LEN + 1,
+            MAX_FRAME_LEN
+        ));
+
+        assert!(response_error_may_be_oversized_response(&error));
+    }
+
+    #[test]
+    fn oversized_response_classifier_accepts_bounded_response_limit_errors() {
+        let error = NetError::Protocol(format!(
+            "protocol error: fetch-blobs response frame length {} exceeds max {}",
+            MAX_FRAME_LEN + 1,
+            MAX_FRAME_LEN
+        ));
+
+        assert!(response_error_may_be_oversized_response(&error));
+    }
+
+    #[test]
+    fn oversized_response_classifier_rejects_unrelated_protocol_errors() {
+        let unrelated = [
+            "peer mentioned frame length without a limit",
+            "blob upload frame length 16777217 exceeds max 16777216",
+            "frame length accounting failed before decoding",
+            "response frame length was unavailable",
+        ];
+
+        for message in unrelated {
+            assert!(
+                !response_error_may_be_oversized_response(&NetError::Protocol(message.to_owned())),
+                "misclassified protocol error: {message}"
+            );
+        }
     }
 
     #[test]
