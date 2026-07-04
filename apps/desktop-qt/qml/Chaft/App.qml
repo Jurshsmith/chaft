@@ -2342,11 +2342,7 @@ ApplicationWindow {
                                     unreadCount: channelSidebarDelegate.modelData.unreadCount
                                     privateChannel: channelSidebarDelegate.modelData.isPrivate
                                     hasDraft: root.draftTextForChannel(channelSidebarDelegate.modelData.channelId).trim().length > 0
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: root.selectChannelId(channelSidebarDelegate.modelData.channelId, true)
-                                    }
+                                    onActivated: root.selectChannelId(channelSidebarDelegate.modelData.channelId, true)
                                 }
                             }
 

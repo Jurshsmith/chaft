@@ -10,21 +10,36 @@ Item {
     property int unreadCount: 0
     property bool privateChannel: false
     property bool hasDraft: false
+    property bool actionable: true
     readonly property bool hasSecondaryLabel: secondaryLabel.length > 0
+    readonly property string channelKindLabel: privateChannel ? "Private channel" : "Channel"
+    readonly property string unreadLabel: unreadCount > 0 ? String(unreadCount) + " unread" : "No unread messages"
     height: hasSecondaryLabel ? 48 : 34
     width: parent ? parent.width : 220
+    activeFocusOnTab: root.actionable
+    opacity: channelMouse.enabled ? 1 : 0.58
+    signal activated
+
+    Accessible.role: Accessible.Button
+    Accessible.name: "# " + label
+    Accessible.description: channelKindLabel + ". " + (selected ? "Current channel" : "Switch channel") + ". " + unreadLabel + (hasDraft ? ". Draft saved" : "")
+    Accessible.onPressAction: {
+        if (channelMouse.enabled) {
+            root.activated();
+        }
+    }
 
     Rectangle {
         anchors.fill: parent
         radius: Tokens.radiusSm
         color: root.selected ? "#313746" : "transparent"
+        border.color: root.activeFocus ? Tokens.accent : "transparent"
+        border.width: root.activeFocus ? 1 : 0
     }
 
     Column {
         anchors.left: parent.left
-        anchors.right: root.unreadCount > 0
-            ? unreadBadge.left
-            : (root.privateChannel ? privateDot.left : parent.right)
+        anchors.right: root.unreadCount > 0 ? unreadBadge.left : (root.privateChannel ? privateDot.left : parent.right)
         anchors.leftMargin: 10
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
@@ -79,6 +94,28 @@ Item {
             color: "white"
             font.pixelSize: 12
             font.weight: Font.DemiBold
+        }
+    }
+
+    MouseArea {
+        id: channelMouse
+        anchors.fill: parent
+        enabled: root.actionable
+        hoverEnabled: true
+        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: root.activated()
+    }
+
+    ToolTip.visible: channelMouse.containsMouse
+    ToolTip.text: root.label
+
+    Keys.onPressed: function (event) {
+        if (!root.actionable) {
+            return;
+        }
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.activated();
+            event.accepted = true;
         }
     }
 }
