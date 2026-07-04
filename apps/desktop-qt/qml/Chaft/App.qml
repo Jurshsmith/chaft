@@ -4029,82 +4029,27 @@ ApplicationWindow {
                             spacing: 6
                             model: root.peerEndpointHints
 
-                            delegate: Rectangle {
+                            delegate: PeerEndpointHintRow {
+                                id: peerEndpointHintDelegate
+                                required property var modelData
+
                                 width: ListView.view.width
-                                height: 82
-                                radius: Tokens.radiusSm
-                                color: Boolean(modelData.isBackupPeer)
-                                    ? Tokens.secureSurface
-                                    : Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 4
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: String(modelData.endpoint || "")
-                                            color: Tokens.textStrong
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideMiddle
-                                        }
-
-                                        Text {
-                                            text: root.peerEndpointKindLabel(modelData)
-                                            color: Boolean(modelData.isBackupPeer)
-                                                ? Tokens.secure
-                                                : Tokens.textMuted
-                                            font.pixelSize: 11
-                                            font.weight: Font.DemiBold
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.peerEndpointDetailLabel(modelData)
-                                            color: Tokens.textMuted
-                                            font.pixelSize: 11
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Button {
-                                            text: "Use"
-                                            Layout.preferredWidth: 48
-                                            enabled: !root.isPeerEndpointExpired(modelData)
-                                                && String(modelData.endpoint || "").trim().length > 0
-                                            onClicked: root.usePeerEndpoint(modelData.endpoint)
-                                        }
-
-                                        Button {
-                                            text: "Sync"
-                                            Layout.preferredWidth: 54
-                                            enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
-                                                && !root.isPeerEndpointExpired(modelData)
-                                                && String(modelData.endpoint || "").trim().length > 0
-                                            onClicked: chaftController.syncWorkspace(modelData.endpoint)
-                                        }
-
-                                        Button {
-                                            text: root.isBackupPeerSaved(modelData.endpoint) ? "Saved" : "Save"
-                                            Layout.preferredWidth: 60
-                                            enabled: !root.isBackupPeerSaved(modelData.endpoint)
-                                                && !root.isPeerEndpointExpired(modelData)
-                                                && String(modelData.endpoint || "").trim().length > 0
-                                            onClicked: chaftController.addBackupPeerEndpoint(modelData.endpoint)
-                                        }
-                                    }
+                                endpoint: String(peerEndpointHintDelegate.modelData.endpoint || "")
+                                kindLabel: root.peerEndpointKindLabel(peerEndpointHintDelegate.modelData)
+                                detailLabel: root.peerEndpointDetailLabel(peerEndpointHintDelegate.modelData)
+                                backupPeer: Boolean(peerEndpointHintDelegate.modelData.isBackupPeer)
+                                expired: root.isPeerEndpointExpired(peerEndpointHintDelegate.modelData)
+                                runtimeReady: root.runtimeWorkReady
+                                syncInFlight: chaftController.syncInFlight
+                                savedAsBackup: root.isBackupPeerSaved(peerEndpointHintDelegate.endpoint)
+                                onUseRequested: function (endpoint) {
+                                    root.usePeerEndpoint(endpoint)
+                                }
+                                onSyncRequested: function (endpoint) {
+                                    chaftController.syncWorkspace(endpoint)
+                                }
+                                onSaveRequested: function (endpoint) {
+                                    chaftController.addBackupPeerEndpoint(endpoint)
                                 }
                             }
                         }

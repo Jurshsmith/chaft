@@ -3,6 +3,7 @@ App 1.0 App.qml
 singleton Tokens 1.0 tokens/Tokens.qml
 AttachmentRow 1.0 components/AttachmentRow.qml
 BackupPeerStatusRow 1.0 components/BackupPeerStatusRow.qml
+PeerEndpointHintRow 1.0 components/PeerEndpointHintRow.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
 SidebarItem 1.0 components/SidebarItem.qml
 StatusChip 1.0 components/StatusChip.qml
