@@ -101,6 +101,7 @@ tools/smoke/local-p2p.sh --offline
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
 tools/desktop/qml-lint.sh
+tools/desktop/ci-gates.sh macOS
 tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
@@ -123,6 +124,26 @@ Desktop build prerequisites by OS:
 - Windows: Rust 1.92, CMake 3.28+, Ninja, MSVC x64 build tools, Python 3, and
   Qt 6.8+ desktop libraries. CI runs inside the MSVC developer environment and
   uses Qt `win64_msvc2022_64`.
+
+CI installs Qt through `jurplel/install-qt-action` with Qt
+`CHAFT_QT_VERSION=6.8.3` and no explicit archive/package filter. Keep it that
+way unless `aqtinstall` package discovery is checked for every OS target; narrow
+archive filters can fail on Linux or Windows with missing `qt_base` packages
+even when the full desktop target is available.
+
+For local Qt installs that mirror CI, `aqtinstall` can be used directly:
+
+```sh
+python3 -m pip install --user aqtinstall
+python3 -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$HOME/Qt"
+python3 -m aqt install-qt mac desktop 6.8.3 clang_64 -O "$HOME/Qt"
+python3 -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O "$HOME/Qt"
+```
+
+Point `QT_ROOT_DIR` at the installed Qt prefix, or keep `qt-cmake`/`qmake6` on
+`PATH`. `tools/desktop/ci-gates.sh <platform>` runs the same desktop preflight,
+QML lint, smoke, Linux screenshot baseline, package smoke, and release metadata
+verification sequence used by GitHub Actions.
 
 CI builds release desktop packages on Linux, macOS, and Windows after the debug
 desktop smoke passes. Linux is expected to produce a CPack TGZ archive

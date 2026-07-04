@@ -120,22 +120,9 @@ jobs:
           arch: ${{ matrix.qt-arch }}
           cache: true
 
-      - name: Run desktop preflight
+      - name: Run desktop CI gates
         shell: bash
-        run: tools/desktop/preflight.sh
-
-      - name: Lint desktop QML
-        shell: bash
-        run: tools/desktop/qml-lint.sh
-
-      - name: Run desktop smoke
-        shell: bash
-        run: tools/desktop/smoke.sh debug
-
-      - name: Run desktop screenshot baseline
-        if: runner.os == 'Linux'
-        shell: bash
-        run: tools/desktop/screenshot-smoke.sh debug
+        run: tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
 
       - name: Upload Linux desktop screenshot
         if: runner.os == 'Linux'
@@ -144,18 +131,6 @@ jobs:
           name: chaft-linux-desktop-screenshot
           path: build/desktop-debug/smoke/*.png
           if-no-files-found: error
-
-      - name: Build release package
-        shell: bash
-        run: tools/desktop/package-smoke.sh release
-
-      - name: Generate release metadata
-        shell: bash
-        run: python3 tools/desktop/release-metadata.py release
-
-      - name: Verify release metadata
-        shell: bash
-        run: python3 tools/desktop/verify-release-metadata.py release --platform "${{ matrix.package-platform }}"
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
