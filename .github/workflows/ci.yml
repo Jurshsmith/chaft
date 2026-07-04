@@ -42,6 +42,9 @@ jobs:
       - name: Run Rust clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Compile benchmark targets
+        run: cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
+
       - name: Test Rust workspace
         timeout-minutes: 45
         run: cargo test --workspace --all-targets --locked

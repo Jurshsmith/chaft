@@ -108,7 +108,7 @@ tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
 python3 tools/desktop/release-metadata.py release
 python3 tools/desktop/verify-release-metadata.py release
-cargo bench -p chaft-benchmarks --bench hot_paths --no-run
+cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 ```
 
 Desktop build prerequisites by OS:
@@ -150,7 +150,7 @@ projection, local search, direct sync pull, direct blob transfer, and FFI JSON
 payload generation. Compile the benchmark target without running samples with:
 
 ```sh
-cargo bench -p chaft-benchmarks --bench hot_paths --no-run
+cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 ```
 
 Run samples locally with Criterion options when investigating regressions:
