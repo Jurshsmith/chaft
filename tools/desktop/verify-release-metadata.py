@@ -20,6 +20,11 @@ REQUIRED_METADATA = {
     "chaft-desktop-provenance.json",
     "chaft-desktop-sbom.cdx.json",
 }
+SOURCE_MATERIALS = (
+    "Cargo.lock",
+    "Cargo.toml",
+    "apps/desktop-qt/CMakeLists.txt",
+)
 
 
 def fail(message):
@@ -91,6 +96,27 @@ def artifact_rows(files):
         }
         for path in files
     ]
+
+
+def source_material_rows():
+    root = repo_root()
+    missing = []
+    rows = {}
+    for relative in SOURCE_MATERIALS:
+        path = root / relative
+        if not path.is_file():
+            missing.append(relative)
+            continue
+        rows[relative] = {
+            "sha256": file_sha256(path),
+            "sizeBytes": path.stat().st_size,
+        }
+    if missing:
+        fail(
+            "source material file(s) missing from current checkout: "
+            + ", ".join(missing)
+        )
+    return rows
 
 
 def parse_checksums(path):
@@ -235,6 +261,34 @@ def verify_sbom(package_dir, artifacts, source_commit):
             fail(f"SBOM missing or stale artifact packageFormat property: {key}")
 
 
+def verify_provenance_materials(provenance):
+    materials = provenance.get("materials")
+    if not isinstance(materials, list) or not materials:
+        fail("provenance materials array is missing")
+
+    actual = {}
+    for material in materials:
+        if not isinstance(material, dict):
+            fail("provenance material row is not an object")
+
+        name = material.get("name")
+        sha256 = material.get("sha256")
+        size_bytes = material.get("sizeBytes")
+        if not isinstance(name, str) or not name:
+            fail("provenance material row is missing name")
+        if name in actual:
+            fail(f"duplicate provenance material row for {name}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(sha256 or "")):
+            fail(f"provenance material row has invalid sha256: {name}")
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes <= 0:
+            fail(f"provenance material row has invalid sizeBytes: {name}")
+
+        actual[name] = {"sha256": sha256, "sizeBytes": size_bytes}
+
+    if actual != source_material_rows():
+        fail("provenance material rows do not match current source checkout")
+
+
 def verify_provenance(package_dir, profile, artifacts, require_clean):
     provenance = load_json(package_dir / "chaft-desktop-provenance.json")
     if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
@@ -284,6 +338,7 @@ def verify_provenance(package_dir, profile, artifacts, require_clean):
     }
     if actual != expected:
         fail("provenance artifact rows do not match package files")
+    verify_provenance_materials(provenance)
     return provenance
 
 

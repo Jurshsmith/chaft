@@ -50,11 +50,13 @@ linux_dir="$smoke_dir/linux-package"
 macos_dir="$smoke_dir/macos-package"
 windows_dir="$smoke_dir/windows-package"
 ci_dir="$smoke_dir/ci-package"
+materials_dir="$smoke_dir/materials-package"
 
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.tar.gz"
 write_artifact "$macos_dir" "Chaft-0.1.0-macOS.dmg"
 write_artifact "$windows_dir" "Chaft-0.1.0-Windows.zip"
 write_artifact "$ci_dir" "Chaft-0.1.0-CI.tar.gz"
+write_artifact "$materials_dir" "Chaft-0.1.0-Materials.tar.gz"
 
 for row in \
   "Linux:$linux_dir" \
@@ -92,6 +94,32 @@ expect_failure "stale SBOM source commit" \
   python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
     --package-dir "$windows_dir" \
     --platform Windows
+
+python3 "$repo_root/tools/desktop/release-metadata.py" release \
+  --package-dir "$materials_dir"
+python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+  --package-dir "$materials_dir" \
+  --platform Linux
+
+python3 - "$materials_dir/chaft-desktop-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+for item in provenance.get("materials", []):
+    if item.get("name") == "Cargo.toml":
+        item["sha256"] = "0" * 64
+        break
+else:
+    raise SystemExit("Cargo.toml provenance material row missing")
+path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+expect_failure "stale provenance source material" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$materials_dir" \
+    --platform Linux
 
 ci_sha="$(git -C "$repo_root" rev-parse HEAD)"
 GITHUB_ACTIONS=true \
