@@ -1605,43 +1605,38 @@ fn handle_request(
                 },
             )?;
             validate_request_workspace_id_option("inventory", request.workspace_id.as_deref())?;
-            let inventory_page = inventory_page_request(&request)?;
+            let inventory_page =
+                inventory_page_request(&request)?.unwrap_or(InventoryPageRequest {
+                    start_index: 0,
+                    limit: MAX_INVENTORY_EVENT_IDS_PER_RESPONSE,
+                });
             let (event_ids, inventory_total_count) = {
                 let store = lock_event_store(&store)?;
-                match (request.workspace_id, inventory_page) {
-                    (Some(workspace_id), Some(page)) => {
+                match request.workspace_id {
+                    Some(workspace_id) => {
                         let total_count = store
                             .count_servable_events_for_workspace(&workspace_id)
                             .map_err(|error| NetError::Protocol(error.to_string()))?;
                         let event_ids = store
                             .list_servable_event_ids_for_workspace_page(
                                 &workspace_id,
-                                page.start_index,
-                                page.limit,
+                                inventory_page.start_index,
+                                inventory_page.limit,
                             )
                             .map_err(|error| NetError::Protocol(error.to_string()))?;
                         (event_ids, Some(total_count as u64))
                     }
-                    (None, Some(page)) => {
+                    None => {
                         let total_count = store
                             .count_servable_events()
                             .map_err(|error| NetError::Protocol(error.to_string()))?;
                         let event_ids = store
-                            .list_servable_event_ids_page(page.start_index, page.limit)
+                            .list_servable_event_ids_page(
+                                inventory_page.start_index,
+                                inventory_page.limit,
+                            )
                             .map_err(|error| NetError::Protocol(error.to_string()))?;
                         (event_ids, Some(total_count as u64))
-                    }
-                    (Some(workspace_id), None) => {
-                        let event_ids = store
-                            .list_servable_event_ids_for_workspace(&workspace_id)
-                            .map_err(|error| NetError::Protocol(error.to_string()))?;
-                        (event_ids, None)
-                    }
-                    (None, None) => {
-                        let event_ids = store
-                            .list_servable_event_ids()
-                            .map_err(|error| NetError::Protocol(error.to_string()))?;
-                        (event_ids, None)
                     }
                 }
             };
@@ -3091,6 +3086,44 @@ mod tests {
 
         assert_eq!(response.event_ids, vec![second.event_id.0]);
         assert_eq!(response.inventory_total_count, Some(3));
+    }
+
+    #[test]
+    fn inventory_request_without_explicit_page_is_bounded_and_reports_total_count() {
+        let identity = DeviceIdentity::generate();
+        let workspace_id = WorkspaceId::new();
+        let store = EventStore::open_in_memory().unwrap();
+        let mut event_ids = Vec::new();
+        for index in 0..=MAX_INVENTORY_EVENT_IDS_PER_RESPONSE {
+            let event = identity.sign_event(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                identity.device_id().clone(),
+                EventBody::DeviceProfileUpdated {
+                    display_name: format!("Inventory {index:04}"),
+                },
+            ));
+            event_ids.push(event.event_id.0.clone());
+            store.append_event(&event).unwrap();
+        }
+
+        let mut request = empty_sync_request(WireSyncRequestKind::Inventory);
+        request.workspace_id = Some(workspace_id.0);
+
+        let response = handle_request(request, Arc::new(Mutex::new(store)), None).unwrap();
+
+        assert_eq!(
+            response.event_ids.len(),
+            MAX_INVENTORY_EVENT_IDS_PER_RESPONSE
+        );
+        assert_eq!(
+            response.event_ids,
+            event_ids[..MAX_INVENTORY_EVENT_IDS_PER_RESPONSE]
+        );
+        assert_eq!(
+            response.inventory_total_count,
+            Some((MAX_INVENTORY_EVENT_IDS_PER_RESPONSE + 1) as u64)
+        );
     }
 
     #[test]
