@@ -41,15 +41,15 @@ fn actual_ffi_export_symbols() -> Vec<&'static str> {
 
     for line in include_str!("lib.rs").lines() {
         let trimmed = line.trim();
-        if let Some(index) = trimmed.find("extern \"C\" fn ") {
-            if previous_nonempty == "#[unsafe(no_mangle)]" {
-                let name = trimmed[index + "extern \"C\" fn ".len()..]
-                    .split_once('(')
-                    .map(|(name, _)| name)
-                    .unwrap_or("");
-                if name.starts_with("chaft_") {
-                    symbols.push(name);
-                }
+        if let Some(index) = trimmed.find("extern \"C\" fn ")
+            && previous_nonempty == "#[unsafe(no_mangle)]"
+        {
+            let name = trimmed[index + "extern \"C\" fn ".len()..]
+                .split_once('(')
+                .map(|(name, _)| name)
+                .unwrap_or("");
+            if name.starts_with("chaft_") {
+                symbols.push(name);
             }
         }
         if !trimmed.is_empty() {
