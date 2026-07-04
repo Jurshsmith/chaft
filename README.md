@@ -113,15 +113,15 @@ cargo bench -p chaft-benchmarks --bench hot_paths --no-run
 
 Desktop build prerequisites by OS:
 
-- Linux: Rust 1.92, CMake 3.28+, Ninja, Qt 6.7+ desktop libraries, and the
+- Linux: Rust 1.92, CMake 3.28+, Ninja, Qt 6.8+ desktop libraries, and the
   usual C/C++ build toolchain. CI installs `cmake` and `ninja-build`, then
   uses Qt `linux_gcc_64`.
-- macOS: Rust 1.92, CMake 3.28+, Ninja, Xcode command line tools, and Qt 6.7+
+- macOS: Rust 1.92, CMake 3.28+, Ninja, Xcode command line tools, and Qt 6.8+
   desktop libraries. CI installs CMake/Ninja through Homebrew and uses Qt
   `clang_64`.
 - Windows: Rust 1.92, CMake 3.28+, Ninja, MSVC x64 build tools, Python 3, and
-  Qt 6.7+ desktop libraries. CI runs inside the MSVC developer environment and
-  uses Qt `win64_msvc2019_64`.
+  Qt 6.8+ desktop libraries. CI runs inside the MSVC developer environment and
+  uses Qt `win64_msvc2022_64`.
 
 CI builds release desktop packages on Linux, macOS, and Windows after the debug
 desktop smoke passes. Linux is expected to produce a CPack TGZ archive

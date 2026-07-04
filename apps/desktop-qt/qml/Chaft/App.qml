@@ -360,8 +360,8 @@ ApplicationWindow {
         }
         var parts = value.split(".")
         for (var i = 0; i < parts.length; i++) {
-            var octet = Number(parts[i])
-            if (octet < 0 || octet > 255) {
+            var segmentValue = Number(parts[i])
+            if (segmentValue < 0 || segmentValue > 255) {
                 return false
             }
         }

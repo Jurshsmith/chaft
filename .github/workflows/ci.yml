@@ -15,7 +15,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CHAFT_QT_VERSION: 6.7.3
+  CHAFT_QT_VERSION: 6.8.3
 
 jobs:
   rust:
@@ -68,15 +68,13 @@ jobs:
             qt-host: linux
             qt-arch: linux_gcc_64
           - name: macOS
-            # Qt 6.7 links against AGL through OpenGL on GitHub's macOS 26
-            # image. Keep this pinned until the Qt toolchain is upgraded.
             os: macos-15
             qt-host: mac
             qt-arch: clang_64
           - name: Windows
             os: windows-latest
             qt-host: windows
-            qt-arch: win64_msvc2019_64
+            qt-arch: win64_msvc2022_64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
