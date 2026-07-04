@@ -136,3 +136,4 @@ jobs:
           name: chaft-${{ matrix.name }}-desktop-release
           path: build/desktop-release/package/*
           if-no-files-found: error
+          compression-level: 0
