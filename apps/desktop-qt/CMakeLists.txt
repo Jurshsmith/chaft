@@ -22,6 +22,11 @@ qt_add_executable(ChaftDesktop
     src/main.cpp
 )
 
+set(CHAFT_QML_MODULE_OPTIONS)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND CHAFT_QML_MODULE_OPTIONS NO_CACHEGEN)
+endif()
+
 set_target_properties(ChaftDesktop PROPERTIES
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_BUNDLE_NAME "Chaft"
@@ -34,6 +39,7 @@ set_target_properties(ChaftDesktop PROPERTIES
 qt_add_qml_module(ChaftDesktop
     URI Chaft
     VERSION 1.0
+    ${CHAFT_QML_MODULE_OPTIONS}
     QML_FILES
         qml/Chaft/App.qml
         qml/Chaft/tokens/Tokens.qml
