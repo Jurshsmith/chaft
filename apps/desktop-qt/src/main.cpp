@@ -10226,7 +10226,58 @@ void configureDesktopSmoke(QCoreApplication *app,
   });
 }
 
+void setLaunchEnvironmentValue(const char *name, const QString &value) {
+  const auto normalized = value.trimmed();
+  if (!normalized.isEmpty()) {
+    qputenv(name, normalized.toUtf8());
+  }
+}
+
+bool launchOptionValue(const QString &argument, const QString &option,
+                       int *index, int argc, char *argv[],
+                       QString *value) {
+  const auto prefix = option + QStringLiteral("=");
+  if (argument.startsWith(prefix)) {
+    *value = argument.mid(prefix.size());
+    return true;
+  }
+  if (argument == option && *index + 1 < argc) {
+    ++(*index);
+    *value = QString::fromLocal8Bit(argv[*index]);
+    return true;
+  }
+  return false;
+}
+
+void applyDesktopLaunchEnvironment(int argc, char *argv[]) {
+  for (int index = 1; index < argc; ++index) {
+    const auto argument = QString::fromLocal8Bit(argv[index]);
+    QString value;
+    if (launchOptionValue(argument, QStringLiteral("--ffi-library"), &index,
+                          argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_FFI_LIBRARY", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--qml-import-root"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_DESKTOP_QML_IMPORT_ROOT", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--runtime-dir"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_RUNTIME_DIR", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--workspace-id"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_WORKSPACE_ID", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--identity-file"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_IDENTITY_FILE", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--peer-endpoint"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_PEER_ENDPOINT", value);
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
+  applyDesktopLaunchEnvironment(argc, argv);
+
   if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
   }

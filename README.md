@@ -93,6 +93,48 @@ The Qt app is scaffolded but requires Qt 6 and CMake to build. Its first paint
 uses a built-in `WorkspaceSnapshot` with the production JSON shape, then the
 controller replaces it with runtime or raw-store data on background workers.
 
+## Run The Desktop App
+
+For interactive local testing, build the native desktop shell and seed a
+persistent workspace with channels, replies, edits, reactions, an attachment,
+search data, storage health data, and partial-history UI rows:
+
+```sh
+tools/desktop/launch.sh debug --fresh
+```
+
+The seeded runtime is stored under `scratch/desktop-test/visual-workspace`.
+Rerun without `--fresh` to keep messages and settings created during testing:
+
+```sh
+tools/desktop/launch.sh debug
+```
+
+Start the app and return to the shell immediately:
+
+```sh
+tools/desktop/launch.sh debug --detached
+```
+
+Use `release` instead of `debug` to test the optimized app. The same commands
+work on Linux, macOS, and Windows shells that can run the repo scripts. The
+launcher prints the app binary, runtime directory, selected workspace ID,
+and manifest path before starting the app. Detached Linux and Windows-style
+shell launches also print a log path.
+
+To verify the packaged app for the current OS with the same runtime smoke:
+
+```sh
+tools/desktop/package-smoke.sh debug
+```
+
+To verify release metadata, checksums, SBOM, provenance, and platform artifact
+suffix handling for Linux, macOS, and Windows package names:
+
+```sh
+tools/desktop/release-metadata-smoke.sh
+```
+
 Recommended public checks:
 
 ```sh

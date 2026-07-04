@@ -2206,6 +2206,10 @@ ApplicationWindow {
                     id: searchField
                     Layout.fillWidth: true
                     placeholderText: "Search or jump"
+                    Accessible.name: "Search or jump"
+                    Accessible.description: root.searchHasTerms
+                        ? "Search messages and channels"
+                        : "Find messages, channels, or jump to a channel"
                     color: Tokens.textStrong
                     placeholderTextColor: Tokens.textMuted
                     onTextChanged: {
@@ -2236,6 +2240,8 @@ ApplicationWindow {
                         id: workspaceNameField
                         Layout.fillWidth: true
                         placeholderText: "Workspace name"
+                        Accessible.name: "Workspace name"
+                        Accessible.description: "Name for the new local workspace"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         background: Rectangle {
@@ -2252,6 +2258,7 @@ ApplicationWindow {
                     Button {
                         Layout.fillWidth: true
                         text: "Create workspace"
+                        Accessible.name: "Create workspace"
                         enabled: root.runtimeAccessReady
                         onClicked: chaftController.createWorkspace(workspaceNameField.text, "general")
                     }
@@ -2266,6 +2273,8 @@ ApplicationWindow {
                         id: channelNameField
                         Layout.fillWidth: true
                         placeholderText: "New channel"
+                        Accessible.name: "New channel"
+                        Accessible.description: "Name for the channel to create"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         background: Rectangle {
@@ -2284,11 +2293,19 @@ ApplicationWindow {
                     CheckBox {
                         id: privateChannelCheck
                         text: "Private"
+                        Accessible.name: "Private channel"
+                        Accessible.description: checked
+                            ? "New channel will require explicit member grants"
+                            : "New channel will be visible to workspace members"
                         Layout.preferredWidth: 86
                     }
 
                     Button {
                         text: "+"
+                        Accessible.name: "Create channel"
+                        Accessible.description: privateChannelCheck.checked
+                            ? "Create private channel"
+                            : "Create public channel"
                         implicitWidth: 36
                         enabled: root.runtimeWorkReady
                             && channelNameField.text.trim().length > 0
