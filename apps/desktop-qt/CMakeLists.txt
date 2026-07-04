@@ -40,6 +40,11 @@ qt_add_qml_module(ChaftDesktop
     URI Chaft
     VERSION 1.0
     ${CHAFT_QML_MODULE_OPTIONS}
+    IMPORTS
+        QtQuick
+        QtQuick.Controls
+        QtQuick.Dialogs
+        QtQuick.Layouts
     QML_FILES
         qml/Chaft/App.qml
         qml/Chaft/tokens/Tokens.qml
@@ -48,6 +53,13 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml
 )
+
+if(APPLE)
+    # Qt 6.7 on GitHub macOS runners can scan the source qml/ path as a
+    # generated QML module under Chaft. Provide the expected empty module path.
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Chaft/QML")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/Chaft/QML/qmldir" "module QML\n")
+endif()
 
 target_link_libraries(ChaftDesktop PRIVATE Qt6::Network Qt6::Qml Qt6::Quick)
 
