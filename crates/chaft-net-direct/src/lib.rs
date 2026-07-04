@@ -4011,6 +4011,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_events_splits_batch_after_bounded_oversized_response_error() {
+        let workspace_id = WorkspaceId::new();
+        let first = small_device_key_package_event(&workspace_id, 1);
+        let second = small_device_key_package_event(&workspace_id, 2);
+        let event_by_id = HashMap::from([
+            (first.event_id.0.clone(), first.clone()),
+            (second.event_id.0.clone(), second.clone()),
+        ]);
+        let request_sizes = Arc::new(Mutex::new(Vec::new()));
+        let server_request_sizes = Arc::clone(&request_sizes);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = PeerAddress {
+            peer_id: PeerId("split-fetch-bounded-error".to_owned()),
+            endpoint: listener.local_addr().unwrap().to_string(),
+        };
+        let server_task = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request_len = stream.read_u32().await.unwrap() as usize;
+                let mut request_bytes = vec![0; request_len];
+                stream.read_exact(&mut request_bytes).await.unwrap();
+                let request = decode_sync_request(&request_bytes).unwrap();
+                server_request_sizes
+                    .lock()
+                    .unwrap()
+                    .push(request.event_ids.len());
+
+                let response = if request.event_ids.len() > 1 {
+                    sync_error_response(oversized_sync_response_error(
+                        "fetch-events",
+                        MAX_FRAME_LEN + 1,
+                    ))
+                } else {
+                    let event_envelopes = request
+                        .event_ids
+                        .iter()
+                        .filter_map(|event_id| event_by_id.get(event_id))
+                        .map(encode_event_envelope)
+                        .collect::<Vec<_>>();
+                    WireSyncResponse {
+                        event_ids: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                        blobs: Vec::new(),
+                        blob_descriptors: Vec::new(),
+                        blob_availability: Vec::new(),
+                        event_envelopes,
+                        inventory_total_count: None,
+                    }
+                };
+                let response = encode_sync_response(&response);
+                stream.write_u32(response.len() as u32).await.unwrap();
+                stream.write_all(&response).await.unwrap();
+            }
+        });
+
+        let fetched = DirectTransport
+            .fetch_events(&peer, vec![first.event_id.clone(), second.event_id.clone()])
+            .await
+            .unwrap();
+
+        server_task.await.unwrap();
+        assert_eq!(fetched, vec![first, second]);
+        assert_eq!(*request_sizes.lock().unwrap(), vec![2, 1, 1]);
+    }
+
+    #[tokio::test]
     async fn fetch_blobs_splits_batch_after_closed_oversized_response() {
         let first = b"first blob".to_vec();
         let second = b"second blob".to_vec();
