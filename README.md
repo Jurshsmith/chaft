@@ -103,6 +103,7 @@ tools/desktop/preflight.sh
 tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
+tools/desktop/release-metadata-smoke.sh
 tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
 python3 tools/desktop/release-metadata.py release
@@ -137,6 +138,10 @@ python3 tools/desktop/verify-release-metadata.py release --platform Linux
 Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is
 non-blank, and compares broad image metrics against
 `tools/desktop/screenshot-baseline.json` before uploading the smoke screenshot.
+`tools/desktop/release-metadata-smoke.sh` exercises the release metadata tools
+without requiring Qt by generating synthetic Linux, macOS, and Windows package
+artifacts, then checking platform package suffixes, checksums, SBOM/provenance
+artifact rows, and clean-provenance enforcement.
 
 Phase 2 performance work starts with `chaft-benchmarks`, a public Criterion
 benchmark crate for append, decrypted snapshot hydration, local search, direct

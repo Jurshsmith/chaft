@@ -52,6 +52,9 @@ jobs:
       - name: Run visual workspace smoke
         run: tools/smoke/visual-workspace.sh --locked
 
+      - name: Run release metadata smoke
+        run: tools/desktop/release-metadata-smoke.sh
+
   desktop:
     name: Desktop ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
