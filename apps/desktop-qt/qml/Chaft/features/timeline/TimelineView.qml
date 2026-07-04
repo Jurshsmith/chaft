@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -405,16 +407,18 @@ ListView {
 
     delegate: Rectangle {
         id: row
+        required property int index
+        required property var modelData
         width: root.width
-        readonly property string rowMessageId: String(modelData.messageId || "")
-        readonly property string rowEventId: String(modelData.eventId || "")
+        readonly property string rowMessageId: String(row.modelData.messageId || "")
+        readonly property string rowEventId: String(row.modelData.eventId || "")
         readonly property string rowItemKey: row.rowMessageId.length > 0 ? row.rowMessageId : row.rowEventId
         readonly property bool selectedRow: row.rowItemKey.length > 0 && row.rowItemKey === root.selectedItemKey
-        readonly property bool historyGapRow: modelData.kind === "missing_history_gap"
-        readonly property bool invalidSignatureRow: modelData.kind === "invalid_signature"
+        readonly property bool historyGapRow: row.modelData.kind === "missing_history_gap"
+        readonly property bool invalidSignatureRow: row.modelData.kind === "invalid_signature"
         readonly property bool warningRow: row.historyGapRow || row.invalidSignatureRow
-        readonly property bool unreadDividerBefore: Boolean(modelData.unreadDividerBefore)
-        readonly property bool messageDeleted: Boolean(modelData.deleted)
+        readonly property bool unreadDividerBefore: Boolean(row.modelData.unreadDividerBefore)
+        readonly property bool messageDeleted: Boolean(row.modelData.deleted)
         readonly property int unreadOffset: row.unreadDividerBefore ? 32 : 0
         readonly property int bodyLineLimit: row.warningRow ? 1 : 8
         readonly property real bodyMaxHeight: Math.ceil(14 * 1.35 * row.bodyLineLimit)
@@ -424,7 +428,7 @@ ListView {
         )
         color: row.warningRow
             ? Tokens.warningSurface
-            : (row.selectedRow ? Tokens.secureSurface : (index % 2 === 0 ? Tokens.surfaceBase : Tokens.surfaceRaised))
+            : (row.selectedRow ? Tokens.secureSurface : (row.index % 2 === 0 ? Tokens.surfaceBase : Tokens.surfaceRaised))
         border.color: row.selectedRow ? Tokens.secure : "transparent"
         border.width: row.selectedRow ? 1 : 0
         height: row.unreadOffset + row.contentAreaHeight
@@ -472,7 +476,7 @@ ListView {
             acceptedButtons: Qt.LeftButton
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: root.itemSelected(modelData)
+            onClicked: root.itemSelected(row.modelData)
         }
 
         RowLayout {
@@ -493,13 +497,13 @@ ListView {
                 radius: 7
                 color: row.warningRow
                     ? Tokens.warning
-                    : (modelData.encrypted ? Tokens.secure : Tokens.accent)
+                    : (row.modelData.encrypted ? Tokens.secure : Tokens.accent)
 
                 Text {
                     anchors.centerIn: parent
                     text: row.warningRow
                         ? "!"
-                        : root.authorInitial(modelData.authorDisplayName, modelData.authorDeviceId)
+                        : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
                     color: "white"
                     font.pixelSize: 14
                     font.weight: Font.DemiBold
@@ -521,7 +525,7 @@ ListView {
                             ? "History gap"
                             : row.invalidSignatureRow
                                 ? "Invalid signature"
-                            : root.authorLabel(modelData.authorDisplayName, modelData.authorDeviceId)
+                            : root.authorLabel(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
                         color: Tokens.textStrong
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
@@ -530,7 +534,7 @@ ListView {
 
                     Text {
                         Layout.preferredWidth: Math.min(160, implicitWidth)
-                        text: root.channelLabel(modelData.channelName, modelData.channelId)
+                        text: root.channelLabel(row.modelData.channelName, row.modelData.channelId)
                         visible: text.length > 0
                         color: Tokens.textMuted
                         font.pixelSize: 11
@@ -539,7 +543,7 @@ ListView {
                     }
 
                     Text {
-                        text: root.timeLabel(modelData.physicalMs)
+                        text: root.timeLabel(row.modelData.physicalMs)
                         visible: text.length > 0
                         color: Tokens.textMuted
                         font.pixelSize: 11
@@ -550,7 +554,7 @@ ListView {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 28
-                    visible: Boolean(modelData.replyPreview)
+                    visible: Boolean(row.modelData.replyPreview)
                     radius: Tokens.radiusSm
                     color: Tokens.surfaceBase
                     border.color: Tokens.borderSubtle
@@ -572,7 +576,7 @@ ListView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: root.replyPreviewLabel(modelData.replyPreview)
+                            text: root.replyPreviewLabel(row.modelData.replyPreview)
                             color: Tokens.textMuted
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
@@ -590,7 +594,7 @@ ListView {
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(bodyText.implicitHeight, row.bodyMaxHeight)
                         Layout.maximumHeight: row.bodyMaxHeight
-                        text: modelData.body
+                        text: row.modelData.body
                         color: row.warningRow ? Tokens.warningText : Tokens.textStrong
                         font.pixelSize: 14
                         wrapMode: Text.Wrap
@@ -599,7 +603,7 @@ ListView {
                     }
 
                     Rectangle {
-                        visible: modelData.encrypted
+                        visible: row.modelData.encrypted
                         Layout.preferredHeight: 22
                         Layout.preferredWidth: 74
                         radius: Tokens.radiusSm
@@ -662,7 +666,7 @@ ListView {
                     spacing: 6
 
                     Repeater {
-                        model: root.attachmentEntries(modelData.attachments)
+                        model: root.attachmentEntries(row.modelData.attachments)
 
                         delegate: TimelineAttachmentChip {
                             id: attachmentChip
@@ -686,7 +690,7 @@ ListView {
 
                     Rectangle {
                         id: attachmentOverflowChip
-                        readonly property string overflowLabel: root.attachmentOverflowLabel(modelData)
+                        readonly property string overflowLabel: root.attachmentOverflowLabel(row.modelData)
                         visible: overflowLabel.length > 0
                         width: Math.min(160, Math.max(78, attachmentOverflowText.implicitWidth + 18))
                         height: 24
@@ -707,57 +711,28 @@ ListView {
                     }
 
                     Repeater {
-                        model: root.reactionEntries(modelData.reactions, modelData.myReactions)
+                        model: root.reactionEntries(row.modelData.reactions, row.modelData.myReactions)
 
-                        delegate: Rectangle {
+                        delegate: TimelineReactionChip {
                             id: reactionChip
-                            readonly property bool mine: Boolean(modelData.mine)
-                            width: Math.max(44, reactionLabel.implicitWidth + 16)
-                            height: 24
-                            radius: Tokens.radiusSm
-                            color: reactionChip.mine
-                                ? (reactionMouse.containsMouse && root.actionsEnabled
-                                    ? Tokens.surfaceRaised
-                                    : Tokens.secureSurface)
-                                : Tokens.surfaceRaised
-                            border.color: reactionChip.mine && reactionMouse.containsMouse && root.actionsEnabled
-                                ? Tokens.secure
-                                : (reactionChip.mine ? Tokens.secure : Tokens.borderSubtle)
+                            required property var modelData
 
-                            Text {
-                                id: reactionLabel
-                                anchors.centerIn: parent
-                                text: modelData.reaction + " " + modelData.count
-                                color: reactionChip.mine ? Tokens.secure : Tokens.textMuted
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
+                            messageId: row.rowMessageId
+                            reaction: String(reactionChip.modelData.reaction || "")
+                            count: Number(reactionChip.modelData.count || 0)
+                            mine: Boolean(reactionChip.modelData.mine)
+                            actionsEnabled: root.actionsEnabled
+                            messageDeleted: row.messageDeleted
+                            warningRow: row.warningRow
+                            onRemoveRequested: function (messageId, reaction) {
+                                root.reactionRemoveRequested(messageId, reaction)
                             }
-
-                            MouseArea {
-                                id: reactionMouse
-                                anchors.fill: parent
-                                enabled: root.actionsEnabled
-                                    && reactionChip.mine
-                                    && Boolean(modelData.reaction)
-                                    && Boolean(row.rowMessageId)
-                                    && !row.messageDeleted
-                                    && !row.warningRow
-                                hoverEnabled: true
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: root.reactionRemoveRequested(
-                                    row.rowMessageId,
-                                    String(modelData.reaction || "")
-                                )
-                            }
-
-                            ToolTip.visible: reactionMouse.containsMouse && reactionMouse.enabled
-                            ToolTip.text: "Remove " + String(modelData.reaction || "")
                         }
                     }
 
                     Rectangle {
                         id: reactionOverflowChip
-                        readonly property string overflowLabel: root.reactionOverflowLabel(modelData)
+                        readonly property string overflowLabel: root.reactionOverflowLabel(row.modelData)
                         visible: overflowLabel.length > 0
                         width: Math.min(170, Math.max(92, reactionOverflowText.implicitWidth + 18))
                         height: 24
@@ -778,43 +753,21 @@ ListView {
                     }
 
                     Repeater {
-                        model: root.quickReactionEntries(modelData.myReactions)
+                        model: root.quickReactionEntries(row.modelData.myReactions)
 
-                        delegate: Rectangle {
+                        delegate: TimelineQuickReactionChip {
                             id: quickReactionChip
-                            readonly property string reactionText: String(modelData || "")
-                            width: Math.max(44, quickReactionLabel.implicitWidth + 16)
-                            height: 24
-                            radius: Tokens.radiusSm
-                            visible: root.actionsEnabled
-                                && Boolean(row.rowMessageId)
-                                && !row.messageDeleted
-                                && !row.warningRow
-                            color: quickReactionMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
-                            border.color: Tokens.borderSubtle
+                            required property var modelData
+                            readonly property string reactionText: String(quickReactionChip.modelData || "")
 
-                            Text {
-                                id: quickReactionLabel
-                                anchors.centerIn: parent
-                                text: quickReactionChip.reactionText
-                                color: Tokens.textMuted
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
+                            messageId: row.rowMessageId
+                            reaction: quickReactionChip.reactionText
+                            actionsEnabled: root.actionsEnabled
+                            messageDeleted: row.messageDeleted
+                            warningRow: row.warningRow
+                            onAddRequested: function (messageId, reaction) {
+                                root.reactionRequested(messageId, reaction)
                             }
-
-                            MouseArea {
-                                id: quickReactionMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.reactionRequested(
-                                    row.rowMessageId,
-                                    quickReactionChip.reactionText
-                                )
-                            }
-
-                            ToolTip.visible: quickReactionMouse.containsMouse
-                            ToolTip.text: "Add " + quickReactionChip.reactionText
                         }
                     }
 
@@ -822,7 +775,7 @@ ListView {
                         width: Math.max(70, threadReplyText.implicitWidth + 18)
                         height: 24
                         radius: Tokens.radiusSm
-                        visible: Number(modelData.threadReplyCount || 0) > 0
+                        visible: Number(row.modelData.threadReplyCount || 0) > 0
                             && !row.warningRow
                         color: Tokens.secureSurface
                         border.color: Tokens.borderSubtle
@@ -830,15 +783,15 @@ ListView {
                         Text {
                             id: threadReplyText
                             anchors.centerIn: parent
-                            text: root.threadReplyLabel(modelData.threadReplyCount)
+                            text: root.threadReplyLabel(row.modelData.threadReplyCount)
                             color: Tokens.secure
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                         }
 
                         ToolTip.visible: threadReplyMouse.containsMouse
-                        ToolTip.text: modelData.threadLatestReply
-                            ? "Latest: " + root.replyPreviewLabel(modelData.threadLatestReply)
+                        ToolTip.text: row.modelData.threadLatestReply
+                            ? "Latest: " + root.replyPreviewLabel(row.modelData.threadLatestReply)
                             : "Thread replies"
 
                         MouseArea {
@@ -846,7 +799,7 @@ ListView {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.threadRequested(modelData)
+                            onClicked: root.threadRequested(row.modelData)
                         }
                     }
 
@@ -854,7 +807,7 @@ ListView {
                         width: 52
                         height: 24
                         radius: Tokens.radiusSm
-                        visible: root.actionsEnabled && Boolean(modelData.messageId) && !modelData.deleted
+                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
                             && !row.warningRow
                         color: replyMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
                         border.color: Tokens.borderSubtle
@@ -872,7 +825,7 @@ ListView {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.replyRequested(modelData)
+                            onClicked: root.replyRequested(row.modelData)
                         }
 
                         ToolTip.visible: replyMouse.containsMouse
@@ -912,8 +865,8 @@ ListView {
                         width: 44
                         height: 24
                         radius: Tokens.radiusSm
-                        visible: root.actionsEnabled && Boolean(modelData.messageId) && !modelData.deleted
-                            && !Boolean(modelData.bodyTruncated)
+                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
+                            && !Boolean(row.modelData.bodyTruncated)
                         color: editMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
                         border.color: Tokens.borderSubtle
 
@@ -930,7 +883,7 @@ ListView {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.editRequested(modelData.messageId || "", modelData.body || "")
+                            onClicked: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
                         }
 
                         ToolTip.visible: editMouse.containsMouse
@@ -941,7 +894,7 @@ ListView {
                         width: 56
                         height: 24
                         radius: Tokens.radiusSm
-                        visible: root.actionsEnabled && Boolean(modelData.messageId) && !modelData.deleted
+                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
                         color: deleteMouse.containsMouse ? Tokens.warningSurface : Tokens.surfaceRaised
                         border.color: Tokens.borderSubtle
 
@@ -958,7 +911,7 @@ ListView {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.deleteRequested(modelData.messageId || "")
+                            onClicked: root.deleteRequested(row.modelData.messageId || "")
                         }
 
                         ToolTip.visible: deleteMouse.containsMouse
