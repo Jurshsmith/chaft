@@ -83,6 +83,19 @@ python3 tools/desktop/release-metadata.py release
 python3 tools/desktop/verify-release-metadata.py release
 ```
 
+When changing hot runtime, sync, blob, search, snapshot, or FFI paths, also
+compile the public benchmark target:
+
+```sh
+cargo bench -p chaft-benchmarks --bench hot_paths --no-run
+```
+
+For local performance investigation, run Criterion samples explicitly:
+
+```sh
+cargo bench -p chaft-benchmarks --bench hot_paths -- --sample-size 10
+```
+
 ## Engineering Rules
 
 - Keep the Rust core deterministic, bounded, and testable without a central

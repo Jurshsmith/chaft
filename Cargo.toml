@@ -4,6 +4,7 @@ members = [
     "apps/chaft-cli",
     "apps/chaft-node",
     "crates/chaft-app",
+    "crates/chaft-benchmarks",
     "crates/chaft-core",
     "crates/chaft-crypto",
     "crates/chaft-ffi",

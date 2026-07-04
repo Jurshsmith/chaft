@@ -106,6 +106,7 @@ tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
 python3 tools/desktop/release-metadata.py release
 python3 tools/desktop/verify-release-metadata.py release
+cargo bench -p chaft-benchmarks --bench hot_paths --no-run
 ```
 
 Desktop build prerequisites by OS:
@@ -134,6 +135,21 @@ python3 tools/desktop/verify-release-metadata.py release
 Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is
 non-blank, and compares broad image metrics against
 `tools/desktop/screenshot-baseline.json` before uploading the smoke screenshot.
+
+Phase 2 performance work starts with `chaft-benchmarks`, a public Criterion
+benchmark crate for append, decrypted snapshot hydration, local search, direct
+sync pull, direct blob transfer, and FFI JSON payload generation. Compile the
+benchmark target without running samples with:
+
+```sh
+cargo bench -p chaft-benchmarks --bench hot_paths --no-run
+```
+
+Run samples locally with Criterion options when investigating regressions:
+
+```sh
+cargo bench -p chaft-benchmarks --bench hot_paths -- --sample-size 10
+```
 
 ```sh
 cargo test --workspace
