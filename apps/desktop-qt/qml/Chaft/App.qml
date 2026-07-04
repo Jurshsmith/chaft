@@ -2170,33 +2170,16 @@ ApplicationWindow {
 
                 Repeater {
                     model: root.workspaceRailItems
-                    delegate: Rectangle {
-                        readonly property bool selectedWorkspace: String(modelData.workspaceId || "") === chaftController.selectedWorkspaceId
+                    delegate: WorkspaceRailItem {
+                        workspaceId: String(modelData.workspaceId || "")
+                        workspaceName: String(modelData.name || modelData.workspaceId || "Workspace")
+                        initial: root.workspaceInitial(modelData)
+                        selected: String(modelData.workspaceId || "") === chaftController.selectedWorkspaceId
                             || (chaftController.selectedWorkspaceId.length === 0 && index === 0)
-                        width: 40
-                        height: 40
-                        radius: 8
-                        color: selectedWorkspace ? Tokens.accent : Tokens.railElevated
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.workspaceInitial(modelData)
-                            color: "white"
-                            font.pixelSize: 15
-                            font.weight: Font.DemiBold
+                        actionable: root.runtimeWorkReady
+                        onActivated: function(workspaceId) {
+                            root.selectWorkspaceId(workspaceId)
                         }
-
-                        MouseArea {
-                            id: railMouse
-                            anchors.fill: parent
-                            enabled: Boolean(modelData.workspaceId) && root.runtimeWorkReady
-                            hoverEnabled: true
-                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: root.selectWorkspaceId(modelData.workspaceId)
-                        }
-
-                        ToolTip.visible: railMouse.containsMouse
-                        ToolTip.text: modelData.name || modelData.workspaceId || "Workspace"
                     }
                 }
             }
