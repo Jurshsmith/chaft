@@ -597,6 +597,22 @@
       "workspaceId": "string"
     }
   },
+  "chaft_runtime_start_direct_peer_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "endpoint": "string",
+      "peerId": "string"
+    }
+  },
+  "chaft_runtime_stop_direct_peer_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "endpoint": "string",
+      "peerId": "string"
+    }
+  },
   "chaft_runtime_sync_workspace_direct_result_json.error": {
     "error": {
       "code": "string",

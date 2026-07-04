@@ -678,6 +678,28 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
             )
         }),
     );
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_direct_peer = parse_ffi_json(unsafe {
+        chaft_runtime_start_direct_peer_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        )
+    });
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_start_direct_peer_result_json",
+        started_direct_peer.clone(),
+    );
+    let hosted_peer_id =
+        CString::new(started_direct_peer["value"]["peerId"].as_str().unwrap()).unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_stop_direct_peer_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_stop_direct_peer_result_json(hosted_peer_id.as_ptr())
+        }),
+    );
     insert_contract_shape(
         &mut contract,
         "chaft_runtime_sync_workspace_direct_result_json.error",
