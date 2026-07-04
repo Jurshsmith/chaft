@@ -2333,16 +2333,19 @@ ApplicationWindow {
                             Repeater {
                                 model: root.filteredChannels
                                 delegate: SidebarItem {
-                                    label: modelData.name
-                                    secondaryLabel: root.channelSidebarLabel(modelData)
-                                    selected: modelData.channelId === root.selectedChannel.channelId
-                                    unreadCount: modelData.unreadCount
-                                    privateChannel: modelData.isPrivate
-                                    hasDraft: root.draftTextForChannel(modelData.channelId).trim().length > 0
+                                    id: channelSidebarDelegate
+                                    required property var modelData
+
+                                    label: channelSidebarDelegate.modelData.name
+                                    secondaryLabel: root.channelSidebarLabel(channelSidebarDelegate.modelData)
+                                    selected: channelSidebarDelegate.modelData.channelId === root.selectedChannel.channelId
+                                    unreadCount: channelSidebarDelegate.modelData.unreadCount
+                                    privateChannel: channelSidebarDelegate.modelData.isPrivate
+                                    hasDraft: root.draftTextForChannel(channelSidebarDelegate.modelData.channelId).trim().length > 0
 
                                     MouseArea {
                                         anchors.fill: parent
-                                        onClicked: root.selectChannelId(modelData.channelId, true)
+                                        onClicked: root.selectChannelId(channelSidebarDelegate.modelData.channelId, true)
                                     }
                                 }
                             }
