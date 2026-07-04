@@ -4127,47 +4127,15 @@ ApplicationWindow {
                             spacing: 6
                             model: chaftController.backupPeerEndpoints
 
-                            delegate: Rectangle {
+                            delegate: BackupPeerStatusRow {
+                                id: backupPeerStatusDelegate
+                                required property string modelData
+
                                 width: ListView.view.width
-                                height: 54
-                                radius: Tokens.radiusSm
-                                color: Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 2
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: modelData
-                                            color: Tokens.textStrong
-                                            font.pixelSize: 12
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideMiddle
-                                        }
-
-                                        Text {
-                                            text: root.backupPeerStateLabel(modelData)
-                                            color: root.backupPeerStateColor(modelData)
-                                            font.pixelSize: 11
-                                            font.weight: Font.DemiBold
-                                        }
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: root.backupPeerStatusText(modelData)
-                                        color: Tokens.textMuted
-                                        font.pixelSize: 11
-                                        elide: Text.ElideRight
-                                    }
-                                }
+                                endpoint: backupPeerStatusDelegate.modelData
+                                statusText: root.backupPeerStatusText(backupPeerStatusDelegate.modelData)
+                                stateLabel: root.backupPeerStateLabel(backupPeerStatusDelegate.modelData)
+                                stateColor: root.backupPeerStateColor(backupPeerStatusDelegate.modelData)
                             }
                         }
 
