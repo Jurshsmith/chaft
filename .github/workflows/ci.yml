@@ -65,7 +65,9 @@ jobs:
             qt-host: linux
             qt-arch: linux_gcc_64
           - name: macOS
-            os: macos-latest
+            # Qt 6.7 links against AGL through OpenGL on GitHub's macOS 26
+            # image. Keep this pinned until the Qt toolchain is upgraded.
+            os: macos-15
             qt-host: mac
             qt-arch: clang_64
           - name: Windows
