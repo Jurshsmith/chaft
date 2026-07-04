@@ -823,6 +823,9 @@ void addDesktopQmlImportPaths(QQmlApplicationEngine *engine) {
       normalizedEnvironmentPath(qEnvironmentVariable("CHAFT_DESKTOP_QML_IMPORT_ROOT"));
 
   addDesktopQmlImportPath(engine, &added, envImportRoot);
+  if (!envImportRoot.isEmpty()) {
+    return;
+  }
   addDesktopQmlImportPath(engine, &added, appDir.absolutePath());
   addDesktopQmlImportPath(engine, &added, appDir.absoluteFilePath("../../.."));
   addDesktopQmlImportPath(engine, &added,
