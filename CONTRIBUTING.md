@@ -80,8 +80,12 @@ Generate and verify release metadata before sharing a package:
 
 ```sh
 python3 tools/desktop/release-metadata.py release
-python3 tools/desktop/verify-release-metadata.py release
+python3 tools/desktop/verify-release-metadata.py release --platform Linux
 ```
+
+Use `--platform macOS` or `--platform Windows` when checking those package
+directories from a non-CI machine; the verifier rejects package suffixes that do
+not match the target OS.
 
 When changing hot runtime, sync, blob, search, snapshot, or FFI paths, also
 compile the public benchmark target:

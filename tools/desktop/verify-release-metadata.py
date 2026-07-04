@@ -3,12 +3,18 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 PACKAGE_SUFFIXES = (".dmg", ".zip", ".tgz", ".tar.gz")
+PLATFORM_PACKAGE_SUFFIXES = {
+    "linux": (".tgz", ".tar.gz"),
+    "macos": (".dmg",),
+    "windows": (".zip",),
+}
 REQUIRED_METADATA = {
     "SHA256SUMS",
     "chaft-desktop-provenance.json",
@@ -30,6 +36,31 @@ def file_sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def package_format(name):
+    if name.endswith((".tgz", ".tar.gz")):
+        return "linux-tgz"
+    if name.endswith(".dmg"):
+        return "macos-dmg"
+    if name.endswith(".zip"):
+        return "windows-zip"
+    return "unknown"
+
+
+def normalized_platform_name(value):
+    normalized = (value or "").strip().lower()
+    if normalized in {"darwin", "mac", "macos", "osx"}:
+        return "macos"
+    if normalized in {"win32", "windows", "msys", "mingw", "cygwin"}:
+        return "windows"
+    if normalized == "linux":
+        return "linux"
+    return normalized
+
+
+def current_platform_name():
+    return normalized_platform_name(os.environ.get("RUNNER_OS") or platform.system())
 
 
 def load_json(path):
@@ -54,6 +85,7 @@ def artifact_rows(files):
     return [
         {
             "name": path.name,
+            "packageFormat": package_format(path.name),
             "sizeBytes": path.stat().st_size,
             "sha256": file_sha256(path),
         }
@@ -130,6 +162,27 @@ def verify_checksums(package_dir, artifacts):
             )
 
 
+def verify_platform_package_shape(artifacts, platform_name):
+    normalized = normalized_platform_name(platform_name)
+    expected_suffixes = PLATFORM_PACKAGE_SUFFIXES.get(normalized)
+    if expected_suffixes is None:
+        fail(
+            "unsupported package verification platform "
+            f"{platform_name!r}; expected Linux, macOS, or Windows"
+        )
+
+    unexpected = [
+        artifact["name"]
+        for artifact in artifacts
+        if not artifact["name"].endswith(expected_suffixes)
+    ]
+    if unexpected:
+        fail(
+            f"{normalized} package directory contains unexpected package type(s): "
+            + ", ".join(sorted(unexpected))
+        )
+
+
 def verify_sbom(package_dir, artifacts):
     sbom = load_json(package_dir / "chaft-desktop-sbom.cdx.json")
     if sbom.get("bomFormat") != "CycloneDX":
@@ -162,6 +215,9 @@ def verify_sbom(package_dir, artifacts):
         key = f"chaft:artifact:{artifact['name']}:sha256"
         if property_map.get(key) != artifact["sha256"]:
             fail(f"SBOM missing or stale artifact checksum property: {key}")
+        key = f"chaft:artifact:{artifact['name']}:packageFormat"
+        if property_map.get(key) != artifact["packageFormat"]:
+            fail(f"SBOM missing or stale artifact packageFormat property: {key}")
 
 
 def verify_provenance(package_dir, profile, artifacts, require_clean):
@@ -192,6 +248,7 @@ def verify_provenance(package_dir, profile, artifacts, require_clean):
 
     expected = {
         artifact["name"]: {
+            "packageFormat": artifact["packageFormat"],
             "sha256": artifact["sha256"],
             "sizeBytes": artifact["sizeBytes"],
         }
@@ -199,6 +256,7 @@ def verify_provenance(package_dir, profile, artifacts, require_clean):
     }
     actual = {
         artifact.get("name"): {
+            "packageFormat": artifact.get("packageFormat"),
             "sha256": artifact.get("sha256"),
             "sizeBytes": artifact.get("sizeBytes"),
         }
@@ -220,6 +278,11 @@ def main():
         action="store_true",
         help="Require provenance to report a clean Git worktree.",
     )
+    parser.add_argument(
+        "--platform",
+        default=current_platform_name(),
+        help="Package platform to verify: Linux, macOS, or Windows.",
+    )
     args = parser.parse_args()
 
     package_dir = args.package_dir or repo_root() / "build" / f"desktop-{args.profile}" / "package"
@@ -229,6 +292,7 @@ def main():
     if not artifacts:
         fail(f"no package artifacts found in {package_dir}")
 
+    verify_platform_package_shape(artifacts, args.platform)
     verify_checksums(package_dir, artifacts)
     verify_sbom(package_dir, artifacts)
     verify_provenance(

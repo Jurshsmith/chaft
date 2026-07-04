@@ -123,14 +123,15 @@ Desktop build prerequisites by OS:
   uses Qt `win64_msvc2019_64`.
 
 CI builds release desktop packages on Linux, macOS, and Windows after the debug
-desktop smoke passes. The uploaded artifact bundle for each OS includes the
-native package (`.tgz`, `.dmg`, or `.zip`), `SHA256SUMS`,
+desktop smoke passes. Linux is expected to produce a CPack TGZ archive
+(`.tar.gz` or `.tgz`), macOS a `.dmg`, and Windows a `.zip`. The uploaded
+artifact bundle for each OS includes the native package, `SHA256SUMS`,
 `chaft-desktop-sbom.cdx.json`, and `chaft-desktop-provenance.json`. Generate the
 same metadata locally after packaging with:
 
 ```sh
 python3 tools/desktop/release-metadata.py release
-python3 tools/desktop/verify-release-metadata.py release
+python3 tools/desktop/verify-release-metadata.py release --platform Linux
 ```
 
 Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is

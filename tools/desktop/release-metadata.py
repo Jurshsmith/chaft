@@ -14,6 +14,16 @@ from pathlib import Path
 PACKAGE_SUFFIXES = (".dmg", ".zip", ".tgz", ".tar.gz")
 
 
+def package_format(name):
+    if name.endswith((".tgz", ".tar.gz")):
+        return "linux-tgz"
+    if name.endswith(".dmg"):
+        return "macos-dmg"
+    if name.endswith(".zip"):
+        return "windows-zip"
+    return "unknown"
+
+
 def command_output(args):
     try:
         completed = subprocess.run(
@@ -56,6 +66,7 @@ def artifact_rows(files):
     return [
         {
             "name": path.name,
+            "packageFormat": package_format(path.name),
             "path": path.as_posix(),
             "sizeBytes": path.stat().st_size,
             "sha256": file_sha256(path),
@@ -215,6 +226,13 @@ def write_sbom(root, package_dir, version, artifacts, tools):
         "components": cargo_components(metadata),
         "properties": [
             {"name": f"chaft:artifact:{artifact['name']}:sha256", "value": artifact["sha256"]}
+            for artifact in artifacts
+        ]
+        + [
+            {
+                "name": f"chaft:artifact:{artifact['name']}:packageFormat",
+                "value": artifact["packageFormat"],
+            }
             for artifact in artifacts
         ],
     }
