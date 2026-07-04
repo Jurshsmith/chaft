@@ -2165,11 +2165,17 @@ ApplicationWindow {
                 Repeater {
                     model: root.workspaceRailItems
                     delegate: WorkspaceRailItem {
-                        workspaceId: String(modelData.workspaceId || "")
-                        workspaceName: String(modelData.name || modelData.workspaceId || "Workspace")
-                        initial: root.workspaceInitial(modelData)
-                        selected: String(modelData.workspaceId || "") === chaftController.selectedWorkspaceId
-                            || (chaftController.selectedWorkspaceId.length === 0 && index === 0)
+                        id: workspaceRailDelegate
+                        required property int index
+                        required property var modelData
+
+                        workspaceId: String(workspaceRailDelegate.modelData.workspaceId || "")
+                        workspaceName: String(workspaceRailDelegate.modelData.name
+                            || workspaceRailDelegate.modelData.workspaceId
+                            || "Workspace")
+                        initial: root.workspaceInitial(workspaceRailDelegate.modelData)
+                        selected: String(workspaceRailDelegate.modelData.workspaceId || "") === chaftController.selectedWorkspaceId
+                            || (chaftController.selectedWorkspaceId.length === 0 && workspaceRailDelegate.index === 0)
                         actionable: root.runtimeWorkReady
                         onActivated: function(workspaceId) {
                             root.selectWorkspaceId(workspaceId)
