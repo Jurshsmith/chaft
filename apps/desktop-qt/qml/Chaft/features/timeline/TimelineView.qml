@@ -664,58 +664,22 @@ ListView {
                     Repeater {
                         model: root.attachmentEntries(modelData.attachments)
 
-                        delegate: Rectangle {
+                        delegate: TimelineAttachmentChip {
                             id: attachmentChip
-                            readonly property string attachmentBlobHash: String(modelData.blobHash || "")
-                            readonly property string attachmentSelector: String(modelData.attachmentId || "").length > 0
-                                ? String(modelData.attachmentId)
+                            required property var modelData
+                            readonly property string attachmentBlobHash: String(attachmentChip.modelData.blobHash || "")
+
+                            messageId: row.rowMessageId
+                            selector: String(attachmentChip.modelData.attachmentId || "").length > 0
+                                ? String(attachmentChip.modelData.attachmentId)
                                 : attachmentBlobHash
-                            readonly property string attachmentDisplayName: String(modelData.displayName || "attachment")
-                            readonly property bool attachmentAvailable: modelData.localBlobAvailable !== false
-                            width: Math.min(220, Math.max(92, attachmentLabel.implicitWidth + 18))
-                            height: 24
-                            radius: Tokens.radiusSm
-                            color: attachmentChip.attachmentAvailable ? Tokens.surfaceRaised : Tokens.warningSurface
-                            border.color: attachmentChip.attachmentAvailable ? Tokens.borderSubtle : Tokens.warning
-
-                            Text {
-                                id: attachmentLabel
-                                anchors.centerIn: parent
-                                width: parent.width - 14
-                                text: attachmentChip.attachmentDisplayName
-                                color: attachmentChip.attachmentAvailable ? Tokens.textStrong : Tokens.warningText
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideMiddle
-                            }
-
-                            ToolTip.visible: attachmentMouse.containsMouse
-                            ToolTip.text: (modelData.mediaType || "application/octet-stream")
-                                + " - "
-                                + String(modelData.byteLen || 0)
-                                + " bytes"
-                                + (attachmentChip.attachmentAvailable ? "" : " - missing locally")
-
-                            MouseArea {
-                                id: attachmentMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: root.actionsEnabled
-                                    && attachmentChip.attachmentAvailable
-                                    && attachmentChip.attachmentSelector.length > 0
-                                    ? Qt.PointingHandCursor
-                                    : Qt.ArrowCursor
-                                onClicked: {
-                                    if (root.actionsEnabled
-                                            && attachmentChip.attachmentAvailable
-                                            && attachmentChip.attachmentSelector.length > 0) {
-                                        root.attachmentSaveRequested(
-                                            row.rowMessageId,
-                                            attachmentChip.attachmentSelector,
-                                            attachmentChip.attachmentDisplayName
-                                        )
-                                    }
-                                }
+                            displayName: String(attachmentChip.modelData.displayName || "attachment")
+                            mediaType: String(attachmentChip.modelData.mediaType || "application/octet-stream")
+                            byteLen: Number(attachmentChip.modelData.byteLen || 0)
+                            available: attachmentChip.modelData.localBlobAvailable !== false
+                            actionsEnabled: root.actionsEnabled
+                            onSaveRequested: function (messageId, selector, displayName) {
+                                root.attachmentSaveRequested(messageId, selector, displayName)
                             }
                         }
                     }
