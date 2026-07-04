@@ -26,6 +26,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QTimer>
+#include <QUrl>
 #include <QVariant>
 #include <QVariantList>
 #include <QVariantMap>
@@ -818,7 +819,10 @@ void addDesktopQmlImportPaths(QQmlApplicationEngine *engine) {
   QStringList added;
   const auto appDir = QDir(QCoreApplication::applicationDirPath());
   const auto currentDir = QDir::current();
+  const auto envImportRoot =
+      normalizedEnvironmentPath(qEnvironmentVariable("CHAFT_DESKTOP_QML_IMPORT_ROOT"));
 
+  addDesktopQmlImportPath(engine, &added, envImportRoot);
   addDesktopQmlImportPath(engine, &added, appDir.absolutePath());
   addDesktopQmlImportPath(engine, &added, appDir.absoluteFilePath("../../.."));
   addDesktopQmlImportPath(engine, &added,
@@ -836,6 +840,19 @@ void addDesktopQmlImportPaths(QQmlApplicationEngine *engine) {
 
   addDesktopQmlImportPath(engine, &added,
                           currentDir.absoluteFilePath("apps/desktop-qt/qml"));
+}
+
+void loadDesktopQml(QQmlApplicationEngine *engine) {
+  const auto configuredFile =
+      normalizedEnvironmentPath(qEnvironmentVariable("CHAFT_DESKTOP_QML_FILE"));
+  const QFileInfo configuredInfo(configuredFile);
+  if (!configuredFile.isEmpty() && configuredInfo.exists() &&
+      configuredInfo.isFile()) {
+    engine->load(QUrl::fromLocalFile(configuredInfo.absoluteFilePath()));
+    return;
+  }
+
+  engine->loadFromModule("Chaft", "App");
 }
 
 [[noreturn]] void finishDesktopSmoke(int code) {
@@ -10147,7 +10164,7 @@ int main(int argc, char *argv[]) {
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
       []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
   addDesktopQmlImportPaths(&engine);
-  engine.loadFromModule("Chaft", "App");
+  loadDesktopQml(&engine);
   configureDesktopSmoke(&app, &chaftController);
 
   return app.exec();
