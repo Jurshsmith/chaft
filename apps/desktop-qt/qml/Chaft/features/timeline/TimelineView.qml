@@ -618,43 +618,12 @@ ListView {
                         }
                     }
 
-                    Rectangle {
+                    TimelineRepairChip {
                         visible: row.historyGapRow
                         Layout.preferredHeight: 24
                         Layout.preferredWidth: 62
-                        radius: Tokens.radiusSm
-                        color: gapRepairMouse.containsMouse && root.historyRepairEnabled
-                            ? Tokens.secureSurface
-                            : Tokens.surfaceRaised
-                        border.color: root.historyRepairEnabled ? Tokens.borderSubtle : Tokens.warning
-                        opacity: root.historyRepairEnabled ? 1.0 : 0.72
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Repair"
-                            color: root.historyRepairEnabled ? Tokens.textMuted : Tokens.warningText
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        MouseArea {
-                            id: gapRepairMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: root.historyRepairEnabled
-                                ? Qt.PointingHandCursor
-                                : Qt.ArrowCursor
-                            onClicked: {
-                                if (root.historyRepairEnabled) {
-                                    root.historyRepairRequested(row.rowEventId)
-                                }
-                            }
-                        }
-
-                        ToolTip.visible: gapRepairMouse.containsMouse
-                        ToolTip.text: root.historyRepairEnabled
-                            ? "Pull missing history from peer"
-                            : "Set a peer endpoint to repair history"
+                        repairEnabled: root.historyRepairEnabled
+                        onRepairRequested: root.historyRepairRequested(row.rowEventId)
                     }
                 }
 
