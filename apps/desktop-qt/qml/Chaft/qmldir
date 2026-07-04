@@ -4,6 +4,7 @@ singleton Tokens 1.0 tokens/Tokens.qml
 AttachmentRow 1.0 components/AttachmentRow.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
 SidebarItem 1.0 components/SidebarItem.qml
+StatusChip 1.0 components/StatusChip.qml
 WorkspaceRailItem 1.0 components/WorkspaceRailItem.qml
 TimelineView 1.0 features/timeline/TimelineView.qml
 ComposerBar 1.0 features/composer/ComposerBar.qml

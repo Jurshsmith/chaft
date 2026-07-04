@@ -3060,61 +3060,17 @@ ApplicationWindow {
                                     )
                                 }
 
-                                Rectangle {
-                                    Layout.preferredWidth: Math.min(260, Math.max(118, queueStatusLabel.implicitWidth + 20))
-                                    Layout.preferredHeight: 30
-                                    radius: 7
-                                    color: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
-                                        ? Tokens.warningSurface
-                                        : Tokens.secureSurface
-                                    border.color: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
-                                        ? Tokens.warning
-                                        : Tokens.borderSubtle
-                                    clip: true
-
-                                    Text {
-                                        id: queueStatusLabel
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 10
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: root.publishQueueStatusText()
-                                        color: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
-                                            ? Tokens.warningText
-                                            : Tokens.secure
-                                        font.pixelSize: 12
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
+                                StatusChip {
+                                    text: root.publishQueueStatusText()
+                                    warning: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
+                                    secure: !(root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0)
+                                    maxWidth: 260
                                 }
 
-                                Rectangle {
+                                StatusChip {
                                     visible: root.storageHealthKnown
-                                    Layout.preferredWidth: Math.min(240, Math.max(118, cacheStatusLabel.implicitWidth + 20))
-                                    Layout.preferredHeight: 30
-                                    radius: 7
-                                    color: root.storageHealthHasIssue
-                                        ? Tokens.warningSurface
-                                        : Tokens.surfaceRaised
-                                    border.color: root.storageHealthHasIssue
-                                        ? Tokens.warning
-                                        : Tokens.borderSubtle
-                                    clip: true
-
-                                    Text {
-                                        id: cacheStatusLabel
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 10
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: root.storageHealthStatusText()
-                                        color: root.storageHealthHasIssue
-                                            ? Tokens.warningText
-                                            : Tokens.textMuted
-                                        font.pixelSize: 12
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
+                                    text: root.storageHealthStatusText()
+                                    warning: root.storageHealthHasIssue
                                 }
 
                                 Button {
