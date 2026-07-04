@@ -316,6 +316,14 @@
     },
     "workspaceId": "string"
   },
+  "chaft_runtime_backup_workspace_direct_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
+  },
   "chaft_runtime_create_channel_result_json": {
     "error": "null",
     "ok": "bool",
@@ -425,6 +433,14 @@
       }
     }
   },
+  "chaft_runtime_publish_event_with_trust_snapshot_direct_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
+  },
   "chaft_runtime_publish_peer_endpoint_result_json": {
     "error": "null",
     "ok": "bool",
@@ -464,6 +480,49 @@
     },
     "ok": "bool",
     "value": "null"
+  },
+  "chaft_runtime_pull_workspace_direct_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
+  },
+  "chaft_runtime_retry_blob_transfers_direct_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "blobTransferAttemptCount": "number",
+      "blobTransferAttempts": {
+        "arrayOf": "empty"
+      },
+      "missingBlobCount": "number",
+      "missingBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "peerErrorCount": "number",
+      "peerErrors": {
+        "arrayOf": "empty"
+      },
+      "pendingAttemptCount": "number",
+      "pendingAttemptIds": {
+        "arrayOf": "empty"
+      },
+      "reconciledBlobCount": "number",
+      "reconciledBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "retriedBlobCount": "number",
+      "retriedBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "skippedBlobCount": "number",
+      "skippedBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "workspaceId": "string"
+    }
   },
   "chaft_runtime_search_workspace_channels_result_json": {
     "error": "null",
@@ -537,6 +596,14 @@
       "messageId": "string",
       "workspaceId": "string"
     }
+  },
+  "chaft_runtime_sync_workspace_direct_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
   },
   "chaft_runtime_update_device_profile_result_json": {
     "error": "null",

@@ -617,9 +617,72 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
     let unsupported_peer = CString::new("central://example.invalid").unwrap();
     insert_contract_shape(
         &mut contract,
+        "chaft_runtime_backup_workspace_direct_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_runtime_backup_workspace_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                unsupported_peer.as_ptr(),
+            )
+        }),
+    );
+    let direct_event_id = CString::new(sent["value"]["eventId"].as_str().unwrap()).unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_publish_event_with_trust_snapshot_direct_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_runtime_publish_event_with_trust_snapshot_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                direct_event_id.as_ptr(),
+                unsupported_peer.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
         "chaft_runtime_publish_workspace_direct_result_json.error",
         parse_ffi_json(unsafe {
             chaft_runtime_publish_workspace_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                unsupported_peer.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_pull_workspace_direct_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_runtime_pull_workspace_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                unsupported_peer.as_ptr(),
+            )
+        }),
+    );
+    let retry_peers = CString::new("127.0.0.1:7777;127.0.0.1:7778").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_retry_blob_transfers_direct_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_retry_blob_transfers_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                retry_peers.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_sync_workspace_direct_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_runtime_sync_workspace_direct_result_json(
                 data_dir.as_ptr(),
                 std::ptr::null(),
                 runtime_workspace_id.as_ptr(),
