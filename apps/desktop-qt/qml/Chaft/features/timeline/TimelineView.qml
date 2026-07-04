@@ -803,119 +803,40 @@ ListView {
                         }
                     }
 
-                    Rectangle {
-                        width: 52
-                        height: 24
-                        radius: Tokens.radiusSm
+                    TimelineActionChip {
+                        label: "Reply"
+                        tooltip: "Reply in channel"
+                        minimumWidth: 52
                         visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
                             && !row.warningRow
-                        color: replyMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Reply"
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        MouseArea {
-                            id: replyMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.replyRequested(row.modelData)
-                        }
-
-                        ToolTip.visible: replyMouse.containsMouse
-                        ToolTip.text: "Reply in channel"
+                        onActivated: root.replyRequested(row.modelData)
                     }
 
-                    Rectangle {
-                        width: 52
-                        height: 24
-                        radius: Tokens.radiusSm
+                    TimelineActionChip {
+                        label: "Proof"
+                        tooltip: "Publish proof slice"
+                        minimumWidth: 52
                         visible: root.actionsEnabled && row.rowEventId.length > 0
                             && !row.warningRow
-                        color: proofMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Proof"
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        MouseArea {
-                            id: proofMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.proofPublishRequested(row.rowEventId)
-                        }
-
-                        ToolTip.visible: proofMouse.containsMouse
-                        ToolTip.text: "Publish proof slice"
+                        onActivated: root.proofPublishRequested(row.rowEventId)
                     }
 
-                    Rectangle {
-                        width: 44
-                        height: 24
-                        radius: Tokens.radiusSm
+                    TimelineActionChip {
+                        label: "Edit"
+                        tooltip: "Edit message"
+                        minimumWidth: 44
                         visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
                             && !Boolean(row.modelData.bodyTruncated)
-                        color: editMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Edit"
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        MouseArea {
-                            id: editMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
-                        }
-
-                        ToolTip.visible: editMouse.containsMouse
-                        ToolTip.text: "Edit message"
+                        onActivated: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
                     }
 
-                    Rectangle {
-                        width: 56
-                        height: 24
-                        radius: Tokens.radiusSm
+                    TimelineActionChip {
+                        label: "Delete"
+                        tooltip: "Delete message"
+                        minimumWidth: 56
+                        destructive: true
                         visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
-                        color: deleteMouse.containsMouse ? Tokens.warningSurface : Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Delete"
-                            color: Tokens.warningText
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        MouseArea {
-                            id: deleteMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.deleteRequested(row.modelData.messageId || "")
-                        }
-
-                        ToolTip.visible: deleteMouse.containsMouse
-                        ToolTip.text: "Delete message"
+                        onActivated: root.deleteRequested(row.modelData.messageId || "")
                     }
                 }
             }
