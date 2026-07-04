@@ -3,6 +3,7 @@ use std::{
     os::raw::c_char,
 };
 
+use chaft_app::{WorkspaceSnapshot, WorkspaceSnapshotOptions};
 use chaft_ffi::{
     chaft_decrypted_workspace_snapshot_from_runtime_latest_result_json, chaft_string_free,
 };
@@ -11,7 +12,7 @@ use chaft_net::{PeerAddress, PeerId};
 use chaft_net_direct::{DirectPeerServer, DirectTransport};
 use chaft_runtime::LocalRuntime;
 use chaft_store::EventStore;
-use chaft_types::{ChannelId, WorkspaceId};
+use chaft_types::{ChannelId, SignedEvent, WorkspaceId};
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use tempfile::TempDir;
 use tokio::{runtime::Runtime, sync::oneshot, task::JoinHandle};
@@ -82,6 +83,15 @@ fn attachment_file(temp_dir: &TempDir, bytes: usize) -> std::path::PathBuf {
     body.truncate(bytes);
     std::fs::write(&path, body).expect("write benchmark attachment");
     path
+}
+
+fn runtime_events_fixture(messages: usize) -> (RuntimeFixture, Vec<SignedEvent>) {
+    let fixture = runtime_fixture(messages);
+    let events = fixture
+        .runtime
+        .workspace_events(&fixture.workspace_id)
+        .expect("read benchmark workspace events");
+    (fixture, events)
 }
 
 fn direct_sync_fixture(rt: &Runtime, messages: usize, include_blob: bool) -> DirectSyncFixture {
@@ -204,6 +214,23 @@ fn bench_search(c: &mut Criterion) {
     });
 }
 
+fn bench_app_projection(c: &mut Criterion) {
+    let (fixture, events) = runtime_events_fixture(SNAPSHOT_MESSAGE_COUNT);
+    let options = WorkspaceSnapshotOptions::latest(128);
+    c.bench_function("app_projection/latest_snapshot_256_events", |b| {
+        b.iter(|| {
+            let snapshot = WorkspaceSnapshot::from_events_with_options(
+                black_box(fixture.workspace_id.clone()),
+                black_box(events.as_slice()),
+                black_box(&options),
+            )
+            .expect("project benchmark app snapshot");
+            black_box(snapshot.timeline.len());
+            black_box(snapshot.channels.len());
+        });
+    });
+}
+
 fn bench_direct_sync(c: &mut Criterion) {
     let rt = Runtime::new().expect("create benchmark tokio runtime");
     c.bench_function("sync_pull/direct_tcp_96_events", |b| {
@@ -287,6 +314,7 @@ criterion_group!(
     bench_runtime_append,
     bench_snapshot_hydration,
     bench_search,
+    bench_app_projection,
     bench_direct_sync,
     bench_blob_transfer,
     bench_ffi_json

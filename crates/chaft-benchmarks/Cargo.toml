@@ -12,6 +12,7 @@ name = "hot_paths"
 harness = false
 
 [dependencies]
+chaft-app = { path = "../chaft-app" }
 chaft-ffi = { path = "../chaft-ffi" }
 chaft-media = { path = "../chaft-media" }
 chaft-net = { path = "../chaft-net" }

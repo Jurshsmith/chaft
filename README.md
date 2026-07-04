@@ -144,9 +144,9 @@ artifacts, then checking platform package suffixes, checksums, SBOM/provenance
 artifact rows, and clean-provenance enforcement.
 
 Phase 2 performance work starts with `chaft-benchmarks`, a public Criterion
-benchmark crate for append, decrypted snapshot hydration, local search, direct
-sync pull, direct blob transfer, and FFI JSON payload generation. Compile the
-benchmark target without running samples with:
+benchmark crate for append, decrypted snapshot hydration, app snapshot
+projection, local search, direct sync pull, direct blob transfer, and FFI JSON
+payload generation. Compile the benchmark target without running samples with:
 
 ```sh
 cargo bench -p chaft-benchmarks --bench hot_paths --no-run

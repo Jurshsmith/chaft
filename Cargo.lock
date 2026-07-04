@@ -416,6 +416,7 @@ dependencies = [
 name = "chaft-benchmarks"
 version = "0.1.0"
 dependencies = [
+ "chaft-app",
  "chaft-ffi",
  "chaft-media",
  "chaft-net",
