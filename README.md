@@ -106,6 +106,32 @@ tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
 ```
 
+Desktop build prerequisites by OS:
+
+- Linux: Rust 1.92, CMake 3.28+, Ninja, Qt 6.7+ desktop libraries, and the
+  usual C/C++ build toolchain. CI installs `cmake` and `ninja-build`, then
+  uses Qt `linux_gcc_64`.
+- macOS: Rust 1.92, CMake 3.28+, Ninja, Xcode command line tools, and Qt 6.7+
+  desktop libraries. CI installs CMake/Ninja through Homebrew and uses Qt
+  `clang_64`.
+- Windows: Rust 1.92, CMake 3.28+, Ninja, MSVC x64 build tools, Python 3, and
+  Qt 6.7+ desktop libraries. CI runs inside the MSVC developer environment and
+  uses Qt `win64_msvc2019_64`.
+
+CI builds release desktop packages on Linux, macOS, and Windows after the debug
+desktop smoke passes. The uploaded artifact bundle for each OS includes the
+native package (`.tgz`, `.dmg`, or `.zip`), `SHA256SUMS`,
+`chaft-desktop-sbom.cdx.json`, and `chaft-desktop-provenance.json`. Generate the
+same metadata locally after packaging with:
+
+```sh
+python3 tools/desktop/release-metadata.py release
+```
+
+Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is
+non-blank, and compares broad image metrics against
+`tools/desktop/screenshot-baseline.json` before uploading the smoke screenshot.
+
 ```sh
 cargo test --workspace
 cargo build -p chaft-ffi

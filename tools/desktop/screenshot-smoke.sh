@@ -14,6 +14,7 @@ case "$profile" in
 esac
 
 output_path="${2:-$repo_root/build/desktop-$profile/smoke/visual-smoke.png}"
+baseline_path="${CHAFT_DESKTOP_SCREENSHOT_BASELINE:-$script_dir/screenshot-baseline.json}"
 case "$output_path" in
   /*) ;;
   *)
@@ -173,3 +174,10 @@ for row in rows[::step]:
 
 fail("screenshot appears blank or nearly uniform")
 PY
+
+if [ -f "$baseline_path" ]; then
+  python3 "$script_dir/screenshot-baseline.py" "$output_path" "$baseline_path"
+else
+  printf 'screenshot baseline not found: %s\n' "$baseline_path" >&2
+  exit 1
+fi

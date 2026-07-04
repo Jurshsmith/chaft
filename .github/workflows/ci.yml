@@ -45,7 +45,7 @@ jobs:
   desktop:
     name: Desktop ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 75
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -109,15 +109,30 @@ jobs:
         shell: bash
         run: tools/desktop/smoke.sh debug
 
-      - name: Build macOS release package
-        if: runner.os == 'macOS'
+      - name: Run desktop screenshot baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        run: tools/desktop/screenshot-smoke.sh debug
+
+      - name: Upload Linux desktop screenshot
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaft-linux-desktop-screenshot
+          path: build/desktop-debug/smoke/*.png
+          if-no-files-found: error
+
+      - name: Build release package
         shell: bash
         run: tools/desktop/package-smoke.sh release
 
-      - name: Upload macOS release package
-        if: runner.os == 'macOS'
+      - name: Generate release metadata
+        shell: bash
+        run: python3 tools/desktop/release-metadata.py release
+
+      - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: chaft-macos-dmg
-          path: build/desktop-release/package/*.dmg
+          name: chaft-${{ matrix.name }}-desktop-release
+          path: build/desktop-release/package/*
           if-no-files-found: error
