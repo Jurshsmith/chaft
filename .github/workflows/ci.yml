@@ -33,8 +33,18 @@ jobs:
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Rust gates
-        run: tools/ci/rust-gates.sh --locked
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Check Rust workspace
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Run Rust clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test Rust workspace
+        timeout-minutes: 45
+        run: cargo test --workspace --all-targets --locked
 
       - name: Run local P2P smoke
         run: tools/smoke/local-p2p.sh --locked
