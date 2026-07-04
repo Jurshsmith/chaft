@@ -59,7 +59,7 @@ cleanup() {
 require_tool cargo
 require_tool python3
 
-"$script_dir/build.sh" "$profile" >/dev/null
+"$script_dir/build.sh" "$profile"
 
 ffi_library_name="$(chaft_desktop_ffi_library_name)"
 ffi_library="$repo_root/target/$rust_target_dir/$ffi_library_name"
