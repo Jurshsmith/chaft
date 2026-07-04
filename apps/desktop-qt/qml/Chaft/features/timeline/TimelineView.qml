@@ -551,38 +551,10 @@ ListView {
                     }
                 }
 
-                Rectangle {
+                TimelineReplyPreview {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 28
-                    visible: Boolean(row.modelData.replyPreview)
-                    radius: Tokens.radiusSm
-                    color: Tokens.surfaceBase
-                    border.color: Tokens.borderSubtle
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
-
-                        Rectangle {
-                            Layout.preferredWidth: 3
-                            Layout.fillHeight: true
-                            Layout.topMargin: 6
-                            Layout.bottomMargin: 6
-                            radius: 2
-                            color: Tokens.secure
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: root.replyPreviewLabel(row.modelData.replyPreview)
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
-                    }
+                    label: row.modelData.replyPreview ? root.replyPreviewLabel(row.modelData.replyPreview) : ""
                 }
 
                 RowLayout {
