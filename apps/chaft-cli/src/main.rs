@@ -455,8 +455,26 @@ impl From<CliWorkspaceRole> for WorkspaceRole {
     }
 }
 
+#[cfg(windows)]
+const WINDOWS_CLI_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+#[cfg(windows)]
+fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .name("chaft-cli".to_string())
+        .stack_size(WINDOWS_CLI_STACK_BYTES)
+        .spawn(run_cli)?
+        .join()
+        .map_err(|_| anyhow!("chaft-cli worker thread panicked"))?
+}
+
+#[cfg(not(windows))]
+fn main() -> Result<()> {
+    run_cli()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     let data_dir = checked_cli_path_arg(cli.data_dir.clone(), "data directory")?;
     let identity_file = checked_optional_cli_path_arg(cli.identity_file.clone(), "identity file")?;
