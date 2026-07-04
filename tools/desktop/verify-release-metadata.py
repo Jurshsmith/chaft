@@ -183,7 +183,18 @@ def verify_platform_package_shape(artifacts, platform_name):
         )
 
 
-def verify_sbom(package_dir, artifacts):
+def metadata_property_map(metadata):
+    properties = metadata.get("properties")
+    if not isinstance(properties, list):
+        return {}
+    return {
+        item.get("name"): item.get("value")
+        for item in properties
+        if isinstance(item, dict)
+    }
+
+
+def verify_sbom(package_dir, artifacts, source_commit):
     sbom = load_json(package_dir / "chaft-desktop-sbom.cdx.json")
     if sbom.get("bomFormat") != "CycloneDX":
         fail("SBOM bomFormat must be CycloneDX")
@@ -198,6 +209,10 @@ def verify_sbom(package_dir, artifacts):
     component = metadata.get("component")
     if not isinstance(component, dict) or component.get("name") != "Chaft Desktop":
         fail("SBOM metadata.component must describe Chaft Desktop")
+
+    metadata_properties = metadata_property_map(metadata)
+    if metadata_properties.get("chaft:sourceCommit") != source_commit:
+        fail("SBOM metadata source commit does not match provenance source.commit")
 
     components = sbom.get("components")
     if not isinstance(components, list) or not components:
@@ -241,6 +256,10 @@ def verify_provenance(package_dir, profile, artifacts, require_clean):
         for key in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_SHA"):
             if not github.get(key):
                 fail(f"CI provenance is missing {key}")
+        if github.get("GITHUB_SHA") != os.environ.get("GITHUB_SHA"):
+            fail("CI provenance GITHUB_SHA does not match current CI commit")
+        if source.get("commit") != github.get("GITHUB_SHA"):
+            fail("CI provenance source.commit does not match GITHUB_SHA")
 
     provenance_artifacts = provenance.get("artifacts")
     if not isinstance(provenance_artifacts, list):
@@ -265,6 +284,7 @@ def verify_provenance(package_dir, profile, artifacts, require_clean):
     }
     if actual != expected:
         fail("provenance artifact rows do not match package files")
+    return provenance
 
 
 def main():
@@ -294,13 +314,13 @@ def main():
 
     verify_platform_package_shape(artifacts, args.platform)
     verify_checksums(package_dir, artifacts)
-    verify_sbom(package_dir, artifacts)
-    verify_provenance(
+    provenance = verify_provenance(
         package_dir,
         args.profile,
         artifacts,
         args.require_clean or os.environ.get("GITHUB_ACTIONS") == "true",
     )
+    verify_sbom(package_dir, artifacts, provenance["source"]["commit"])
 
     print(
         f"release metadata verified: {len(artifacts)} artifact(s) in {package_dir}"

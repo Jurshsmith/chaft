@@ -40,6 +40,7 @@ expect_failure() {
 }
 
 require_tool cargo
+require_tool git
 require_tool python3
 
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-release-metadata-smoke.XXXXXX")"
@@ -48,10 +49,12 @@ trap cleanup EXIT INT TERM
 linux_dir="$smoke_dir/linux-package"
 macos_dir="$smoke_dir/macos-package"
 windows_dir="$smoke_dir/windows-package"
+ci_dir="$smoke_dir/ci-package"
 
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.tar.gz"
 write_artifact "$macos_dir" "Chaft-0.1.0-macOS.dmg"
 write_artifact "$windows_dir" "Chaft-0.1.0-Windows.zip"
+write_artifact "$ci_dir" "Chaft-0.1.0-CI.tar.gz"
 
 for row in \
   "Linux:$linux_dir" \
@@ -72,6 +75,52 @@ expect_failure "platform package suffix mismatch" \
   python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
     --package-dir "$linux_dir" \
     --platform Windows
+
+python3 - "$windows_dir/chaft-desktop-sbom.cdx.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+sbom = json.loads(path.read_text(encoding="utf-8"))
+for item in sbom.get("metadata", {}).get("properties", []):
+    if item.get("name") == "chaft:sourceCommit":
+        item["value"] = "stale-source-commit"
+path.write_text(json.dumps(sbom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+expect_failure "stale SBOM source commit" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$windows_dir" \
+    --platform Windows
+
+ci_sha="$(git -C "$repo_root" rev-parse HEAD)"
+GITHUB_ACTIONS=true \
+GITHUB_REPOSITORY=Jurshsmith/chaft \
+GITHUB_RUN_ID=1 \
+GITHUB_SHA="$ci_sha" \
+  python3 "$repo_root/tools/desktop/release-metadata.py" release \
+    --package-dir "$ci_dir"
+
+python3 - "$ci_dir/chaft-desktop-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+provenance.setdefault("source", {})["dirty"] = False
+provenance.setdefault("github", {})["GITHUB_SHA"] = "stale-ci-sha"
+path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+expect_failure "CI provenance commit mismatch" \
+  env \
+    GITHUB_ACTIONS=true \
+    GITHUB_REPOSITORY=Jurshsmith/chaft \
+    GITHUB_RUN_ID=1 \
+    GITHUB_SHA="$ci_sha" \
+    python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+      --package-dir "$ci_dir" \
+      --platform Linux
 
 printf 'tampered package bytes\n' >> "$linux_dir/Chaft-0.1.0-Linux.tar.gz"
 expect_failure "stale checksum/SBOM/provenance after package mutation" \

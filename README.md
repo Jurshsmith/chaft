@@ -141,7 +141,8 @@ non-blank, and compares broad image metrics against
 `tools/desktop/release-metadata-smoke.sh` exercises the release metadata tools
 without requiring Qt by generating synthetic Linux, macOS, and Windows package
 artifacts, then checking platform package suffixes, checksums, SBOM/provenance
-artifact rows, and clean-provenance enforcement.
+artifact rows, SBOM/provenance source commit consistency, and clean-provenance
+enforcement.
 
 Phase 2 performance work starts with `chaft-benchmarks`, a public Criterion
 benchmark crate for append, decrypted snapshot hydration, app snapshot
