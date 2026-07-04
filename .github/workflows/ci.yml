@@ -121,6 +121,10 @@ jobs:
         shell: bash
         run: tools/desktop/preflight.sh
 
+      - name: Lint desktop QML
+        shell: bash
+        run: tools/desktop/qml-lint.sh
+
       - name: Run desktop smoke
         shell: bash
         run: tools/desktop/smoke.sh debug
