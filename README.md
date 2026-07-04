@@ -101,7 +101,7 @@ tools/smoke/local-p2p.sh --offline
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
 tools/desktop/qml-lint.sh
-tools/desktop/ci-gates.sh macOS
+tools/desktop/ci-gates.sh
 tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
