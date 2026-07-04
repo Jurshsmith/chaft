@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <utility>
 
@@ -792,6 +793,55 @@ QStringList ffiLibraryCandidates() {
       QDir(currentDir)
           .filePath(QStringLiteral("../../target/release/") + libraryName));
   return candidates;
+}
+
+void addDesktopQmlImportPath(QQmlApplicationEngine *engine, QStringList *added,
+                             const QString &path) {
+  const QDir dir(path);
+  if (!dir.exists()) {
+    return;
+  }
+
+  auto normalized = dir.canonicalPath();
+  if (normalized.isEmpty()) {
+    normalized = dir.absolutePath();
+  }
+  if (added->contains(normalized)) {
+    return;
+  }
+
+  engine->addImportPath(normalized);
+  added->append(normalized);
+}
+
+void addDesktopQmlImportPaths(QQmlApplicationEngine *engine) {
+  QStringList added;
+  const auto appDir = QDir(QCoreApplication::applicationDirPath());
+  const auto currentDir = QDir::current();
+
+  addDesktopQmlImportPath(engine, &added, appDir.absolutePath());
+  addDesktopQmlImportPath(engine, &added, appDir.absoluteFilePath("../../.."));
+  addDesktopQmlImportPath(engine, &added,
+                          appDir.absoluteFilePath("../Resources/qml"));
+
+  for (const auto &preset :
+       {QStringLiteral("desktop-debug"), QStringLiteral("desktop-release")}) {
+    const auto buildModuleRoot =
+        currentDir.absoluteFilePath(QStringLiteral("build/%1/apps/desktop-qt")
+                                        .arg(preset));
+    addDesktopQmlImportPath(engine, &added, buildModuleRoot);
+    addDesktopQmlImportPath(engine, &added,
+                            QDir(buildModuleRoot).filePath("Chaft/qml"));
+  }
+
+  addDesktopQmlImportPath(engine, &added,
+                          currentDir.absoluteFilePath("apps/desktop-qt/qml"));
+}
+
+[[noreturn]] void finishDesktopSmoke(int code) {
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::_Exit(code);
 }
 
 QString defaultRuntimeDir() {
@@ -10038,7 +10088,7 @@ void configureDesktopSmoke(QCoreApplication *app,
     if (screenshotPath.isEmpty()) {
       std::fprintf(stderr, "desktop smoke passed: workspace=%s\n",
                    workspaceId.constData());
-      QCoreApplication::exit(0);
+      finishDesktopSmoke(0);
       return;
     }
 
@@ -10048,7 +10098,7 @@ void configureDesktopSmoke(QCoreApplication *app,
         const auto error = errorMessage.toUtf8();
         std::fprintf(stderr, "desktop smoke screenshot failed: %s\n",
                      error.constData());
-        QCoreApplication::exit(125);
+        finishDesktopSmoke(125);
         return;
       }
 
@@ -10056,7 +10106,7 @@ void configureDesktopSmoke(QCoreApplication *app,
       std::fprintf(stderr,
                    "desktop smoke passed: workspace=%s screenshot=%s\n",
                    workspaceId.constData(), screenshot.constData());
-      QCoreApplication::exit(0);
+      finishDesktopSmoke(0);
     });
   };
 
@@ -10077,7 +10127,7 @@ void configureDesktopSmoke(QCoreApplication *app,
                  "desktop smoke timed out: workspace=%s expected=%s status=%s\n",
                  workspaceId.constData(), expected.constData(),
                  syncStatus.constData());
-    QCoreApplication::exit(124);
+    finishDesktopSmoke(124);
   });
 }
 
@@ -10096,6 +10146,7 @@ int main(int argc, char *argv[]) {
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
       []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
+  addDesktopQmlImportPaths(&engine);
   engine.loadFromModule("Chaft", "App");
   configureDesktopSmoke(&app, &chaftController);
 

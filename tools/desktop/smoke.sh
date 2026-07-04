@@ -5,6 +5,8 @@ script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
 . "$script_dir/common.sh"
 
+chaft_desktop_add_tool_paths
+
 profile="${1:-debug}"
 case "$profile" in
   debug)
@@ -88,6 +90,11 @@ expected_text="$(json_field "$manifest_json" desktopExpectedText)"
 case "$(uname -s)" in
   Linux)
     if [ -z "${DISPLAY:-}" ]; then
+      export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+    fi
+    ;;
+  Darwin)
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
       export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
     fi
     ;;
