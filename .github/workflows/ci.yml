@@ -53,7 +53,7 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             qt-host: linux
-            qt-arch: gcc_64
+            qt-arch: linux_gcc_64
           - name: macOS
             os: macos-latest
             qt-host: mac
@@ -61,7 +61,7 @@ jobs:
           - name: Windows
             os: windows-latest
             qt-host: windows
-            qt-arch: win64_msvc2022_64
+            qt-arch: win64_msvc2019_64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
