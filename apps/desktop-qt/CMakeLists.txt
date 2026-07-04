@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(GNUInstallDirs)
 
 find_package(Qt6 REQUIRED COMPONENTS Network Qml Quick)
-qt_standard_project_setup(REQUIRES 6.7)
+qt_standard_project_setup(REQUIRES 6.8)
 
 if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
@@ -58,7 +58,7 @@ qt_add_qml_module(ChaftDesktop
 )
 
 if(APPLE)
-    # Qt 6.7 on GitHub macOS runners can scan the source qml/ path as a
+    # Qt 6.8 on GitHub macOS runners can scan the source qml/ path as a
     # generated QML module under Chaft. Provide the expected empty module path.
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Chaft/QML")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/Chaft/QML/qmldir" "module QML\n")
