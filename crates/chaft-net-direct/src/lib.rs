@@ -1518,7 +1518,7 @@ where
         Ok(response) => response,
         Err(error) => sync_error_response(error),
     };
-    write_frame(stream, &encode_sync_response(&response)).await?;
+    write_frame(stream, &encode_sync_response_with_frame_limit(response)).await?;
     stream.shutdown().await?;
     Ok(())
 }
@@ -1534,6 +1534,36 @@ fn sync_error_response(error: NetError) -> WireSyncResponse {
         event_envelopes: Vec::new(),
         inventory_total_count: None,
     }
+}
+
+fn encode_sync_response_with_frame_limit(response: WireSyncResponse) -> Vec<u8> {
+    let response_bytes = encode_sync_response(&response);
+    if response_bytes.len() <= MAX_FRAME_LEN {
+        return response_bytes;
+    }
+
+    encode_sync_response(&sync_error_response(oversized_sync_response_error(
+        "sync",
+        response_bytes.len(),
+    )))
+}
+
+fn validate_sync_response_frame_len(
+    context: &str,
+    response: &WireSyncResponse,
+) -> Result<(), NetError> {
+    let len = response.encoded_len();
+    if len <= MAX_FRAME_LEN {
+        return Ok(());
+    }
+
+    Err(oversized_sync_response_error(context, len))
+}
+
+fn oversized_sync_response_error(context: &str, len: usize) -> NetError {
+    NetError::Protocol(format!(
+        "{context} response frame length {len} exceeds max {MAX_FRAME_LEN}"
+    ))
 }
 
 fn bounded_sync_response_error(error: &str) -> String {
@@ -1680,17 +1710,21 @@ fn handle_request(
                 }
                 events
             };
-            let event_envelopes = events.iter().map(encode_event_envelope).collect();
-            Ok(WireSyncResponse {
+            let mut response = WireSyncResponse {
                 event_ids: Vec::new(),
                 events: Vec::new(),
                 error: None,
                 blobs: Vec::new(),
                 blob_descriptors: Vec::new(),
                 blob_availability: Vec::new(),
-                event_envelopes,
+                event_envelopes: Vec::new(),
                 inventory_total_count: None,
-            })
+            };
+            for event in &events {
+                response.event_envelopes.push(encode_event_envelope(event));
+                validate_sync_response_frame_len("fetch-events", &response)?;
+            }
+            Ok(response)
         }
         WireSyncRequestKind::PublishEvents => {
             validate_request_shape(
@@ -1852,50 +1886,56 @@ fn handle_request(
             let blob_store = blob_store
                 .as_ref()
                 .ok_or_else(|| NetError::Protocol("blob store unavailable".to_owned()))?;
-            let mut blobs = Vec::new();
-            let mut blob_descriptors = Vec::new();
-            let mut blob_availability = Vec::new();
+            let mut response = WireSyncResponse {
+                event_ids: Vec::new(),
+                events: Vec::new(),
+                error: None,
+                blobs: Vec::new(),
+                blob_descriptors: Vec::new(),
+                blob_availability: Vec::new(),
+                event_envelopes: Vec::new(),
+                inventory_total_count: None,
+            };
             for hash in request.blob_hashes {
                 if let Some(availability) = blob_store
                     .availability(&hash)
                     .map_err(|error| NetError::Protocol(error.to_string()))?
                 {
-                    blob_availability.push(availability_to_wire(&availability));
+                    response
+                        .blob_availability
+                        .push(availability_to_wire(&availability));
+                    validate_sync_response_frame_len("fetch-blobs", &response)?;
                 }
                 if let Some(bytes) = blob_store
                     .get_bytes(&hash)
                     .map_err(|error| NetError::Protocol(error.to_string()))?
                 {
-                    blobs.push(WireBlobEnvelope {
+                    response.blobs.push(WireBlobEnvelope {
                         hash: hash.clone(),
                         bytes,
                     });
+                    validate_sync_response_frame_len("fetch-blobs", &response)?;
                 } else if let Some(bytes) = blob_store
                     .get_chunk(&hash)
                     .map_err(|error| NetError::Protocol(error.to_string()))?
                 {
-                    blobs.push(WireBlobEnvelope {
+                    response.blobs.push(WireBlobEnvelope {
                         hash: hash.clone(),
                         bytes,
                     });
+                    validate_sync_response_frame_len("fetch-blobs", &response)?;
                 }
                 if let Some(descriptor) = blob_store
                     .get_manifest(&hash)
                     .map_err(|error| NetError::Protocol(error.to_string()))?
                 {
-                    blob_descriptors.push(descriptor_to_wire(&descriptor));
+                    response
+                        .blob_descriptors
+                        .push(descriptor_to_wire(&descriptor));
+                    validate_sync_response_frame_len("fetch-blobs", &response)?;
                 }
             }
-            Ok(WireSyncResponse {
-                event_ids: Vec::new(),
-                events: Vec::new(),
-                error: None,
-                blobs,
-                blob_descriptors,
-                blob_availability,
-                event_envelopes: Vec::new(),
-                inventory_total_count: None,
-            })
+            Ok(response)
         }
         WireSyncRequestKind::FetchBlobAvailability => {
             validate_request_shape(
@@ -1919,25 +1959,28 @@ fn handle_request(
             let blob_store = blob_store
                 .as_ref()
                 .ok_or_else(|| NetError::Protocol("blob store unavailable".to_owned()))?;
-            let mut blob_availability = Vec::new();
-            for hash in request.blob_hashes {
-                if let Some(availability) = blob_store
-                    .availability(&hash)
-                    .map_err(|error| NetError::Protocol(error.to_string()))?
-                {
-                    blob_availability.push(availability_to_wire(&availability));
-                }
-            }
-            Ok(WireSyncResponse {
+            let mut response = WireSyncResponse {
                 event_ids: Vec::new(),
                 events: Vec::new(),
                 error: None,
                 blobs: Vec::new(),
                 blob_descriptors: Vec::new(),
-                blob_availability,
+                blob_availability: Vec::new(),
                 event_envelopes: Vec::new(),
                 inventory_total_count: None,
-            })
+            };
+            for hash in request.blob_hashes {
+                if let Some(availability) = blob_store
+                    .availability(&hash)
+                    .map_err(|error| NetError::Protocol(error.to_string()))?
+                {
+                    response
+                        .blob_availability
+                        .push(availability_to_wire(&availability));
+                    validate_sync_response_frame_len("fetch-blob-availability", &response)?;
+                }
+            }
+            Ok(response)
         }
         WireSyncRequestKind::Unspecified => Ok(WireSyncResponse {
             event_ids: Vec::new(),
@@ -2977,6 +3020,33 @@ mod tests {
         assert!(response.event_envelopes.is_empty());
         assert!(response.blobs.is_empty());
         assert!(response.inventory_total_count.is_none());
+    }
+
+    #[test]
+    fn oversized_sync_response_is_encoded_as_bounded_error_frame() {
+        let response = WireSyncResponse {
+            event_ids: Vec::new(),
+            events: Vec::new(),
+            error: None,
+            blobs: vec![WireBlobEnvelope {
+                hash: "0".repeat(64),
+                bytes: vec![7; MAX_FRAME_LEN],
+            }],
+            blob_descriptors: Vec::new(),
+            blob_availability: Vec::new(),
+            event_envelopes: Vec::new(),
+            inventory_total_count: None,
+        };
+
+        let encoded = encode_sync_response_with_frame_limit(response);
+        let decoded = decode_sync_response(&encoded).unwrap();
+        let error = decoded.error.unwrap();
+
+        assert!(encoded.len() <= MAX_FRAME_LEN);
+        assert!(decoded.blobs.is_empty());
+        assert!(error.contains("sync response frame length"));
+        assert!(error.contains("exceeds max"));
+        assert!(error.len() <= MAX_SYNC_RESPONSE_ERROR_BYTES);
     }
 
     #[test]
@@ -4819,6 +4889,29 @@ mod tests {
 
         assert!(error.contains("peer requested non-canonical blob hash"));
         assert!(!error.contains("blob store unavailable"));
+    }
+
+    #[test]
+    fn fetch_blobs_request_rejects_oversized_response_before_write() {
+        let blob_dir = tempfile::tempdir().unwrap();
+        let blob_store = BlobStore::open(blob_dir.path().join("blobs")).unwrap();
+        let bytes = vec![9; MAX_FRAME_LEN];
+        let hash = blob_hash(&bytes);
+        blob_store.put_bytes_with_hash(&hash, &bytes).unwrap();
+
+        let mut request = empty_sync_request(WireSyncRequestKind::FetchBlobs);
+        request.blob_hashes = vec![hash];
+
+        let error = handle_request(
+            request,
+            Arc::new(Mutex::new(EventStore::open_in_memory().unwrap())),
+            Some(Arc::new(blob_store)),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("fetch-blobs response frame length"));
+        assert!(error.contains("exceeds max"));
     }
 
     #[test]
