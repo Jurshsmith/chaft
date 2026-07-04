@@ -99,7 +99,6 @@ jobs:
           host: ${{ matrix.qt-host }}
           target: desktop
           arch: ${{ matrix.qt-arch }}
-          archives: qtbase qtdeclarative qttools
           cache: true
 
       - name: Run desktop preflight
