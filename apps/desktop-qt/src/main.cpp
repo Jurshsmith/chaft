@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QHostAddress>
 #include <QIODevice>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,6 +21,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QPixmap>
+#include <QQuickWindow>
 #include <QSaveFile>
 #include <QScreen>
 #include <QStandardPaths>
@@ -10117,6 +10119,20 @@ bool saveDesktopSmokeScreenshot(const QString &path, QString *errorMessage) {
               .arg(outputDir.absolutePath());
     }
     return false;
+  }
+
+  if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+    const auto image = quickWindow->grabWindow();
+    if (!image.isNull()) {
+      if (!image.save(path, "PNG")) {
+        if (errorMessage != nullptr) {
+          *errorMessage = QStringLiteral("failed to write desktop screenshot: %1")
+                              .arg(path);
+        }
+        return false;
+      }
+      return true;
+    }
   }
 
   const auto pixmap = screen->grabWindow(window->winId());
