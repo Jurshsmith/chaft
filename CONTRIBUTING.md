@@ -59,6 +59,7 @@ Desktop work should also run:
 
 ```sh
 tools/desktop/preflight.sh
+tools/desktop/qml-lint.sh
 tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
 ```
@@ -67,9 +68,10 @@ The desktop scripts discover common Homebrew Qt locations and configure/build
 `apps/desktop-qt` through the root CMake presets. The smoke script creates the
 same visual smoke runtime used by `tools/smoke/visual-workspace.sh`, launches
 the Qt shell with the built FFI library, and waits for runtime-backed message
-hydration. Use `tools/desktop/screenshot-smoke.sh debug` when UI work needs a
-local screenshot artifact; it runs the same smoke and verifies the captured PNG
-is nonblank.
+hydration. The QML lint script also verifies that every QML source is listed in
+the Qt module so release packages do not depend on source-tree imports. Use
+`tools/desktop/screenshot-smoke.sh debug` when UI work needs a local screenshot
+artifact; it runs the same smoke and verifies the captured PNG is nonblank.
 
 Use `tools/desktop/package.sh release` when you need a local distributable
 desktop artifact. The script installs the app, bundles the Rust FFI dynamic

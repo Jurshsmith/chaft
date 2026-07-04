@@ -49,7 +49,22 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/App.qml
         qml/Chaft/tokens/Tokens.qml
         qml/Chaft/components/AttachmentRow.qml
+        qml/Chaft/components/BackupPeerStatusRow.qml
+        qml/Chaft/components/KeyPackageRow.qml
+        qml/Chaft/components/MemberRow.qml
+        qml/Chaft/components/PeerEndpointHintRow.qml
+        qml/Chaft/components/PeerRouteChip.qml
+        qml/Chaft/components/SavedBackupPeerRow.qml
         qml/Chaft/components/SidebarItem.qml
+        qml/Chaft/components/StatusChip.qml
+        qml/Chaft/components/TimelineActionChip.qml
+        qml/Chaft/components/TimelineAttachmentChip.qml
+        qml/Chaft/components/TimelineOverflowChip.qml
+        qml/Chaft/components/TimelineQuickReactionChip.qml
+        qml/Chaft/components/TimelineReactionChip.qml
+        qml/Chaft/components/TimelineRepairChip.qml
+        qml/Chaft/components/TimelineReplyPreview.qml
+        qml/Chaft/components/TimelineThreadChip.qml
         qml/Chaft/components/WorkspaceRailItem.qml
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml

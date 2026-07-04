@@ -21,6 +21,8 @@ if [ ! -d "$qml_root" ]; then
   exit 1
 fi
 
+python3 "$script_dir/qml-module-check.py"
+
 tmp_files="$(mktemp "${TMPDIR:-/tmp}/chaft-qml-files.XXXXXX")"
 tmp_logs="$(mktemp -d "${TMPDIR:-/tmp}/chaft-qml-lint.XXXXXX")"
 trap 'rm -f "$tmp_files"; rm -rf "$tmp_logs"' EXIT HUP INT TERM
