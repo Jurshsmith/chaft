@@ -548,6 +548,10 @@ impl LocalRuntime {
             }
             None => None,
         };
+        if !is_backup_peer && (replica_storage_class.is_some() || replica_retention_hint.is_some())
+        {
+            return Err(RuntimeError::ReplicaCapabilityRequiresBackupPeer);
+        }
 
         let context = self.workspace_write_context(&workspace_id)?;
         let mut event = SignableEvent::new(

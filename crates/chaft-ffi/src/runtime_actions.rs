@@ -142,6 +142,14 @@ pub(crate) fn runtime_publish_peer_endpoint_result(
             parse_optional_replica_storage_class(args.replica_storage_class)?;
         let replica_retention_hint =
             normalize_optional_replica_retention_hint(args.replica_retention_hint)?;
+        if !args.is_backup_peer
+            && (replica_storage_class.is_some() || replica_retention_hint.is_some())
+        {
+            return Err(ffi_error(
+                "replica_capability_requires_backup_peer",
+                "replica capability metadata requires a backup peer endpoint",
+            ));
+        }
         let runtime = open_runtime_from_ffi(args.data_dir, args.identity_file)?;
         runtime
             .publish_peer_endpoint_with_replica_capability(PublishPeerEndpointRequest {

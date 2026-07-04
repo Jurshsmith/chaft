@@ -91,6 +91,8 @@ pub enum AuthorizationError {
     UnsupportedPeerEndpoint,
     #[error("event peer endpoint transport does not match its route")]
     PeerEndpointTransportMismatch,
+    #[error("event replica capability metadata requires a backup peer endpoint")]
+    ReplicaCapabilityRequiresBackupPeer,
     #[error("event {label} has too many items ({actual_count}, max {max_count})")]
     EventItemCountTooLarge {
         label: &'static str,
@@ -316,7 +318,8 @@ impl WorkspaceState {
                             | AuthorizationError::EventPayloadRequired { .. }
                             | AuthorizationError::EventItemCountTooLarge { .. }
                             | AuthorizationError::UnsupportedPeerEndpoint
-                            | AuthorizationError::PeerEndpointTransportMismatch),
+                            | AuthorizationError::PeerEndpointTransportMismatch
+                            | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
                         )) => return Err(CoreError::Authorization(error)),
                         Err(CoreError::Authorization(_)) => index += 1,
                         Err(error) => return Err(error),
@@ -1227,7 +1230,8 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::EventPayloadRequired { .. }
                     | AuthorizationError::EventItemCountTooLarge { .. }
                     | AuthorizationError::UnsupportedPeerEndpoint
-                    | AuthorizationError::PeerEndpointTransportMismatch),
+                    | AuthorizationError::PeerEndpointTransportMismatch
+                    | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
                 ) => return Err(error),
             }
         }
@@ -1819,6 +1823,8 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             endpoint_id,
             endpoint,
             transport,
+            is_backup_peer,
+            replica_storage_class,
             replica_retention_hint,
             ..
         } => {
@@ -1845,6 +1851,11 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             }
             if !peer_endpoint_hint_transport_is_consistent(endpoint, transport) {
                 return Err(AuthorizationError::PeerEndpointTransportMismatch);
+            }
+            if !*is_backup_peer
+                && (replica_storage_class.is_some() || replica_retention_hint.is_some())
+            {
+                return Err(AuthorizationError::ReplicaCapabilityRequiresBackupPeer);
             }
             Ok(())
         }
@@ -3757,6 +3768,40 @@ mod tests {
             .unwrap_err()
         {
             CoreError::Authorization(AuthorizationError::PeerEndpointTransportMismatch) => {}
+            error => panic!("unexpected error: {error}"),
+        }
+    }
+
+    #[test]
+    fn replica_capability_requires_backup_peer_before_materialization() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let endpoint_event = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::PeerEndpointPublished {
+                endpoint_id: "member-route".to_owned(),
+                endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
+                transport: "direct-tcp".to_owned(),
+                is_backup_peer: false,
+                expires_at_ms: None,
+                replica_storage_class: Some(ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some("30d".to_owned()),
+            },
+        ));
+
+        assert_eq!(
+            authorize_event_with_history(std::slice::from_ref(&root), &endpoint_event),
+            Err(AuthorizationError::ReplicaCapabilityRequiresBackupPeer)
+        );
+
+        match WorkspaceState::new(workspace_id)
+            .apply_batch(&[root, endpoint_event])
+            .unwrap_err()
+        {
+            CoreError::Authorization(AuthorizationError::ReplicaCapabilityRequiresBackupPeer) => {}
             error => panic!("unexpected error: {error}"),
         }
     }

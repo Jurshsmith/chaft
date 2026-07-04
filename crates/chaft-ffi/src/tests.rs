@@ -3591,6 +3591,55 @@ fn runtime_publish_peer_endpoint_ffi_accepts_replica_capability_metadata() {
 }
 
 #[test]
+fn runtime_publish_peer_endpoint_ffi_rejects_replica_capability_on_non_backup_peer() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+    let created = runtime
+        .create_workspace("Chaft FFI Replica Policy", "general")
+        .unwrap();
+    drop(runtime);
+
+    let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_id = CString::new(created.workspace_id.clone()).unwrap();
+    let endpoint_id = CString::new("desktop-member").unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let transport = CString::new("direct-tcp").unwrap();
+    let storage_class = CString::new("full-history").unwrap();
+    let retention_hint = CString::new("30d").unwrap();
+
+    let rejected_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id.as_ptr(),
+                endpoint_id.as_ptr(),
+                endpoint.as_ptr(),
+                transport.as_ptr(),
+                false,
+                false,
+                0,
+                storage_class.as_ptr(),
+                retention_hint.as_ptr(),
+            ),
+        )
+    };
+    let rejected = serde_json::from_str::<Value>(&rejected_json).unwrap();
+    assert_eq!(rejected["ok"], false);
+    assert_eq!(
+        rejected["error"]["code"],
+        "replica_capability_requires_backup_peer"
+    );
+
+    let event_count = EventStore::open(tempdir.path().join("events.db"))
+        .unwrap()
+        .list_events()
+        .unwrap()
+        .len();
+    assert_eq!(event_count, 2);
+}
+
+#[test]
 fn runtime_action_ffi_rejects_oversized_device_key_package_file_before_publish() {
     let tempdir = tempfile::tempdir().unwrap();
     let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();

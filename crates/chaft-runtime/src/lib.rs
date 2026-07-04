@@ -297,6 +297,8 @@ pub enum RuntimeError {
     PeerEndpointTransportRequired,
     #[error("peer endpoint transport does not match its route")]
     PeerEndpointTransportMismatch,
+    #[error("replica capability metadata requires a backup peer endpoint")]
+    ReplicaCapabilityRequiresBackupPeer,
     #[error("peer endpoint list is too large ({actual_count} endpoints, max {max_count})")]
     PeerEndpointListTooLarge {
         actual_count: usize,
@@ -4611,6 +4613,31 @@ mod tests {
             snapshot.peer_endpoints[0].replica_retention_hint.as_deref(),
             Some("30d")
         );
+    }
+
+    #[test]
+    fn runtime_rejects_replica_capability_on_non_backup_peer() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Replica Policy", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+
+        assert!(matches!(
+            runtime.publish_peer_endpoint_with_replica_capability(PublishPeerEndpointRequest {
+                workspace_id: workspace_id.clone(),
+                endpoint_id: "member-route".to_owned(),
+                endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
+                transport: "direct-tcp".to_owned(),
+                is_backup_peer: false,
+                expires_at_ms: None,
+                replica_storage_class: Some(chaft_types::ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some("30d".to_owned()),
+            }),
+            Err(RuntimeError::ReplicaCapabilityRequiresBackupPeer)
+        ));
+        assert_eq!(runtime.workspace_events(&workspace_id).unwrap().len(), 2);
     }
 
     #[test]
