@@ -104,6 +104,8 @@ tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
 tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
+python3 tools/desktop/release-metadata.py release
+python3 tools/desktop/verify-release-metadata.py release
 ```
 
 Desktop build prerequisites by OS:
@@ -126,6 +128,7 @@ same metadata locally after packaging with:
 
 ```sh
 python3 tools/desktop/release-metadata.py release
+python3 tools/desktop/verify-release-metadata.py release
 ```
 
 Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is

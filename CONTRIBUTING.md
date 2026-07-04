@@ -76,6 +76,12 @@ desktop artifact. The script installs the app, bundles the Rust FFI dynamic
 library, and writes platform packages under `build/desktop-release/package`.
 Use `tools/desktop/package-smoke.sh release` to also launch the installed app
 without `CHAFT_FFI_LIBRARY` and verify it can load the bundled Rust runtime.
+Generate and verify release metadata before sharing a package:
+
+```sh
+python3 tools/desktop/release-metadata.py release
+python3 tools/desktop/verify-release-metadata.py release
+```
 
 ## Engineering Rules
 

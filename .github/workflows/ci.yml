@@ -140,6 +140,10 @@ jobs:
         shell: bash
         run: python3 tools/desktop/release-metadata.py release
 
+      - name: Verify release metadata
+        shell: bash
+        run: python3 tools/desktop/verify-release-metadata.py release
+
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
