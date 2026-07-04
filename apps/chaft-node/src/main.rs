@@ -25,7 +25,7 @@ use chaft_store::{EventStore, WorkspaceEventStorageHealth, WorkspaceEventStorage
 use chaft_sync::pull_workspace_from_peer_with_inventory;
 use chaft_types::{
     EventBody, PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES,
-    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, SignedEvent, WorkspaceId,
+    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, ReplicaStorageClass, SignedEvent, WorkspaceId,
     direct_tcp_peer_listen_address_is_valid, peer_endpoint_hint_is_supported,
     peer_endpoint_hint_transport_is_consistent, validate_workspace_id_str,
 };
@@ -839,8 +839,11 @@ fn discovered_peer_addresses(
         .cloned()
         .collect::<Vec<_>>();
     endpoints.sort_by(|left, right| {
-        left.is_backup_peer
-            .cmp(&right.is_backup_peer)
+        discovered_peer_rank(left.is_backup_peer, left.replica_storage_class)
+            .cmp(&discovered_peer_rank(
+                right.is_backup_peer,
+                right.replica_storage_class,
+            ))
             .then_with(|| right.physical_ms.cmp(&left.physical_ms))
             .then_with(|| left.endpoint.cmp(&right.endpoint))
     });
@@ -867,6 +870,23 @@ fn discovered_peer_addresses(
         }
     }
     Ok(peers)
+}
+
+fn discovered_peer_rank(
+    is_backup_peer: bool,
+    replica_storage_class: Option<ReplicaStorageClass>,
+) -> u8 {
+    if !is_backup_peer {
+        return 6;
+    }
+    match replica_storage_class {
+        Some(ReplicaStorageClass::FullHistoryWithBlobs) => 0,
+        Some(ReplicaStorageClass::FullHistory) => 1,
+        None => 2,
+        Some(ReplicaStorageClass::PartialHistory) => 3,
+        Some(ReplicaStorageClass::MetadataIndex) => 4,
+        Some(ReplicaStorageClass::EphemeralPeer) => 5,
+    }
 }
 
 fn peer_endpoint_hint_metadata_is_bounded(event: &SignedEvent) -> bool {
@@ -3121,6 +3141,85 @@ mod tests {
 
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].endpoint, "direct+tcp://127.0.0.1:7001");
+    }
+
+    #[test]
+    fn discovered_peer_addresses_prioritize_replica_capabilities() {
+        let store = EventStore::open_in_memory().unwrap();
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceIdentity::generate();
+        let root = workspace_root(&owner, workspace_id.clone());
+        store.append_event(&root).unwrap();
+        let mut parent_id = root.event_id.clone();
+
+        let endpoints = [
+            ("member-newest", 7205, false, None, 5_i64),
+            (
+                "partial-backup",
+                7203,
+                true,
+                Some(ReplicaStorageClass::PartialHistory),
+                4_i64,
+            ),
+            ("legacy-backup", 7202, true, None, 3_i64),
+            (
+                "full-history",
+                7201,
+                true,
+                Some(ReplicaStorageClass::FullHistory),
+                2_i64,
+            ),
+            (
+                "full-history-with-blobs",
+                7200,
+                true,
+                Some(ReplicaStorageClass::FullHistoryWithBlobs),
+                1_i64,
+            ),
+        ];
+
+        for (endpoint_id, port, is_backup_peer, replica_storage_class, physical_ms) in endpoints {
+            let mut endpoint = SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.device_id().clone(),
+                EventBody::PeerEndpointPublished {
+                    endpoint_id: endpoint_id.to_owned(),
+                    endpoint: format!("direct+tcp://127.0.0.1:{port}"),
+                    transport: "direct-tcp".to_owned(),
+                    is_backup_peer,
+                    expires_at_ms: None,
+                    replica_storage_class,
+                    replica_retention_hint: None,
+                },
+            );
+            endpoint.timestamp = chaft_types::HybridTimestamp {
+                physical_ms,
+                logical: 0,
+            };
+            endpoint.parents = vec![parent_id];
+            let endpoint = owner.sign_event(endpoint);
+            parent_id = endpoint.event_id.clone();
+            store.append_event(&endpoint).unwrap();
+        }
+
+        let peers =
+            discovered_peer_addresses(&store, &workspace_id, current_unix_millis()).unwrap();
+
+        let endpoints = peers
+            .iter()
+            .map(|peer| peer.endpoint.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            endpoints,
+            vec![
+                "direct+tcp://127.0.0.1:7200",
+                "direct+tcp://127.0.0.1:7201",
+                "direct+tcp://127.0.0.1:7202",
+                "direct+tcp://127.0.0.1:7203",
+                "direct+tcp://127.0.0.1:7205",
+            ]
+        );
     }
 
     #[test]
