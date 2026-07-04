@@ -506,40 +506,15 @@ ListView {
                 Layout.fillWidth: true
                 spacing: 3
 
-                RowLayout {
+                TimelineHeaderRow {
                     Layout.fillWidth: true
-                    spacing: 8
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: row.historyGapRow
-                            ? "History gap"
-                            : row.invalidSignatureRow
-                                ? "Invalid signature"
+                    primaryLabel: row.historyGapRow
+                        ? "History gap"
+                        : row.invalidSignatureRow
+                            ? "Invalid signature"
                             : root.authorLabel(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
-                        color: Tokens.textStrong
-                        font.pixelSize: 14
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        Layout.preferredWidth: Math.min(160, implicitWidth)
-                        text: root.channelLabel(row.modelData.channelName, row.modelData.channelId)
-                        visible: text.length > 0
-                        color: Tokens.textMuted
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        text: root.timeLabel(row.modelData.physicalMs)
-                        visible: text.length > 0
-                        color: Tokens.textMuted
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                    }
+                    channelLabel: root.channelLabel(row.modelData.channelName, row.modelData.channelId)
+                    timeLabel: root.timeLabel(row.modelData.physicalMs)
                 }
 
                 TimelineReplyPreview {

@@ -14,6 +14,7 @@ TimelineActionChip 1.0 components/TimelineActionChip.qml
 TimelineAttachmentChip 1.0 components/TimelineAttachmentChip.qml
 TimelineAuthorMark 1.0 components/TimelineAuthorMark.qml
 TimelineEncryptedBadge 1.0 components/TimelineEncryptedBadge.qml
+TimelineHeaderRow 1.0 components/TimelineHeaderRow.qml
 TimelineOverflowChip 1.0 components/TimelineOverflowChip.qml
 TimelineQuickReactionChip 1.0 components/TimelineQuickReactionChip.qml
 TimelineReactionChip 1.0 components/TimelineReactionChip.qml
