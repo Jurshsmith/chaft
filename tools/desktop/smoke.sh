@@ -64,8 +64,8 @@ require_tool python3
 ffi_library_name="$(chaft_desktop_ffi_library_name)"
 ffi_library="$repo_root/target/$rust_target_dir/$ffi_library_name"
 desktop_binary="$(chaft_desktop_find_binary "$repo_root" "desktop-$profile" || true)"
-build_qml_root="$repo_root/build/desktop-$profile/apps/desktop-qt"
-build_qml_file="$build_qml_root/Chaft/qml/Chaft/App.qml"
+source_qml_root="$repo_root/apps/desktop-qt/qml"
+source_qml_file="$source_qml_root/Chaft/App.qml"
 
 if [ ! -x "$desktop_binary" ]; then
   printf 'desktop binary not found for %s build\n' "$profile" >&2
@@ -103,8 +103,8 @@ case "$(uname -s)" in
 esac
 
 CHAFT_FFI_LIBRARY="$ffi_library" \
-CHAFT_DESKTOP_QML_FILE="$build_qml_file" \
-CHAFT_DESKTOP_QML_IMPORT_ROOT="$build_qml_root" \
+CHAFT_DESKTOP_QML_FILE="$source_qml_file" \
+CHAFT_DESKTOP_QML_IMPORT_ROOT="$source_qml_root" \
 CHAFT_RUNTIME_DIR="$runtime_dir" \
 CHAFT_WORKSPACE_ID="$workspace_id" \
 CHAFT_DESKTOP_SMOKE=1 \
