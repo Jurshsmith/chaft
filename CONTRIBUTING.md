@@ -96,6 +96,11 @@ For local performance investigation, run Criterion samples explicitly:
 cargo bench -p chaft-benchmarks --bench hot_paths -- --sample-size 10
 ```
 
+FFI JSON response shape is guarded by
+`crates/chaft-ffi/ffi-json-contract.snapshot.json`. Update that snapshot only
+with intentional desktop API changes and keep the focused `chaft-ffi` tests
+green.
+
 ## Engineering Rules
 
 - Keep the Rust core deterministic, bounded, and testable without a central

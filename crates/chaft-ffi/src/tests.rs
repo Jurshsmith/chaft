@@ -16,7 +16,7 @@ use chaft_store::EventStore;
 use chaft_types::{
     ChannelId, DeviceId, EventBody, MessageId, PayloadEncryption, SealedPayload, SignableEvent,
 };
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use tokio::sync::oneshot;
 
 use super::*;
@@ -289,6 +289,36 @@ unsafe fn take_ffi_string(value: *mut c_char) -> String {
     text
 }
 
+fn parse_ffi_json(value: *mut c_char) -> Value {
+    let json = unsafe { take_ffi_string(value) };
+    serde_json::from_str::<Value>(&json).unwrap()
+}
+
+fn json_contract_shape(value: &Value) -> Value {
+    match value {
+        Value::Null => Value::String("null".to_owned()),
+        Value::Bool(_) => Value::String("bool".to_owned()),
+        Value::Number(_) => Value::String("number".to_owned()),
+        Value::String(_) => Value::String("string".to_owned()),
+        Value::Array(items) => json!({
+            "arrayOf": items
+                .first()
+                .map(json_contract_shape)
+                .unwrap_or_else(|| Value::String("empty".to_owned()))
+        }),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(field, value)| (field.clone(), json_contract_shape(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn insert_contract_shape(contract: &mut Map<String, Value>, export: &str, value: Value) {
+    contract.insert(export.to_owned(), json_contract_shape(&value));
+}
+
 #[test]
 fn version_is_static_c_string() {
     let version = unsafe { CStr::from_ptr(chaft_core_version()) }
@@ -305,6 +335,266 @@ fn ffi_export_contract_matches_declared_symbols() {
         contracted_ffi_export_symbols(),
         "update crates/chaft-ffi/ffi-exports.txt for intentional desktop ABI changes"
     );
+}
+
+#[test]
+fn ffi_json_contract_snapshot_matches_declared_shapes() {
+    let mut contract = Map::new();
+    let (workspace_id, events) = sample_events();
+    let workspace_id_c = CString::new(workspace_id.0).unwrap();
+    let events_json = CString::new(serde_json::to_string(&events).unwrap()).unwrap();
+
+    insert_contract_shape(
+        &mut contract,
+        "chaft_demo_workspace_snapshot_json",
+        parse_ffi_json(chaft_demo_workspace_snapshot_json()),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_workspace_snapshot_from_events_result_json.ok",
+        parse_ffi_json(unsafe {
+            chaft_workspace_snapshot_from_events_result_json(
+                workspace_id_c.as_ptr(),
+                events_json.as_ptr(),
+            )
+        }),
+    );
+    let invalid_events_json = CString::new("not-json").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_workspace_snapshot_from_events_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_workspace_snapshot_from_events_result_json(
+                workspace_id_c.as_ptr(),
+                invalid_events_json.as_ptr(),
+            )
+        }),
+    );
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("FFI Contract Workspace").unwrap();
+    let channel_name = CString::new("general").unwrap();
+    let created = parse_ffi_json(unsafe {
+        chaft_runtime_create_workspace_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        )
+    });
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_create_workspace_result_json",
+        created.clone(),
+    );
+    let runtime_workspace_id =
+        CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
+    let runtime_channel_id = CString::new(created["value"]["channelId"].as_str().unwrap()).unwrap();
+
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_device_id_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_device_id_result_json(data_dir.as_ptr(), std::ptr::null())
+        }),
+    );
+    let display_name = CString::new("Contract Device").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_update_device_profile_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_update_device_profile_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                display_name.as_ptr(),
+            )
+        }),
+    );
+    let message_text = CString::new("contract message search-token").unwrap();
+    let sent = parse_ffi_json(unsafe {
+        chaft_runtime_send_message_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            runtime_workspace_id.as_ptr(),
+            runtime_channel_id.as_ptr(),
+            message_text.as_ptr(),
+        )
+    });
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_send_message_result_json",
+        sent.clone(),
+    );
+    let reply_to = CString::new(sent["value"]["messageId"].as_str().unwrap()).unwrap();
+    let reply_text = CString::new("contract reply").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_send_message_reply_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_send_message_reply_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                runtime_channel_id.as_ptr(),
+                reply_to.as_ptr(),
+                reply_text.as_ptr(),
+            )
+        }),
+    );
+    let ops_channel_name = CString::new("contract-ops").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_create_channel_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_create_channel_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                ops_channel_name.as_ptr(),
+                false,
+            )
+        }),
+    );
+
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_list_workspaces_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_list_workspaces_result_json(data_dir.as_ptr(), std::ptr::null())
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_list_workspace_page_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_list_workspace_page_result_json(data_dir.as_ptr(), std::ptr::null(), 0, 8)
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_list_workspace_member_page_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_list_workspace_member_page_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                0,
+                8,
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_list_workspace_channel_page_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_list_workspace_channel_page_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                0,
+                8,
+            )
+        }),
+    );
+    let channel_query = CString::new("contract").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_search_workspace_channels_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_search_workspace_channels_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                channel_query.as_ptr(),
+                8,
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_decrypted_workspace_snapshot_from_runtime_latest_result_json",
+        parse_ffi_json(unsafe {
+            chaft_decrypted_workspace_snapshot_from_runtime_latest_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                8,
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_decrypted_workspace_snapshot_from_runtime_window_result_json",
+        parse_ffi_json(unsafe {
+            chaft_decrypted_workspace_snapshot_from_runtime_window_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                0,
+                8,
+            )
+        }),
+    );
+    let search_query = CString::new("search-token").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_search_workspace_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_search_workspace_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                search_query.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_workspace_publish_queue_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_workspace_publish_queue_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_workspace_storage_health_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_workspace_storage_health_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+            )
+        }),
+    );
+    let unsupported_peer = CString::new("central://example.invalid").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_publish_workspace_direct_result_json.error",
+        parse_ffi_json(unsafe {
+            chaft_runtime_publish_workspace_direct_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                unsupported_peer.as_ptr(),
+            )
+        }),
+    );
+
+    let actual = Value::Object(contract);
+    let expected =
+        serde_json::from_str::<Value>(include_str!("../ffi-json-contract.snapshot.json")).unwrap();
+    if actual != expected {
+        panic!(
+            "FFI JSON contract changed; update crates/chaft-ffi/ffi-json-contract.snapshot.json for intentional desktop API changes\n{}",
+            serde_json::to_string_pretty(&actual).unwrap()
+        );
+    }
 }
 
 #[test]

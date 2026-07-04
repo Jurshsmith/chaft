@@ -1,0 +1,683 @@
+{
+  "chaft_decrypted_workspace_snapshot_from_runtime_latest_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channelCount": "number",
+      "channels": {
+        "arrayOf": {
+          "channelId": "string",
+          "isPrivate": "bool",
+          "latestActivity": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "string",
+            "eventId": "string",
+            "messageId": "string",
+            "physicalMs": "number",
+            "preview": "string"
+          },
+          "name": "string",
+          "unreadCount": "number"
+        }
+      },
+      "gapCount": "number",
+      "gaps": {
+        "arrayOf": "empty"
+      },
+      "invalidSignatureCount": "number",
+      "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "keyPackageCount": "number",
+      "keyPackages": {
+        "arrayOf": "empty"
+      },
+      "memberCount": "number",
+      "members": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "string",
+          "membershipEventId": "string",
+          "profileEventId": "string",
+          "role": "string"
+        }
+      },
+      "name": "string",
+      "peerEndpointCount": "number",
+      "peerEndpoints": {
+        "arrayOf": "empty"
+      },
+      "profileCount": "number",
+      "profiles": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "string",
+          "updatedEventId": "string"
+        }
+      },
+      "timeline": {
+        "arrayOf": {
+          "attachmentCount": "number",
+          "attachments": {
+            "arrayOf": "empty"
+          },
+          "authorDeviceId": "string",
+          "authorDisplayName": "string",
+          "body": "string",
+          "channelId": "string",
+          "deleted": "bool",
+          "encrypted": "bool",
+          "eventId": "string",
+          "kind": "string",
+          "messageId": "string",
+          "missingParentIds": {
+            "arrayOf": "empty"
+          },
+          "myReactions": {
+            "arrayOf": "empty"
+          },
+          "physicalMs": "number",
+          "reactionCount": "number",
+          "reactions": {},
+          "replyPreview": "null",
+          "replyToMessageId": "null",
+          "threadLatestReply": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "string",
+            "body": "string",
+            "deleted": "bool",
+            "messageId": "string"
+          },
+          "threadReplyCount": "number",
+          "threadReplyPreviews": {
+            "arrayOf": {
+              "authorDeviceId": "string",
+              "authorDisplayName": "string",
+              "body": "string",
+              "deleted": "bool",
+              "messageId": "string"
+            }
+          }
+        }
+      },
+      "timelineWindow": {
+        "hasMoreAfter": "bool",
+        "hasMoreBefore": "bool",
+        "itemCount": "number",
+        "startIndex": "number",
+        "totalCount": "number"
+      },
+      "workspaceId": "string"
+    }
+  },
+  "chaft_decrypted_workspace_snapshot_from_runtime_window_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channelCount": "number",
+      "channels": {
+        "arrayOf": {
+          "channelId": "string",
+          "isPrivate": "bool",
+          "latestActivity": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "string",
+            "eventId": "string",
+            "messageId": "string",
+            "physicalMs": "number",
+            "preview": "string"
+          },
+          "name": "string",
+          "unreadCount": "number"
+        }
+      },
+      "gapCount": "number",
+      "gaps": {
+        "arrayOf": "empty"
+      },
+      "invalidSignatureCount": "number",
+      "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "keyPackageCount": "number",
+      "keyPackages": {
+        "arrayOf": "empty"
+      },
+      "memberCount": "number",
+      "members": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "string",
+          "membershipEventId": "string",
+          "profileEventId": "string",
+          "role": "string"
+        }
+      },
+      "name": "string",
+      "peerEndpointCount": "number",
+      "peerEndpoints": {
+        "arrayOf": "empty"
+      },
+      "profileCount": "number",
+      "profiles": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "string",
+          "updatedEventId": "string"
+        }
+      },
+      "timeline": {
+        "arrayOf": {
+          "attachmentCount": "number",
+          "attachments": {
+            "arrayOf": "empty"
+          },
+          "authorDeviceId": "string",
+          "authorDisplayName": "string",
+          "body": "string",
+          "channelId": "string",
+          "deleted": "bool",
+          "encrypted": "bool",
+          "eventId": "string",
+          "kind": "string",
+          "messageId": "string",
+          "missingParentIds": {
+            "arrayOf": "empty"
+          },
+          "myReactions": {
+            "arrayOf": "empty"
+          },
+          "physicalMs": "number",
+          "reactionCount": "number",
+          "reactions": {},
+          "replyPreview": "null",
+          "replyToMessageId": "null",
+          "threadLatestReply": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "string",
+            "body": "string",
+            "deleted": "bool",
+            "messageId": "string"
+          },
+          "threadReplyCount": "number",
+          "threadReplyPreviews": {
+            "arrayOf": {
+              "authorDeviceId": "string",
+              "authorDisplayName": "string",
+              "body": "string",
+              "deleted": "bool",
+              "messageId": "string"
+            }
+          }
+        }
+      },
+      "timelineWindow": {
+        "hasMoreAfter": "bool",
+        "hasMoreBefore": "bool",
+        "itemCount": "number",
+        "startIndex": "number",
+        "totalCount": "number"
+      },
+      "workspaceId": "string"
+    }
+  },
+  "chaft_demo_workspace_snapshot_json": {
+    "channelCount": "number",
+    "channels": {
+      "arrayOf": {
+        "channelId": "string",
+        "isPrivate": "bool",
+        "latestActivity": "null",
+        "name": "string",
+        "unreadCount": "number"
+      }
+    },
+    "gapCount": "number",
+    "gaps": {
+      "arrayOf": "empty"
+    },
+    "invalidSignatureCount": "number",
+    "invalidSignatures": {
+      "arrayOf": "empty"
+    },
+    "keyPackageCount": "number",
+    "keyPackages": {
+      "arrayOf": {
+        "byteLen": "number",
+        "deviceId": "string",
+        "keyPackageId": "string",
+        "physicalMs": "number",
+        "protocol": "string",
+        "publishedEventId": "string"
+      }
+    },
+    "memberCount": "number",
+    "members": {
+      "arrayOf": {
+        "deviceId": "string",
+        "displayName": "string",
+        "membershipEventId": "string",
+        "profileEventId": "string",
+        "role": "string"
+      }
+    },
+    "name": "string",
+    "peerEndpointCount": "number",
+    "peerEndpoints": {
+      "arrayOf": "empty"
+    },
+    "profileCount": "number",
+    "profiles": {
+      "arrayOf": {
+        "deviceId": "string",
+        "displayName": "string",
+        "updatedEventId": "string"
+      }
+    },
+    "timeline": {
+      "arrayOf": {
+        "attachmentCount": "number",
+        "attachments": {
+          "arrayOf": "empty"
+        },
+        "authorDeviceId": "string",
+        "authorDisplayName": "string",
+        "body": "string",
+        "channelId": "string",
+        "deleted": "bool",
+        "encrypted": "bool",
+        "eventId": "string",
+        "kind": "string",
+        "messageId": "string",
+        "missingParentIds": {
+          "arrayOf": "empty"
+        },
+        "myReactions": {
+          "arrayOf": "empty"
+        },
+        "physicalMs": "number",
+        "reactionCount": "number",
+        "reactions": {},
+        "replyPreview": "null",
+        "replyToMessageId": "null",
+        "threadLatestReply": "null",
+        "threadReplyCount": "number",
+        "threadReplyPreviews": {
+          "arrayOf": "empty"
+        }
+      }
+    },
+    "timelineWindow": {
+      "hasMoreAfter": "bool",
+      "hasMoreBefore": "bool",
+      "itemCount": "number",
+      "startIndex": "number",
+      "totalCount": "number"
+    },
+    "workspaceId": "string"
+  },
+  "chaft_runtime_create_channel_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channelId": "string",
+      "eventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_create_workspace_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channelEventId": "string",
+      "channelId": "string",
+      "ownerDeviceId": "string",
+      "workspaceEventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_device_id_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "deviceId": "string"
+    }
+  },
+  "chaft_runtime_list_workspace_channel_page_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channels": {
+        "arrayOf": {
+          "channelId": "string",
+          "isPrivate": "bool",
+          "latestActivity": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "string",
+            "eventId": "string",
+            "messageId": "string",
+            "physicalMs": "number",
+            "preview": "string"
+          },
+          "name": "string",
+          "unreadCount": "number"
+        }
+      },
+      "hasMoreAfter": "bool",
+      "hasMoreBefore": "bool",
+      "itemCount": "number",
+      "startIndex": "number",
+      "totalCount": "number"
+    }
+  },
+  "chaft_runtime_list_workspace_member_page_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "hasMoreAfter": "bool",
+      "hasMoreBefore": "bool",
+      "itemCount": "number",
+      "members": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "string",
+          "membershipEventId": "string",
+          "profileEventId": "string",
+          "role": "string"
+        }
+      },
+      "startIndex": "number",
+      "totalCount": "number"
+    }
+  },
+  "chaft_runtime_list_workspace_page_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "hasMoreAfter": "bool",
+      "hasMoreBefore": "bool",
+      "itemCount": "number",
+      "startIndex": "number",
+      "totalCount": "number",
+      "workspaces": {
+        "arrayOf": {
+          "channelCount": "number",
+          "eventCount": "number",
+          "hasWorkspaceKey": "bool",
+          "memberCount": "number",
+          "name": "string",
+          "workspaceId": "string"
+        }
+      }
+    }
+  },
+  "chaft_runtime_list_workspaces_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "arrayOf": {
+        "channelCount": "number",
+        "eventCount": "number",
+        "hasWorkspaceKey": "bool",
+        "memberCount": "number",
+        "name": "string",
+        "workspaceId": "string"
+      }
+    }
+  },
+  "chaft_runtime_publish_workspace_direct_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
+  },
+  "chaft_runtime_search_workspace_channels_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channels": {
+        "arrayOf": {
+          "channelId": "string",
+          "isPrivate": "bool",
+          "latestActivity": "null",
+          "name": "string",
+          "unreadCount": "number"
+        }
+      },
+      "itemCount": "number",
+      "query": "string",
+      "totalCount": "number"
+    }
+  },
+  "chaft_runtime_search_workspace_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "hasMoreHits": "bool",
+      "hitCount": "number",
+      "hits": {
+        "arrayOf": {
+          "authorDeviceId": "string",
+          "authorDisplayName": "string",
+          "body": "string",
+          "bodyCharCount": "number",
+          "bodyTruncated": "bool",
+          "channelId": "string",
+          "channelIsPrivate": "bool",
+          "channelName": "string",
+          "eventId": "string",
+          "messageId": "string",
+          "physicalMs": "number",
+          "workspaceId": "string"
+        }
+      },
+      "itemCount": "number",
+      "query": "string",
+      "rawCandidateCount": "number",
+      "rawCandidateLimit": "number",
+      "visibleHitLimit": "number",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_send_message_reply_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "attachmentCount": "number",
+      "channelId": "string",
+      "encrypted": "bool",
+      "eventId": "string",
+      "messageId": "string",
+      "replyToMessageId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_send_message_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "attachmentCount": "number",
+      "channelId": "string",
+      "encrypted": "bool",
+      "eventId": "string",
+      "messageId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_update_device_profile_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "deviceId": "string",
+      "displayName": "string",
+      "eventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_workspace_publish_queue_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "availableBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "backupEventIds": {
+        "arrayOf": "string"
+      },
+      "missingBlobHashes": {
+        "arrayOf": "empty"
+      },
+      "publishableEventIds": {
+        "arrayOf": "string"
+      },
+      "skippedGaps": {
+        "arrayOf": "empty"
+      },
+      "summary": {
+        "availableBlobCount": "number",
+        "backupEventCount": "number",
+        "channels": {
+          "arrayOf": {
+            "backupEventCount": "number",
+            "channelId": "null",
+            "missingBlobCount": "number",
+            "publishableEventCount": "number",
+            "queuedAttachmentBlobCount": "number",
+            "queuedMessageEventCount": "number"
+          }
+        },
+        "hasMissingLocalBlobs": "bool",
+        "hasSkippedGaps": "bool",
+        "isComplete": "bool",
+        "missingBlobCount": "number",
+        "newestEventPhysicalMs": "number",
+        "oldestEventPhysicalMs": "number",
+        "publishableEventCount": "number",
+        "queuedAttachmentBlobCount": "number",
+        "queuedMessageEventCount": "number",
+        "skippedGapCount": "number"
+      },
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_workspace_storage_health_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "corruptEventCount": "number",
+      "nonServableParseableEventCount": "number",
+      "parseableEventCount": "number",
+      "poisonedServableMetadataCount": "number",
+      "promotableServableMetadataCount": "number",
+      "servableEventCount": "number",
+      "signatureValidMetadataCount": "number",
+      "totalEventCount": "number",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_workspace_snapshot_from_events_result_json.error": {
+    "error": {
+      "code": "string",
+      "message": "string"
+    },
+    "ok": "bool",
+    "value": "null"
+  },
+  "chaft_workspace_snapshot_from_events_result_json.ok": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "channelCount": "number",
+      "channels": {
+        "arrayOf": {
+          "channelId": "string",
+          "isPrivate": "bool",
+          "latestActivity": {
+            "authorDeviceId": "string",
+            "authorDisplayName": "null",
+            "eventId": "string",
+            "messageId": "string",
+            "physicalMs": "number",
+            "preview": "string"
+          },
+          "name": "string",
+          "unreadCount": "number"
+        }
+      },
+      "gapCount": "number",
+      "gaps": {
+        "arrayOf": "empty"
+      },
+      "invalidSignatureCount": "number",
+      "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "keyPackageCount": "number",
+      "keyPackages": {
+        "arrayOf": "empty"
+      },
+      "memberCount": "number",
+      "members": {
+        "arrayOf": {
+          "deviceId": "string",
+          "displayName": "null",
+          "membershipEventId": "string",
+          "profileEventId": "null",
+          "role": "string"
+        }
+      },
+      "name": "string",
+      "peerEndpointCount": "number",
+      "peerEndpoints": {
+        "arrayOf": "empty"
+      },
+      "profileCount": "number",
+      "profiles": {
+        "arrayOf": "empty"
+      },
+      "timeline": {
+        "arrayOf": {
+          "attachmentCount": "number",
+          "attachments": {
+            "arrayOf": "empty"
+          },
+          "authorDeviceId": "string",
+          "authorDisplayName": "null",
+          "body": "string",
+          "channelId": "string",
+          "deleted": "bool",
+          "encrypted": "bool",
+          "eventId": "string",
+          "kind": "string",
+          "messageId": "string",
+          "missingParentIds": {
+            "arrayOf": "empty"
+          },
+          "myReactions": {
+            "arrayOf": "empty"
+          },
+          "physicalMs": "number",
+          "reactionCount": "number",
+          "reactions": {},
+          "replyPreview": "null",
+          "replyToMessageId": "null",
+          "threadLatestReply": "null",
+          "threadReplyCount": "number",
+          "threadReplyPreviews": {
+            "arrayOf": "empty"
+          }
+        }
+      },
+      "timelineWindow": {
+        "hasMoreAfter": "bool",
+        "hasMoreBefore": "bool",
+        "itemCount": "number",
+        "startIndex": "number",
+        "totalCount": "number"
+      },
+      "workspaceId": "string"
+    }
+  }
+}
