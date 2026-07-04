@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use chaft_media::{BlobAvailability, describe_blob, validate_blob_availability};
 use chaft_net::PeerAddress;
 
-use crate::DIRECT_BLOB_CHUNK_SIZE;
+use crate::{BlobTransferAttempt, BlobTransferStatus, DIRECT_BLOB_CHUNK_SIZE};
 
 pub(crate) fn planned_chunk_upload(
     bytes: &[u8],
@@ -45,13 +45,45 @@ pub(crate) fn planned_chunk_upload(
     )
 }
 
-pub(crate) fn ordered_retry_peers(peers: &[PeerAddress]) -> Vec<&PeerAddress> {
-    let mut ordered = Vec::new();
+pub(crate) fn planned_retry_peers<'a>(
+    peers: &'a [PeerAddress],
+    attempts: &[BlobTransferAttempt],
+    workspace_id: &str,
+    blob_hash: &str,
+) -> Vec<&'a PeerAddress> {
+    let mut ranked = Vec::new();
     let mut seen = BTreeSet::new();
-    for peer in peers {
+    for (index, peer) in peers.iter().enumerate() {
         if seen.insert(peer.endpoint.clone()) {
-            ordered.push(peer);
+            ranked.push((
+                retry_peer_rank(peer, attempts, workspace_id, blob_hash),
+                index,
+                peer,
+            ));
         }
     }
-    ordered
+    ranked.sort_by_key(|(rank, index, _)| (*rank, *index));
+    ranked.into_iter().map(|(_, _, peer)| peer).collect()
+}
+
+fn retry_peer_rank(
+    peer: &PeerAddress,
+    attempts: &[BlobTransferAttempt],
+    workspace_id: &str,
+    blob_hash: &str,
+) -> u8 {
+    let mut rank = 1;
+    for attempt in attempts {
+        if attempt.workspace_id != workspace_id
+            || attempt.peer_endpoint != peer.endpoint
+            || attempt.blob_hash != blob_hash
+        {
+            continue;
+        }
+        match attempt.status {
+            BlobTransferStatus::Succeeded => return 0,
+            BlobTransferStatus::InProgress | BlobTransferStatus::Failed => rank = 2,
+        }
+    }
+    rank
 }

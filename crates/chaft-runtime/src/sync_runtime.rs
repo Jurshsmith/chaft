@@ -18,7 +18,7 @@ use crate::{
     MAX_PUBLISH_QUEUE_SKIPPED_GAP_SAMPLE_ROWS, PublishedWorkspace, PulledOpenMlsCatchup,
     PulledOpenMlsChannelCatchup, PulledWorkspace, PulledWorkspaceGap, RuntimeError,
     SyncedWorkspace, WorkspacePublishQueue, attachment_blob_hashes, blob_transfer_peer_error,
-    is_backup_slice_event, merge_published_workspace, ordered_retry_peers, planned_chunk_upload,
+    is_backup_slice_event, merge_published_workspace, planned_chunk_upload, planned_retry_peers,
     validate_event_id_reference, validate_peer_address, validate_peer_addresses,
     validate_workspace_id_reference, workspace_publish_queue_summary,
 };
@@ -273,14 +273,14 @@ impl LocalRuntime {
             attachment_blob_hashes(&self.materialized_workspace_events(&workspace_id)?)
                 .into_iter()
                 .collect::<BTreeSet<_>>();
-        let ledger = self.read_blob_transfer_ledger()?;
-        let pending_entries = ledger
-            .entries
-            .into_iter()
+        let ledger_entries = self.read_blob_transfer_ledger()?.entries;
+        let pending_entries = ledger_entries
+            .iter()
             .filter(|entry| {
                 entry.workspace_id == workspace_id.0
                     && entry.status != BlobTransferStatus::Succeeded
             })
+            .cloned()
             .collect::<Vec<_>>();
         let pending_attempt_ids = pending_entries
             .iter()
@@ -309,7 +309,6 @@ impl LocalRuntime {
         let mut missing = BTreeSet::new();
         let mut skipped = BTreeSet::new();
         let mut processed = BTreeSet::new();
-        let retry_peers = ordered_retry_peers(peers);
 
         for pending in pending_entries {
             if !processed.insert(pending.blob_hash.clone()) {
@@ -331,7 +330,9 @@ impl LocalRuntime {
                 continue;
             };
 
-            for &peer in &retry_peers {
+            let retry_peers =
+                planned_retry_peers(peers, &ledger_entries, &workspace_id.0, &pending.blob_hash);
+            for peer in retry_peers {
                 let remote_blob_availability = match transport
                     .fetch_blob_availabilities(peer, vec![pending.blob_hash.clone()])
                     .await

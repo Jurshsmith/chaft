@@ -71,7 +71,7 @@ pub use blob_transfer::{
     BlobTransferAttempt, BlobTransferLedger, BlobTransferMode, BlobTransferPeerError,
     BlobTransferRetryReport, BlobTransferStatus,
 };
-pub(crate) use blob_transfer_planning::{ordered_retry_peers, planned_chunk_upload};
+pub(crate) use blob_transfer_planning::{planned_chunk_upload, planned_retry_peers};
 pub(crate) use compromise::{
     COMPROMISE_ACTION_REVIEW_INVALID_SIGNATURES,
     COMPROMISE_ACTION_ROTATE_WORKSPACE_FOR_SUSPECTED_COMPROMISE,
@@ -3309,7 +3309,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_retry_peers_preserves_first_endpoint_occurrence() {
+    fn planned_retry_peers_preserves_first_endpoint_occurrence_without_ledger() {
         let first = PeerAddress {
             peer_id: PeerId("first".to_owned()),
             endpoint: "127.0.0.1:7001".to_owned(),
@@ -3324,12 +3324,102 @@ mod tests {
         };
         let peers = vec![first.clone(), duplicate, second.clone()];
 
-        let ordered = ordered_retry_peers(&peers)
+        let ordered = planned_retry_peers(&peers, &[], "wrk_retry_plan", "blob_retry_plan")
             .into_iter()
             .map(|peer| peer.peer_id.0.clone())
             .collect::<Vec<_>>();
 
         assert_eq!(ordered, vec![first.peer_id.0, second.peer_id.0]);
+    }
+
+    #[test]
+    fn planned_retry_peers_prioritize_success_and_deprioritize_failed_endpoints() {
+        let workspace_id = "wrk_retry_plan";
+        let blob_hash_value = blob_hash(b"retry plan blob");
+        let failed = PeerAddress {
+            peer_id: PeerId("failed".to_owned()),
+            endpoint: "127.0.0.1:7001".to_owned(),
+        };
+        let neutral = PeerAddress {
+            peer_id: PeerId("neutral".to_owned()),
+            endpoint: "127.0.0.1:7002".to_owned(),
+        };
+        let duplicate_neutral = PeerAddress {
+            peer_id: PeerId("duplicate-neutral".to_owned()),
+            endpoint: neutral.endpoint.clone(),
+        };
+        let succeeded = PeerAddress {
+            peer_id: PeerId("succeeded".to_owned()),
+            endpoint: "127.0.0.1:7003".to_owned(),
+        };
+        let attempt = |peer: &PeerAddress,
+                       workspace_id: &str,
+                       blob_hash_value: &str,
+                       status: BlobTransferStatus| {
+            BlobTransferAttempt {
+                attempt_id: format!("attempt-{}-{status:?}", peer.peer_id.0),
+                workspace_id: workspace_id.to_owned(),
+                peer_id: peer.peer_id.0.clone(),
+                peer_endpoint: peer.endpoint.clone(),
+                blob_hash: blob_hash_value.to_owned(),
+                mode: BlobTransferMode::WholeBlob,
+                status,
+                attempt_count: 1,
+                total_byte_len: 4,
+                chunk_size: None,
+                chunk_count: 0,
+                chunk_hashes: Vec::new(),
+                planned_chunk_count: 0,
+                planned_chunk_hashes: Vec::new(),
+                remote_available_chunk_count: 0,
+                remote_available_chunk_hashes: Vec::new(),
+                started_at_unix_ms: 1,
+                finished_at_unix_ms: Some(2),
+                error: None,
+            }
+        };
+        let attempts = vec![
+            attempt(
+                &failed,
+                workspace_id,
+                &blob_hash_value,
+                BlobTransferStatus::Failed,
+            ),
+            attempt(
+                &succeeded,
+                workspace_id,
+                &blob_hash_value,
+                BlobTransferStatus::Succeeded,
+            ),
+            attempt(
+                &neutral,
+                "other_workspace",
+                &blob_hash_value,
+                BlobTransferStatus::Failed,
+            ),
+            attempt(
+                &neutral,
+                workspace_id,
+                &blob_hash(b"other blob"),
+                BlobTransferStatus::Failed,
+            ),
+        ];
+        let peers = vec![
+            failed.clone(),
+            neutral.clone(),
+            duplicate_neutral,
+            succeeded.clone(),
+        ];
+
+        let planned = planned_retry_peers(&peers, &attempts, workspace_id, &blob_hash_value)
+            .into_iter()
+            .map(|peer| peer.peer_id.0.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            planned,
+            vec![succeeded.peer_id.0, neutral.peer_id.0, failed.peer_id.0]
+        );
     }
 
     #[test]
@@ -10536,6 +10626,10 @@ mod tests {
             peer_id: PeerId("churned-node".to_owned()),
             endpoint: "127.0.0.1:7011".to_owned(),
         };
+        let historical_peer = PeerAddress {
+            peer_id: PeerId("historical-node".to_owned()),
+            endpoint: "127.0.0.1:7010".to_owned(),
+        };
         let fallback_peer = PeerAddress {
             peer_id: PeerId("fallback-node".to_owned()),
             endpoint: "127.0.0.1:7012".to_owned(),
@@ -10543,7 +10637,7 @@ mod tests {
         let started = alice
             .record_blob_transfer_started(
                 &workspace_id.0,
-                &churned_peer,
+                &historical_peer,
                 &attachment.blob_hash,
                 BlobTransferMode::WholeBlob,
                 ciphertext.len() as u64,
@@ -10601,6 +10695,7 @@ mod tests {
             .iter()
             .find(|attempt| attempt.attempt_id == failed.attempt_id)
             .unwrap();
+        assert_eq!(reconciled.peer_endpoint, historical_peer.endpoint);
         assert_eq!(reconciled.status, BlobTransferStatus::Succeeded);
         assert!(reconciled.error.is_none());
         assert!(
@@ -10611,6 +10706,112 @@ mod tests {
                 .iter()
                 .all(|attempt| attempt.status == BlobTransferStatus::Succeeded)
         );
+    }
+
+    #[tokio::test]
+    async fn retry_pending_blob_transfers_prioritizes_unfailed_fallback_peer() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let attachment_bytes = b"repair avoids recently failed peer".to_vec();
+        let attachment_path = alice_dir.path().join("planned-fallback-repair.bin");
+        fs::write(&attachment_path, &attachment_bytes).unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Planned Fallback Blob Retry", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let channel_id = ChannelId(created.channel_id.clone());
+        let sent = alice
+            .send_message_with_attachment_file(
+                workspace_id.clone(),
+                channel_id,
+                "retry should skip recently failed peer",
+                &attachment_path,
+                "application/octet-stream",
+            )
+            .unwrap();
+        let alice_events = alice.workspace_events(&workspace_id).unwrap();
+        let sent_event = alice_events
+            .iter()
+            .find(|event| event.event_id.0 == sent.event_id)
+            .unwrap();
+        let EventBody::MessageCreatedEncrypted { attachments, .. } = &sent_event.event.body else {
+            panic!("expected encrypted message event");
+        };
+        let attachment = attachments[0].clone();
+        let alice_blob_store = BlobStore::open(alice.paths().blob_store.clone()).unwrap();
+        let ciphertext = alice_blob_store
+            .get_bytes(&attachment.blob_hash)
+            .unwrap()
+            .unwrap();
+        let failed_peer = PeerAddress {
+            peer_id: PeerId("failed-node".to_owned()),
+            endpoint: "127.0.0.1:7021".to_owned(),
+        };
+        let fallback_peer = PeerAddress {
+            peer_id: PeerId("fallback-node".to_owned()),
+            endpoint: "127.0.0.1:7022".to_owned(),
+        };
+        let started = alice
+            .record_blob_transfer_started(
+                &workspace_id.0,
+                &failed_peer,
+                &attachment.blob_hash,
+                BlobTransferMode::WholeBlob,
+                ciphertext.len() as u64,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap();
+        let failed = alice
+            .record_blob_transfer_finished(
+                &started,
+                BlobTransferStatus::Failed,
+                Some("recently failed peer".to_owned()),
+            )
+            .unwrap();
+        let transport = ChurnyWholeBlobRepairTransport::new(
+            attachment.blob_hash.clone(),
+            failed_peer.endpoint.clone(),
+        );
+
+        let retry = alice
+            .retry_pending_blob_transfers_direct(
+                &transport,
+                workspace_id,
+                &[failed_peer.clone(), fallback_peer.clone()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(transport.fetch_count(), 1);
+        assert_eq!(transport.upload_count(), 1);
+        assert_eq!(retry.pending_attempt_ids, vec![failed.attempt_id.clone()]);
+        assert_eq!(
+            retry.retried_blob_hashes,
+            vec![attachment.blob_hash.clone()]
+        );
+        assert_eq!(
+            retry.reconciled_blob_hashes,
+            vec![attachment.blob_hash.clone()]
+        );
+        assert!(retry.peer_errors.is_empty());
+        assert_eq!(retry.blob_transfer_attempts.len(), 2);
+        let upload_attempt = retry
+            .blob_transfer_attempts
+            .iter()
+            .find(|attempt| attempt.peer_endpoint == fallback_peer.endpoint)
+            .unwrap();
+        assert_eq!(upload_attempt.status, BlobTransferStatus::Succeeded);
+        let reconciled = retry
+            .blob_transfer_attempts
+            .iter()
+            .find(|attempt| attempt.attempt_id == failed.attempt_id)
+            .unwrap();
+        assert_eq!(reconciled.peer_endpoint, failed_peer.endpoint);
+        assert_eq!(reconciled.status, BlobTransferStatus::Succeeded);
+        assert!(reconciled.error.is_none());
     }
 
     #[tokio::test]
