@@ -3149,42 +3149,10 @@ ApplicationWindow {
                                     }
                                 }
 
-                                Rectangle {
-                                    Layout.preferredWidth: 148
-                                    Layout.preferredHeight: 30
-                                    radius: 7
-                                    color: root.activePeerRouteIsWarning()
-                                        ? Tokens.warningSurface
-                                        : Tokens.secureSurface
-                                    border.color: root.activePeerRouteIsWarning()
-                                        ? Tokens.warning
-                                        : Tokens.borderSubtle
-                                    clip: true
-
-                                    Text {
-                                        id: peerRouteLabel
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 10
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: root.activePeerRouteLabel()
-                                        color: root.activePeerRouteIsWarning()
-                                            ? Tokens.warningText
-                                            : Tokens.secure
-                                        font.pixelSize: 12
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
-
-                                    ToolTip.visible: routeMouse.containsMouse
-                                    ToolTip.text: root.activePeerRouteDetail()
-
-                                    MouseArea {
-                                        id: routeMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        acceptedButtons: Qt.NoButton
-                                    }
+                                PeerRouteChip {
+                                    label: root.activePeerRouteLabel()
+                                    detail: root.activePeerRouteDetail()
+                                    warning: root.activePeerRouteIsWarning()
                                 }
 
                                 CheckBox {
