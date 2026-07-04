@@ -2580,36 +2580,14 @@ ApplicationWindow {
                             Repeater {
                                 model: chaftController.backupPeerEndpoints
 
-                                delegate: RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 6
+                                delegate: SavedBackupPeerRow {
+                                    id: savedBackupPeerDelegate
+                                    required property string modelData
 
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: modelData
-                                            color: Tokens.textMuted
-                                            font.pixelSize: 12
-                                            elide: Text.ElideMiddle
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.backupPeerStatusText(modelData)
-                                            color: Tokens.textMuted
-                                            opacity: 0.72
-                                            font.pixelSize: 11
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-
-                                    Button {
-                                        text: "x"
-                                        implicitWidth: 28
-                                        onClicked: chaftController.removeBackupPeerEndpoint(modelData)
+                                    endpoint: savedBackupPeerDelegate.modelData
+                                    statusText: root.backupPeerStatusText(savedBackupPeerDelegate.modelData)
+                                    onRemoveRequested: function (endpoint) {
+                                        chaftController.removeBackupPeerEndpoint(endpoint)
                                     }
                                 }
                             }

@@ -7,6 +7,7 @@ KeyPackageRow 1.0 components/KeyPackageRow.qml
 MemberRow 1.0 components/MemberRow.qml
 PeerEndpointHintRow 1.0 components/PeerEndpointHintRow.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
+SavedBackupPeerRow 1.0 components/SavedBackupPeerRow.qml
 SidebarItem 1.0 components/SidebarItem.qml
 StatusChip 1.0 components/StatusChip.qml
 WorkspaceRailItem 1.0 components/WorkspaceRailItem.qml
