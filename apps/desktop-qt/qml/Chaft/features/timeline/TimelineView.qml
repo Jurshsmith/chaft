@@ -771,36 +771,14 @@ ListView {
                         }
                     }
 
-                    Rectangle {
-                        width: Math.max(70, threadReplyText.implicitWidth + 18)
-                        height: 24
-                        radius: Tokens.radiusSm
+                    TimelineThreadChip {
+                        label: root.threadReplyLabel(row.modelData.threadReplyCount)
+                        latestReplyLabel: row.modelData.threadLatestReply
+                            ? root.replyPreviewLabel(row.modelData.threadLatestReply)
+                            : ""
                         visible: Number(row.modelData.threadReplyCount || 0) > 0
                             && !row.warningRow
-                        color: Tokens.secureSurface
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            id: threadReplyText
-                            anchors.centerIn: parent
-                            text: root.threadReplyLabel(row.modelData.threadReplyCount)
-                            color: Tokens.secure
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-
-                        ToolTip.visible: threadReplyMouse.containsMouse
-                        ToolTip.text: row.modelData.threadLatestReply
-                            ? "Latest: " + root.replyPreviewLabel(row.modelData.threadLatestReply)
-                            : "Thread replies"
-
-                        MouseArea {
-                            id: threadReplyMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.threadRequested(row.modelData)
-                        }
+                        onOpenRequested: root.threadRequested(row.modelData)
                     }
 
                     TimelineActionChip {
