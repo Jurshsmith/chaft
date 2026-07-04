@@ -9,14 +9,18 @@ use chaft_runtime::{
     AddedReaction, AppliedOpenMlsChannelGroupCommits, AppliedOpenMlsWorkspaceGroupCommits,
     CreatedChannel, CreatedMessage, CreatedOpenMlsChannelGroup, CreatedOpenMlsWorkspaceGroup,
     CreatedWorkspace, DeletedMessage, EditedMessage, InvitedMember, JoinedOpenMlsChannelGroup,
-    JoinedOpenMlsWorkspaceGroup, MarkedChannelRead, PrunedBlobCache, PublishedDeviceKeyPackage,
-    PublishedOpenMlsKeyPackage, PublishedPeerEndpoint, RemovedChannelMember,
-    RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls, RemovedMember,
-    RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedOpenMlsChannelGroupMember,
-    RemovedOpenMlsWorkspaceGroupMember, RemovedReaction, SavedAttachment, UpdatedDeviceProfile,
-    UpdatedOpenMlsChannelGroup, UpdatedOpenMlsWorkspaceGroup, UpdatedWorkspaceOpenMlsGroups,
+    JoinedOpenMlsWorkspaceGroup, MarkedChannelRead, PrunedBlobCache, PublishPeerEndpointRequest,
+    PublishedDeviceKeyPackage, PublishedOpenMlsKeyPackage, PublishedPeerEndpoint,
+    RemovedChannelMember, RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls,
+    RemovedMember, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls,
+    RemovedOpenMlsChannelGroupMember, RemovedOpenMlsWorkspaceGroupMember, RemovedReaction,
+    SavedAttachment, UpdatedDeviceProfile, UpdatedOpenMlsChannelGroup,
+    UpdatedOpenMlsWorkspaceGroup, UpdatedWorkspaceOpenMlsGroups,
 };
-use chaft_types::{ChannelId, DeviceId, DeviceKeyPackageId, MessageId, WorkspaceId};
+use chaft_types::{
+    ChannelId, DeviceId, DeviceKeyPackageId, MessageId, REPLICA_RETENTION_HINT_MAX_BYTES,
+    ReplicaStorageClass, WorkspaceId,
+};
 
 use crate::{
     envelope::{FfiError, FfiResult, ffi_error, result_envelope},
@@ -120,6 +124,8 @@ pub(crate) struct PeerEndpointFfiArgs {
     pub(crate) is_backup_peer: bool,
     pub(crate) has_expires_at_ms: bool,
     pub(crate) expires_at_ms: i64,
+    pub(crate) replica_storage_class: *const c_char,
+    pub(crate) replica_retention_hint: *const c_char,
 }
 
 pub(crate) fn runtime_publish_peer_endpoint_result(
@@ -132,18 +138,76 @@ pub(crate) fn runtime_publish_peer_endpoint_result(
         let transport = read_c_string(args.transport, "transport")?;
         let (endpoint_id, endpoint, transport) =
             validate_peer_endpoint_hint_inputs(endpoint_id, endpoint, transport)?;
+        let replica_storage_class =
+            parse_optional_replica_storage_class(args.replica_storage_class)?;
+        let replica_retention_hint =
+            normalize_optional_replica_retention_hint(args.replica_retention_hint)?;
         let runtime = open_runtime_from_ffi(args.data_dir, args.identity_file)?;
         runtime
-            .publish_peer_endpoint(
-                WorkspaceId(workspace_id),
+            .publish_peer_endpoint_with_replica_capability(PublishPeerEndpointRequest {
+                workspace_id: WorkspaceId(workspace_id),
                 endpoint_id,
                 endpoint,
                 transport,
-                args.is_backup_peer,
-                args.has_expires_at_ms.then_some(args.expires_at_ms),
-            )
+                is_backup_peer: args.is_backup_peer,
+                expires_at_ms: args.has_expires_at_ms.then_some(args.expires_at_ms),
+                replica_storage_class,
+                replica_retention_hint,
+            })
             .map_err(|error| ffi_error("runtime_publish_peer_endpoint_failed", error.to_string()))
     })
+}
+
+fn parse_optional_replica_storage_class(
+    value: *const c_char,
+) -> Result<Option<ReplicaStorageClass>, FfiError> {
+    let Some(value) = optional_c_string(value, "replica_storage_class")? else {
+        return Ok(None);
+    };
+    let normalized = value.trim().replace('-', "_");
+    if normalized.is_empty() {
+        return Err(ffi_error(
+            "replica_storage_class_required",
+            "replica storage class is required when provided",
+        ));
+    }
+    ReplicaStorageClass::from_wire(&normalized)
+        .map(Some)
+        .ok_or_else(|| {
+            ffi_error(
+                "replica_storage_class_unsupported",
+                format!(
+                    "replica storage class must be one of: {}",
+                    ReplicaStorageClass::supported_wire_values().join(", ")
+                ),
+            )
+        })
+}
+
+fn normalize_optional_replica_retention_hint(
+    value: *const c_char,
+) -> Result<Option<String>, FfiError> {
+    let Some(value) = optional_c_string(value, "replica_retention_hint")? else {
+        return Ok(None);
+    };
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        return Err(ffi_error(
+            "replica_retention_hint_required",
+            "replica retention hint is required when provided",
+        ));
+    }
+    if value.len() > REPLICA_RETENTION_HINT_MAX_BYTES {
+        return Err(ffi_error(
+            "replica_retention_hint_too_large",
+            format!(
+                "replica retention hint is too large ({} bytes, max {})",
+                value.len(),
+                REPLICA_RETENTION_HINT_MAX_BYTES
+            ),
+        ));
+    }
+    Ok(Some(value))
 }
 
 pub(crate) fn runtime_publish_openmls_device_key_package_result(

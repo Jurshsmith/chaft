@@ -98,6 +98,10 @@ using RuntimePublishDeviceKeyPackageResultJsonFn = char *(*)(const char *,
 using RuntimePublishPeerEndpointResultJsonFn =
     char *(*)(const char *, const char *, const char *, const char *,
               const char *, const char *, bool, bool, qint64);
+using RuntimePublishPeerEndpointWithReplicaCapabilityResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *,
+              const char *, const char *, bool, bool, qint64, const char *,
+              const char *);
 using RuntimeOpenMlsWorkspaceActionResultJsonFn = char *(*)(const char *,
                                                             const char *,
                                                             const char *);
@@ -2229,7 +2233,9 @@ public:
       runPeerEndpointPublish(
           QStringLiteral("backup:") + normalized, normalized,
           transportLabelForPeerEndpoint(normalized), true, false, 0,
-          QStringLiteral("backup peer saved and announced"), generation);
+          QStringLiteral("backup peer saved and announced"), generation,
+          QStringLiteral("full_history_with_blobs"),
+          QStringLiteral("operator_saved"));
     } else if (m_runtimeAccessSuspendedUntilUnlock || m_runtimeUnlockRequired) {
       setSyncStatus(QStringLiteral("backup peer saved; unlock to announce"));
     } else {
@@ -2741,7 +2747,12 @@ public:
     setSyncStatus(QStringLiteral("publishing endpoint..."));
     runPeerEndpointPublish(normalizedEndpointId, normalizedEndpoint,
                            normalizedTransport, isBackupPeer, false, 0,
-                           QStringLiteral("endpoint published"), generation);
+                           QStringLiteral("endpoint published"), generation,
+                           isBackupPeer
+                               ? QStringLiteral("full_history_with_blobs")
+                               : QString(),
+                           isBackupPeer ? QStringLiteral("operator_saved")
+                                        : QString());
     return true;
   }
 
@@ -4287,6 +4298,11 @@ private:
           reinterpret_cast<RuntimePublishPeerEndpointResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_publish_peer_endpoint_result_json"));
+      m_publishPeerEndpointWithReplicaCapabilityJson = reinterpret_cast<
+          RuntimePublishPeerEndpointWithReplicaCapabilityResultJsonFn>(
+          m_library.resolve(
+              "chaft_runtime_publish_peer_endpoint_with_replica_capability_"
+              "result_json"));
       m_publishOpenMlsDeviceKeyPackageJson =
           reinterpret_cast<RuntimeOpenMlsWorkspaceActionResultJsonFn>(
               m_library.resolve(
@@ -6668,7 +6684,9 @@ private:
                               const QString &endpoint, const QString &transport,
                               bool isBackupPeer, bool hasExpiresAtMs,
                               qint64 expiresAtMs, const QString &successStatus,
-                              quint64 generation) {
+                              quint64 generation,
+                              const QString &replicaStorageClass = QString(),
+                              const QString &replicaRetentionHint = QString()) {
     QString metadataError;
     if (!validatePeerEndpointForPublish(endpointId, endpoint, transport,
                                         &metadataError)) {
@@ -6678,6 +6696,8 @@ private:
 
     const QPointer<ChaftController> guard(this);
     const auto publishFn = m_publishPeerEndpointJson;
+    const auto publishWithCapabilityFn =
+        m_publishPeerEndpointWithReplicaCapabilityJson;
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
     const auto freeString = m_freeString;
@@ -6685,24 +6705,48 @@ private:
     const auto identityFile = m_identityFile;
     const auto workspaceId = m_workspaceId;
     const auto timelineLimit = configuredTimelineLimit();
-    auto *thread = QThread::create([guard, publishFn, snapshotFn,
-                                    snapshotLatestFn, freeString, runtimeDir,
-                                    identityFile, workspaceId, endpointId,
-                                    endpoint, transport, isBackupPeer,
-                                    hasExpiresAtMs, expiresAtMs, successStatus,
-                                    generation, timelineLimit]() {
+    auto *thread = QThread::create([guard, publishFn, publishWithCapabilityFn,
+                                    snapshotFn, snapshotLatestFn, freeString,
+                                    runtimeDir, identityFile, workspaceId,
+                                    endpointId, endpoint, transport,
+                                    isBackupPeer, hasExpiresAtMs, expiresAtMs,
+                                    successStatus, generation, timelineLimit,
+                                    replicaStorageClass,
+                                    replicaRetentionHint]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
       const auto endpointIdBytes = endpointId.toUtf8();
       const auto endpointBytes = endpoint.toUtf8();
       const auto transportBytes = transport.toUtf8();
-      char *raw = publishFn(
-          runtimeDirBytes.constData(),
-          identityFileBytes.isEmpty() ? nullptr : identityFileBytes.constData(),
-          workspaceIdBytes.constData(), endpointIdBytes.constData(),
-          endpointBytes.constData(), transportBytes.constData(), isBackupPeer,
-          hasExpiresAtMs, expiresAtMs);
+      const auto replicaStorageClassBytes =
+          replicaStorageClass.trimmed().toUtf8();
+      const auto replicaRetentionHintBytes =
+          replicaRetentionHint.trimmed().toUtf8();
+      char *raw = nullptr;
+      if (publishWithCapabilityFn != nullptr) {
+        raw = publishWithCapabilityFn(
+            runtimeDirBytes.constData(),
+            identityFileBytes.isEmpty() ? nullptr
+                                        : identityFileBytes.constData(),
+            workspaceIdBytes.constData(), endpointIdBytes.constData(),
+            endpointBytes.constData(), transportBytes.constData(), isBackupPeer,
+            hasExpiresAtMs, expiresAtMs,
+            replicaStorageClassBytes.isEmpty()
+                ? nullptr
+                : replicaStorageClassBytes.constData(),
+            replicaRetentionHintBytes.isEmpty()
+                ? nullptr
+                : replicaRetentionHintBytes.constData());
+      } else {
+        raw = publishFn(
+            runtimeDirBytes.constData(),
+            identityFileBytes.isEmpty() ? nullptr
+                                        : identityFileBytes.constData(),
+            workspaceIdBytes.constData(), endpointIdBytes.constData(),
+            endpointBytes.constData(), transportBytes.constData(), isBackupPeer,
+            hasExpiresAtMs, expiresAtMs);
+      }
 
       QString error;
       const auto json = takeFfiString(raw, freeString, &error);
@@ -6905,15 +6949,27 @@ private:
     const auto endpointIdBytes = m_hostedPeerEndpointId.toUtf8();
     const auto endpointBytes = normalizedEndpoint.toUtf8();
     const auto transportBytes = m_hostedPeerTransport.toUtf8();
-    const auto json = takeWorkerFfiString(
-        m_publishPeerEndpointJson(
-            runtimeDirBytes.constData(),
-            identityFileBytes.isEmpty() ? nullptr
-                                        : identityFileBytes.constData(),
-            workspaceIdBytes.constData(), endpointIdBytes.constData(),
-            endpointBytes.constData(), transportBytes.constData(), false, true,
-            QDateTime::currentMSecsSinceEpoch()),
-        m_freeString);
+    const auto replicaStorageClassBytes = QByteArray("ephemeral_peer");
+    const auto replicaRetentionHintBytes = QByteArray("session");
+    char *raw = nullptr;
+    if (m_publishPeerEndpointWithReplicaCapabilityJson != nullptr) {
+      raw = m_publishPeerEndpointWithReplicaCapabilityJson(
+          runtimeDirBytes.constData(),
+          identityFileBytes.isEmpty() ? nullptr : identityFileBytes.constData(),
+          workspaceIdBytes.constData(), endpointIdBytes.constData(),
+          endpointBytes.constData(), transportBytes.constData(), false, true,
+          QDateTime::currentMSecsSinceEpoch(),
+          replicaStorageClassBytes.constData(),
+          replicaRetentionHintBytes.constData());
+    } else {
+      raw = m_publishPeerEndpointJson(
+          runtimeDirBytes.constData(),
+          identityFileBytes.isEmpty() ? nullptr : identityFileBytes.constData(),
+          workspaceIdBytes.constData(), endpointIdBytes.constData(),
+          endpointBytes.constData(), transportBytes.constData(), false, true,
+          QDateTime::currentMSecsSinceEpoch());
+    }
+    const auto json = takeWorkerFfiString(raw, m_freeString);
     Q_UNUSED(json);
   }
 
@@ -6962,7 +7018,7 @@ private:
             ? QStringLiteral("serving %1, endpoint announced")
                   .arg(normalizedEndpoint)
             : successStatus,
-        generation);
+        generation, QStringLiteral("ephemeral_peer"), QStringLiteral("session"));
   }
 
   void expireHostedPeerEndpoint(const QString &endpointId,
@@ -6985,7 +7041,8 @@ private:
     runPeerEndpointPublish(endpointId, normalizedEndpoint, transport, false,
                            true, QDateTime::currentMSecsSinceEpoch(),
                            QStringLiteral("hosted endpoint expired"),
-                           generation);
+                           generation, QStringLiteral("ephemeral_peer"),
+                           QStringLiteral("session"));
   }
 
   void runDirectPeerStart(const QString &listenEndpoint) {
@@ -9849,6 +9906,8 @@ private:
   RuntimePublishDeviceKeyPackageResultJsonFn m_publishDeviceKeyPackageJson =
       nullptr;
   RuntimePublishPeerEndpointResultJsonFn m_publishPeerEndpointJson = nullptr;
+  RuntimePublishPeerEndpointWithReplicaCapabilityResultJsonFn
+      m_publishPeerEndpointWithReplicaCapabilityJson = nullptr;
   RuntimeOpenMlsWorkspaceActionResultJsonFn
       m_publishOpenMlsDeviceKeyPackageJson = nullptr;
   RuntimeOpenMlsWorkspaceActionResultJsonFn m_createOpenMlsWorkspaceGroupJson =

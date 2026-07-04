@@ -659,6 +659,46 @@ pub unsafe extern "C" fn chaft_runtime_publish_peer_endpoint_result_json(
         is_backup_peer,
         has_expires_at_ms,
         expires_at_ms,
+        replica_storage_class: std::ptr::null(),
+        replica_retention_hint: std::ptr::null(),
+    });
+    into_c_string(&result)
+}
+
+/// Publishes a signed peer endpoint hint with optional replica capability
+/// metadata for this workspace member.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file`,
+/// `replica_storage_class`, and `replica_retention_hint` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    endpoint_id: *const c_char,
+    endpoint: *const c_char,
+    transport: *const c_char,
+    is_backup_peer: bool,
+    has_expires_at_ms: bool,
+    expires_at_ms: i64,
+    replica_storage_class: *const c_char,
+    replica_retention_hint: *const c_char,
+) -> *mut c_char {
+    let result = runtime_publish_peer_endpoint_result(PeerEndpointFfiArgs {
+        data_dir,
+        identity_file,
+        workspace_id,
+        endpoint_id,
+        endpoint,
+        transport,
+        is_backup_peer,
+        has_expires_at_ms,
+        expires_at_ms,
+        replica_storage_class,
+        replica_retention_hint,
     });
     into_c_string(&result)
 }

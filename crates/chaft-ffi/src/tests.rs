@@ -572,6 +572,48 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
             )
         }),
     );
+    let peer_endpoint_id = CString::new("contract-desktop").unwrap();
+    let peer_endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let peer_transport = CString::new("direct-tcp").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_publish_peer_endpoint_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_publish_peer_endpoint_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                peer_endpoint_id.as_ptr(),
+                peer_endpoint.as_ptr(),
+                peer_transport.as_ptr(),
+                true,
+                false,
+                0,
+            )
+        }),
+    );
+    let capability_endpoint_id = CString::new("contract-replica").unwrap();
+    let replica_storage_class = CString::new("full_history_with_blobs").unwrap();
+    let replica_retention_hint = CString::new("30d").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                capability_endpoint_id.as_ptr(),
+                peer_endpoint.as_ptr(),
+                peer_transport.as_ptr(),
+                true,
+                false,
+                0,
+                replica_storage_class.as_ptr(),
+                replica_retention_hint.as_ptr(),
+            )
+        }),
+    );
     let unsupported_peer = CString::new("central://example.invalid").unwrap();
     insert_contract_shape(
         &mut contract,
@@ -2801,6 +2843,8 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
     assert_eq!(peer_endpoint["value"]["transport"], "direct-tcp");
     assert_eq!(peer_endpoint["value"]["isBackupPeer"], true);
     assert_eq!(peer_endpoint["value"]["expiresAtMs"], 1_700_000_600_000_i64);
+    assert_eq!(peer_endpoint["value"]["replicaStorageClass"], Value::Null);
+    assert_eq!(peer_endpoint["value"]["replicaRetentionHint"], Value::Null);
 
     let openmls_key_package_json = unsafe {
         take_ffi_string(
@@ -3214,6 +3258,14 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
         peer_endpoint["value"]["endpoint"]
     );
     assert_eq!(snapshot["value"]["peerEndpoints"][0]["isBackupPeer"], true);
+    assert_eq!(
+        snapshot["value"]["peerEndpoints"][0]["replicaStorageClass"],
+        Value::Null
+    );
+    assert_eq!(
+        snapshot["value"]["peerEndpoints"][0]["replicaRetentionHint"],
+        Value::Null
+    );
     assert_eq!(snapshot["value"]["timeline"][0]["reactions"]["+1"], 1);
     assert_eq!(
         snapshot["value"]["timeline"][0]["myReactions"],
@@ -3364,6 +3416,93 @@ fn runtime_publish_peer_endpoint_ffi_rejects_invalid_hint_policy_before_append()
         .unwrap()
         .len();
     assert_eq!(after_event_count, before_event_count);
+}
+
+#[test]
+fn runtime_publish_peer_endpoint_ffi_accepts_replica_capability_metadata() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+    let created = runtime
+        .create_workspace("Chaft FFI Replica Capability", "general")
+        .unwrap();
+    drop(runtime);
+
+    let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_id = CString::new(created.workspace_id.clone()).unwrap();
+    let endpoint_id = CString::new("desktop-replica").unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let transport = CString::new("direct-tcp").unwrap();
+    let storage_class = CString::new("full-history-with-blobs").unwrap();
+    let retention_hint = CString::new(" 30d ").unwrap();
+
+    let published_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id.as_ptr(),
+                endpoint_id.as_ptr(),
+                endpoint.as_ptr(),
+                transport.as_ptr(),
+                true,
+                true,
+                1_700_000_600_000,
+                storage_class.as_ptr(),
+                retention_hint.as_ptr(),
+            ),
+        )
+    };
+    let published = serde_json::from_str::<Value>(&published_json).unwrap();
+    assert_eq!(published["ok"], true);
+    assert_eq!(published["value"]["endpointId"], "desktop-replica");
+    assert_eq!(
+        published["value"]["replicaStorageClass"],
+        "full_history_with_blobs"
+    );
+    assert_eq!(published["value"]["replicaRetentionHint"], "30d");
+
+    let snapshot_json = unsafe {
+        take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+        ))
+    };
+    let snapshot = serde_json::from_str::<Value>(&snapshot_json).unwrap();
+    assert_eq!(snapshot["ok"], true);
+    assert_eq!(
+        snapshot["value"]["peerEndpoints"][0]["replicaStorageClass"],
+        "full_history_with_blobs"
+    );
+    assert_eq!(
+        snapshot["value"]["peerEndpoints"][0]["replicaRetentionHint"],
+        "30d"
+    );
+
+    let unsupported_class = CString::new("central-server").unwrap();
+    let rejected_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id.as_ptr(),
+                endpoint_id.as_ptr(),
+                endpoint.as_ptr(),
+                transport.as_ptr(),
+                true,
+                false,
+                0,
+                unsupported_class.as_ptr(),
+                std::ptr::null(),
+            ),
+        )
+    };
+    let rejected = serde_json::from_str::<Value>(&rejected_json).unwrap();
+    assert_eq!(rejected["ok"], false);
+    assert_eq!(
+        rejected["error"]["code"],
+        "replica_storage_class_unsupported"
+    );
 }
 
 #[test]

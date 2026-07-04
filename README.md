@@ -452,9 +452,9 @@ can use the displayed endpoint as their peer endpoint for pull, push, or sync.
 After a host starts, the desktop publishes that endpoint as a signed workspace
 hint with a short expiry, refreshes it while hosting, and publishes an immediate
 expiry update on toolbar Stop or best-effort normal desktop shutdown. Saving a
-backup peer in the desktop also publishes an `isBackupPeer` hint. The runtime
-and CLI expose the same signed peer-endpoint path, including optional
-`replicaStorageClass` and `replicaRetentionHint` fields, so newly synced
+backup peer in the desktop also publishes an `isBackupPeer` hint. The runtime,
+CLI, and desktop FFI expose the same signed peer-endpoint path, including
+optional `replicaStorageClass` and `replicaRetentionHint` fields, so newly synced
 profiles can discover operator-approved endpoints and their advertised storage
 intent from the replicated log instead of relying only on out-of-band notes.
 Direct TCP and Iroh host start/stop bind and close peer threads on background Qt

@@ -425,6 +425,38 @@
       }
     }
   },
+  "chaft_runtime_publish_peer_endpoint_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "deviceId": "string",
+      "endpoint": "string",
+      "endpointId": "string",
+      "eventId": "string",
+      "expiresAtMs": "null",
+      "isBackupPeer": "bool",
+      "replicaRetentionHint": "null",
+      "replicaStorageClass": "null",
+      "transport": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_publish_peer_endpoint_with_replica_capability_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "deviceId": "string",
+      "endpoint": "string",
+      "endpointId": "string",
+      "eventId": "string",
+      "expiresAtMs": "null",
+      "isBackupPeer": "bool",
+      "replicaRetentionHint": "string",
+      "replicaStorageClass": "string",
+      "transport": "string",
+      "workspaceId": "string"
+    }
+  },
   "chaft_runtime_publish_workspace_direct_result_json.error": {
     "error": {
       "code": "string",
