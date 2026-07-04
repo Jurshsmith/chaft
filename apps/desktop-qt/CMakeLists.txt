@@ -53,6 +53,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/WorkspaceRailItem.qml
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml
+        qml/Chaft/features/inspector/ChannelMediaPanel.qml
 )
 
 if(APPLE)

@@ -3915,56 +3915,16 @@ ApplicationWindow {
                             color: Tokens.borderSubtle
                         }
 
-                        RowLayout {
+                        ChannelMediaPanel {
                             Layout.fillWidth: true
-                            spacing: 8
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Media"
-                                color: Tokens.textStrong
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
+                            attachments: root.channelAttachments
+                            recentAttachments: root.recentChannelAttachments
+                            runtimeReady: root.runtimeWorkReady
+                            onSaveRequested: function(messageId, attachment) {
+                                root.openSaveAttachmentDialog(messageId, attachment)
                             }
-
-                            Text {
-                                text: String(root.channelAttachments.length)
-                                color: Tokens.textMuted
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
-                            }
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            visible: root.channelAttachments.length === 0
-                            text: "No channel files"
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                        }
-
-                        ListView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.min(210, contentHeight)
-                            visible: root.channelAttachments.length > 0
-                            clip: true
-                            interactive: contentHeight > height
-                            spacing: 6
-                            model: root.recentChannelAttachments
-
-                            delegate: AttachmentRow {
-                                width: ListView.view.width
-                                attachment: modelData
-                                detailText: root.attachmentDetailLabel(modelData)
-                                selector: root.attachmentSelectorFor(modelData)
-                                runtimeReady: root.runtimeWorkReady
-                                onSaveRequested: function(messageId, attachment) {
-                                    root.openSaveAttachmentDialog(messageId, attachment)
-                                }
-                                onCopyRequested: function(attachment) {
-                                    root.copyAttachmentSelector(attachment)
-                                }
+                            onCopyRequested: function(attachment) {
+                                root.copyAttachmentSelector(attachment)
                             }
                         }
 
