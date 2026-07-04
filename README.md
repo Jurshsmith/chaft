@@ -218,7 +218,7 @@ cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json device-id
 cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json --identity-passphrase "<private passphrase>" device-id
 cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json sample-event
 cargo run -p chaft-node -- --data-dir ./scratch/node
-cargo run -p chaft-node -- --data-dir ./scratch/node serve --listen 127.0.0.1:7777
+cargo run -p chaft-node -- --data-dir ./scratch/node serve --listen 127.0.0.1:7777 --max-active-connections 128
 cargo run -p chaft-node -- --data-dir ./scratch/node serve-iroh
 cargo run -p chaft-cli -- --data-dir ./scratch/app export-trust-snapshot --workspace-id <workspace-id> > ./scratch/trust-snapshot.json
 cargo run -p chaft-cli -- --data-dir ./scratch/app publish-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777
@@ -228,7 +228,7 @@ cargo run -p chaft-cli -- --data-dir ./scratch/app publish-event-with-trust-snap
 cargo run -p chaft-cli -- --data-dir ./scratch/app storage-health --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app repair-storage-metadata --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app pull-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777
-cargo run -p chaft-node -- --data-dir ./scratch/backup mirror-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777 --listen 127.0.0.1:7778 --once
+cargo run -p chaft-node -- --data-dir ./scratch/backup mirror-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777 --listen 127.0.0.1:7778 --max-active-connections 128 --once
 cargo run -p chaft-node -- --data-dir ./scratch/backup mirror-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777 --listen-iroh --once
 cargo run -p chaft-node -- --data-dir ./scratch/backup status
 cargo run -p chaft-node -- --data-dir ./scratch/backup status --json --require-healthy --max-age-seconds 120
@@ -747,6 +747,9 @@ store as a native Iroh QUIC peer and prints the `iroh://...` endpoint. A node ca
 also serve its current encrypted store directly with `serve-iroh`. Its outbound
 peers accept bare `host:port`, `tcp://host:port`, `direct+tcp://host:port`, and
 native `iroh://<endpoint-id>?addr=<host:port>` through the policy-aware bridge.
+Direct TCP serving defaults to 256 active connections and `--max-active-connections`
+can lower or raise that limit for both `serve` and `mirror-workspace --listen`;
+zero is rejected before the node starts hosting.
 The `--workspace-id` argument is trimmed, rejected when blank, and capped at
 128 bytes before the node opens its event/blob stores or starts a hosted mirror.
 The node also rejects blank or over-64 KiB `--data-dir` paths and rejects derived

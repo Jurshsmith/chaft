@@ -182,7 +182,16 @@ impl DirectPeerServer {
         &self,
         shutdown: oneshot::Receiver<()>,
     ) -> Result<(), NetError> {
-        self.serve_until_shutdown_with_connection_limit(shutdown, MAX_ACTIVE_DIRECT_CONNECTIONS)
+        self.serve_until_shutdown_with_max_connections(shutdown, MAX_ACTIVE_DIRECT_CONNECTIONS)
+            .await
+    }
+
+    pub async fn serve_until_shutdown_with_max_connections(
+        &self,
+        shutdown: oneshot::Receiver<()>,
+        max_active_connections: usize,
+    ) -> Result<(), NetError> {
+        self.serve_until_shutdown_with_connection_limit(shutdown, max_active_connections)
             .await
     }
 
@@ -3986,7 +3995,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server_task = tokio::spawn(async move {
             server
-                .serve_until_shutdown_with_connection_limit(shutdown_rx, 1)
+                .serve_until_shutdown_with_max_connections(shutdown_rx, 1)
                 .await
         });
 
@@ -4013,6 +4022,24 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn direct_server_rejects_zero_active_connection_limit() {
+        let store = EventStore::open_in_memory().unwrap();
+        let server = DirectPeerServer::bind("127.0.0.1:0", store).await.unwrap();
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        let error = server
+            .serve_until_shutdown_with_max_connections(shutdown_rx, 0)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("connection limit must be greater than zero")
+        );
     }
 
     #[test]

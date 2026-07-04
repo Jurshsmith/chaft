@@ -17,7 +17,9 @@ use chaft_media::BlobStore;
 use chaft_net::{ChaftTransport, PeerAddress, PeerId};
 #[cfg(test)]
 use chaft_net_direct::DirectTransport;
-use chaft_net_direct::{BlobSyncTransport, DirectPeerServer, SyncPeerStore};
+use chaft_net_direct::{
+    BlobSyncTransport, DirectPeerServer, MAX_ACTIVE_DIRECT_CONNECTIONS, SyncPeerStore,
+};
 use chaft_net_iroh::{IrohSyncPeer, IrohTransport, IrohTransportConfig};
 use chaft_store::{EventStore, WorkspaceEventStorageHealth, WorkspaceEventStorageRepair};
 use chaft_sync::pull_workspace_from_peer_with_inventory;
@@ -63,6 +65,9 @@ enum Command {
 
         #[arg(long, help = "Serve a single direct TCP connection, then exit")]
         once: bool,
+
+        #[arg(long, default_value_t = MAX_ACTIVE_DIRECT_CONNECTIONS)]
+        max_active_connections: usize,
     },
     #[command(about = "Serve this node's encrypted event/blob store over native Iroh QUIC")]
     ServeIroh,
@@ -84,6 +89,9 @@ enum Command {
 
         #[arg(long, help = "Also serve the mirrored store over native Iroh QUIC")]
         listen_iroh: bool,
+
+        #[arg(long, default_value_t = MAX_ACTIVE_DIRECT_CONNECTIONS)]
+        max_active_connections: usize,
 
         #[arg(long, default_value_t = 60)]
         interval_seconds: u64,
@@ -142,8 +150,14 @@ async fn main() -> Result<()> {
     let blob_path = checked_node_child_path(&data_dir, "blobs", "blob store path")?;
 
     match args.command {
-        Some(Command::Serve { listen, once }) => {
+        Some(Command::Serve {
+            listen,
+            once,
+            max_active_connections,
+        }) => {
             let listen = normalize_listen_endpoint(listen, "listen endpoint")?;
+            let max_active_connections =
+                max_active_connections_arg(max_active_connections, "max active connections")?;
             let (store, blob_store) =
                 open_node_store_with_blobs(&data_dir, &store_path, &blob_path)?;
             let server = DirectPeerServer::bind_with_blobs(&listen, store, blob_store).await?;
@@ -161,7 +175,9 @@ async fn main() -> Result<()> {
                     let _ = tokio::signal::ctrl_c().await;
                     let _ = shutdown_tx.send(());
                 });
-                server.serve_until_shutdown(shutdown_rx).await?;
+                server
+                    .serve_until_shutdown_with_max_connections(shutdown_rx, max_active_connections)
+                    .await?;
             }
         }
         Some(Command::ServeIroh) => {
@@ -183,6 +199,7 @@ async fn main() -> Result<()> {
             peers,
             listen,
             listen_iroh,
+            max_active_connections,
             interval_seconds,
             status_file,
             once,
@@ -191,6 +208,10 @@ async fn main() -> Result<()> {
             let workspace_id = workspace_id_arg(workspace_id)?;
             let configured_peers = mirror_peer_addresses(peers)?;
             let listen = normalize_mirror_listen_options(listen, listen_iroh)?;
+            let max_active_connections = max_active_connections_arg(
+                max_active_connections,
+                "mirror max active connections",
+            )?;
             let status_file = mirror_status_file_path(&data_dir, status_file)?;
             let (store, blob_store) =
                 open_node_store_with_blobs(&data_dir, &store_path, &blob_path)?;
@@ -199,6 +220,7 @@ async fn main() -> Result<()> {
                 listen_iroh,
                 store_path.as_path(),
                 blob_path.as_path(),
+                max_active_connections,
             )
             .await?;
             let mirror_options =
@@ -389,11 +411,19 @@ fn normalize_mirror_listen_options(
         .transpose()
 }
 
+fn max_active_connections_arg(value: usize, label: &str) -> Result<usize> {
+    if value == 0 {
+        bail!("{label} must be greater than zero");
+    }
+    Ok(value)
+}
+
 async fn start_mirror_server(
     listen: Option<String>,
     listen_iroh: bool,
     store_path: &Path,
     blob_path: &Path,
+    max_active_connections: usize,
 ) -> Result<Option<HostedMirrorServer>> {
     if listen.is_some() && listen_iroh {
         bail!("use either --listen for direct TCP or --listen-iroh for native Iroh, not both");
@@ -422,6 +452,8 @@ async fn start_mirror_server(
         return Ok(None);
     };
     let listen = normalize_listen_endpoint(listen, "mirror listen endpoint")?;
+    let max_active_connections =
+        max_active_connections_arg(max_active_connections, "mirror max active connections")?;
     validate_node_path(store_path, "event store path")?;
     validate_node_path(blob_path, "blob store path")?;
 
@@ -435,7 +467,11 @@ async fn start_mirror_server(
         store_path.display()
     );
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let task = tokio::spawn(async move { server.serve_until_shutdown(shutdown_rx).await });
+    let task = tokio::spawn(async move {
+        server
+            .serve_until_shutdown_with_max_connections(shutdown_rx, max_active_connections)
+            .await
+    });
 
     Ok(Some(HostedMirrorServer {
         endpoint: local_addr,
@@ -3226,6 +3262,7 @@ mod tests {
             false,
             &node_store_path,
             &node_blob_path,
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
         )
         .await
         .unwrap()
@@ -3280,10 +3317,16 @@ mod tests {
         let node_blob_path = node_dir.path().join("blobs");
         let node_store = EventStore::open(&node_store_path).unwrap();
         let node_blob_store = BlobStore::open(&node_blob_path).unwrap();
-        let hosted = start_mirror_server(None, true, &node_store_path, &node_blob_path)
-            .await
-            .unwrap()
-            .unwrap();
+        let hosted = start_mirror_server(
+            None,
+            true,
+            &node_store_path,
+            &node_blob_path,
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
         mirror_workspace(
             node_store,
@@ -3322,6 +3365,7 @@ mod tests {
             true,
             &node_store_path,
             &node_blob_path,
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
         )
         .await
         {
@@ -3364,6 +3408,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn max_active_connections_arg_rejects_zero() {
+        assert_eq!(
+            max_active_connections_arg(1, "max active connections").unwrap(),
+            1
+        );
+        let error = max_active_connections_arg(0, "max active connections").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("max active connections must be greater than zero")
+        );
+    }
+
+    #[tokio::test]
+    async fn mirror_server_rejects_zero_direct_connection_limit_before_storage_open() {
+        let node_dir = tempfile::tempdir().unwrap();
+        let oversized_store_path = PathBuf::from("e".repeat(NODE_PATH_MAX_BYTES + 1));
+        let error = match start_mirror_server(
+            Some("127.0.0.1:0".to_owned()),
+            false,
+            &oversized_store_path,
+            &node_dir.path().join("blobs"),
+            0,
+        )
+        .await
+        {
+            Ok(_) => panic!("expected zero connection limit to fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("mirror max active connections must be greater than zero")
+        );
+        assert!(!node_dir.path().join("blobs").exists());
+    }
+
     #[tokio::test]
     async fn mirror_server_rejects_oversized_direct_listen_endpoint() {
         let node_dir = tempfile::tempdir().unwrap();
@@ -3374,6 +3458,7 @@ mod tests {
             false,
             &node_store_path,
             &node_blob_path,
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
         )
         .await
         {
@@ -3398,6 +3483,7 @@ mod tests {
             false,
             &oversized_store_path,
             &node_dir.path().join("blobs"),
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
         )
         .await
         {
@@ -3409,6 +3495,7 @@ mod tests {
             true,
             &node_dir.path().join("events.db"),
             &oversized_blob_path,
+            MAX_ACTIVE_DIRECT_CONNECTIONS,
         )
         .await
         {
@@ -3445,6 +3532,7 @@ mod tests {
                 false,
                 &node_store_path,
                 &node_blob_path,
+                MAX_ACTIVE_DIRECT_CONNECTIONS,
             )
             .await
             {
