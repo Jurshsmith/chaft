@@ -4033,6 +4033,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_blobs_splits_batch_after_bounded_oversized_response_error() {
+        let first = b"first bounded blob".to_vec();
+        let second = b"second bounded blob".to_vec();
+        let first_hash = blob_hash(&first);
+        let second_hash = blob_hash(&second);
+        let blob_by_hash = HashMap::from([
+            (first_hash.clone(), first.clone()),
+            (second_hash.clone(), second.clone()),
+        ]);
+        let request_sizes = Arc::new(Mutex::new(Vec::new()));
+        let server_request_sizes = Arc::clone(&request_sizes);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = PeerAddress {
+            peer_id: PeerId("split-blob-fetch-bounded-error".to_owned()),
+            endpoint: listener.local_addr().unwrap().to_string(),
+        };
+        let server_task = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request_len = stream.read_u32().await.unwrap() as usize;
+                let mut request_bytes = vec![0; request_len];
+                stream.read_exact(&mut request_bytes).await.unwrap();
+                let request = decode_sync_request(&request_bytes).unwrap();
+                server_request_sizes
+                    .lock()
+                    .unwrap()
+                    .push(request.blob_hashes.len());
+
+                let response = if request.blob_hashes.len() > 1 {
+                    sync_error_response(oversized_sync_response_error(
+                        "fetch-blobs",
+                        MAX_FRAME_LEN + 1,
+                    ))
+                } else {
+                    let blobs = request
+                        .blob_hashes
+                        .iter()
+                        .filter_map(|hash| {
+                            blob_by_hash.get(hash).map(|bytes| WireBlobEnvelope {
+                                hash: hash.clone(),
+                                bytes: bytes.clone(),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    WireSyncResponse {
+                        event_ids: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                        blobs,
+                        blob_descriptors: Vec::new(),
+                        blob_availability: Vec::new(),
+                        event_envelopes: Vec::new(),
+                        inventory_total_count: None,
+                    }
+                };
+                let response = encode_sync_response(&response);
+                stream.write_u32(response.len() as u32).await.unwrap();
+                stream.write_all(&response).await.unwrap();
+            }
+        });
+
+        let fetched = DirectTransport
+            .fetch_blobs(&peer, vec![first_hash.clone(), second_hash.clone()])
+            .await
+            .unwrap();
+
+        server_task.await.unwrap();
+        assert_eq!(fetched.get(&first_hash), Some(&first));
+        assert_eq!(fetched.get(&second_hash), Some(&second));
+        assert_eq!(*request_sizes.lock().unwrap(), vec![2, 1, 1]);
+    }
+
+    #[tokio::test]
     async fn fetch_blobs_rejects_non_canonical_hash_before_network() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = listener.local_addr().unwrap().to_string();
