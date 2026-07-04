@@ -4192,76 +4192,22 @@ ApplicationWindow {
                             spacing: 6
                             model: root.keyPackages
 
-                            delegate: Rectangle {
+                            delegate: KeyPackageRow {
+                                id: keyPackageRowDelegate
+                                required property var modelData
+
                                 width: ListView.view.width
-                                height: root.selectedChannelPrivate ? 96 : 76
-                                radius: Tokens.radiusSm
-                                color: Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 5
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 2
-
-                                            Text {
-                                                Layout.fillWidth: true
-                                                text: String(modelData.deviceId || "")
-                                                color: Tokens.textStrong
-                                                font.pixelSize: 12
-                                                font.weight: Font.DemiBold
-                                                elide: Text.ElideMiddle
-                                            }
-
-                                            Text {
-                                                Layout.fillWidth: true
-                                                text: String(modelData.keyPackageId || "")
-                                                color: Tokens.textMuted
-                                                font.pixelSize: 10
-                                                elide: Text.ElideMiddle
-                                            }
-                                        }
-
-                                        Text {
-                                            text: root.isOpenMlsKeyPackage(modelData) ? "OpenMLS" : "Key"
-                                            color: Tokens.textMuted
-                                            font.pixelSize: 11
-                                            font.weight: Font.DemiBold
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-
-                                        Button {
-                                            Layout.fillWidth: true
-                                            text: "Workspace MLS"
-                                            enabled: root.runtimeWorkReady
-                                                && root.isOpenMlsKeyPackage(modelData)
-                                                && String(modelData.keyPackageId || "").length > 0
-                                            onClicked: chaftController.addOpenMlsWorkspaceGroupMember(modelData.keyPackageId)
-                                        }
-
-                                        Button {
-                                            Layout.fillWidth: true
-                                            visible: root.selectedChannelPrivate
-                                            text: "Channel MLS"
-                                            enabled: root.runtimeWorkReady
-                                                && root.isOpenMlsKeyPackage(modelData)
-                                                && root.selectedChannelKey.length > 0
-                                                && String(modelData.keyPackageId || "").length > 0
-                                            onClicked: chaftController.addOpenMlsChannelGroupMember(root.selectedChannelKey, modelData.keyPackageId)
-                                        }
-                                    }
+                                deviceId: String(keyPackageRowDelegate.modelData.deviceId || "")
+                                keyPackageId: String(keyPackageRowDelegate.modelData.keyPackageId || "")
+                                openMls: root.isOpenMlsKeyPackage(keyPackageRowDelegate.modelData)
+                                runtimeReady: root.runtimeWorkReady
+                                privateChannelSelected: root.selectedChannelPrivate
+                                selectedChannelId: root.selectedChannelKey
+                                onWorkspaceMlsRequested: function (keyPackageId) {
+                                    chaftController.addOpenMlsWorkspaceGroupMember(keyPackageId)
+                                }
+                                onChannelMlsRequested: function (channelId, keyPackageId) {
+                                    chaftController.addOpenMlsChannelGroupMember(channelId, keyPackageId)
                                 }
                             }
                         }
