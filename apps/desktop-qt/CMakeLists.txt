@@ -59,6 +59,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/StatusChip.qml
         qml/Chaft/components/TimelineActionChip.qml
         qml/Chaft/components/TimelineAttachmentChip.qml
+        qml/Chaft/components/TimelineEncryptedBadge.qml
         qml/Chaft/components/TimelineOverflowChip.qml
         qml/Chaft/components/TimelineQuickReactionChip.qml
         qml/Chaft/components/TimelineReactionChip.qml

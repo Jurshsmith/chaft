@@ -574,20 +574,10 @@ ListView {
                         elide: Text.ElideRight
                     }
 
-                    Rectangle {
-                        visible: row.modelData.encrypted
+                    TimelineEncryptedBadge {
                         Layout.preferredHeight: 22
                         Layout.preferredWidth: 74
-                        radius: Tokens.radiusSm
-                        color: Tokens.secureSurface
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Encrypted"
-                            color: Tokens.secure
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
+                        encrypted: row.modelData.encrypted
                     }
 
                     TimelineRepairChip {
