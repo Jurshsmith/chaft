@@ -35,6 +35,39 @@ fn sealed_payload() -> SealedPayload {
     }
 }
 
+fn actual_ffi_export_symbols() -> Vec<&'static str> {
+    let mut symbols = Vec::new();
+    let mut previous_nonempty = "";
+
+    for line in include_str!("lib.rs").lines() {
+        let trimmed = line.trim();
+        if let Some(index) = trimmed.find("extern \"C\" fn ") {
+            if previous_nonempty == "#[unsafe(no_mangle)]" {
+                let name = trimmed[index + "extern \"C\" fn ".len()..]
+                    .split_once('(')
+                    .map(|(name, _)| name)
+                    .unwrap_or("");
+                if name.starts_with("chaft_") {
+                    symbols.push(name);
+                }
+            }
+        }
+        if !trimmed.is_empty() {
+            previous_nonempty = trimmed;
+        }
+    }
+
+    symbols
+}
+
+fn contracted_ffi_export_symbols() -> Vec<&'static str> {
+    include_str!("../ffi-exports.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
+}
+
 fn sample_strings(prefix: &str, count: usize) -> Vec<String> {
     (0..count)
         .map(|index| format!("{prefix}_{index:03}"))
@@ -263,6 +296,15 @@ fn version_is_static_c_string() {
         .unwrap();
 
     assert_eq!(version, "0.1.0");
+}
+
+#[test]
+fn ffi_export_contract_matches_declared_symbols() {
+    assert_eq!(
+        actual_ffi_export_symbols(),
+        contracted_ffi_export_symbols(),
+        "update crates/chaft-ffi/ffi-exports.txt for intentional desktop ABI changes"
+    );
 }
 
 #[test]
