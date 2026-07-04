@@ -2602,6 +2602,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_iroh_fetch_blobs_splits_after_bounded_oversized_response_error() {
+        let first = b"first native bounded blob".to_vec();
+        let second = b"second native bounded blob".to_vec();
+        let first_hash = blob_hash(&first);
+        let second_hash = blob_hash(&second);
+        let blob_by_hash = HashMap::from([
+            (first_hash.clone(), first.clone()),
+            (second_hash.clone(), second.clone()),
+        ]);
+        let request_sizes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server_request_sizes = Arc::clone(&request_sizes);
+        let server_endpoint = bind_native_endpoint(&IrohTransportConfig::default())
+            .await
+            .unwrap();
+        let peer_endpoint = native_endpoint_url(&server_endpoint);
+        let accept_endpoint = server_endpoint.clone();
+        let (done_tx, done_rx) = oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let incoming = accept_endpoint.accept().await.unwrap();
+            let mut accepting = incoming.accept().unwrap();
+            let alpn = accepting.alpn().await.unwrap();
+            assert_eq!(alpn, CHAFT_SYNC_ALPN);
+            let connection = accepting.await.unwrap();
+
+            for _ in 0..3 {
+                let (send, recv) = connection.accept_bi().await.unwrap();
+                let mut stream = IrohBiStream::new(send, recv);
+                let request = read_native_test_request(&mut stream).await;
+                assert_eq!(request.kind, WireSyncRequestKind::FetchBlobs as i32);
+                server_request_sizes
+                    .lock()
+                    .unwrap()
+                    .push(request.blob_hashes.len());
+
+                let response = if request.blob_hashes.len() > 1 {
+                    WireSyncResponse {
+                        event_ids: Vec::new(),
+                        events: Vec::new(),
+                        error: Some(format!(
+                            "fetch-blobs response frame length {} exceeds max {}",
+                            MAX_FRAME_LEN + 1,
+                            MAX_FRAME_LEN
+                        )),
+                        blobs: Vec::new(),
+                        blob_descriptors: Vec::new(),
+                        blob_availability: Vec::new(),
+                        event_envelopes: Vec::new(),
+                        inventory_total_count: None,
+                    }
+                } else {
+                    let blobs = request
+                        .blob_hashes
+                        .iter()
+                        .filter_map(|hash| {
+                            blob_by_hash.get(hash).map(|bytes| WireBlobEnvelope {
+                                hash: hash.clone(),
+                                bytes: bytes.clone(),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    WireSyncResponse {
+                        event_ids: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                        blobs,
+                        blob_descriptors: Vec::new(),
+                        blob_availability: Vec::new(),
+                        event_envelopes: Vec::new(),
+                        inventory_total_count: None,
+                    }
+                };
+                write_native_test_response(&mut stream, response).await;
+            }
+            let _ = done_rx.await;
+        });
+        let peer = PeerAddress {
+            peer_id: PeerId("native-split-bounded-blob-fetch".to_owned()),
+            endpoint: peer_endpoint,
+        };
+        let transport = IrohTransport::default();
+
+        let fetched = transport
+            .fetch_blobs(&peer, vec![first_hash.clone(), second_hash.clone()])
+            .await
+            .unwrap();
+
+        let _ = done_tx.send(());
+        server_task.await.unwrap();
+        server_endpoint.close().await;
+        assert_eq!(fetched.get(&first_hash), Some(&first));
+        assert_eq!(fetched.get(&second_hash), Some(&second));
+        assert_eq!(*request_sizes.lock().unwrap(), vec![2, 1, 1]);
+    }
+
+    #[tokio::test]
     async fn native_iroh_rejects_chunked_fetch_when_manifest_lies_about_chunk_lengths() {
         let tempdir = tempfile::tempdir().unwrap();
         let blob_store = BlobStore::open(tempdir.path()).unwrap();
