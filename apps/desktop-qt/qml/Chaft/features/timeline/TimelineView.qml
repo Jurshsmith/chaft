@@ -657,26 +657,10 @@ ListView {
                         }
                     }
 
-                    Rectangle {
-                        id: attachmentOverflowChip
-                        readonly property string overflowLabel: root.attachmentOverflowLabel(row.modelData)
-                        visible: overflowLabel.length > 0
-                        width: Math.min(160, Math.max(78, attachmentOverflowText.implicitWidth + 18))
-                        height: 24
-                        radius: Tokens.radiusSm
-                        color: Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            id: attachmentOverflowText
-                            anchors.centerIn: parent
-                            width: parent.width - 14
-                            text: attachmentOverflowChip.overflowLabel
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
+                    TimelineOverflowChip {
+                        label: root.attachmentOverflowLabel(row.modelData)
+                        minimumWidth: 78
+                        maximumWidth: 160
                     }
 
                     Repeater {
@@ -699,26 +683,10 @@ ListView {
                         }
                     }
 
-                    Rectangle {
-                        id: reactionOverflowChip
-                        readonly property string overflowLabel: root.reactionOverflowLabel(row.modelData)
-                        visible: overflowLabel.length > 0
-                        width: Math.min(170, Math.max(92, reactionOverflowText.implicitWidth + 18))
-                        height: 24
-                        radius: Tokens.radiusSm
-                        color: Tokens.surfaceRaised
-                        border.color: Tokens.borderSubtle
-
-                        Text {
-                            id: reactionOverflowText
-                            anchors.centerIn: parent
-                            width: parent.width - 14
-                            text: reactionOverflowChip.overflowLabel
-                            color: Tokens.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
+                    TimelineOverflowChip {
+                        label: root.reactionOverflowLabel(row.modelData)
+                        minimumWidth: 92
+                        maximumWidth: 170
                     }
 
                     Repeater {

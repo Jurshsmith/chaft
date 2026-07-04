@@ -12,6 +12,7 @@ SidebarItem 1.0 components/SidebarItem.qml
 StatusChip 1.0 components/StatusChip.qml
 TimelineActionChip 1.0 components/TimelineActionChip.qml
 TimelineAttachmentChip 1.0 components/TimelineAttachmentChip.qml
+TimelineOverflowChip 1.0 components/TimelineOverflowChip.qml
 TimelineQuickReactionChip 1.0 components/TimelineQuickReactionChip.qml
 TimelineReactionChip 1.0 components/TimelineReactionChip.qml
 TimelineRepairChip 1.0 components/TimelineRepairChip.qml
