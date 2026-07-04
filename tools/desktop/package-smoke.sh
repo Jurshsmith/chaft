@@ -92,12 +92,20 @@ created_json="$smoke_dir/created.json"
 
 workspace_id="$(json_field "$created_json" workspaceId)"
 channel_id="$(json_field "$created_json" channelId)"
-expected_text="package smoke hello"
+parent_text="package smoke parent"
+expected_text="package smoke reply"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$channel_id" \
-  --text "$expected_text" > "$smoke_dir/message.json"
+  --text "$parent_text" > "$smoke_dir/parent-message.json"
+parent_message_id="$(json_field "$smoke_dir/parent-message.json" messageId)"
+
+"$cli_bin" --data-dir "$runtime_dir" send-message \
+  --workspace-id "$workspace_id" \
+  --channel-id "$channel_id" \
+  --reply-to "$parent_message_id" \
+  --text "$expected_text" > "$smoke_dir/reply-message.json"
 
 case "$(uname -s)" in
   Linux)

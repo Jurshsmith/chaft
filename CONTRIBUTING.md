@@ -77,7 +77,8 @@ Use `tools/desktop/package.sh release` when you need a local distributable
 desktop artifact. The script installs the app, bundles the Rust FFI dynamic
 library, and writes platform packages under `build/desktop-release/package`.
 Use `tools/desktop/package-smoke.sh release` to also launch the installed app
-without `CHAFT_FFI_LIBRARY` and verify it can load the bundled Rust runtime.
+without `CHAFT_FFI_LIBRARY` and verify it can load the bundled Rust runtime and
+packaged QML components for reply rows.
 Generate and verify release metadata before sharing a package:
 
 ```sh
