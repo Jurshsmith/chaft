@@ -53,6 +53,7 @@ pub const MAX_ACTIVE_DIRECT_CONNECTIONS: usize = 256;
 pub const MAX_SYNC_RESPONSE_ERROR_BYTES: usize = 2 * 1024;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const FRAME_IO_TIMEOUT: Duration = Duration::from_secs(30);
+const SYNC_RESPONSE_ERROR_TRUNCATED_SUFFIX: &str = "...";
 
 #[derive(Debug, Clone, Default)]
 pub struct DirectTransport;
@@ -1515,20 +1516,40 @@ where
         .and_then(|request| handle_request(request, store, blob_store))
     {
         Ok(response) => response,
-        Err(error) => WireSyncResponse {
-            event_ids: Vec::new(),
-            events: Vec::new(),
-            error: Some(error.to_string()),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            blob_availability: Vec::new(),
-            event_envelopes: Vec::new(),
-            inventory_total_count: None,
-        },
+        Err(error) => sync_error_response(error),
     };
     write_frame(stream, &encode_sync_response(&response)).await?;
     stream.shutdown().await?;
     Ok(())
+}
+
+fn sync_error_response(error: NetError) -> WireSyncResponse {
+    WireSyncResponse {
+        event_ids: Vec::new(),
+        events: Vec::new(),
+        error: Some(bounded_sync_response_error(&error.to_string())),
+        blobs: Vec::new(),
+        blob_descriptors: Vec::new(),
+        blob_availability: Vec::new(),
+        event_envelopes: Vec::new(),
+        inventory_total_count: None,
+    }
+}
+
+fn bounded_sync_response_error(error: &str) -> String {
+    if error.len() <= MAX_SYNC_RESPONSE_ERROR_BYTES {
+        return error.to_owned();
+    }
+
+    let mut end =
+        MAX_SYNC_RESPONSE_ERROR_BYTES.saturating_sub(SYNC_RESPONSE_ERROR_TRUNCATED_SUFFIX.len());
+    while end > 0 && !error.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    let mut bounded = error[..end].to_owned();
+    bounded.push_str(SYNC_RESPONSE_ERROR_TRUNCATED_SUFFIX);
+    bounded
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2946,6 +2967,40 @@ mod tests {
         assert!(error.contains("peer error message length"));
         assert!(error.contains(&MAX_SYNC_RESPONSE_ERROR_BYTES.to_string()));
         assert!(!error.contains(&"x".repeat(128)));
+    }
+
+    #[test]
+    fn sync_error_response_bounds_outbound_error_message() {
+        let message = "x".repeat(MAX_SYNC_RESPONSE_ERROR_BYTES + 128);
+
+        let response = sync_error_response(NetError::Protocol(message));
+        let error = response.error.unwrap();
+
+        assert_eq!(error.len(), MAX_SYNC_RESPONSE_ERROR_BYTES);
+        assert!(error.ends_with(SYNC_RESPONSE_ERROR_TRUNCATED_SUFFIX));
+        assert!(response.event_ids.is_empty());
+        assert!(response.event_envelopes.is_empty());
+        assert!(response.blobs.is_empty());
+        assert!(response.inventory_total_count.is_none());
+    }
+
+    #[test]
+    fn bounded_sync_response_error_preserves_utf8_boundaries() {
+        let message =
+            "protocol error: ".to_owned() + &"é".repeat(MAX_SYNC_RESPONSE_ERROR_BYTES) + "tail";
+
+        let error = bounded_sync_response_error(&message);
+
+        assert!(error.is_char_boundary(error.len()));
+        assert!(error.len() <= MAX_SYNC_RESPONSE_ERROR_BYTES);
+        assert!(error.ends_with(SYNC_RESPONSE_ERROR_TRUNCATED_SUFFIX));
+    }
+
+    #[test]
+    fn bounded_sync_response_error_leaves_bounded_message_unchanged() {
+        let message = "bounded peer request failure";
+
+        assert_eq!(bounded_sync_response_error(message), message);
     }
 
     #[tokio::test]
