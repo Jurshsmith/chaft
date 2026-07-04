@@ -2138,6 +2138,118 @@ mod tests {
         }
     }
 
+    struct ChurnyWholeBlobRepairTransport {
+        blob_hash: String,
+        failing_endpoint: String,
+        fetch_count: AtomicUsize,
+        upload_count: AtomicUsize,
+    }
+
+    impl ChurnyWholeBlobRepairTransport {
+        fn new(blob_hash: String, failing_endpoint: String) -> Self {
+            Self {
+                blob_hash,
+                failing_endpoint,
+                fetch_count: AtomicUsize::new(0),
+                upload_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn fetch_count(&self) -> usize {
+            self.fetch_count.load(AtomicOrdering::SeqCst)
+        }
+
+        fn upload_count(&self) -> usize {
+            self.upload_count.load(AtomicOrdering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ChaftTransport for ChurnyWholeBlobRepairTransport {
+        async fn connect(&self, _peer: PeerAddress) -> Result<(), NetError> {
+            Ok(())
+        }
+
+        async fn fetch_inventory(&self, _peer: &PeerAddress) -> Result<Vec<EventId>, NetError> {
+            Ok(Vec::new())
+        }
+
+        async fn publish_event(
+            &self,
+            _peer: &PeerAddress,
+            _event: SignedEvent,
+        ) -> Result<(), NetError> {
+            Err(NetError::Protocol(
+                "unexpected legacy publish in churny repair transport".to_owned(),
+            ))
+        }
+
+        async fn fetch_events(
+            &self,
+            _peer: &PeerAddress,
+            _event_ids: Vec<EventId>,
+        ) -> Result<Vec<SignedEvent>, NetError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[async_trait]
+    impl BlobSyncTransport for ChurnyWholeBlobRepairTransport {
+        async fn put_blobs(
+            &self,
+            peer: &PeerAddress,
+            blobs: Vec<Vec<u8>>,
+        ) -> Result<Vec<String>, NetError> {
+            self.upload_count.fetch_add(1, AtomicOrdering::SeqCst);
+            assert_ne!(peer.endpoint, self.failing_endpoint);
+            assert_eq!(blobs.len(), 1);
+            assert_eq!(blob_hash(&blobs[0]), self.blob_hash);
+            Ok(vec![self.blob_hash.clone()])
+        }
+
+        async fn fetch_blobs(
+            &self,
+            _peer: &PeerAddress,
+            _hashes: Vec<String>,
+        ) -> Result<HashMap<String, Vec<u8>>, NetError> {
+            Ok(HashMap::new())
+        }
+
+        async fn fetch_blob_availabilities(
+            &self,
+            peer: &PeerAddress,
+            hashes: Vec<String>,
+        ) -> Result<HashMap<String, BlobAvailability>, NetError> {
+            self.fetch_count.fetch_add(1, AtomicOrdering::SeqCst);
+            assert_eq!(hashes, vec![self.blob_hash.clone()]);
+            if peer.endpoint == self.failing_endpoint {
+                return Err(NetError::Protocol(
+                    "peer closed repair availability stream".to_owned(),
+                ));
+            }
+            Ok(HashMap::new())
+        }
+
+        async fn put_blob_chunked(
+            &self,
+            _peer: &PeerAddress,
+            _bytes: Vec<u8>,
+            _chunk_size: usize,
+        ) -> Result<BlobDescriptor, NetError> {
+            Err(NetError::Protocol(
+                "unexpected chunked blob upload in churny repair transport".to_owned(),
+            ))
+        }
+
+        async fn fetch_blob_chunked(
+            &self,
+            _peer: &PeerAddress,
+            _hash: &str,
+        ) -> Result<Option<Vec<u8>>, NetError> {
+            Ok(None)
+        }
+    }
+
     fn attachment_media_type_for_message(events: &[SignedEvent], event_id: &str) -> String {
         let event = events
             .iter()
@@ -10364,6 +10476,122 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_pending_blob_transfers_continues_after_churned_peer() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let attachment_bytes = b"repair survives churned first peer".to_vec();
+        let attachment_path = alice_dir.path().join("churned-peer-repair.bin");
+        fs::write(&attachment_path, &attachment_bytes).unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Churned Peer Blob Retry", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let channel_id = ChannelId(created.channel_id.clone());
+        let sent = alice
+            .send_message_with_attachment_file(
+                workspace_id.clone(),
+                channel_id,
+                "retry should survive churned peer",
+                &attachment_path,
+                "application/octet-stream",
+            )
+            .unwrap();
+        let alice_events = alice.workspace_events(&workspace_id).unwrap();
+        let sent_event = alice_events
+            .iter()
+            .find(|event| event.event_id.0 == sent.event_id)
+            .unwrap();
+        let EventBody::MessageCreatedEncrypted { attachments, .. } = &sent_event.event.body else {
+            panic!("expected encrypted message event");
+        };
+        let attachment = attachments[0].clone();
+        let alice_blob_store = BlobStore::open(alice.paths().blob_store.clone()).unwrap();
+        let ciphertext = alice_blob_store
+            .get_bytes(&attachment.blob_hash)
+            .unwrap()
+            .unwrap();
+        let churned_peer = PeerAddress {
+            peer_id: PeerId("churned-node".to_owned()),
+            endpoint: "127.0.0.1:7011".to_owned(),
+        };
+        let fallback_peer = PeerAddress {
+            peer_id: PeerId("fallback-node".to_owned()),
+            endpoint: "127.0.0.1:7012".to_owned(),
+        };
+        let started = alice
+            .record_blob_transfer_started(
+                &workspace_id.0,
+                &churned_peer,
+                &attachment.blob_hash,
+                BlobTransferMode::WholeBlob,
+                ciphertext.len() as u64,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap();
+        let failed = alice
+            .record_blob_transfer_finished(
+                &started,
+                BlobTransferStatus::Failed,
+                Some("churned peer".to_owned()),
+            )
+            .unwrap();
+        let transport = ChurnyWholeBlobRepairTransport::new(
+            attachment.blob_hash.clone(),
+            churned_peer.endpoint.clone(),
+        );
+
+        let retry = alice
+            .retry_pending_blob_transfers_direct(
+                &transport,
+                workspace_id,
+                &[churned_peer.clone(), fallback_peer.clone()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(transport.fetch_count(), 2);
+        assert_eq!(transport.upload_count(), 1);
+        assert_eq!(retry.pending_attempt_ids, vec![failed.attempt_id.clone()]);
+        assert_eq!(
+            retry.retried_blob_hashes,
+            vec![attachment.blob_hash.clone()]
+        );
+        assert_eq!(
+            retry.reconciled_blob_hashes,
+            vec![attachment.blob_hash.clone()]
+        );
+        assert_eq!(retry.peer_errors.len(), 1);
+        assert_eq!(retry.peer_errors[0].peer_endpoint, churned_peer.endpoint);
+        assert_eq!(retry.peer_errors[0].blob_hash, attachment.blob_hash);
+        assert!(retry.peer_errors[0].suspect_protocol_error);
+        assert_eq!(retry.blob_transfer_attempts.len(), 2);
+        let upload_attempt = retry
+            .blob_transfer_attempts
+            .iter()
+            .find(|attempt| attempt.peer_endpoint == fallback_peer.endpoint)
+            .unwrap();
+        assert_eq!(upload_attempt.status, BlobTransferStatus::Succeeded);
+        let reconciled = retry
+            .blob_transfer_attempts
+            .iter()
+            .find(|attempt| attempt.attempt_id == failed.attempt_id)
+            .unwrap();
+        assert_eq!(reconciled.status, BlobTransferStatus::Succeeded);
+        assert!(reconciled.error.is_none());
+        assert!(
+            alice
+                .blob_transfer_ledger()
+                .unwrap()
+                .entries
+                .iter()
+                .all(|attempt| attempt.status == BlobTransferStatus::Succeeded)
+        );
     }
 
     #[tokio::test]
