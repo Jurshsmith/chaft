@@ -900,19 +900,6 @@ ApplicationWindow {
         return (item && item.threadReplyPreviews) || []
     }
 
-    function threadReplyCountLabel(count) {
-        var value = Number(count || 0)
-        return value === 1 ? "1 reply" : String(value) + " replies"
-    }
-
-    function threadReplyOverflowLabel(count, previews) {
-        var hidden = Number(count || 0) - ((previews || []).length)
-        if (hidden <= 0) {
-            return ""
-        }
-        return String(hidden) + (hidden === 1 ? " older reply" : " older replies")
-    }
-
     function byteSizeLabel(byteLen) {
         var value = Number(byteLen || 0)
         if (value >= 1024 * 1024) {
