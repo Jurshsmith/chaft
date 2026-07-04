@@ -4,8 +4,9 @@ use chaft_types::{
     CHANNEL_NAME_MAX_BYTES, ChannelId, DEVICE_DISPLAY_NAME_MAX_BYTES,
     DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, DeviceId, DeviceKeyPackageId, EventBody, MessageId,
     PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES,
-    REACTION_TEXT_MAX_BYTES, SignableEvent, WORKSPACE_NAME_MAX_BYTES, WorkspaceId, WorkspaceRole,
-    peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
+    REACTION_TEXT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES, ReplicaStorageClass, SignableEvent,
+    WORKSPACE_NAME_MAX_BYTES, WorkspaceId, WorkspaceRole, peer_endpoint_hint_is_supported,
+    peer_endpoint_hint_transport_is_consistent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -65,7 +66,21 @@ pub struct PublishedPeerEndpoint {
     pub transport: String,
     pub is_backup_peer: bool,
     pub expires_at_ms: Option<i64>,
+    pub replica_storage_class: Option<ReplicaStorageClass>,
+    pub replica_retention_hint: Option<String>,
     pub event_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishPeerEndpointRequest {
+    pub workspace_id: WorkspaceId,
+    pub endpoint_id: String,
+    pub endpoint: String,
+    pub transport: String,
+    pub is_backup_peer: bool,
+    pub expires_at_ms: Option<i64>,
+    pub replica_storage_class: Option<ReplicaStorageClass>,
+    pub replica_retention_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,12 +479,39 @@ impl LocalRuntime {
         is_backup_peer: bool,
         expires_at_ms: Option<i64>,
     ) -> Result<PublishedPeerEndpoint, RuntimeError> {
-        let endpoint_id = endpoint_id.as_ref().trim().to_owned();
+        self.publish_peer_endpoint_with_replica_capability(PublishPeerEndpointRequest {
+            workspace_id,
+            endpoint_id: endpoint_id.as_ref().to_owned(),
+            endpoint: endpoint.as_ref().to_owned(),
+            transport: transport.as_ref().to_owned(),
+            is_backup_peer,
+            expires_at_ms,
+            replica_storage_class: None,
+            replica_retention_hint: None,
+        })
+    }
+
+    pub fn publish_peer_endpoint_with_replica_capability(
+        &self,
+        request: PublishPeerEndpointRequest,
+    ) -> Result<PublishedPeerEndpoint, RuntimeError> {
+        let PublishPeerEndpointRequest {
+            workspace_id,
+            endpoint_id,
+            endpoint,
+            transport,
+            is_backup_peer,
+            expires_at_ms,
+            replica_storage_class,
+            replica_retention_hint,
+        } = request;
+
+        let endpoint_id = endpoint_id.trim().to_owned();
         if endpoint_id.is_empty() {
             return Err(RuntimeError::PeerEndpointIdRequired);
         }
         validate_metadata_field_size("peer endpoint ID", &endpoint_id, PEER_ENDPOINT_ID_MAX_BYTES)?;
-        let endpoint = endpoint.as_ref().trim().to_owned();
+        let endpoint = endpoint.trim().to_owned();
         if endpoint.is_empty() {
             return Err(RuntimeError::PeerEndpointRequired);
         }
@@ -477,7 +519,7 @@ impl LocalRuntime {
         if !peer_endpoint_hint_is_supported(&endpoint) {
             return Err(RuntimeError::UnsupportedPeerEndpoint);
         }
-        let transport = transport.as_ref().trim().to_owned();
+        let transport = transport.trim().to_owned();
         if transport.is_empty() {
             return Err(RuntimeError::PeerEndpointTransportRequired);
         }
@@ -489,6 +531,23 @@ impl LocalRuntime {
         if !peer_endpoint_hint_transport_is_consistent(&endpoint, &transport) {
             return Err(RuntimeError::PeerEndpointTransportMismatch);
         }
+        let replica_retention_hint = match replica_retention_hint {
+            Some(hint) => {
+                let hint = hint.trim().to_owned();
+                if hint.is_empty() {
+                    return Err(RuntimeError::MetadataFieldRequired {
+                        field: "replica retention hint",
+                    });
+                }
+                validate_metadata_field_size(
+                    "replica retention hint",
+                    &hint,
+                    REPLICA_RETENTION_HINT_MAX_BYTES,
+                )?;
+                Some(hint)
+            }
+            None => None,
+        };
 
         let context = self.workspace_write_context(&workspace_id)?;
         let mut event = SignableEvent::new(
@@ -501,6 +560,8 @@ impl LocalRuntime {
                 transport: transport.clone(),
                 is_backup_peer,
                 expires_at_ms,
+                replica_storage_class,
+                replica_retention_hint: replica_retention_hint.clone(),
             },
         );
         event.parents = context.head_event_ids.clone();
@@ -514,6 +575,8 @@ impl LocalRuntime {
             transport,
             is_backup_peer,
             expires_at_ms,
+            replica_storage_class,
+            replica_retention_hint,
             event_id: event.event_id.0,
         })
     }

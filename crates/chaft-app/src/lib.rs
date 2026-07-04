@@ -143,6 +143,8 @@ pub struct PeerEndpointSnapshot {
     pub transport: String,
     pub is_backup_peer: bool,
     pub expires_at_ms: Option<i64>,
+    pub replica_storage_class: Option<String>,
+    pub replica_retention_hint: Option<String>,
     pub published_event_id: String,
     pub physical_ms: i64,
 }
@@ -563,6 +565,10 @@ impl WorkspaceSnapshot {
                 transport: endpoint.transport.clone(),
                 is_backup_peer: endpoint.is_backup_peer,
                 expires_at_ms: endpoint.expires_at_ms,
+                replica_storage_class: endpoint
+                    .replica_storage_class
+                    .map(|storage_class| storage_class.as_str().to_owned()),
+                replica_retention_hint: endpoint.replica_retention_hint.clone(),
                 published_event_id: endpoint.published_event_id.0.clone(),
                 physical_ms: endpoint.physical_ms,
             })
@@ -4044,6 +4050,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: Some(1_700_000_600_000),
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
         let replacement = signed(SignableEvent::new(
@@ -4056,6 +4064,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: Some(chaft_types::ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some("30d".to_owned()),
             },
         ));
         let replacement_event_id = replacement.event_id.0.clone();
@@ -4079,6 +4089,14 @@ mod tests {
         assert_eq!(snapshot.peer_endpoints[0].transport, "direct-tcp");
         assert!(snapshot.peer_endpoints[0].is_backup_peer);
         assert_eq!(snapshot.peer_endpoints[0].expires_at_ms, None);
+        assert_eq!(
+            snapshot.peer_endpoints[0].replica_storage_class.as_deref(),
+            Some("full_history_with_blobs")
+        );
+        assert_eq!(
+            snapshot.peer_endpoints[0].replica_retention_hint.as_deref(),
+            Some("30d")
+        );
         assert_eq!(
             snapshot.peer_endpoints[0].published_event_id,
             replacement_event_id
@@ -4113,6 +4131,8 @@ mod tests {
                     transport: "direct-tcp".to_owned(),
                     is_backup_peer: false,
                     expires_at_ms: None,
+                    replica_storage_class: None,
+                    replica_retention_hint: None,
                 },
             );
             endpoint.timestamp = HybridTimestamp {
@@ -4133,6 +4153,8 @@ mod tests {
                     transport: "direct-tcp".to_owned(),
                     is_backup_peer: true,
                     expires_at_ms: None,
+                    replica_storage_class: None,
+                    replica_retention_hint: None,
                 },
             );
             endpoint.timestamp = HybridTimestamp {
@@ -5014,6 +5036,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: Some(1_700_000_600_000),
+                replica_storage_class: Some("full_history".to_owned()),
+                replica_retention_hint: Some("best-effort".to_owned()),
                 published_event_id: "evt_peer_endpoint".to_owned(),
                 physical_ms: 1_700_000_000_050,
             }],

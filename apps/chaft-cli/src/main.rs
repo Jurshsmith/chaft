@@ -12,16 +12,17 @@ use chaft_net::{ChaftTransport, PeerAddress, PeerId};
 use chaft_net_direct::AuthorizedPublishTransport;
 use chaft_net_iroh::IrohTransport;
 use chaft_runtime::{
-    ChannelKeyExport, LocalRuntime, RuntimePaths, WorkspaceKeyExport, WorkspaceRecoveryBundle,
+    ChannelKeyExport, LocalRuntime, PublishPeerEndpointRequest, RuntimePaths, WorkspaceKeyExport,
+    WorkspaceRecoveryBundle,
 };
 use chaft_types::{
     ChannelId, DeviceId, DeviceKeyPackageId, EventBody, EventId, MessageId,
     PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES,
-    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, SignableEvent, SignedEvent, WorkspaceId, WorkspaceRole,
-    is_canonical_event_id_str, peer_endpoint_hint_is_supported,
-    peer_endpoint_hint_transport_is_consistent, validate_channel_id_str, validate_device_id_str,
-    validate_device_key_package_id_str, validate_event_id_str, validate_message_id_str,
-    validate_workspace_id_str,
+    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES, ReplicaStorageClass,
+    SignableEvent, SignedEvent, WorkspaceId, WorkspaceRole, is_canonical_event_id_str,
+    peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
+    validate_channel_id_str, validate_device_id_str, validate_device_key_package_id_str,
+    validate_event_id_str, validate_message_id_str, validate_workspace_id_str,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -93,6 +94,10 @@ enum Command {
         is_backup_peer: bool,
         #[arg(long)]
         expires_at_ms: Option<i64>,
+        #[arg(long)]
+        replica_storage_class: Option<String>,
+        #[arg(long)]
+        replica_retention_hint: Option<String>,
     },
     PublishOpenMlsDeviceKeyPackage {
         #[arg(long)]
@@ -563,22 +568,32 @@ async fn run_cli() -> Result<()> {
             transport,
             is_backup_peer,
             expires_at_ms,
+            replica_storage_class,
+            replica_retention_hint,
         } => {
             let workspace_id = workspace_id_arg(workspace_id)?;
             let (endpoint_id, endpoint, transport) =
                 normalize_peer_endpoint_hint_inputs(endpoint_id, endpoint, transport)?;
+            let replica_storage_class =
+                parse_optional_replica_storage_class(replica_storage_class)?;
+            let replica_retention_hint =
+                normalize_optional_replica_retention_hint(replica_retention_hint)?;
             let runtime = open_runtime(
                 &data_dir,
                 identity_file.clone(),
                 cli.identity_passphrase.as_deref(),
             )?;
-            let published = runtime.publish_peer_endpoint(
-                workspace_id,
-                endpoint_id,
-                endpoint,
-                transport,
-                is_backup_peer,
-                expires_at_ms,
+            let published = runtime.publish_peer_endpoint_with_replica_capability(
+                PublishPeerEndpointRequest {
+                    workspace_id,
+                    endpoint_id,
+                    endpoint,
+                    transport,
+                    is_backup_peer,
+                    expires_at_ms,
+                    replica_storage_class,
+                    replica_retention_hint,
+                },
             )?;
             println!("{}", serde_json::to_string_pretty(&published)?);
         }
@@ -1735,6 +1750,41 @@ fn normalize_peer_endpoint_hint_inputs(
     Ok((endpoint_id, endpoint, transport))
 }
 
+fn parse_optional_replica_storage_class(
+    value: Option<String>,
+) -> Result<Option<ReplicaStorageClass>> {
+    value
+        .map(|value| {
+            let normalized = value.trim().replace('-', "_");
+            ReplicaStorageClass::from_wire(&normalized).ok_or_else(|| {
+                anyhow!(
+                    "replica storage class must be one of: {}",
+                    ReplicaStorageClass::supported_wire_values().join(", ")
+                )
+            })
+        })
+        .transpose()
+}
+
+fn normalize_optional_replica_retention_hint(value: Option<String>) -> Result<Option<String>> {
+    value
+        .map(|value| {
+            let value = value.trim().to_owned();
+            if value.is_empty() {
+                return Err(anyhow!("replica retention hint is required when provided"));
+            }
+            if value.len() > REPLICA_RETENTION_HINT_MAX_BYTES {
+                return Err(anyhow!(
+                    "replica retention hint is too large ({} bytes, max {})",
+                    value.len(),
+                    REPLICA_RETENTION_HINT_MAX_BYTES
+                ));
+            }
+            Ok(value)
+        })
+        .transpose()
+}
+
 fn infer_peer_endpoint_transport(endpoint: &str, transport: &str) -> String {
     let transport = transport.trim();
     if !transport.eq_ignore_ascii_case("auto") {
@@ -2050,6 +2100,48 @@ mod tests {
             error
                 .to_string()
                 .contains("transport does not match the endpoint route")
+        );
+    }
+
+    #[test]
+    fn replica_storage_class_arg_accepts_wire_and_cli_spellings() {
+        assert_eq!(
+            parse_optional_replica_storage_class(Some(" full_history_with_blobs ".to_owned()))
+                .unwrap(),
+            Some(ReplicaStorageClass::FullHistoryWithBlobs)
+        );
+        assert_eq!(
+            parse_optional_replica_storage_class(Some("full-history".to_owned())).unwrap(),
+            Some(ReplicaStorageClass::FullHistory)
+        );
+    }
+
+    #[test]
+    fn replica_storage_class_arg_rejects_unknown_values() {
+        let error =
+            parse_optional_replica_storage_class(Some("central-server".to_owned())).unwrap_err();
+
+        assert!(error.to_string().contains("replica storage class"));
+    }
+
+    #[test]
+    fn replica_retention_hint_arg_trims_and_rejects_blank_or_oversized_values() {
+        assert_eq!(
+            normalize_optional_replica_retention_hint(Some(" 30d ".to_owned())).unwrap(),
+            Some("30d".to_owned())
+        );
+
+        let blank = normalize_optional_replica_retention_hint(Some(" ".to_owned())).unwrap_err();
+        assert!(blank.to_string().contains("retention hint is required"));
+
+        let oversized = normalize_optional_replica_retention_hint(Some(
+            "x".repeat(REPLICA_RETENTION_HINT_MAX_BYTES + 1),
+        ))
+        .unwrap_err();
+        assert!(
+            oversized
+                .to_string()
+                .contains("retention hint is too large")
         );
     }
 }

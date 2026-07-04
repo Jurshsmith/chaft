@@ -26,6 +26,7 @@ pub const PEER_ENDPOINT_ID_MAX_BYTES: usize = 2304;
 pub const PEER_ENDPOINT_MAX_BYTES: usize = 2048;
 pub const PEER_ENDPOINT_LIST_MAX_ITEMS: usize = 33;
 pub const PEER_ENDPOINT_TRANSPORT_MAX_BYTES: usize = 64;
+pub const REPLICA_RETENTION_HINT_MAX_BYTES: usize = 128;
 pub const IROH_ENDPOINT_ID_HEX_BYTES: usize = 64;
 pub const IROH_ENDPOINT_ID_BASE32_BYTES: usize = 52;
 pub const REACTION_TEXT_MAX_BYTES: usize = 64;
@@ -386,6 +387,49 @@ pub struct SealedPayload {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplicaStorageClass {
+    EphemeralPeer,
+    MetadataIndex,
+    PartialHistory,
+    FullHistory,
+    FullHistoryWithBlobs,
+}
+
+impl ReplicaStorageClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EphemeralPeer => "ephemeral_peer",
+            Self::MetadataIndex => "metadata_index",
+            Self::PartialHistory => "partial_history",
+            Self::FullHistory => "full_history",
+            Self::FullHistoryWithBlobs => "full_history_with_blobs",
+        }
+    }
+
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "ephemeral_peer" => Some(Self::EphemeralPeer),
+            "metadata_index" => Some(Self::MetadataIndex),
+            "partial_history" => Some(Self::PartialHistory),
+            "full_history" => Some(Self::FullHistory),
+            "full_history_with_blobs" => Some(Self::FullHistoryWithBlobs),
+            _ => None,
+        }
+    }
+
+    pub fn supported_wire_values() -> &'static [&'static str] {
+        &[
+            "ephemeral_peer",
+            "metadata_index",
+            "partial_history",
+            "full_history",
+            "full_history_with_blobs",
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventBody {
@@ -426,6 +470,10 @@ pub enum EventBody {
         transport: String,
         is_backup_peer: bool,
         expires_at_ms: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replica_storage_class: Option<ReplicaStorageClass>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replica_retention_hint: Option<String>,
     },
     OpenMlsWorkspaceGroupMemberAdded {
         invitee_device_id: DeviceId,
@@ -1007,6 +1055,41 @@ mod tests {
                 !peer_endpoint_hint_transport_is_consistent(&endpoint, transport),
                 "{endpoint} with {transport} should be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn replica_storage_class_wire_values_are_stable() {
+        for value in ReplicaStorageClass::supported_wire_values() {
+            let storage_class = ReplicaStorageClass::from_wire(value).unwrap();
+            assert_eq!(storage_class.as_str(), *value);
+        }
+        assert_eq!(ReplicaStorageClass::from_wire("full-history"), None);
+        assert_eq!(ReplicaStorageClass::from_wire("unknown"), None);
+    }
+
+    #[test]
+    fn peer_endpoint_events_decode_without_replica_capability_fields() {
+        let body = serde_json::from_value::<EventBody>(serde_json::json!({
+            "kind": "peer_endpoint_published",
+            "endpoint_id": "desktop",
+            "endpoint": "direct+tcp://127.0.0.1:7777",
+            "transport": "direct-tcp",
+            "is_backup_peer": true,
+            "expires_at_ms": null
+        }))
+        .unwrap();
+
+        match body {
+            EventBody::PeerEndpointPublished {
+                replica_storage_class,
+                replica_retention_hint,
+                ..
+            } => {
+                assert_eq!(replica_storage_class, None);
+                assert_eq!(replica_retention_hint, None);
+            }
+            other => panic!("unexpected event body: {other:?}"),
         }
     }
 

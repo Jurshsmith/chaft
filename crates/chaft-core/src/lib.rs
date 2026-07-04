@@ -13,12 +13,12 @@ use chaft_types::{
     OPENMLS_COMMIT_MAX_BYTES, OPENMLS_GROUP_ID_MAX_BYTES, OPENMLS_KEY_PACKAGE_MAX_BYTES,
     OPENMLS_KEY_PACKAGE_REF_MAX_BYTES, OPENMLS_PROTOCOL_MAX_BYTES, OPENMLS_RATCHET_TREE_MAX_BYTES,
     OPENMLS_WELCOME_MAX_BYTES, PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_MAX_BYTES,
-    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REACTION_TEXT_MAX_BYTES, SEALED_MESSAGE_MARKDOWN_MAX_BYTES,
-    SEALED_PAYLOAD_AAD_MAX_BYTES, SEALED_PAYLOAD_KEY_ID_MAX_BYTES, SEALED_PAYLOAD_NONCE_MAX_BYTES,
-    SealedPayload, SignedEvent, TrustSnapshot, TrustSnapshotChannel, TrustSnapshotEventChannel,
-    TrustSnapshotMessage, TrustSnapshotRole, WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES,
-    WorkspaceId, WorkspaceRole, peer_endpoint_hint_is_supported,
-    peer_endpoint_hint_transport_is_consistent,
+    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REACTION_TEXT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES,
+    ReplicaStorageClass, SEALED_MESSAGE_MARKDOWN_MAX_BYTES, SEALED_PAYLOAD_AAD_MAX_BYTES,
+    SEALED_PAYLOAD_KEY_ID_MAX_BYTES, SEALED_PAYLOAD_NONCE_MAX_BYTES, SealedPayload, SignedEvent,
+    TrustSnapshot, TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage,
+    TrustSnapshotRole, WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceId,
+    WorkspaceRole, peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
 };
 use thiserror::Error;
 
@@ -212,6 +212,8 @@ pub struct PeerEndpointView {
     pub transport: String,
     pub is_backup_peer: bool,
     pub expires_at_ms: Option<i64>,
+    pub replica_storage_class: Option<ReplicaStorageClass>,
+    pub replica_retention_hint: Option<String>,
     pub published_event_id: EventId,
     pub physical_ms: i64,
 }
@@ -447,6 +449,8 @@ impl WorkspaceState {
                 transport,
                 is_backup_peer,
                 expires_at_ms,
+                replica_storage_class,
+                replica_retention_hint,
             } => {
                 let device_id = signed.event.author_device_id.clone();
                 self.peer_endpoints.insert(
@@ -458,6 +462,8 @@ impl WorkspaceState {
                         transport: transport.clone(),
                         is_backup_peer: *is_backup_peer,
                         expires_at_ms: *expires_at_ms,
+                        replica_storage_class: *replica_storage_class,
+                        replica_retention_hint: replica_retention_hint.clone(),
                         published_event_id: signed.event_id.clone(),
                         physical_ms: signed.event.timestamp.physical_ms,
                     },
@@ -1813,6 +1819,7 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             endpoint_id,
             endpoint,
             transport,
+            replica_retention_hint,
             ..
         } => {
             validate_event_text_required("peer endpoint ID", endpoint_id)?;
@@ -1825,6 +1832,14 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
                 transport,
                 PEER_ENDPOINT_TRANSPORT_MAX_BYTES,
             )?;
+            if let Some(replica_retention_hint) = replica_retention_hint {
+                validate_event_text_required("replica retention hint", replica_retention_hint)?;
+                validate_event_text_size(
+                    "replica retention hint",
+                    replica_retention_hint,
+                    REPLICA_RETENTION_HINT_MAX_BYTES,
+                )?;
+            }
             if !peer_endpoint_hint_is_supported(endpoint) {
                 return Err(AuthorizationError::UnsupportedPeerEndpoint);
             }
@@ -3538,6 +3553,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
         assert_payload_rejected_before_materialization(
@@ -3628,6 +3645,8 @@ mod tests {
                     transport: transport.to_owned(),
                     is_backup_peer: true,
                     expires_at_ms: None,
+                    replica_storage_class: None,
+                    replica_retention_hint: None,
                 },
             ));
             assert_required_payload_rejected_before_materialization(
@@ -3655,6 +3674,8 @@ mod tests {
                 transport: "wss".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
 
@@ -3687,6 +3708,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
 
@@ -3719,6 +3742,8 @@ mod tests {
                 transport: "iroh".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
 
@@ -4006,6 +4031,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: Some(1_700_000_600_000),
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
         let second_endpoint = signed(SignableEvent::new(
@@ -4018,6 +4045,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: Some(ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some("30d".to_owned()),
             },
         ));
         let removal = signed(SignableEvent::new(
@@ -4038,6 +4067,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         ));
         let mut state = WorkspaceState::new(workspace_id);
@@ -4063,6 +4094,11 @@ mod tests {
         assert_eq!(materialized.transport, "direct-tcp");
         assert!(materialized.is_backup_peer);
         assert_eq!(materialized.expires_at_ms, None);
+        assert_eq!(
+            materialized.replica_storage_class,
+            Some(ReplicaStorageClass::FullHistoryWithBlobs)
+        );
+        assert_eq!(materialized.replica_retention_hint.as_deref(), Some("30d"));
         assert_eq!(materialized.published_event_id, second_endpoint.event_id);
 
         assert_eq!(

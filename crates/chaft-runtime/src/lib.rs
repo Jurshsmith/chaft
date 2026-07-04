@@ -163,10 +163,10 @@ pub use sync_results::{
 pub use workspace_actions::{
     AddedChannelMember, AddedReaction, CreatedChannel, CreatedMessage, CreatedWorkspace,
     DeletedMessage, EditedMessage, InvitedMember, MarkedChannelRead, PrunedBlobCache,
-    PublishedDeviceKeyPackage, PublishedPeerEndpoint, RemovedChannelMember,
-    RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls, RemovedMember,
-    RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedReaction, SavedAttachment,
-    UpdatedDeviceProfile,
+    PublishPeerEndpointRequest, PublishedDeviceKeyPackage, PublishedPeerEndpoint,
+    RemovedChannelMember, RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls,
+    RemovedMember, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedReaction,
+    SavedAttachment, UpdatedDeviceProfile,
 };
 #[cfg(test)]
 pub(crate) use workspace_listing::MAX_WORKSPACE_SUMMARY_PAGE_ROWS;
@@ -4456,14 +4456,16 @@ mod tests {
             .unwrap();
 
         let published = runtime
-            .publish_peer_endpoint(
-                workspace_id.clone(),
-                " desktop ",
-                " direct+tcp://127.0.0.1:7777 ",
-                " direct-tcp ",
-                true,
-                Some(1_700_000_600_000),
-            )
+            .publish_peer_endpoint_with_replica_capability(PublishPeerEndpointRequest {
+                workspace_id: workspace_id.clone(),
+                endpoint_id: " desktop ".to_owned(),
+                endpoint: " direct+tcp://127.0.0.1:7777 ".to_owned(),
+                transport: " direct-tcp ".to_owned(),
+                is_backup_peer: true,
+                expires_at_ms: Some(1_700_000_600_000),
+                replica_storage_class: Some(chaft_types::ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some(" 30d ".to_owned()),
+            })
             .unwrap();
         let events = runtime.workspace_events(&workspace_id).unwrap();
         let snapshot = runtime.decrypted_workspace_snapshot(workspace_id).unwrap();
@@ -4475,6 +4477,11 @@ mod tests {
         assert_eq!(published.transport, "direct-tcp");
         assert!(published.is_backup_peer);
         assert_eq!(published.expires_at_ms, Some(1_700_000_600_000));
+        assert_eq!(
+            published.replica_storage_class,
+            Some(chaft_types::ReplicaStorageClass::FullHistoryWithBlobs)
+        );
+        assert_eq!(published.replica_retention_hint.as_deref(), Some("30d"));
         assert_eq!(events.len(), 4);
         assert_eq!(events[3].event_id.0, published.event_id);
         assert_eq!(events[3].event.parents, vec![events[2].event_id.clone()]);
@@ -4486,11 +4493,15 @@ mod tests {
                 transport,
                 is_backup_peer,
                 expires_at_ms,
+                replica_storage_class,
+                replica_retention_hint,
             } if endpoint_id == "desktop"
                 && endpoint == "direct+tcp://127.0.0.1:7777"
                 && transport == "direct-tcp"
                 && *is_backup_peer
                 && *expires_at_ms == Some(1_700_000_600_000)
+                && *replica_storage_class == Some(chaft_types::ReplicaStorageClass::FullHistoryWithBlobs)
+                && replica_retention_hint.as_deref() == Some("30d")
         ));
         assert_eq!(snapshot.peer_endpoints.len(), 1);
         assert_eq!(
@@ -4502,6 +4513,14 @@ mod tests {
             "direct+tcp://127.0.0.1:7777"
         );
         assert!(snapshot.peer_endpoints[0].is_backup_peer);
+        assert_eq!(
+            snapshot.peer_endpoints[0].replica_storage_class.as_deref(),
+            Some("full_history_with_blobs")
+        );
+        assert_eq!(
+            snapshot.peer_endpoints[0].replica_retention_hint.as_deref(),
+            Some("30d")
+        );
     }
 
     #[test]

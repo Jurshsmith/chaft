@@ -106,6 +106,8 @@ message PeerEndpointPublished {
   string transport = 3;
   bool is_backup_peer = 4;
   optional int64 expires_at_ms = 5;
+  optional string replica_storage_class = 6;
+  optional string replica_retention_hint = 7;
 }
 
 message OpenMlsWorkspaceGroupMemberAdded {

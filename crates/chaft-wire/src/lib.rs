@@ -1,8 +1,9 @@
 use chaft_types::{
     AttachmentRef, ChannelId, ContentKeyScope, DeviceId, DeviceKeyPackageId, EncryptedBlobRef,
-    EventBody, EventId, HybridTimestamp, MessageId, PayloadEncryption, SealedPayload,
-    SignableEvent, SignedEvent, SignedTrustSnapshot, TrustSnapshot, TrustSnapshotChannel,
-    TrustSnapshotEventChannel, TrustSnapshotMessage, TrustSnapshotRole, WorkspaceId, WorkspaceRole,
+    EventBody, EventId, HybridTimestamp, MessageId, PayloadEncryption, ReplicaStorageClass,
+    SealedPayload, SignableEvent, SignedEvent, SignedTrustSnapshot, TrustSnapshot,
+    TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage, TrustSnapshotRole,
+    WorkspaceId, WorkspaceRole,
 };
 use prost::{Enumeration, Message, Oneof};
 use thiserror::Error;
@@ -25,6 +26,8 @@ pub enum WireError {
     PayloadEncryption(i32),
     #[error("unknown workspace role {0}")]
     WorkspaceRole(i32),
+    #[error("unknown replica storage class {0}")]
+    ReplicaStorageClass(String),
     #[error("event id mismatch: expected {expected}, recomputed {actual}")]
     EventIdMismatch { expected: String, actual: String },
     #[error("trust snapshot protobuf field missing: {0}")]
@@ -209,6 +212,10 @@ pub struct WirePeerEndpointPublished {
     pub is_backup_peer: bool,
     #[prost(int64, optional, tag = "5")]
     pub expires_at_ms: Option<i64>,
+    #[prost(string, optional, tag = "6")]
+    pub replica_storage_class: Option<String>,
+    #[prost(string, optional, tag = "7")]
+    pub replica_retention_hint: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -706,12 +713,17 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             transport,
             is_backup_peer,
             expires_at_ms,
+            replica_storage_class,
+            replica_retention_hint,
         } => Kind::PeerEndpointPublished(WirePeerEndpointPublished {
             endpoint_id: endpoint_id.clone(),
             endpoint: endpoint.clone(),
             transport: transport.clone(),
             is_backup_peer: *is_backup_peer,
             expires_at_ms: *expires_at_ms,
+            replica_storage_class: replica_storage_class
+                .map(|storage_class| storage_class.as_str().to_owned()),
+            replica_retention_hint: replica_retention_hint.clone(),
         }),
         EventBody::OpenMlsWorkspaceGroupMemberAdded {
             invitee_device_id,
@@ -958,13 +970,27 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             protocol: body.protocol,
             key_package: body.key_package,
         }),
-        Kind::PeerEndpointPublished(body) => Ok(EventBody::PeerEndpointPublished {
-            endpoint_id: body.endpoint_id,
-            endpoint: body.endpoint,
-            transport: body.transport,
-            is_backup_peer: body.is_backup_peer,
-            expires_at_ms: body.expires_at_ms,
-        }),
+        Kind::PeerEndpointPublished(body) => {
+            let replica_storage_class = body
+                .replica_storage_class
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| {
+                    ReplicaStorageClass::from_wire(&value)
+                        .ok_or(WireError::ReplicaStorageClass(value))
+                })
+                .transpose()?;
+            Ok(EventBody::PeerEndpointPublished {
+                endpoint_id: body.endpoint_id,
+                endpoint: body.endpoint,
+                transport: body.transport,
+                is_backup_peer: body.is_backup_peer,
+                expires_at_ms: body.expires_at_ms,
+                replica_storage_class,
+                replica_retention_hint: body
+                    .replica_retention_hint
+                    .filter(|value| !value.trim().is_empty()),
+            })
+        }
         Kind::OpenMlsWorkspaceGroupMemberAdded(body) => {
             Ok(EventBody::OpenMlsWorkspaceGroupMemberAdded {
                 invitee_device_id: DeviceId(body.invitee_device_id),
@@ -1695,6 +1721,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: Some(1_700_000_600_000),
+                replica_storage_class: Some(ReplicaStorageClass::FullHistoryWithBlobs),
+                replica_retention_hint: Some("30d".to_owned()),
             },
             EventBody::OpenMlsWorkspaceGroupMemberAdded {
                 invitee_device_id: DeviceId("dev_invitee".to_owned()),

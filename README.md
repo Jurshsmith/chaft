@@ -32,7 +32,8 @@ can hold private context, local notes, and secrets without becoming part of Git.
 - Network target: no central server. Optional replica nodes store encrypted,
   partial event/blob data and never become authority nodes. Signed peer endpoint
   announcements let members advertise direct TCP, native Iroh, or backup-peer
-  hints through normal workspace replication without granting trust.
+  hints plus optional replica storage class and retention intent through normal
+  workspace replication without granting trust.
 - Message privacy: encrypted message event variants carry sealed markdown
   payloads. Public channels use the workspace content key, private channels use
   per-channel content keys. When local OpenMLS workspace group state exists,
@@ -159,7 +160,7 @@ cargo run -p chaft-cli -- --data-dir ./scratch/app list-workspaces
 cargo run -p chaft-cli -- --data-dir ./scratch/app init-workspace --name "Chaft Local" --channel general
 cargo run -p chaft-cli -- --data-dir ./scratch/app update-device-profile --workspace-id <workspace-id> --display-name "Mira"
 cargo run -p chaft-cli -- --data-dir ./scratch/app publish-device-key-package --workspace-id <workspace-id> --key-package-file ./scratch/openmls-key-package.bin
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-peer-endpoint --workspace-id <workspace-id> --endpoint-id desktop --endpoint direct+tcp://127.0.0.1:7777 --backup-peer
+cargo run -p chaft-cli -- --data-dir ./scratch/app publish-peer-endpoint --workspace-id <workspace-id> --endpoint-id desktop --endpoint direct+tcp://127.0.0.1:7777 --backup-peer --replica-storage-class full-history-with-blobs --replica-retention-hint 30d
 cargo run -p chaft-cli -- --data-dir ./scratch/app publish-open-mls-device-key-package --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app create-open-mls-workspace-group --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app add-open-mls-workspace-group-member --workspace-id <workspace-id> --key-package-id <device-key-package-id>
@@ -451,9 +452,10 @@ After a host starts, the desktop publishes that endpoint as a signed workspace
 hint with a short expiry, refreshes it while hosting, and publishes an immediate
 expiry update on toolbar Stop or best-effort normal desktop shutdown. Saving a
 backup peer in the desktop also publishes an `isBackupPeer` hint. The runtime
-and CLI expose the same signed peer-endpoint path, so newly synced profiles can
-discover operator-approved endpoints from the replicated log instead of relying
-only on out-of-band notes.
+and CLI expose the same signed peer-endpoint path, including optional
+`replicaStorageClass` and `replicaRetentionHint` fields, so newly synced
+profiles can discover operator-approved endpoints and their advertised storage
+intent from the replicated log instead of relying only on out-of-band notes.
 Direct TCP and Iroh host start/stop bind and close peer threads on background Qt
 workers, so local store opens, port binding, QUIC endpoint setup, and shutdown
 joins do not freeze the shell.
@@ -466,9 +468,10 @@ discovery deployment. `CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE=1` disables the
 direct TCP bridge for policy tests. Those Iroh policy flags ignore raw values
 above 16 bytes before matching `1`, `true`, `yes`, or `on`. Signed peer endpoint
 hints use the same 2 KiB endpoint cap, a 2304-byte endpoint-ID cap, and a
-64-byte transport-label cap before append, and the CLI/FFI publish endpoints
-reject unsupported routes or endpoint/transport mismatches before opening the
-runtime, so replicated discovery metadata stays bounded.
+64-byte transport-label cap before append. Replica retention hints are capped at
+128 bytes, and the CLI/FFI publish endpoints reject unsupported routes or
+endpoint/transport mismatches before opening the runtime, so replicated
+discovery metadata stays bounded.
 The `Live` toggle periodically syncs the selected peer endpoint and suppresses
 overlapping sync workers so the desktop can keep a workspace fresh without
 manual button presses. If the endpoint field is empty, Live sync falls back to

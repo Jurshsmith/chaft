@@ -2601,6 +2601,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         forged_endpoint.parents = vec![root.event_id.clone()];
@@ -2632,6 +2634,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         endpoint.parents = vec![root.event_id.clone()];
@@ -2669,6 +2673,8 @@ mod tests {
                     transport: transport.to_owned(),
                     is_backup_peer: true,
                     expires_at_ms: None,
+                    replica_storage_class: None,
+                    replica_retention_hint: None,
                 },
             );
             blank_hint.parents = vec![root.event_id.clone()];
@@ -2685,6 +2691,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         supported_endpoint.parents = vec![root.event_id.clone()];
@@ -2715,6 +2723,8 @@ mod tests {
                 transport: "wss".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         unsupported_endpoint.parents = vec![root.event_id.clone()];
@@ -2729,6 +2739,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         supported_endpoint.parents = vec![root.event_id.clone()];
@@ -2760,6 +2772,8 @@ mod tests {
                 transport: "iroh".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         mismatched_endpoint.parents = vec![root.event_id.clone()];
@@ -2774,6 +2788,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         supported_endpoint.parents = vec![root.event_id.clone()];
@@ -2999,6 +3015,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: false,
                 expires_at_ms: Some(current_unix_millis() as i64 + 60_000),
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         endpoint.parents = vec![root.event_id.clone()];
@@ -3036,6 +3054,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         fresh_endpoint.parents = vec![root.event_id.clone()];
@@ -3050,6 +3070,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: Some(1),
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         expired_endpoint.parents = vec![fresh_endpoint.event_id.clone()];
@@ -3086,6 +3108,8 @@ mod tests {
                     transport: "direct-tcp".to_owned(),
                     is_backup_peer: false,
                     expires_at_ms: None,
+                    replica_storage_class: None,
+                    replica_retention_hint: None,
                 },
             );
             endpoint.timestamp = chaft_types::HybridTimestamp {
@@ -3802,6 +3826,8 @@ mod tests {
                 transport: "direct-tcp".to_owned(),
                 is_backup_peer: true,
                 expires_at_ms: None,
+                replica_storage_class: None,
+                replica_retention_hint: None,
             },
         );
         endpoint_hint.parents = vec![root.event_id.clone()];
