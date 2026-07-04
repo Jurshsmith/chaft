@@ -3782,50 +3782,18 @@ ApplicationWindow {
                                     Repeater {
                                         model: root.inspectorAttachmentPreviews
 
-                                        delegate: RowLayout {
+                                        delegate: AttachmentRow {
                                             Layout.fillWidth: true
-                                            spacing: 6
-
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 1
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: String(modelData.displayName || "attachment")
-                                                    color: modelData.localBlobAvailable === false ? Tokens.warningText : Tokens.textStrong
-                                                    font.pixelSize: 12
-                                                    font.weight: Font.DemiBold
-                                                    elide: Text.ElideMiddle
-                                                }
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: String(modelData.mediaType || "application/octet-stream")
-                                                        + " | "
-                                                        + root.byteSizeLabel(Number(modelData.byteLen || 0))
-                                                        + (modelData.localBlobAvailable === false ? " | missing locally" : "")
-                                                    color: modelData.localBlobAvailable === false ? Tokens.warningText : Tokens.textMuted
-                                                    font.pixelSize: 11
-                                                    elide: Text.ElideRight
-                                                }
+                                            attachment: modelData
+                                            detailText: root.attachmentDetailLabel(modelData)
+                                            messageId: String(root.inspectorItem.messageId || "")
+                                            selector: root.attachmentSelectorFor(modelData)
+                                            runtimeReady: root.runtimeWorkReady
+                                            onSaveRequested: function(messageId, attachment) {
+                                                root.openSaveAttachmentDialog(messageId, attachment)
                                             }
-
-                                            Button {
-                                                text: String(modelData.attachmentId || "").length > 0 ? "Copy ID" : "Copy hash"
-                                                Layout.preferredWidth: 82
-                                                enabled: root.attachmentSelectorFor(modelData).length > 0
-                                                onClicked: root.copyAttachmentSelector(modelData)
-                                            }
-
-                                            Button {
-                                                text: "Save"
-                                                Layout.preferredWidth: 56
-                                                enabled: root.runtimeWorkReady
-                                                    && String(root.inspectorItem.messageId || "").length > 0
-                                                    && modelData.localBlobAvailable !== false
-                                                    && root.attachmentSelectorFor(modelData).length > 0
-                                                onClicked: root.openSaveAttachmentDialog(root.inspectorItem.messageId, modelData)
+                                            onCopyRequested: function(attachment) {
+                                                root.copyAttachmentSelector(attachment)
                                             }
                                         }
                                     }
