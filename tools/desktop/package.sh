@@ -41,6 +41,7 @@ package_dir="$build_dir/package"
 rm -rf "$install_dir" "$package_dir"
 cmake --install "$build_dir" --prefix "$install_dir"
 cpack --config "$build_dir/CPackConfig.cmake"
+rm -rf "$package_dir/_CPack_Packages"
 
 printf 'install tree: %s\n' "$install_dir"
 printf 'package artifacts:\n'
