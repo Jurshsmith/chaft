@@ -181,3 +181,20 @@ else
   printf 'screenshot baseline not found: %s\n' "$baseline_path" >&2
   exit 1
 fi
+
+ui_states="${CHAFT_SMOKE_UI_STATES:-setup,drawer,palette}"
+for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
+  state_output="$(dirname "$output_path")/visual-smoke-$ui_state.png"
+  state_baseline="$script_dir/screenshot-baseline-$ui_state.json"
+  if [ ! -f "$state_baseline" ]; then
+    printf 'screenshot baseline not found for state %s: %s\n' \
+      "$ui_state" "$state_baseline" >&2
+    exit 1
+  fi
+  rm -f "$state_output"
+  CHAFT_DESKTOP_SMOKE_SCREENSHOT="$state_output" \
+  CHAFT_SMOKE_UI_STATE="$ui_state" \
+    "$script_dir/smoke.sh" "$profile"
+  python3 "$script_dir/screenshot-baseline.py" "$state_output" "$state_baseline"
+  printf 'screenshot state verified: %s at %s\n' "$ui_state" "$state_output"
+done

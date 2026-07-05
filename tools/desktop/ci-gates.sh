@@ -42,6 +42,8 @@ cd "$repo_root"
 
 run_step "desktop preflight" "$script_dir/preflight.sh"
 run_step "QML lint" "$script_dir/qml-lint.sh"
+run_step "QML style lint" python3 "$script_dir/style-lint.py"
+run_step "theme contrast check" python3 "$script_dir/theme-contrast-check.py"
 run_step "desktop debug smoke" "$script_dir/smoke.sh" debug
 
 if [ "$platform" = "Linux" ] && [ "${CHAFT_DESKTOP_SKIP_SCREENSHOT:-0}" != "1" ]; then

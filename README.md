@@ -431,13 +431,20 @@ local rows for those workspace summaries so corrupt cached rows do not break the
 rail.
 The desktop stores its
 selected workspace ID, default direct peer endpoint, saved
-backup peer endpoints, backup peer status metadata, and the Auto backup setting
+backup peer endpoints, backup peer status metadata, the Auto backup setting,
+and the selected theme ID
 in `desktop.json` under the runtime directory. The desktop ignores that config
 file if it grows beyond 64 KiB and writes it with an atomic bounded save so a
 failed persistence attempt keeps the previous routing metadata intact; set
 `CHAFT_PEER_ENDPOINT` to override the saved peer endpoint for a run,
 `CHAFT_BACKUP_PEERS` to add comma- or semicolon-separated backup endpoints, and
-`CHAFT_AUTO_BACKUP=1` to enable Auto backup for a run. `CHAFT_BACKUP_PEERS` is
+`CHAFT_AUTO_BACKUP=1` to enable Auto backup for a run. `CHAFT_THEME` overrides
+the saved theme ID for a run; theme IDs are trimmed and capped at 64 bytes
+before persistence or use, and unknown IDs fall back to the default theme.
+Appearance can also follow the system color scheme: `themeMode`,
+`darkThemeId`, and `lightThemeId` persist in `desktop.json` under the same
+64-byte theme-ID caps, an unknown system scheme resolves as dark, and a valid
+`CHAFT_THEME` forces manual mode for that run. `CHAFT_BACKUP_PEERS` is
 ignored if its raw list text exceeds the 32-peer saved-backup budget before
 splitting. Selected workspace IDs
 loaded from `desktop.json` or `CHAFT_WORKSPACE_ID` are trimmed, and blank or
@@ -719,7 +726,10 @@ the active channel context to that row while keeping the query active, so the
 inspector, composer, and sidebar stay anchored to the result's channel.
 Demo/keyless startup paths fall back to filtering the
 currently loaded snapshot.
-Keyboard control is first-class: `Ctrl/Cmd+K` focuses search/jump,
+Keyboard control is first-class: `Ctrl/Cmd+K` opens the command palette
+(channels rank first on a query, preserving the old jump behavior, followed by
+actions), `Ctrl/Cmd+F` focuses search/jump, `Ctrl/Cmd+/` opens the shortcut
+overlay generated from the same action registry,
 `Ctrl/Cmd+M` focuses the composer, `Alt+Up/Down` steps channels,
 `Alt+Left/Right` steps workspaces, `Ctrl/Cmd+O` opens file attachment,
 `Alt+Home/End` jumps the timeline, `Ctrl/Cmd+Shift+C` copies selected message
@@ -765,6 +775,19 @@ owned by the local device are styled and removed as local reactions.
 Device/profile, invite, backup, key-package, OpenMLS, key-transfer, and manual
 rekey controls live behind the scrollable Setup panel so daily channel
 navigation stays visible on normal desktop window heights.
+The Setup panel also has an Appearance section with a 24-theme catalog: the
+default is the dark `midnight-relay`, the original hybrid palette remains
+available as `chaft-classic`, and picking a swatch applies live through QML
+token bindings, persists only the bounded `desktop.json` theme ID, and never
+writes to the runtime event log.
+Its `Follow system` toggle tracks the OS dark/light scheme live with separate
+dark and light theme slots; picking a swatch in that mode updates the slot
+matching the theme's dark flag.
+The desktop bundles the Space Grotesk UI face and the JetBrains Mono data face
+(both SIL OFL; license texts ship in `apps/desktop-qt/fonts/` and inside the
+embedded font resources), loads them from embedded resources at startup with
+platform-font fallback, and renders device IDs, event/message IDs, peer
+endpoints, key-package rows, and timeline time labels in the mono face.
 On wide desktop windows, the right inspector derives selected-message details,
 thread reply context, selected attachment save/copy controls with overflow
 counts, channel counts, recent media, backup peer health, members, and
