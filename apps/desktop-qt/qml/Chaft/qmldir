@@ -1,5 +1,6 @@
 module Chaft
 App 1.0 App.qml
+singleton Themes 1.0 tokens/Themes.qml
 singleton Tokens 1.0 tokens/Tokens.qml
 AttachmentRow 1.0 components/AttachmentRow.qml
 BackupPeerStatusRow 1.0 components/BackupPeerStatusRow.qml
@@ -8,8 +9,14 @@ MemberRow 1.0 components/MemberRow.qml
 PeerEndpointHintRow 1.0 components/PeerEndpointHintRow.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
 SavedBackupPeerRow 1.0 components/SavedBackupPeerRow.qml
+SetupSection 1.0 components/SetupSection.qml
 SidebarItem 1.0 components/SidebarItem.qml
 StatusChip 1.0 components/StatusChip.qml
+LabeledField 1.0 components/controls/LabeledField.qml
+SyncStatusPill 1.0 components/SyncStatusPill.qml
+ThemeSwatch 1.0 components/ThemeSwatch.qml
+ToastHost 1.0 components/ToastHost.qml
+ConfirmDialog 1.0 components/ConfirmDialog.qml
 TimelineActionChip 1.0 components/TimelineActionChip.qml
 TimelineAttachmentChip 1.0 components/TimelineAttachmentChip.qml
 TimelineAuthorMark 1.0 components/TimelineAuthorMark.qml
@@ -23,6 +30,9 @@ TimelineReplyPreview 1.0 components/TimelineReplyPreview.qml
 TimelineThreadChip 1.0 components/TimelineThreadChip.qml
 WorkspaceRailItem 1.0 components/WorkspaceRailItem.qml
 TimelineView 1.0 features/timeline/TimelineView.qml
+SetupPanel 1.0 features/setup/SetupPanel.qml
+CommandPalette 1.0 features/palette/CommandPalette.qml
+ShortcutOverlay 1.0 features/palette/ShortcutOverlay.qml
 ComposerBar 1.0 features/composer/ComposerBar.qml
 ChannelMediaPanel 1.0 features/inspector/ChannelMediaPanel.qml
 InspectorThreadPanel 1.0 features/inspector/InspectorThreadPanel.qml

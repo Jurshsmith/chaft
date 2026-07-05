@@ -14,7 +14,7 @@ if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
 endif()
 
-set_source_files_properties(qml/Chaft/tokens/Tokens.qml
+set_source_files_properties(qml/Chaft/tokens/Themes.qml qml/Chaft/tokens/Tokens.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE
 )
 
@@ -47,6 +47,7 @@ qt_add_qml_module(ChaftDesktop
         QtQuick.Layouts
     QML_FILES
         qml/Chaft/App.qml
+        qml/Chaft/tokens/Themes.qml
         qml/Chaft/tokens/Tokens.qml
         qml/Chaft/components/AttachmentRow.qml
         qml/Chaft/components/BackupPeerStatusRow.qml
@@ -55,8 +56,14 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/PeerEndpointHintRow.qml
         qml/Chaft/components/PeerRouteChip.qml
         qml/Chaft/components/SavedBackupPeerRow.qml
+        qml/Chaft/components/SetupSection.qml
         qml/Chaft/components/SidebarItem.qml
         qml/Chaft/components/StatusChip.qml
+        qml/Chaft/components/controls/LabeledField.qml
+        qml/Chaft/components/SyncStatusPill.qml
+        qml/Chaft/components/ThemeSwatch.qml
+        qml/Chaft/components/ToastHost.qml
+        qml/Chaft/components/ConfirmDialog.qml
         qml/Chaft/components/TimelineActionChip.qml
         qml/Chaft/components/TimelineAttachmentChip.qml
         qml/Chaft/components/TimelineAuthorMark.qml
@@ -69,10 +76,45 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/TimelineReplyPreview.qml
         qml/Chaft/components/TimelineThreadChip.qml
         qml/Chaft/components/WorkspaceRailItem.qml
+        qml/Chaft/features/palette/CommandPalette.qml
+        qml/Chaft/features/palette/ShortcutOverlay.qml
+        qml/Chaft/features/setup/SetupPanel.qml
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml
         qml/Chaft/features/inspector/ChannelMediaPanel.qml
         qml/Chaft/features/inspector/InspectorThreadPanel.qml
+)
+
+qt_add_qml_module(ChaftStyleModule
+    STATIC
+    URI ChaftStyle
+    VERSION 1.0
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ChaftStyle"
+    QML_FILES
+        qml/ChaftStyle/Button.qml
+        qml/ChaftStyle/CheckBox.qml
+        qml/ChaftStyle/ComboBox.qml
+        qml/ChaftStyle/Dialog.qml
+        qml/ChaftStyle/Menu.qml
+        qml/ChaftStyle/MenuItem.qml
+        qml/ChaftStyle/ScrollBar.qml
+        qml/ChaftStyle/TextField.qml
+        qml/ChaftStyle/ToolTip.qml
+)
+target_link_libraries(ChaftDesktop PRIVATE ChaftStyleModuleplugin)
+
+qt_add_resources(ChaftDesktop "chaft_desktop_fonts"
+    PREFIX "/fonts"
+    BASE fonts
+    FILES
+        fonts/SpaceGrotesk-Regular.ttf
+        fonts/SpaceGrotesk-Medium.ttf
+        fonts/SpaceGrotesk-Bold.ttf
+        fonts/JetBrainsMono-Regular.ttf
+        fonts/JetBrainsMono-Medium.ttf
+        fonts/JetBrainsMono-SemiBold.ttf
+        fonts/OFL-SpaceGrotesk.txt
+        fonts/OFL-JetBrainsMono.txt
 )
 
 if(APPLE)
