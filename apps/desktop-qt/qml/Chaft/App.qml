@@ -1833,6 +1833,50 @@ ApplicationWindow {
         workspacePeerEndpointField.text = chaftController.defaultPeerEndpoint
     }
 
+    function parsedCredentialObject(credentials) {
+        try {
+            var parsed = JSON.parse(String(credentials || ""))
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed
+                : null
+        } catch (error) {
+            return null
+        }
+    }
+
+    function credentialJsonForImport(credentials, passphrase) {
+        var parsed = root.parsedCredentialObject(credentials)
+        if (parsed === null) {
+            return credentials
+        }
+        if (String(parsed.kind || "") === "chaft.workspace-invite.v1"
+                && parsed.workspaceKey !== undefined) {
+            return JSON.stringify(parsed.workspaceKey)
+        }
+        if (parsed.recoveryBundle !== undefined
+                && String(passphrase || "").trim().length > 0) {
+            return JSON.stringify(parsed.recoveryBundle)
+        }
+        if (parsed.workspaceKey !== undefined
+                && String(passphrase || "").trim().length === 0) {
+            return JSON.stringify(parsed.workspaceKey)
+        }
+        return credentials
+    }
+
+    function credentialUsesWorkspaceKey(credentials) {
+        var parsed = root.parsedCredentialObject(credentials)
+        return parsed !== null && parsed.workspaceKey !== undefined
+    }
+
+    function credentialPeerEndpoint(credentials) {
+        var parsed = root.parsedCredentialObject(credentials)
+        if (parsed === null) {
+            return ""
+        }
+        return String(parsed.peerEndpoint || "").trim()
+    }
+
     function submitWorkspaceCreate() {
         if (!root.runtimeAccessReady) {
             return false
@@ -1856,14 +1900,21 @@ ApplicationWindow {
         if (credentials.length === 0) {
             return false
         }
+        var packagePeerEndpoint = root.credentialPeerEndpoint(credentials)
         var peerEndpoint = workspacePeerEndpointField.text.trim()
+        if (peerEndpoint.length === 0 && packagePeerEndpoint.length > 0) {
+            peerEndpoint = packagePeerEndpoint
+            workspacePeerEndpointField.text = peerEndpoint
+        }
         if (peerEndpoint.length > 0) {
             chaftController.defaultPeerEndpoint = peerEndpoint
         }
         var passphrase = workspaceRecoveryPassphraseField.text.trim()
+        var credentialJson = root.credentialJsonForImport(credentials, passphrase)
         var accepted = passphrase.length > 0
-            ? chaftController.importRecoveryBundle(credentials, passphrase)
-            : chaftController.importWorkspaceKey(credentials)
+                && !root.credentialUsesWorkspaceKey(credentials)
+            ? chaftController.importRecoveryBundle(credentialJson, passphrase)
+            : chaftController.importWorkspaceKey(credentialJson)
         if (accepted) {
             workspaceEntryDialog.close()
         }
@@ -2572,7 +2623,7 @@ ApplicationWindow {
                         id: workspaceCredentialsField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 156
-                        placeholderText: "Paste workspace key or recovery bundle JSON"
+                        placeholderText: "Paste invite, workspace key, or recovery bundle JSON"
                         Accessible.name: "Workspace credentials JSON"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted

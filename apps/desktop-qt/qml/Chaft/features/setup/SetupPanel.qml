@@ -513,6 +513,17 @@ ScrollView {
                         text: "Save JSON"
                         onClicked: app.openSaveKeyTransferDialog()
                     }
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: "Package invite"
+                        enabled: app.runtimeWorkReady
+                            && inviteDeviceField.text.trim().length > 0
+                        onClicked: chaftController.stageWorkspaceInvitePackage(
+                            inviteDeviceField.text,
+                            inviteRoleBox.currentText,
+                            app.preferredSyncPeerEndpoint())
+                    }
                 }
 
                 LabeledField {

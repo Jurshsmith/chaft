@@ -2222,6 +2222,85 @@ public:
 
   Q_INVOKABLE void clearKeyTransferJson() { setKeyTransferJson(QString()); }
 
+  Q_INVOKABLE bool stageWorkspaceInvitePackage(const QString &deviceId,
+                                               const QString &role,
+                                               const QString &peerEndpoint) {
+    if (!ensureRuntimeWorkspace()) {
+      return false;
+    }
+    const auto normalizedDeviceId = deviceId.trimmed();
+    const auto normalizedRole =
+        role.trimmed().isEmpty() ? QStringLiteral("member") : role.trimmed();
+    const auto normalizedPeerEndpoint = peerEndpoint.trimmed();
+    if (normalizedDeviceId.isEmpty()) {
+      setSyncStatus(QStringLiteral("device ID required"));
+      return false;
+    }
+    QString metadataError;
+    if (!validateMetadataTextForWrite(
+            normalizedDeviceId, kMaxDeviceIdReferenceBytes,
+            QStringLiteral("device ID"), QStringLiteral("512 bytes"),
+            &metadataError) ||
+        !validateMetadataTextForWrite(
+            normalizedRole, kMaxWorkspaceRoleBytes,
+            QStringLiteral("workspace role"), QStringLiteral("16 bytes"),
+            &metadataError)) {
+      setSyncStatus(metadataError);
+      return false;
+    }
+    if (!normalizedPeerEndpoint.isEmpty() &&
+        !validatePeerEndpointForUse(normalizedPeerEndpoint, &metadataError)) {
+      setSyncStatus(metadataError);
+      return false;
+    }
+
+    QJsonParseError parseError;
+    const auto credentialsDocument =
+        QJsonDocument::fromJson(m_keyTransferJson.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !credentialsDocument.isObject()) {
+      setSyncStatus(QStringLiteral("export workspace key first"));
+      return false;
+    }
+    const auto workspaceKey = credentialsDocument.object();
+    if (workspaceKey.value(QStringLiteral("workspaceId")).toString() !=
+        m_workspaceId) {
+      setSyncStatus(QStringLiteral("workspace key does not match selection"));
+      return false;
+    }
+    if (!workspaceKey.contains(QStringLiteral("aes256GcmSivKey")) &&
+        !workspaceKey.contains(QStringLiteral("aes_256_gcm_siv_key"))) {
+      setSyncStatus(QStringLiteral("workspace key export required"));
+      return false;
+    }
+
+    QJsonObject package;
+    package.insert(QStringLiteral("kind"),
+                   QStringLiteral("chaft.workspace-invite.v1"));
+    package.insert(QStringLiteral("schemaVersion"), 1);
+    package.insert(QStringLiteral("workspaceId"), m_workspaceId);
+    package.insert(QStringLiteral("workspaceName"),
+                   m_workspaceSnapshot.value(QStringLiteral("name")).toString());
+    package.insert(QStringLiteral("inviteeDeviceId"), normalizedDeviceId);
+    package.insert(QStringLiteral("role"), normalizedRole);
+    package.insert(
+        QStringLiteral("createdAt"),
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    if (!normalizedPeerEndpoint.isEmpty()) {
+      package.insert(QStringLiteral("peerEndpoint"), normalizedPeerEndpoint);
+    }
+    package.insert(QStringLiteral("workspaceKey"), workspaceKey);
+
+    const auto bytes = QJsonDocument(package).toJson(QJsonDocument::Indented);
+    if (bytes.size() > kMaxKeyTransferJsonBytes) {
+      setSyncStatus(QStringLiteral("invite package is too large"));
+      return false;
+    }
+    setKeyTransferJson(QString::fromUtf8(bytes));
+    setSyncStatus(QStringLiteral("workspace invite package staged"));
+    return true;
+  }
+
   Q_INVOKABLE bool unlockRuntime(const QString &passphrase) {
     if (!validateRuntimePathsForDispatch()) {
       setRuntimeUnlockRequired(true);

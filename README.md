@@ -118,9 +118,11 @@ tools/desktop/launch.sh debug --smoke-workspace --fresh
 
 Desktop onboarding supports creating more than one workspace and joining more
 than one workspace from exported credentials. The join form accepts workspace
-key JSON or passphrase-protected recovery bundle JSON. After creating a
-workspace, the app prompts for a recovery export so the credentials can be saved
-or copied before inviting other devices. Signed workspace invites, admin/member
+key JSON, invite-package JSON, or passphrase-protected recovery bundle JSON.
+After creating a workspace, the app prompts for a recovery export so the
+credentials can be saved or copied before inviting other devices. Setup can
+stage a saved invite package from an exported workspace key plus an invitee
+device ID, role, and peer endpoint. Signed workspace invites, admin/member
 roles, member removal, and private-channel grants are available from Setup and
 the pinned details panel once a workspace is selected.
 
