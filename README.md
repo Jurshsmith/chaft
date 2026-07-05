@@ -116,6 +116,14 @@ For deterministic visual regression data, opt into the seeded smoke workspace:
 tools/desktop/launch.sh debug --smoke-workspace --fresh
 ```
 
+Desktop onboarding supports creating more than one workspace and joining more
+than one workspace from exported credentials. The join form accepts workspace
+key JSON or passphrase-protected recovery bundle JSON. After creating a
+workspace, the app prompts for a recovery export so the credentials can be saved
+or copied before inviting other devices. Signed workspace invites, admin/member
+roles, member removal, and private-channel grants are available from Setup and
+the pinned details panel once a workspace is selected.
+
 Start the app and return to the shell immediately:
 
 ```sh
@@ -132,6 +140,12 @@ To verify the packaged app for the current OS with the same runtime smoke:
 
 ```sh
 tools/desktop/package-smoke.sh debug
+```
+
+To verify the no-workspace onboarding state without seeding smoke data:
+
+```sh
+tools/desktop/empty-workspace-smoke.sh debug
 ```
 
 To verify release metadata, checksums, SBOM, provenance, and platform artifact
@@ -319,9 +333,9 @@ launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
 runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
 temporary runtime and use the printed `runtimeDir`, `workspaceId`, and
 `desktopExpectedText` values for manual desktop hydration or screenshot work.
-`tools/desktop/screenshot-smoke.sh debug` runs the same desktop smoke and writes
-a verified PNG under `build/desktop-debug/smoke/` for local visual regression
-review.
+`tools/desktop/screenshot-smoke.sh debug` runs the same desktop smoke plus the
+empty-workspace onboarding state and writes verified PNGs under
+`build/desktop-debug/smoke/` for local visual regression review.
 To hydrate the shell from a real local runtime with decrypted local message
 bodies, set `CHAFT_RUNTIME_DIR` and `CHAFT_WORKSPACE_ID`; optionally set
 `CHAFT_IDENTITY_FILE` when using a non-default identity path, and set

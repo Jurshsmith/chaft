@@ -182,6 +182,18 @@ else
   exit 1
 fi
 
+empty_output="$(dirname "$output_path")/visual-smoke-empty.png"
+empty_baseline="$script_dir/screenshot-baseline-empty.json"
+if [ ! -f "$empty_baseline" ]; then
+  printf 'screenshot baseline not found for empty workspace: %s\n' \
+    "$empty_baseline" >&2
+  exit 1
+fi
+rm -f "$empty_output"
+"$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_output"
+python3 "$script_dir/screenshot-baseline.py" "$empty_output" "$empty_baseline"
+printf 'screenshot state verified: empty at %s\n' "$empty_output"
+
 ui_states="${CHAFT_SMOKE_UI_STATES:-setup,drawer,palette}"
 for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   state_output="$(dirname "$output_path")/visual-smoke-$ui_state.png"

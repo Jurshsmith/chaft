@@ -99,6 +99,7 @@ ApplicationWindow {
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
     property string workspaceEntryMode: "join"
+    property bool pendingPostCreateExport: false
 
     readonly property bool systemThemeMode: chaftController.themeMode === "system"
     readonly property bool systemPrefersDark: Application.styleHints.colorScheme !== Qt.ColorScheme.Light
@@ -1839,6 +1840,8 @@ ApplicationWindow {
         if (chaftController.createWorkspace(
                     workspaceCreateNameField.text,
                     workspaceCreateChannelField.text)) {
+            chaftController.clearKeyTransferJson()
+            root.pendingPostCreateExport = true
             workspaceEntryDialog.close()
             return true
         }
@@ -2085,6 +2088,14 @@ ApplicationWindow {
 
     function copyTextToClipboard(text, label) {
         return chaftController.copyText(String(text || ""), String(label || "text"))
+    }
+
+    function openSaveKeyTransferDialog() {
+        if (chaftController.keyTransferJson.length === 0) {
+            return false
+        }
+        saveKeyTransferDialog.open()
+        return true
     }
 
     function inspectorBodyCopyText() {
@@ -2462,6 +2473,12 @@ ApplicationWindow {
             if (root.autoBackupEnabled) {
                 autoBackupDebounce.restart()
             }
+            if (root.pendingPostCreateExport
+                    && root.runtimeWorkReady
+                    && root.currentWorkspaceId().length > 0) {
+                root.pendingPostCreateExport = false
+                postCreateExportDialog.open()
+            }
         }
         function onSelectedWorkspaceChanged() {
             root.inspectorItemKey = ""
@@ -2684,6 +2701,116 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: postCreateExportDialog
+        modal: true
+        width: Math.min(root.width - 48, 560)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape
+        title: "Save workspace credentials"
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Tokens.space3
+
+            Text {
+                Layout.fillWidth: true
+                text: "Export recovery credentials before inviting other devices."
+                color: Tokens.textMuted
+                font.pixelSize: Tokens.fontSizeSm
+                wrapMode: Text.WordWrap
+            }
+
+            TextField {
+                id: postCreateRecoveryPassphraseField
+                Layout.fillWidth: true
+                placeholderText: "Recovery passphrase"
+                Accessible.name: "Recovery passphrase"
+                echoMode: TextInput.Password
+                color: Tokens.textStrong
+                placeholderTextColor: Tokens.textMuted
+                background: Rectangle {
+                    radius: Tokens.radiusMd
+                    color: Tokens.sidebarInput
+                }
+                onAccepted: {
+                    if (text.trim().length > 0 && root.runtimeWorkReady) {
+                        chaftController.exportRecoveryBundle(text)
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Tokens.space2
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Export recovery"
+                    enabled: root.runtimeWorkReady
+                        && postCreateRecoveryPassphraseField.text.trim().length > 0
+                        && !chaftController.keyTransferInFlight
+                    onClicked: chaftController.exportRecoveryBundle(
+                        postCreateRecoveryPassphraseField.text)
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Export workspace"
+                    enabled: root.runtimeWorkReady
+                        && !chaftController.keyTransferInFlight
+                    onClicked: chaftController.exportWorkspaceKey()
+                }
+            }
+
+            TextArea {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 132
+                visible: chaftController.keyTransferJson.length > 0
+                readOnly: true
+                text: chaftController.keyTransferJson
+                Accessible.name: "Exported credentials JSON"
+                color: Tokens.textStrong
+                wrapMode: TextEdit.WrapAnywhere
+                background: Rectangle {
+                    radius: Tokens.radiusMd
+                    color: Tokens.sidebarInput
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Tokens.space2
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Copy JSON"
+                    enabled: chaftController.keyTransferJson.length > 0
+                    onClicked: root.copyTextToClipboard(
+                        chaftController.keyTransferJson,
+                        "credentials JSON")
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Save JSON"
+                    enabled: chaftController.keyTransferJson.length > 0
+                    onClicked: root.openSaveKeyTransferDialog()
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Done"
+                    onClicked: postCreateExportDialog.close()
+                }
+            }
+        }
+
+        onOpened: postCreateRecoveryPassphraseField.forceActiveFocus()
+        onClosed: postCreateRecoveryPassphraseField.text = ""
+    }
+
+    Dialog {
         id: runtimeUnlockDialog
         modal: true
         width: Math.min(root.width - 48, 420)
@@ -2815,6 +2942,13 @@ ApplicationWindow {
             attachmentSelector = ""
             displayName = ""
         }
+    }
+
+    FileDialog {
+        id: saveKeyTransferDialog
+        title: "Save credentials JSON"
+        fileMode: FileDialog.SaveFile
+        onAccepted: chaftController.saveKeyTransferJson(root.localPathFromUrl(selectedFile))
     }
 
     RowLayout {

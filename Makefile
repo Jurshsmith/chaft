@@ -48,6 +48,7 @@ help:
 		'Desktop build/run:' \
 		'  make desktop-build             Build desktop app with PROFILE' \
 		'  make desktop-smoke             Run desktop smoke with PROFILE' \
+		'  make desktop-empty-smoke       Run empty workspace desktop smoke with PROFILE' \
 		'  make desktop-launch            Build and launch normal desktop runtime' \
 		'  make desktop-launch-fresh      Recreate normal desktop runtime before launch' \
 		'  make desktop-launch-detached   Launch normal desktop runtime in background' \
@@ -113,12 +114,15 @@ desktop-checks:
 	$(MAKE) style-lint
 	$(MAKE) theme-contrast
 
-.PHONY: desktop-build desktop-smoke desktop-launch desktop-launch-fresh desktop-launch-detached desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
+.PHONY: desktop-build desktop-smoke desktop-empty-smoke desktop-launch desktop-launch-fresh desktop-launch-detached desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
 desktop-build:
 	tools/desktop/build.sh $(PROFILE)
 
 desktop-smoke:
 	tools/desktop/smoke.sh $(PROFILE)
+
+desktop-empty-smoke:
+	tools/desktop/empty-workspace-smoke.sh $(PROFILE)
 
 desktop-launch:
 	tools/desktop/launch.sh $(PROFILE) $(LAUNCH_ARGS)

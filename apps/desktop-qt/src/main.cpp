@@ -2173,6 +2173,55 @@ public:
     return true;
   }
 
+  Q_INVOKABLE bool saveKeyTransferJson(const QString &outputPath) {
+    const auto normalizedOutputPath = outputPath.trimmed();
+    if (normalizedOutputPath.isEmpty()) {
+      setSyncStatus(QStringLiteral("output path required"));
+      return false;
+    }
+    QString metadataError;
+    if (!validateMetadataTextForWrite(normalizedOutputPath, kMaxFfiPathBytes,
+                                      QStringLiteral("output path"),
+                                      QStringLiteral("64 KB"),
+                                      &metadataError)) {
+      setSyncStatus(metadataError);
+      return false;
+    }
+    const auto bytes = m_keyTransferJson.toUtf8();
+    if (bytes.isEmpty()) {
+      setSyncStatus(QStringLiteral("credentials JSON unavailable"));
+      return false;
+    }
+
+    const QFileInfo fileInfo(normalizedOutputPath);
+    const auto outputDir = fileInfo.absoluteDir();
+    if (!outputDir.exists() && !QDir().mkpath(outputDir.absolutePath())) {
+      setSyncStatus(QStringLiteral("failed to create output directory"));
+      return false;
+    }
+
+    QSaveFile file(normalizedOutputPath);
+    if (!file.open(QIODevice::WriteOnly)) {
+      setSyncStatus(QStringLiteral("failed to open credentials file"));
+      return false;
+    }
+    if (file.write(bytes) != static_cast<qint64>(bytes.size()) ||
+        file.write("\n", 1) != 1) {
+      file.cancelWriting();
+      setSyncStatus(QStringLiteral("failed to write credentials file"));
+      return false;
+    }
+    if (!file.commit()) {
+      setSyncStatus(QStringLiteral("failed to save credentials file"));
+      return false;
+    }
+
+    setSyncStatus(QStringLiteral("credentials JSON saved"));
+    return true;
+  }
+
+  Q_INVOKABLE void clearKeyTransferJson() { setKeyTransferJson(QString()); }
+
   Q_INVOKABLE bool unlockRuntime(const QString &passphrase) {
     if (!validateRuntimePathsForDispatch()) {
       setRuntimeUnlockRequired(true);
@@ -10192,6 +10241,14 @@ bool desktopSmokeFlagEnabled() {
          value == QStringLiteral("yes") || value == QStringLiteral("on");
 }
 
+bool desktopSmokeExpectNoWorkspace() {
+  const auto value = qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_NO_WORKSPACE")
+                         .trimmed()
+                         .toLower();
+  return value == QStringLiteral("1") || value == QStringLiteral("true") ||
+         value == QStringLiteral("yes") || value == QStringLiteral("on");
+}
+
 int desktopSmokeTimeoutMs() {
   const auto value =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_TIMEOUT_MS").trimmed();
@@ -10217,6 +10274,18 @@ bool desktopSmokeSnapshotContainsText(const QVariantMap &snapshot,
     }
   }
   return false;
+}
+
+bool desktopSmokeReadyForEmptyRuntime(ChaftController *controller,
+                                      const QVariantMap &snapshot) {
+  if (controller == nullptr) {
+    return false;
+  }
+  if (!snapshot.value(QStringLiteral("workspaceId")).toString().isEmpty()) {
+    return false;
+  }
+  const auto status = controller->syncStatus().trimmed().toLower();
+  return !status.isEmpty() && !status.startsWith(QStringLiteral("loading"));
 }
 
 bool saveDesktopSmokeScreenshot(const QString &path, QString *errorMessage) {
@@ -10305,18 +10374,23 @@ void configureDesktopSmoke(QCoreApplication *app,
 
   const auto expectedText =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_TEXT").trimmed();
+  const auto expectNoWorkspace = desktopSmokeExpectNoWorkspace();
   const auto screenshotPath =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_SCREENSHOT").trimmed();
   const auto timeoutMs = desktopSmokeTimeoutMs();
   const auto completed = std::make_shared<bool>(false);
 
   const auto checkSnapshot = [app, controller, expectedText, screenshotPath,
-                              completed]() {
+                              expectNoWorkspace, completed]() {
     if (*completed) {
       return;
     }
     const auto snapshot = controller->workspaceSnapshot();
-    if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+    if (expectNoWorkspace) {
+      if (!desktopSmokeReadyForEmptyRuntime(controller, snapshot)) {
+        return;
+      }
+    } else if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
       return;
     }
 
@@ -10349,6 +10423,8 @@ void configureDesktopSmoke(QCoreApplication *app,
   };
 
   QObject::connect(controller, &ChaftController::workspaceSnapshotChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::syncStatusChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
   QTimer::singleShot(0, app, checkSnapshot);
   QTimer::singleShot(timeoutMs, app, [controller, expectedText, completed]() {

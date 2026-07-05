@@ -495,6 +495,26 @@ ScrollView {
                     }
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: chaftController.keyTransferJson.length > 0
+                    spacing: Tokens.space2
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: "Copy JSON"
+                        onClicked: app.copyTextToClipboard(
+                            chaftController.keyTransferJson,
+                            "credentials JSON")
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: "Save JSON"
+                        onClicked: app.openSaveKeyTransferDialog()
+                    }
+                }
+
                 LabeledField {
                     id: recoveryPassphraseField
                     Layout.fillWidth: true
