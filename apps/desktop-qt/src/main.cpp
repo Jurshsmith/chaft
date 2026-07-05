@@ -658,77 +658,30 @@ QVariantList workspaceSummariesFromRuntime(
 
 QByteArray fallbackSnapshotJson() {
   return R"json({
-        "workspaceId": "wrk_demo",
-        "name": "Chaft Labs",
-        "channels": [
-            { "channelId": "chn_general", "name": "general", "isPrivate": false, "unreadCount": 0 },
-            { "channelId": "chn_runtime", "name": "p2p-runtime", "isPrivate": false, "unreadCount": 2 },
-            { "channelId": "chn_design", "name": "design-system", "isPrivate": false, "unreadCount": 0 },
-            { "channelId": "chn_replicas", "name": "replica-nodes", "isPrivate": true, "unreadCount": 1 }
-        ],
-        "profiles": [
-            { "deviceId": "dev_mira", "displayName": "Mira", "updatedEventId": "evt_profile_mira" }
-        ],
-        "members": [
-            {
-                "deviceId": "dev_mira",
-                "role": "owner",
-                "displayName": "Mira",
-                "profileEventId": "evt_profile_mira",
-                "membershipEventId": "evt_workspace"
-            }
-        ],
-        "keyPackages": [
-            {
-                "deviceId": "dev_mira",
-                "keyPackageId": "dkp_mira_demo",
-                "protocol": "openmls/key-package",
-                "byteLen": 512,
-                "publishedEventId": "evt_key_package_mira",
-                "physicalMs": 1700000000010
-            }
-        ],
+        "workspaceId": "",
+        "name": "",
+        "channels": [],
+        "profiles": [],
+        "members": [],
+        "keyPackages": [],
         "peerEndpoints": [],
-        "timeline": [
-            {
-                "kind": "encrypted_message",
-                "eventId": "evt_ciphertext",
-                "messageId": "msg_ciphertext",
-                "channelId": "chn_general",
-                "authorDeviceId": "dev_mira",
-                "authorDisplayName": "Mira",
-                "body": "Encrypted message",
-                "attachmentCount": 0,
-                "attachments": [],
-                "reactionCount": 0,
-                "reactions": {},
-                "myReactions": [],
-                "encrypted": true,
-                "deleted": false,
-                "missingParentIds": []
-            },
-            {
-                "kind": "missing_history_gap",
-                "eventId": "evt_later_slice",
-                "messageId": null,
-                "channelId": null,
-                "authorDeviceId": null,
-                "authorDisplayName": null,
-                "body": "Missing 2 parent event(s)",
-                "attachmentCount": 0,
-                "attachments": [],
-                "reactionCount": 0,
-                "reactions": {},
-                "myReactions": [],
-                "encrypted": false,
-                "deleted": false,
-                "missingParentIds": ["evt_parent_a", "evt_parent_b"]
-            }
-        ],
-        "gapCount": 0,
-        "gaps": [],
-        "invalidSignatureCount": 0,
-        "invalidSignatures": []
+        "recentCommits": [],
+        "securityIssues": [],
+        "resolvedChannels": {},
+        "timeline": [],
+        "timelineChannelId": "",
+        "timelineWindow": {
+            "startIndex": 0,
+            "itemCount": 0,
+            "totalCount": 0,
+            "hasMoreBefore": false,
+            "hasMoreAfter": false
+        },
+        "channelCount": 0,
+        "memberCount": 0,
+        "keyPackageCount": 0,
+        "peerEndpointCount": 0,
+        "syncStatus": ""
     })json";
 }
 
@@ -2124,7 +2077,7 @@ public:
     }
     if (m_syncStatus.isEmpty()) {
       setSyncStatus(hasRuntimeWorkspace() ? QStringLiteral("local event log")
-                                          : QStringLiteral("demo workspace"));
+                                          : QStringLiteral("no workspace"));
     }
   }
 

@@ -32,6 +32,8 @@ ApplicationWindow {
         && !chaftController.rawEventStoreMode
     readonly property bool runtimeWorkReady: chaftController.hasRuntimeWorkspace
         && root.runtimeAccessReady
+    readonly property bool hasWorkspaceContent: chaftController.hasRuntimeWorkspace
+        || chaftController.rawEventStoreMode
     readonly property var timeline: workspaceSnapshot.timeline || []
     readonly property var timelineWindow: workspaceSnapshot.timelineWindow || ({ startIndex: 0, itemCount: timeline.length, totalCount: timeline.length, hasMoreBefore: false, hasMoreAfter: false })
     readonly property string timelineChannelId: String(workspaceSnapshot.timelineChannelId || "")
@@ -44,7 +46,9 @@ ApplicationWindow {
     readonly property string normalizedSearchQuery: searchHasTerms ? trimmedSearchQuery.toLowerCase() : ""
     readonly property var selectedChannel: root.channelById(root.selectedChannelId)
     readonly property string selectedChannelKey: String(selectedChannel.channelId || "")
-    readonly property string selectedChannelName: String(selectedChannel.name || "general")
+    readonly property string selectedChannelName: root.hasWorkspaceContent
+        ? String(selectedChannel.name || "general")
+        : ""
     readonly property bool selectedChannelPrivate: Boolean(selectedChannel.isPrivate)
     readonly property bool selectedChannelTimelineReady: timelineChannelId.length > 0
         && timelineChannelId === selectedChannelKey
@@ -94,6 +98,7 @@ ApplicationWindow {
     property bool autoSyncEnabled: false
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
+    property string workspaceEntryMode: "join"
 
     readonly property bool systemThemeMode: chaftController.themeMode === "system"
     readonly property bool systemPrefersDark: Application.styleHints.colorScheme !== Qt.ColorScheme.Light
@@ -141,7 +146,7 @@ ApplicationWindow {
             return "View-only store"
         }
         if (!chaftController.hasRuntimeWorkspace) {
-            return "Demo workspace"
+            return "No workspace"
         }
         if (chaftController.runtimeLocked) {
             return "Locked"
@@ -204,6 +209,20 @@ ApplicationWindow {
             run: function () { root.syncDrawerOpen = !root.syncDrawerOpen }
         },
         {
+            id: "join-workspace",
+            label: "Join workspace",
+            shortcut: "",
+            enabled: function () { return root.runtimeAccessReady },
+            run: function () { root.openWorkspaceEntry("join") }
+        },
+        {
+            id: "create-workspace",
+            label: "Create workspace",
+            shortcut: "",
+            enabled: function () { return root.runtimeAccessReady },
+            run: function () { root.openWorkspaceEntry("create") }
+        },
+        {
             id: "new-channel",
             label: "New channel",
             shortcut: "",
@@ -214,14 +233,14 @@ ApplicationWindow {
             id: "focus-composer",
             label: "Focus composer",
             shortcut: root.primaryKeyLabel + "M",
-            enabled: function () { return true },
+            enabled: function () { return root.runtimeWorkReady },
             run: function () { root.focusComposer() }
         },
         {
             id: "focus-search",
             label: "Focus search",
             shortcut: root.primaryKeyLabel + "F",
-            enabled: function () { return true },
+            enabled: function () { return root.hasWorkspaceContent },
             run: function () { root.focusSearch() }
         },
         {
@@ -1784,9 +1803,7 @@ ApplicationWindow {
         var selectedId = String(chaftController.selectedWorkspaceId
             || root.workspaceSnapshot.workspaceId || "")
         if (selectedId.length === 0) {
-            return items.length > 0 ? items : [
-                { workspaceId: "", name: "Chaft" }
-            ]
+            return items
         }
 
         for (var index = 0; index < items.length; index += 1) {
@@ -1800,6 +1817,54 @@ ApplicationWindow {
             name: root.workspaceSnapshot.name || selectedId
         })
         return items
+    }
+
+    function openWorkspaceEntry(mode) {
+        root.workspaceEntryMode = mode === "create" ? "create" : "join"
+        workspaceEntryDialog.open()
+    }
+
+    function resetWorkspaceEntryForm() {
+        workspaceCreateNameField.text = ""
+        workspaceCreateChannelField.text = "general"
+        workspaceCredentialsField.text = ""
+        workspaceRecoveryPassphraseField.text = ""
+        workspacePeerEndpointField.text = chaftController.defaultPeerEndpoint
+    }
+
+    function submitWorkspaceCreate() {
+        if (!root.runtimeAccessReady) {
+            return false
+        }
+        if (chaftController.createWorkspace(
+                    workspaceCreateNameField.text,
+                    workspaceCreateChannelField.text)) {
+            workspaceEntryDialog.close()
+            return true
+        }
+        return false
+    }
+
+    function submitWorkspaceJoin() {
+        if (!root.runtimeAccessReady) {
+            return false
+        }
+        var credentials = workspaceCredentialsField.text.trim()
+        if (credentials.length === 0) {
+            return false
+        }
+        var peerEndpoint = workspacePeerEndpointField.text.trim()
+        if (peerEndpoint.length > 0) {
+            chaftController.defaultPeerEndpoint = peerEndpoint
+        }
+        var passphrase = workspaceRecoveryPassphraseField.text.trim()
+        var accepted = passphrase.length > 0
+            ? chaftController.importRecoveryBundle(credentials, passphrase)
+            : chaftController.importWorkspaceKey(credentials)
+        if (accepted) {
+            workspaceEntryDialog.close()
+        }
+        return accepted
     }
 
     function selectedChannelIndex() {
@@ -2302,6 +2367,7 @@ ApplicationWindow {
     Shortcut {
         sequences: ["Ctrl+F", "Meta+F"]
         context: Qt.ApplicationShortcut
+        enabled: root.hasWorkspaceContent
         onActivated: root.focusSearch()
     }
 
@@ -2314,18 +2380,21 @@ ApplicationWindow {
     Shortcut {
         sequences: ["Ctrl+M", "Meta+M"]
         context: Qt.ApplicationShortcut
+        enabled: root.runtimeWorkReady
         onActivated: root.focusComposer()
     }
 
     Shortcut {
         sequence: "Alt+Up"
         context: Qt.ApplicationShortcut
+        enabled: root.hasWorkspaceContent
         onActivated: root.selectChannelByOffset(-1)
     }
 
     Shortcut {
         sequence: "Alt+Down"
         context: Qt.ApplicationShortcut
+        enabled: root.hasWorkspaceContent
         onActivated: root.selectChannelByOffset(1)
     }
 
@@ -2351,12 +2420,14 @@ ApplicationWindow {
     Shortcut {
         sequence: "Alt+Home"
         context: Qt.ApplicationShortcut
+        enabled: root.hasWorkspaceContent
         onActivated: timelineView.scrollToOldest()
     }
 
     Shortcut {
         sequence: "Alt+End"
         context: Qt.ApplicationShortcut
+        enabled: root.hasWorkspaceContent
         onActivated: timelineView.scrollToLatest()
     }
 
@@ -2430,6 +2501,186 @@ ApplicationWindow {
                 attachmentDialog.pendingReplyToMessageId = ""
             }
         }
+    }
+
+    Dialog {
+        id: workspaceEntryDialog
+        modal: true
+        width: Math.min(root.width - 48, 560)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        title: root.workspaceEntryMode === "create" ? "Create workspace" : "Join workspace"
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Tokens.space3
+
+            TabBar {
+                id: workspaceEntryTabs
+                Layout.fillWidth: true
+                currentIndex: root.workspaceEntryMode === "create" ? 1 : 0
+                onCurrentIndexChanged: {
+                    root.workspaceEntryMode = currentIndex === 1 ? "create" : "join"
+                }
+
+                TabButton {
+                    text: "Join"
+                    Accessible.name: "Join workspace"
+                }
+
+                TabButton {
+                    text: "Create"
+                    Accessible.name: "Create workspace"
+                }
+            }
+
+            StackLayout {
+                Layout.fillWidth: true
+                currentIndex: workspaceEntryTabs.currentIndex
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.space2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Credentials JSON"
+                        color: Tokens.textMuted
+                        font.pixelSize: Tokens.fontSizeXs
+                        font.weight: Font.DemiBold
+                    }
+
+                    TextArea {
+                        id: workspaceCredentialsField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 156
+                        placeholderText: "Paste workspace key or recovery bundle JSON"
+                        Accessible.name: "Workspace credentials JSON"
+                        color: Tokens.textStrong
+                        placeholderTextColor: Tokens.textMuted
+                        wrapMode: TextEdit.WrapAnywhere
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.sidebarInput
+                        }
+                    }
+
+                    TextField {
+                        id: workspaceRecoveryPassphraseField
+                        Layout.fillWidth: true
+                        placeholderText: "Recovery passphrase"
+                        Accessible.name: "Recovery passphrase"
+                        echoMode: TextInput.Password
+                        color: Tokens.textStrong
+                        placeholderTextColor: Tokens.textMuted
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.sidebarInput
+                        }
+                        onAccepted: root.submitWorkspaceJoin()
+                    }
+
+                    TextField {
+                        id: workspacePeerEndpointField
+                        Layout.fillWidth: true
+                        placeholderText: "Peer endpoint"
+                        Accessible.name: "Peer endpoint"
+                        color: Tokens.textStrong
+                        placeholderTextColor: Tokens.textMuted
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.sidebarInput
+                        }
+                        onAccepted: root.submitWorkspaceJoin()
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.space2
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Cancel"
+                            onClicked: workspaceEntryDialog.close()
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Join workspace"
+                            enabled: root.runtimeAccessReady
+                                && workspaceCredentialsField.text.trim().length > 0
+                            onClicked: root.submitWorkspaceJoin()
+                        }
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.space2
+
+                    TextField {
+                        id: workspaceCreateNameField
+                        Layout.fillWidth: true
+                        placeholderText: "Workspace name"
+                        Accessible.name: "Workspace name"
+                        color: Tokens.textStrong
+                        placeholderTextColor: Tokens.textMuted
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.sidebarInput
+                        }
+                        onAccepted: root.submitWorkspaceCreate()
+                    }
+
+                    TextField {
+                        id: workspaceCreateChannelField
+                        Layout.fillWidth: true
+                        text: "general"
+                        placeholderText: "First channel"
+                        Accessible.name: "First channel"
+                        color: Tokens.textStrong
+                        placeholderTextColor: Tokens.textMuted
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.sidebarInput
+                        }
+                        onAccepted: root.submitWorkspaceCreate()
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.space2
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Cancel"
+                            onClicked: workspaceEntryDialog.close()
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Create workspace"
+                            enabled: root.runtimeAccessReady
+                                && workspaceCreateNameField.text.trim().length > 0
+                            onClicked: root.submitWorkspaceCreate()
+                        }
+                    }
+                }
+            }
+        }
+
+        onOpened: {
+            workspacePeerEndpointField.text = chaftController.defaultPeerEndpoint
+            if (root.workspaceEntryMode === "create") {
+                workspaceCreateNameField.forceActiveFocus()
+                workspaceCreateNameField.selectAll()
+            } else {
+                workspaceCredentialsField.forceActiveFocus()
+            }
+        }
+
+        onClosed: root.resetWorkspaceEntryForm()
     }
 
     Dialog {
@@ -2575,34 +2826,80 @@ ApplicationWindow {
             Layout.preferredWidth: 72
             color: Tokens.rail
 
-            Column {
+            Flickable {
+                id: workspaceRailFlick
                 anchors.top: parent.top
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: addWorkspaceButton.top
                 anchors.topMargin: 14
-                spacing: 10
+                anchors.bottomMargin: 10
+                clip: true
+                contentWidth: width
+                contentHeight: workspaceRailColumn.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
 
-                Repeater {
-                    model: root.workspaceRailItems
-                    delegate: WorkspaceRailItem {
-                        id: workspaceRailDelegate
-                        required property int index
-                        required property var modelData
+                Column {
+                    id: workspaceRailColumn
+                    x: Math.round((workspaceRailFlick.width - width) / 2)
+                    width: 40
+                    spacing: 10
 
-                        workspaceId: String(workspaceRailDelegate.modelData.workspaceId || "")
-                        workspaceName: String(workspaceRailDelegate.modelData.name
-                            || workspaceRailDelegate.modelData.workspaceId
-                            || "Workspace")
-                        initial: root.workspaceInitial(workspaceRailDelegate.modelData)
-                        selected: String(workspaceRailDelegate.modelData.workspaceId || "") === chaftController.selectedWorkspaceId
-                            || (chaftController.selectedWorkspaceId.length === 0 && workspaceRailDelegate.index === 0)
-                        actionable: root.runtimeWorkReady
-                        // Workspace summaries may not carry unreadCount yet;
-                        // degrade to no badge silently.
-                        unreadCount: Number(workspaceRailDelegate.modelData.unreadCount || 0)
-                        onActivated: function(workspaceId) {
-                            root.selectWorkspaceId(workspaceId)
+                    Repeater {
+                        model: root.workspaceRailItems
+                        delegate: WorkspaceRailItem {
+                            id: workspaceRailDelegate
+                            required property int index
+                            required property var modelData
+
+                            workspaceId: String(workspaceRailDelegate.modelData.workspaceId || "")
+                            workspaceName: String(workspaceRailDelegate.modelData.name
+                                || workspaceRailDelegate.modelData.workspaceId
+                                || "Workspace")
+                            initial: root.workspaceInitial(workspaceRailDelegate.modelData)
+                            selected: String(workspaceRailDelegate.modelData.workspaceId || "") === chaftController.selectedWorkspaceId
+                            actionable: root.runtimeAccessReady
+                            // Workspace summaries may not carry unreadCount yet;
+                            // degrade to no badge silently.
+                            unreadCount: Number(workspaceRailDelegate.modelData.unreadCount || 0)
+                            onActivated: function(workspaceId) {
+                                root.selectWorkspaceId(workspaceId)
+                            }
                         }
                     }
+                }
+            }
+
+            Button {
+                id: addWorkspaceButton
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 14
+                width: 40
+                height: 40
+                text: "+"
+                Accessible.name: "Add workspace"
+                Accessible.description: "Join or create a workspace"
+                enabled: root.runtimeAccessReady
+                onClicked: root.openWorkspaceEntry("join")
+                ToolTip.visible: hovered
+                ToolTip.text: "Add workspace"
+                background: Rectangle {
+                    radius: Tokens.radiusMd
+                    color: addWorkspaceButton.hovered ? Tokens.railElevated : Tokens.rail
+                    border.width: 1
+                    border.color: Tokens.borderSubtle
+                }
+                contentItem: Text {
+                    text: addWorkspaceButton.text
+                    color: Tokens.railText
+                    font.pixelSize: Tokens.fontSizeXl
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                 }
             }
         }
@@ -2627,6 +2924,7 @@ ApplicationWindow {
                 TextField {
                     id: searchField
                     Layout.fillWidth: true
+                    visible: root.hasWorkspaceContent
                     placeholderText: "Search or jump"
                     Accessible.name: "Search or jump"
                     Accessible.description: root.searchHasTerms
@@ -2650,39 +2948,6 @@ ApplicationWindow {
                     background: Rectangle {
                         radius: Tokens.radiusMd
                         color: Tokens.sidebarInput
-                    }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    visible: !chaftController.hasRuntimeWorkspace && !chaftController.rawEventStoreMode
-                    spacing: 8
-
-                    TextField {
-                        id: workspaceNameField
-                        Layout.fillWidth: true
-                        placeholderText: "Workspace name"
-                        Accessible.name: "Workspace name"
-                        Accessible.description: "Name for the new local workspace"
-                        color: Tokens.textStrong
-                        placeholderTextColor: Tokens.textMuted
-                        background: Rectangle {
-                            radius: Tokens.radiusMd
-                            color: Tokens.sidebarInput
-                        }
-                        onAccepted: {
-                            if (root.runtimeAccessReady) {
-                                chaftController.createWorkspace(text, "general")
-                            }
-                        }
-                    }
-
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Create workspace"
-                        Accessible.name: "Create workspace"
-                        enabled: root.runtimeAccessReady
-                        onClicked: chaftController.createWorkspace(workspaceNameField.text, "general")
                     }
                 }
 
@@ -2783,6 +3048,7 @@ ApplicationWindow {
                     id: channelListScroll
                     Layout.fillWidth: true
                     Layout.fillHeight: !root.setupPanelOpen
+                    visible: root.hasWorkspaceContent
                     Layout.preferredHeight: root.setupPanelOpen
                         ? Math.min(180, channelListColumn.implicitHeight + 8)
                         : 1
@@ -2871,9 +3137,69 @@ ApplicationWindow {
                 anchors.fill: parent
                 spacing: 0
 
-                Rectangle {
+                Item {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: chaftController.hasRuntimeWorkspace && root.syncDrawerOpen ? 104 : 58
+                    Layout.fillHeight: true
+                    visible: !root.hasWorkspaceContent
+
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        width: Math.min(520, Math.max(280, parent.width - 64))
+                        spacing: Tokens.space4
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "No workspaces yet"
+                            color: Tokens.textStrong
+                            font.pixelSize: Tokens.fontSizeXl
+                            font.weight: Font.Bold
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Join with workspace credentials, or create a local-first workspace."
+                            color: Tokens.textMuted
+                            font.pixelSize: Tokens.fontSizeMd
+                            wrapMode: Text.WordWrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        RowLayout {
+                            Layout.alignment: Qt.AlignHCenter
+                            spacing: Tokens.space2
+
+                            Button {
+                                text: "Join workspace"
+                                enabled: root.runtimeAccessReady
+                                onClicked: root.openWorkspaceEntry("join")
+                            }
+
+                            Button {
+                                text: "Create workspace"
+                                enabled: root.runtimeAccessReady
+                                onClicked: root.openWorkspaceEntry("create")
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: chaftController.syncStatus.length > 0
+                            text: chaftController.syncStatus
+                            color: Tokens.textMuted
+                            font.pixelSize: Tokens.fontSizeSm
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: root.hasWorkspaceContent
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible
+                        ? (chaftController.hasRuntimeWorkspace && root.syncDrawerOpen ? 104 : 58)
+                        : 0
                     color: Tokens.surfaceBase
 
                     ColumnLayout {
@@ -3119,7 +3445,8 @@ ApplicationWindow {
 
                 Button {
                     Layout.alignment: Qt.AlignHCenter
-                    visible: root.runtimeWorkReady
+                    visible: root.hasWorkspaceContent
+                        && root.runtimeWorkReady
                         && !root.runtimeSearchReady
                         && Boolean(root.timelineWindow.hasMoreBefore)
                     enabled: !chaftController.syncInFlight
@@ -3137,6 +3464,7 @@ ApplicationWindow {
 
                 TimelineView {
                     id: timelineView
+                    visible: root.hasWorkspaceContent
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     timelineModel: root.selectedTimeline
@@ -3186,6 +3514,7 @@ ApplicationWindow {
 
                 ComposerBar {
                     id: composer
+                    visible: root.hasWorkspaceContent
                     Layout.fillWidth: true
                     channelName: root.selectedChannelName
                     editMode: root.editingMessageId.length > 0
@@ -3233,6 +3562,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.preferredWidth: 300
             visible: root.width >= 1400
+                && root.hasWorkspaceContent
                 && (chaftController.inspectorPinned || root.inspectorItemKey.length > 0)
             color: Tokens.surfaceRaised
             border.color: Tokens.borderSubtle

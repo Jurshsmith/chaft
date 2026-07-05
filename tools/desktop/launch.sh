@@ -9,11 +9,11 @@ usage() {
   cat >&2 <<'EOF'
 usage: tools/desktop/launch.sh [debug|release] [options]
 
-Builds Chaft Desktop, prepares a persistent local test workspace, and launches
-the app against it.
+Builds Chaft Desktop, prepares a persistent local runtime, and launches the app.
 
 Options:
-  --fresh            Recreate the seeded workspace before launching.
+  --fresh            Recreate launch data before launching.
+  --smoke-workspace  Seed and select the deterministic visual smoke workspace.
   --data-dir DIR     Store launch data under DIR. Default: scratch/desktop-test.
   --detached         Start the app in the background and return immediately.
   --no-build         Reuse an existing desktop build and FFI library.
@@ -26,6 +26,7 @@ data_root="${CHAFT_DESKTOP_LAUNCH_DIR:-$repo_root/scratch/desktop-test}"
 fresh=0
 detached=0
 build=1
+smoke_workspace="${CHAFT_DESKTOP_LAUNCH_SMOKE:-0}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -34,6 +35,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --fresh)
       fresh=1
+      ;;
+    --smoke-workspace)
+      smoke_workspace=1
       ;;
     --data-dir)
       if [ "$#" -lt 2 ]; then
@@ -124,7 +128,10 @@ if os.path.exists(config_path):
     except (OSError, json.JSONDecodeError):
         config = {}
 
-config["workspaceId"] = workspace_id
+if workspace_id:
+    config["workspaceId"] = workspace_id
+else:
+    config.pop("workspaceId", None)
 tmp_path = config_path + ".tmp"
 with open(tmp_path, "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2, sort_keys=True)
@@ -152,24 +159,36 @@ if [ ! -f "$ffi_library" ]; then
   exit 1
 fi
 
-cli_bin="$repo_root/target/$rust_target_dir/$(chaft_desktop_cli_binary_name)"
-if [ ! -x "$cli_bin" ]; then
-  require_tool cargo
-  (cd "$repo_root" && cargo build -p chaft-cli $cargo_profile)
+manifest_json=
+workspace_id=
+runtime_dir="$data_root/runtime"
+
+if [ "$smoke_workspace" = "1" ]; then
+  cli_bin="$repo_root/target/$rust_target_dir/$(chaft_desktop_cli_binary_name)"
+  if [ ! -x "$cli_bin" ]; then
+    require_tool cargo
+    (cd "$repo_root" && cargo build -p chaft-cli $cargo_profile)
+  fi
+
+  manifest_json="$data_root/manifest.json"
+  workspace_seed_dir="$data_root/visual-workspace"
+
+  if [ "$fresh" -eq 1 ] || [ ! -f "$manifest_json" ]; then
+    mkdir -p "$data_root"
+    CHAFT_CLI_BIN="$cli_bin" \
+    CHAFT_VISUAL_SMOKE_DIR="$workspace_seed_dir" \
+      "$repo_root/tools/smoke/visual-workspace.sh" > "$manifest_json"
+  fi
+
+  runtime_dir="$(json_field "$manifest_json" runtimeDir)"
+  workspace_id="$(json_field "$manifest_json" workspaceId)"
+else
+  if [ "$fresh" -eq 1 ]; then
+    rm -rf "$runtime_dir"
+  fi
+  mkdir -p "$runtime_dir"
 fi
 
-manifest_json="$data_root/manifest.json"
-workspace_seed_dir="$data_root/visual-workspace"
-
-if [ "$fresh" -eq 1 ] || [ ! -f "$manifest_json" ]; then
-  mkdir -p "$data_root"
-  CHAFT_CLI_BIN="$cli_bin" \
-  CHAFT_VISUAL_SMOKE_DIR="$workspace_seed_dir" \
-    "$repo_root/tools/smoke/visual-workspace.sh" > "$manifest_json"
-fi
-
-runtime_dir="$(json_field "$manifest_json" runtimeDir)"
-workspace_id="$(json_field "$manifest_json" workspaceId)"
 write_desktop_config "$runtime_dir" "$workspace_id"
 
 source_qml_root="$repo_root/apps/desktop-qt/qml"
@@ -178,8 +197,10 @@ platform="$(uname -s)"
 
 printf 'desktop binary: %s\n' "$desktop_binary"
 printf 'runtime dir: %s\n' "$runtime_dir"
-printf 'workspace id: %s\n' "$workspace_id"
-printf 'manifest: %s\n' "$manifest_json"
+printf 'workspace id: %s\n' "${workspace_id:-"(none)"}"
+if [ -n "$manifest_json" ]; then
+  printf 'manifest: %s\n' "$manifest_json"
+fi
 if [ "$detached" -eq 1 ] && [ "$platform" != "Darwin" ]; then
   printf 'log file: %s\n' "$log_file"
 fi

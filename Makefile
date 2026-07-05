@@ -48,9 +48,11 @@ help:
 		'Desktop build/run:' \
 		'  make desktop-build             Build desktop app with PROFILE' \
 		'  make desktop-smoke             Run desktop smoke with PROFILE' \
-		'  make desktop-launch            Build and launch seeded desktop workspace' \
-		'  make desktop-launch-fresh      Recreate seeded workspace before launch' \
-		'  make desktop-launch-detached   Launch seeded workspace in background' \
+		'  make desktop-launch            Build and launch normal desktop runtime' \
+		'  make desktop-launch-fresh      Recreate normal desktop runtime before launch' \
+		'  make desktop-launch-detached   Launch normal desktop runtime in background' \
+		'  make desktop-launch-smoke      Build and launch seeded visual smoke workspace' \
+		'  make desktop-launch-smoke-fresh Recreate seeded visual smoke workspace before launch' \
 		'  make desktop-package           Build package with PACKAGE_PROFILE' \
 		'  make desktop-package-smoke     Smoke packaged app with PACKAGE_PROFILE' \
 		'' \
@@ -111,7 +113,7 @@ desktop-checks:
 	$(MAKE) style-lint
 	$(MAKE) theme-contrast
 
-.PHONY: desktop-build desktop-smoke desktop-launch desktop-launch-fresh desktop-launch-detached desktop-package desktop-package-smoke
+.PHONY: desktop-build desktop-smoke desktop-launch desktop-launch-fresh desktop-launch-detached desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
 desktop-build:
 	tools/desktop/build.sh $(PROFILE)
 
@@ -126,6 +128,12 @@ desktop-launch-fresh:
 
 desktop-launch-detached:
 	tools/desktop/launch.sh $(PROFILE) --detached $(LAUNCH_ARGS)
+
+desktop-launch-smoke:
+	tools/desktop/launch.sh $(PROFILE) --smoke-workspace $(LAUNCH_ARGS)
+
+desktop-launch-smoke-fresh:
+	tools/desktop/launch.sh $(PROFILE) --smoke-workspace --fresh $(LAUNCH_ARGS)
 
 desktop-package:
 	tools/desktop/package.sh $(PACKAGE_PROFILE)

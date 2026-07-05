@@ -95,19 +95,25 @@ controller replaces it with runtime or raw-store data on background workers.
 
 ## Run The Desktop App
 
-For interactive local testing, build the native desktop shell and seed a
-persistent workspace with channels, replies, edits, reactions, an attachment,
-search data, storage health data, and partial-history UI rows:
+For interactive local testing, build the native desktop shell and open a
+persistent local runtime. Fresh runtimes start with no joined workspace; use the
+app to join with credentials or create a workspace:
 
 ```sh
 tools/desktop/launch.sh debug --fresh
 ```
 
-The seeded runtime is stored under `scratch/desktop-test/visual-workspace`.
-Rerun without `--fresh` to keep messages and settings created during testing:
+The runtime is stored under `scratch/desktop-test/runtime`. Rerun without
+`--fresh` to keep workspaces, messages, and settings created during testing:
 
 ```sh
 tools/desktop/launch.sh debug
+```
+
+For deterministic visual regression data, opt into the seeded smoke workspace:
+
+```sh
+tools/desktop/launch.sh debug --smoke-workspace --fresh
 ```
 
 Start the app and return to the shell immediately:
@@ -118,9 +124,9 @@ tools/desktop/launch.sh debug --detached
 
 Use `release` instead of `debug` to test the optimized app. The same commands
 work on Linux, macOS, and Windows shells that can run the repo scripts. The
-launcher prints the app binary, runtime directory, selected workspace ID,
-and manifest path before starting the app. Detached Linux and Windows-style
-shell launches also print a log path.
+launcher prints the app binary, runtime directory, and selected workspace ID
+before starting the app. Smoke launches also print the generated manifest path.
+Detached Linux and Windows-style shell launches also print a log path.
 
 To verify the packaged app for the current OS with the same runtime smoke:
 
