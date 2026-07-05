@@ -43,6 +43,7 @@ Rectangle {
     MouseArea {
         id: quickReactionMouse
         anchors.fill: parent
+        scrollGestureEnabled: false
         enabled: root.canAdd
         hoverEnabled: true
         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor

@@ -38,6 +38,7 @@ Rectangle {
     MouseArea {
         id: repairMouse
         anchors.fill: parent
+        scrollGestureEnabled: false
         hoverEnabled: true
         cursorShape: root.repairEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         onClicked: root.activate()

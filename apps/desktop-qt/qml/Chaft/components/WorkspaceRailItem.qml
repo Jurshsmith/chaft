@@ -48,6 +48,7 @@ Rectangle {
     MouseArea {
         id: railMouse
         anchors.fill: parent
+        scrollGestureEnabled: false
         enabled: root.actionable && root.workspaceId.length > 0
         hoverEnabled: true
         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor

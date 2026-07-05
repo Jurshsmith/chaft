@@ -197,6 +197,7 @@ Rectangle {
     MouseArea {
         id: swatchMouse
         anchors.fill: parent
+        scrollGestureEnabled: false
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: root.choose()

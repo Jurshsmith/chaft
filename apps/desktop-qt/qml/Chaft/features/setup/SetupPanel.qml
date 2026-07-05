@@ -37,7 +37,9 @@ ScrollView {
 
     clip: true
     contentWidth: availableWidth
+    contentHeight: setupColumn.implicitHeight
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+    ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
     Connections {
         target: chaftController

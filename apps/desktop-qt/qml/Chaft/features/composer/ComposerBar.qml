@@ -122,6 +122,8 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: root.inputHeight
                     clip: true
+                    contentWidth: availableWidth
+                    contentHeight: messageField.height
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                     ScrollBar.vertical.policy: messageField.contentHeight > root.inputHeight
                         ? ScrollBar.AsNeeded

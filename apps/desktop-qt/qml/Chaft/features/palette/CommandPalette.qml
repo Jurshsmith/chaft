@@ -331,6 +331,7 @@ Popup {
                 MouseArea {
                     id: resultRowMouse
                     anchors.fill: parent
+                    scrollGestureEnabled: false
                     hoverEnabled: true
                     cursorShape: resultDelegate.modelData.enabledNow
                         ? Qt.PointingHandCursor

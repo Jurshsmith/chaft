@@ -335,6 +335,9 @@ ListView {
     boundsBehavior: Flickable.StopAtBounds
     spacing: 0
     model: root.timelineModel
+    ScrollBar.vertical: ScrollBar {
+        policy: ScrollBar.AsNeeded
+    }
 
     Component.onCompleted: {
         if (root.autoFollowLatest) {
@@ -424,6 +427,7 @@ ListView {
         MouseArea {
             id: latestJumpMouse
             anchors.fill: parent
+            scrollGestureEnabled: false
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.scrollToLatest()
@@ -557,6 +561,7 @@ ListView {
 
         MouseArea {
             anchors.fill: parent
+            scrollGestureEnabled: false
             acceptedButtons: Qt.LeftButton
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor

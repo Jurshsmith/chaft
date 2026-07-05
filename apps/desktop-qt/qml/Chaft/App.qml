@@ -2788,7 +2788,9 @@ ApplicationWindow {
                         : 1
                     clip: true
                     contentWidth: availableWidth
+                    contentHeight: channelListColumn.implicitHeight
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                     Item {
                         width: channelListScroll.availableWidth
@@ -3240,7 +3242,9 @@ ApplicationWindow {
                 anchors.fill: parent
                 clip: true
                 contentWidth: availableWidth
+                contentHeight: inspectorColumn.implicitHeight + 28
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                 Item {
                     width: inspectorScroll.availableWidth

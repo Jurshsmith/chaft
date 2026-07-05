@@ -39,6 +39,7 @@ Rectangle {
     MouseArea {
         id: routeMouse
         anchors.fill: parent
+        scrollGestureEnabled: false
         hoverEnabled: true
         acceptedButtons: Qt.NoButton
     }
