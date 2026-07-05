@@ -22,6 +22,8 @@ const MAX_PEER_ENDPOINT_SNAPSHOT_ROWS_PER_KIND: usize = 32;
 pub const MAX_TIMELINE_WINDOW_ROWS: usize = 500;
 const MAX_TIMELINE_ATTACHMENT_SNAPSHOT_ROWS: usize = 8;
 const MAX_TIMELINE_REACTION_SNAPSHOT_ROWS: usize = 12;
+const MAX_GROUPED_TIMELINE_ROW_GAP_MS: i64 = 300_000;
+const MS_PER_UTC_DAY: i64 = 86_400_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +186,10 @@ pub struct TimelineItem {
     pub encrypted: bool,
     pub deleted: bool,
     pub missing_parent_ids: Vec<String>,
+    #[serde(default)]
+    pub grouped_with_previous: bool,
+    #[serde(default)]
+    pub day_boundary: bool,
 }
 
 const THREAD_REPLY_PREVIEW_LIMIT: usize = 5;
@@ -613,6 +619,7 @@ impl WorkspaceSnapshot {
             thread_reply_index(state, &events_by_id, &thread_parent_message_ids);
         let timeline = render_timeline_rows(
             &timeline_rows.rows,
+            timeline_rows.row_before_window,
             &events_by_id,
             &thread_reply_index,
             state,
@@ -1178,6 +1185,7 @@ type ThreadReplyIndex<'state, 'event> =
 struct TimelineRowsWindow<'a> {
     window: TimelineWindowSnapshot,
     rows: Vec<TimelineRowRef<'a>>,
+    row_before_window: Option<TimelineRowRef<'a>>,
 }
 
 fn verified_events_for_snapshot(
@@ -1291,11 +1299,16 @@ fn timeline_rows_for_window<'a>(
             |row| rows.push(row),
         );
         let window = timeline_window_for_count(rows.len(), options);
-        return TimelineRowsWindow { window, rows };
+        return TimelineRowsWindow {
+            window,
+            rows,
+            row_before_window: None,
+        };
     };
 
     if let Some(timeline_start) = options.timeline_start {
         let mut rows = Vec::new();
+        let mut row_before_window = None;
         let mut total_count = 0usize;
         let end_index = timeline_start.saturating_add(timeline_limit);
         for_each_timeline_row_ref(
@@ -1306,7 +1319,9 @@ fn timeline_rows_for_window<'a>(
             invalid_signatures,
             timeline_channel_id,
             |row| {
-                if total_count >= timeline_start && total_count < end_index {
+                if total_count < timeline_start {
+                    row_before_window = Some(row);
+                } else if total_count < end_index {
                     rows.push(row);
                 }
                 total_count = total_count.saturating_add(1);
@@ -1314,7 +1329,11 @@ fn timeline_rows_for_window<'a>(
         );
         let window = timeline_window_for_count(total_count, options);
         rows.truncate(window.item_count);
-        return TimelineRowsWindow { window, rows };
+        return TimelineRowsWindow {
+            window,
+            rows,
+            row_before_window,
+        };
     }
 
     let max_possible_rows = report
@@ -1323,6 +1342,7 @@ fn timeline_rows_for_window<'a>(
         .saturating_add(report.gaps.len())
         .saturating_add(invalid_signatures.len());
     let mut rows = VecDeque::with_capacity(timeline_limit.min(max_possible_rows));
+    let mut row_before_window = None;
     let mut total_count = 0usize;
     for_each_timeline_row_ref(
         report,
@@ -1334,7 +1354,7 @@ fn timeline_rows_for_window<'a>(
         |row| {
             if timeline_limit > 0 {
                 if rows.len() == timeline_limit {
-                    rows.pop_front();
+                    row_before_window = rows.pop_front();
                 }
                 rows.push_back(row);
             }
@@ -1345,6 +1365,7 @@ fn timeline_rows_for_window<'a>(
     TimelineRowsWindow {
         window,
         rows: rows.into_iter().collect(),
+        row_before_window,
     }
 }
 
@@ -1472,29 +1493,90 @@ fn timeline_window_for_count(
 
 fn render_timeline_rows(
     timeline_rows: &[TimelineRowRef<'_>],
+    row_before_window: Option<TimelineRowRef<'_>>,
     events_by_id: &HashMap<&str, &SignedEvent>,
     thread_reply_index: &ThreadReplyIndex<'_, '_>,
     state: &WorkspaceState,
     reader_device_id: Option<&DeviceId>,
     body_overrides_by_event_id: &HashMap<String, String>,
 ) -> Vec<TimelineItem> {
-    timeline_rows
+    let render_row = |row: TimelineRowRef<'_>| match row {
+        TimelineRowRef::Applied(event_id) => timeline_item_for_applied_event(
+            event_id,
+            events_by_id,
+            thread_reply_index,
+            state,
+            reader_device_id,
+            body_overrides_by_event_id,
+        )
+        .expect("selected applied timeline row should render"),
+        TimelineRowRef::Gap(gap) => gap_timeline_item(gap),
+        TimelineRowRef::Invalid(invalid) => invalid_signature_timeline_item(invalid),
+    };
+    let row_before_window = row_before_window.map(&render_row);
+    let mut timeline = timeline_rows
         .iter()
         .copied()
-        .map(|row| match row {
-            TimelineRowRef::Applied(event_id) => timeline_item_for_applied_event(
-                event_id,
-                events_by_id,
-                thread_reply_index,
-                state,
-                reader_device_id,
-                body_overrides_by_event_id,
-            )
-            .expect("selected applied timeline row should render"),
-            TimelineRowRef::Gap(gap) => gap_timeline_item(gap),
-            TimelineRowRef::Invalid(invalid) => invalid_signature_timeline_item(invalid),
-        })
-        .collect()
+        .map(&render_row)
+        .collect::<Vec<_>>();
+    annotate_timeline_row_grouping(&mut timeline, row_before_window.as_ref());
+    timeline
+}
+
+// Grouping and day boundaries must stay stable across window pages, so they
+// are computed against the row immediately before the window when one exists;
+// only a window that truly starts the timeline treats its first row as first.
+// Day comparisons use UTC day indexes (physical_ms / MS_PER_UTC_DAY), not the
+// viewer's local calendar, and rows without a physical timestamp carry the
+// previous known UTC day forward instead of forcing a boundary.
+fn annotate_timeline_row_grouping(
+    timeline: &mut [TimelineItem],
+    row_before_window: Option<&TimelineItem>,
+) {
+    let mut previous_group_key = row_before_window.and_then(timeline_row_group_key);
+    let mut previous_utc_day = row_before_window.and_then(timeline_row_utc_day);
+    let mut first_visible_row = row_before_window.is_none();
+    for item in timeline {
+        let group_key = timeline_row_group_key(item);
+        let utc_day = timeline_row_utc_day(item);
+        item.grouped_with_previous = match (&previous_group_key, &group_key) {
+            (Some((previous_author, previous_physical_ms)), Some((author, physical_ms))) => {
+                author == previous_author
+                    && physical_ms
+                        .checked_sub(*previous_physical_ms)
+                        .is_some_and(|elapsed_ms| {
+                            (0..=MAX_GROUPED_TIMELINE_ROW_GAP_MS).contains(&elapsed_ms)
+                        })
+                    && physical_ms.div_euclid(MS_PER_UTC_DAY)
+                        == previous_physical_ms.div_euclid(MS_PER_UTC_DAY)
+            }
+            _ => false,
+        };
+        item.day_boundary = first_visible_row || (utc_day.is_some() && utc_day != previous_utc_day);
+        previous_group_key = group_key;
+        if utc_day.is_some() {
+            previous_utc_day = utc_day;
+        }
+        first_visible_row = false;
+    }
+}
+
+fn timeline_row_group_key(item: &TimelineItem) -> Option<(String, i64)> {
+    let message_kind = matches!(
+        item.kind,
+        TimelineItemKind::Message | TimelineItemKind::EncryptedMessage
+    );
+    if !message_kind || item.deleted {
+        return None;
+    }
+    let author_device_id = item.author_device_id.clone()?;
+    let physical_ms = item.physical_ms?;
+    Some((author_device_id, physical_ms))
+}
+
+fn timeline_row_utc_day(item: &TimelineItem) -> Option<i64> {
+    item.physical_ms
+        .map(|physical_ms| physical_ms.div_euclid(MS_PER_UTC_DAY))
 }
 
 fn timeline_window_message_ids(
@@ -2082,6 +2164,8 @@ fn timeline_item_for_applied_event(
                 encrypted,
                 deleted,
                 missing_parent_ids: Vec::new(),
+                grouped_with_previous: false,
+                day_boundary: false,
             })
         }
         EventBody::WorkspaceCreated { .. }
@@ -2251,6 +2335,8 @@ fn gap_timeline_item(gap: &MissingHistoryGap) -> TimelineItem {
             .iter()
             .map(|id| id.0.clone())
             .collect(),
+        grouped_with_previous: false,
+        day_boundary: false,
     }
 }
 
@@ -2277,6 +2363,8 @@ fn invalid_signature_timeline_item(invalid: &InvalidSignatureSnapshot) -> Timeli
         encrypted: false,
         deleted: false,
         missing_parent_ids: Vec::new(),
+        grouped_with_previous: false,
+        day_boundary: false,
     }
 }
 
@@ -2303,6 +2391,57 @@ mod tests {
             aad: b"message aad".to_vec(),
             bytes: b"ciphertext".to_vec(),
         }
+    }
+
+    fn workspace_with_channel(
+        workspace_id: &WorkspaceId,
+        channel_id: &ChannelId,
+        owner_device_id: &DeviceId,
+    ) -> Vec<SignedEvent> {
+        vec![
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner_device_id.clone(),
+                EventBody::WorkspaceCreated {
+                    name: "Grouped Rows".to_owned(),
+                },
+            )),
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner_device_id.clone(),
+                EventBody::ChannelCreated {
+                    channel_id: channel_id.clone(),
+                    name: "general".to_owned(),
+                    is_private: false,
+                },
+            )),
+        ]
+    }
+
+    fn timestamped_message(
+        workspace_id: &WorkspaceId,
+        channel_id: &ChannelId,
+        author_device_id: &DeviceId,
+        markdown: &str,
+        physical_ms: i64,
+    ) -> SignedEvent {
+        let mut message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            author_device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: markdown.to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        message.timestamp = HybridTimestamp {
+            physical_ms,
+            logical: 0,
+        };
+        signed(message)
     }
 
     #[test]
@@ -5076,6 +5215,8 @@ mod tests {
                 encrypted: true,
                 deleted: false,
                 missing_parent_ids: Vec::new(),
+                grouped_with_previous: true,
+                day_boundary: false,
             }],
             gap_count: 1,
             gaps: vec![MissingHistorySnapshot {
@@ -5117,6 +5258,8 @@ mod tests {
         assert_eq!(value["timeline"][0]["authorDeviceId"], "dev_test");
         assert_eq!(value["timeline"][0]["authorDisplayName"], "Mira");
         assert_eq!(value["timeline"][0]["physicalMs"], 1_700_000_000_000_i64);
+        assert_eq!(value["timeline"][0]["groupedWithPrevious"], true);
+        assert_eq!(value["timeline"][0]["dayBoundary"], false);
         assert_eq!(value["profiles"], serde_json::json!([]));
         assert_eq!(value["members"][0]["deviceId"], "dev_test");
         assert_eq!(value["members"][0]["role"], "owner");
@@ -5315,5 +5458,315 @@ mod tests {
         );
         assert_eq!(snapshot.timeline[0].body, "Failed signature verification");
         assert!(snapshot.timeline[0].attachments.is_empty());
+    }
+
+    #[test]
+    fn snapshot_groups_same_author_rows_within_five_minutes() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let author = DeviceId("dev_author".to_owned());
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &author);
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "first",
+            1_700_000_000_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "second",
+            1_700_000_000_000 + MAX_GROUPED_TIMELINE_ROW_GAP_MS,
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 2);
+        assert!(!snapshot.timeline[0].grouped_with_previous);
+        assert!(snapshot.timeline[0].day_boundary);
+        assert!(snapshot.timeline[1].grouped_with_previous);
+        assert!(!snapshot.timeline[1].day_boundary);
+    }
+
+    #[test]
+    fn snapshot_breaks_row_grouping_on_author_change() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let other = DeviceId("dev_other".to_owned());
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &owner);
+        events.push(signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: other.clone(),
+                role: WorkspaceRole::Member,
+            },
+        )));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &owner,
+            "owner message",
+            1_700_000_000_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &other,
+            "other message",
+            1_700_000_001_000,
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 2);
+        assert!(!snapshot.timeline[1].grouped_with_previous);
+        assert!(!snapshot.timeline[1].day_boundary);
+    }
+
+    #[test]
+    fn snapshot_breaks_row_grouping_after_five_minute_gap() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let author = DeviceId("dev_author".to_owned());
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &author);
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "first",
+            1_700_000_000_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "too late",
+            1_700_000_000_000 + MAX_GROUPED_TIMELINE_ROW_GAP_MS + 1,
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 2);
+        assert!(!snapshot.timeline[1].grouped_with_previous);
+        assert!(!snapshot.timeline[1].day_boundary);
+    }
+
+    #[test]
+    fn snapshot_marks_day_boundary_on_utc_day_change() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let author = DeviceId("dev_author".to_owned());
+        let utc_midnight_ms = 19_676 * MS_PER_UTC_DAY;
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &author);
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "yesterday first",
+            utc_midnight_ms - 120_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "yesterday second",
+            utc_midnight_ms - 60_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "today",
+            utc_midnight_ms + 60_000,
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 3);
+        assert!(snapshot.timeline[0].day_boundary);
+        assert!(!snapshot.timeline[1].day_boundary);
+        assert!(snapshot.timeline[1].grouped_with_previous);
+        assert!(snapshot.timeline[2].day_boundary);
+        assert!(!snapshot.timeline[2].grouped_with_previous);
+    }
+
+    #[test]
+    fn snapshot_never_groups_gap_or_invalid_signature_rows() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let identity = DeviceIdentity::generate();
+        let owner = identity.device_id().clone();
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &owner);
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &owner,
+            "first",
+            1_700_000_000_000,
+        ));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &owner,
+            "second",
+            1_700_000_001_000,
+        ));
+        let mut forged = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            owner.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "forged".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        forged.timestamp = HybridTimestamp {
+            physical_ms: 1_700_000_002_000,
+            logical: 0,
+        };
+        let mut forged = identity.sign_event(forged);
+        forged.signature[0] ^= 1;
+        let mut gap = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            owner,
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "gap".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        gap.timestamp = HybridTimestamp {
+            physical_ms: 1_700_000_003_000,
+            logical: 0,
+        };
+        gap.parents = vec![EventId("evt_missing_parent".to_owned())];
+        events.push(signed(gap));
+        events.push(forged);
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 4);
+        assert!(snapshot.timeline[1].grouped_with_previous);
+        assert_eq!(
+            snapshot.timeline[2].kind,
+            TimelineItemKind::MissingHistoryGap
+        );
+        assert!(!snapshot.timeline[2].grouped_with_previous);
+        assert!(!snapshot.timeline[2].day_boundary);
+        assert_eq!(
+            snapshot.timeline[3].kind,
+            TimelineItemKind::InvalidSignature
+        );
+        assert!(!snapshot.timeline[3].grouped_with_previous);
+        assert!(!snapshot.timeline[3].day_boundary);
+    }
+
+    #[test]
+    fn snapshot_breaks_row_grouping_across_deleted_message_tombstones() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let author = DeviceId("dev_author".to_owned());
+        let deleted_message_id = MessageId::new();
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &author);
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "first",
+            1_700_000_000_000,
+        ));
+        let mut tombstone = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            author.clone(),
+            EventBody::MessageCreated {
+                message_id: deleted_message_id.clone(),
+                markdown: "soon deleted".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        tombstone.timestamp = HybridTimestamp {
+            physical_ms: 1_700_000_001_000,
+            logical: 0,
+        };
+        events.push(signed(tombstone));
+        events.push(signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            author.clone(),
+            EventBody::MessageDeleted {
+                message_id: deleted_message_id,
+            },
+        )));
+        events.push(timestamped_message(
+            &workspace_id,
+            &channel_id,
+            &author,
+            "after tombstone",
+            1_700_000_002_000,
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(workspace_id, &events).unwrap();
+
+        assert_eq!(snapshot.timeline.len(), 3);
+        assert!(!snapshot.timeline[0].grouped_with_previous);
+        assert!(snapshot.timeline[1].deleted);
+        assert!(!snapshot.timeline[1].grouped_with_previous);
+        assert!(!snapshot.timeline[2].grouped_with_previous);
+        assert!(!snapshot.timeline[2].day_boundary);
+    }
+
+    #[test]
+    fn snapshot_window_pages_group_against_row_before_window() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let author = DeviceId("dev_author".to_owned());
+        let mut events = workspace_with_channel(&workspace_id, &channel_id, &author);
+        for index in 0..4 {
+            events.push(timestamped_message(
+                &workspace_id,
+                &channel_id,
+                &author,
+                &format!("message {index}"),
+                1_700_000_000_000 + i64::from(index) * 1_000,
+            ));
+        }
+
+        let first_page = WorkspaceSnapshot::from_events_with_options(
+            workspace_id.clone(),
+            &events,
+            &WorkspaceSnapshotOptions::window(0, 2),
+        )
+        .unwrap();
+        let later_page = WorkspaceSnapshot::from_events_with_options(
+            workspace_id.clone(),
+            &events,
+            &WorkspaceSnapshotOptions::window(2, 2),
+        )
+        .unwrap();
+        let latest_page = WorkspaceSnapshot::from_events_with_options(
+            workspace_id,
+            &events,
+            &WorkspaceSnapshotOptions::latest(2),
+        )
+        .unwrap();
+
+        assert_eq!(first_page.timeline.len(), 2);
+        assert!(!first_page.timeline[0].grouped_with_previous);
+        assert!(first_page.timeline[0].day_boundary);
+        assert_eq!(later_page.timeline.len(), 2);
+        assert!(later_page.timeline[0].grouped_with_previous);
+        assert!(!later_page.timeline[0].day_boundary);
+        assert!(later_page.timeline[1].grouped_with_previous);
+        assert_eq!(latest_page.timeline.len(), 2);
+        assert!(latest_page.timeline[0].grouped_with_previous);
+        assert!(!latest_page.timeline[0].day_boundary);
     }
 }

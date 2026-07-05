@@ -253,6 +253,8 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
                 encrypted: true,
                 deleted: false,
                 missing_parent_ids: Vec::new(),
+                grouped_with_previous: false,
+                day_boundary: true,
             },
             TimelineItem {
                 kind: TimelineItemKind::MissingHistoryGap,
@@ -276,6 +278,8 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
                 encrypted: false,
                 deleted: false,
                 missing_parent_ids: vec!["evt_parent_a".to_owned(), "evt_parent_b".to_owned()],
+                grouped_with_previous: false,
+                day_boundary: false,
             },
         ],
         gap_count: 0,
