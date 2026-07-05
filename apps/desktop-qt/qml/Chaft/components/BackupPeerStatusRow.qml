@@ -32,7 +32,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.endpoint
                 color: Tokens.textStrong
-                font.pixelSize: 12
+                font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
@@ -40,7 +40,7 @@ Rectangle {
             Text {
                 text: root.stateLabel
                 color: root.stateColor
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
             }
         }
@@ -49,7 +49,7 @@ Rectangle {
             Layout.fillWidth: true
             text: root.statusText
             color: Tokens.textMuted
-            font.pixelSize: 11
+            font.pixelSize: Tokens.fontSizeXs
             elide: Text.ElideRight
         }
     }

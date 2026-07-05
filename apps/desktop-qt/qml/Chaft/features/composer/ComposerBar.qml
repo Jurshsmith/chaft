@@ -90,7 +90,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: "Editing message"
                 color: Tokens.textMuted
-                font.pixelSize: 12
+                font.pixelSize: Tokens.fontSizeSm
                 elide: Text.ElideRight
             }
 
@@ -103,7 +103,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: "Replying to " + root.replyLabel
                     color: Tokens.textMuted
-                    font.pixelSize: 12
+                    font.pixelSize: Tokens.fontSizeSm
                     elide: Text.ElideRight
                 }
 

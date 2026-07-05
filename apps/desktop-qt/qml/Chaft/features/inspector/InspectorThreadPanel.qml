@@ -59,7 +59,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: "Thread"
             color: Tokens.textStrong
-            font.pixelSize: 15
+            font.pixelSize: Tokens.fontSizeLg
             font.weight: Font.DemiBold
         }
 
@@ -75,7 +75,7 @@ ColumnLayout {
                 anchors.centerIn: parent
                 text: root.replyCountLabel(root.replyCount)
                 color: Tokens.secure
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
@@ -115,7 +115,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: replyRow.authorText
                     color: Tokens.textStrong
-                    font.pixelSize: 12
+                    font.pixelSize: Tokens.fontSizeSm
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
@@ -124,7 +124,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: replyRow.bodyText
                     color: replyRow.modelData.deleted ? Tokens.textMuted : Tokens.textStrong
-                    font.pixelSize: 12
+                    font.pixelSize: Tokens.fontSizeSm
                     elide: Text.ElideRight
                 }
             }
@@ -140,7 +140,7 @@ ColumnLayout {
             text: root.overflowLabel(root.replyCount, root.replyPreviews)
             visible: text.length > 0
             color: Tokens.textMuted
-            font.pixelSize: 11
+            font.pixelSize: Tokens.fontSizeXs
             elide: Text.ElideRight
         }
 

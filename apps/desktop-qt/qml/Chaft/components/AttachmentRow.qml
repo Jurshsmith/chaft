@@ -50,7 +50,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.displayName
                 color: root.missingLocalBlob ? Tokens.warningText : Tokens.textStrong
-                font.pixelSize: 12
+                font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
@@ -59,7 +59,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.detailText
                 color: root.missingLocalBlob ? Tokens.warningText : Tokens.textMuted
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 elide: Text.ElideRight
             }
         }

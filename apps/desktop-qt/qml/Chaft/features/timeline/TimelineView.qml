@@ -21,6 +21,12 @@ ListView {
     property real preservedContentHeight: 0
     property real preservedContentY: 0
     property var quickReactions: ["+1", "ship", "eyes", "done"]
+    property var pendingDeleteMessageIds: []
+    readonly property var utcWeekdayLabels: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    readonly property var utcMonthLabels: [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
     readonly property bool showJumpToLatest: root.autoFollowLatest
         && root.count > 0
         && root.contentHeight > root.height + 48
@@ -49,7 +55,29 @@ ListView {
 
     function authorInitial(authorDisplayName, authorDeviceId) {
         var value = root.authorLabel(authorDisplayName, authorDeviceId)
-        return value.length > 0 ? value.slice(0, 1).toUpperCase() : "?"
+        if (value.length === 0) {
+            return "?"
+        }
+        var words = value.split(/[\s_-]+/).filter(function (word) { return word.length > 0 })
+        if (words.length >= 2) {
+            return (words[0].slice(0, 1) + words[1].slice(0, 1)).toUpperCase()
+        }
+        return value.slice(0, 1).toUpperCase()
+    }
+
+    function dayLabel(physicalMs) {
+        var value = Number(physicalMs || 0)
+        if (!isFinite(value) || value <= 0) {
+            return ""
+        }
+        var date = new Date(value)
+        if (isNaN(date.getTime())) {
+            return ""
+        }
+        return root.utcWeekdayLabels[date.getUTCDay()] + ", "
+            + root.utcMonthLabels[date.getUTCMonth()] + " "
+            + String(date.getUTCDate()) + " "
+            + String(date.getUTCFullYear()) + " UTC"
     }
 
     function timeLabel(physicalMs) {
@@ -368,7 +396,7 @@ ListView {
         visible: root.timelineModel.length === 0
         text: root.emptyText
         color: Tokens.textMuted
-        font.pixelSize: 14
+        font.pixelSize: Tokens.fontSizeMd
     }
 
     Rectangle {
@@ -389,7 +417,7 @@ ListView {
             anchors.centerIn: parent
             text: "Jump to latest"
             color: Tokens.accent
-            font.pixelSize: 12
+            font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
         }
 
@@ -419,23 +447,79 @@ ListView {
         readonly property bool warningRow: row.historyGapRow || row.invalidSignatureRow
         readonly property bool unreadDividerBefore: Boolean(row.modelData.unreadDividerBefore)
         readonly property bool messageDeleted: Boolean(row.modelData.deleted)
-        readonly property int unreadOffset: row.unreadDividerBefore ? 32 : 0
+        readonly property bool dayBoundary: Boolean(row.modelData.dayBoundary)
+            && root.dayLabel(row.modelData.physicalMs).length > 0
+        readonly property bool grouped: Boolean(row.modelData.groupedWithPrevious)
+            && !row.warningRow && !row.unreadDividerBefore && !row.dayBoundary
+        readonly property bool pendingDelete: row.rowMessageId.length > 0
+            && root.pendingDeleteMessageIds.indexOf(row.rowMessageId) !== -1
+        readonly property bool rowHovered: rowHover.hovered
+        readonly property int dayOffset: row.dayBoundary ? 28 : 0
+        readonly property int unreadOffset: (row.unreadDividerBefore ? 32 : 0) + row.dayOffset
         readonly property int bodyLineLimit: row.warningRow ? 1 : 8
         readonly property real bodyMaxHeight: Math.ceil(14 * 1.35 * row.bodyLineLimit)
         readonly property real contentAreaHeight: Math.max(
-            row.warningRow ? 52 : 92,
+            row.warningRow ? 52 : (row.grouped ? 40 : 68),
             contentColumn.implicitHeight + 24
         )
+        visible: !row.pendingDelete
         color: row.warningRow
             ? Tokens.warningSurface
-            : (row.selectedRow ? Tokens.secureSurface : (row.index % 2 === 0 ? Tokens.surfaceBase : Tokens.surfaceRaised))
+            : row.selectedRow
+                ? Tokens.secureSurface
+                : row.rowHovered
+                    ? Qt.rgba(Tokens.surfaceRaised.r, Tokens.surfaceRaised.g, Tokens.surfaceRaised.b, 0.8)
+                    : (row.index % 2 === 0 ? Tokens.surfaceBase : Tokens.surfaceRaised)
         border.color: row.selectedRow ? Tokens.secure : "transparent"
         border.width: row.selectedRow ? 1 : 0
-        height: row.unreadOffset + row.contentAreaHeight
+        height: row.pendingDelete ? 0 : row.unreadOffset + row.contentAreaHeight
+
+        HoverHandler {
+            id: rowHover
+            enabled: !row.pendingDelete
+        }
+
+        Item {
+            visible: row.dayBoundary
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 28
+
+            RowLayout {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                spacing: 8
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Tokens.borderSubtle
+                }
+
+                Text {
+                    text: root.dayLabel(row.modelData.physicalMs)
+                    color: Tokens.textMuted
+                    font.family: Tokens.fontMono
+                    font.pixelSize: Tokens.fontSizeXs
+                    font.weight: Font.DemiBold
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Tokens.borderSubtle
+                }
+            }
+        }
 
         Item {
             visible: row.unreadDividerBefore
             anchors.top: parent.top
+            anchors.topMargin: row.dayOffset
             anchors.left: parent.left
             anchors.right: parent.right
             height: 32
@@ -458,7 +542,7 @@ ListView {
                 Text {
                     text: "New messages"
                     color: Tokens.accent
-                    font.pixelSize: 12
+                    font.pixelSize: Tokens.fontSizeSm
                     font.weight: Font.DemiBold
                 }
 
@@ -490,15 +574,30 @@ ListView {
             height: Math.max(36, contentColumn.implicitHeight)
             spacing: 12
 
-            TimelineAuthorMark {
+            Item {
                 Layout.preferredWidth: 36
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: row.grouped ? 18 : 36
                 Layout.alignment: Qt.AlignTop
-                warning: row.warningRow
-                encrypted: row.modelData.encrypted
-                label: row.warningRow
-                    ? ""
-                    : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
+
+                TimelineAuthorMark {
+                    anchors.fill: parent
+                    visible: !row.grouped
+                    warning: row.warningRow
+                    encrypted: row.modelData.encrypted
+                    authorDeviceId: String(row.modelData.authorDeviceId || "")
+                    label: row.warningRow
+                        ? ""
+                        : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: row.grouped && row.rowHovered
+                    text: root.timeLabel(row.modelData.physicalMs)
+                    color: Tokens.textMuted
+                    font.family: Tokens.fontMono
+                    font.pixelSize: Tokens.fontSizeXs
+                }
             }
 
             ColumnLayout {
@@ -508,6 +607,7 @@ ListView {
 
                 TimelineHeaderRow {
                     Layout.fillWidth: true
+                    visible: !row.grouped
                     primaryLabel: row.historyGapRow
                         ? "History gap"
                         : row.invalidSignatureRow
@@ -534,16 +634,18 @@ ListView {
                         Layout.maximumHeight: row.bodyMaxHeight
                         text: row.modelData.body
                         color: row.warningRow ? Tokens.warningText : Tokens.textStrong
-                        font.pixelSize: 14
+                        font.pixelSize: Tokens.fontSizeMd
                         wrapMode: Text.Wrap
                         maximumLineCount: row.bodyLineLimit
                         elide: Text.ElideRight
                     }
 
                     TimelineEncryptedBadge {
-                        Layout.preferredHeight: 22
-                        Layout.preferredWidth: 74
+                        Layout.preferredHeight: visible ? 22 : 0
+                        Layout.preferredWidth: visible ? 74 : 0
                         encrypted: row.modelData.encrypted
+                        kind: String(row.modelData.kind || "")
+                        warningRow: row.warningRow
                     }
 
                     TimelineRepairChip {
@@ -558,7 +660,7 @@ ListView {
                 Flow {
                     id: actionFlow
                     Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? Math.max(24, implicitHeight) : 0
+                    Layout.preferredHeight: visible && implicitHeight > 0 ? implicitHeight : 0
                     visible: !row.warningRow
                     spacing: 6
 
@@ -617,25 +719,6 @@ ListView {
                         maximumWidth: 170
                     }
 
-                    Repeater {
-                        model: root.quickReactionEntries(row.modelData.myReactions)
-
-                        delegate: TimelineQuickReactionChip {
-                            id: quickReactionChip
-                            required property var modelData
-                            readonly property string reactionText: String(quickReactionChip.modelData || "")
-
-                            messageId: row.rowMessageId
-                            reaction: quickReactionChip.reactionText
-                            actionsEnabled: root.actionsEnabled
-                            messageDeleted: row.messageDeleted
-                            warningRow: row.warningRow
-                            onAddRequested: function (messageId, reaction) {
-                                root.reactionRequested(messageId, reaction)
-                            }
-                        }
-                    }
-
                     TimelineThreadChip {
                         label: root.threadReplyLabel(row.modelData.threadReplyCount)
                         latestReplyLabel: row.modelData.threadLatestReply
@@ -646,42 +729,100 @@ ListView {
                         onOpenRequested: root.threadRequested(row.modelData)
                     }
 
-                    TimelineActionChip {
-                        label: "Reply"
-                        tooltip: "Reply in channel"
-                        minimumWidth: 52
-                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
-                            && !row.warningRow
-                        onActivated: root.replyRequested(row.modelData)
-                    }
+                }
+            }
+        }
 
-                    TimelineActionChip {
-                        label: "Proof"
-                        tooltip: "Publish proof slice"
-                        minimumWidth: 52
-                        visible: root.actionsEnabled && row.rowEventId.length > 0
-                            && !row.warningRow
-                        onActivated: root.proofPublishRequested(row.rowEventId)
-                    }
+        Rectangle {
+            id: hoverActions
+            anchors.right: parent.right
+            anchors.rightMargin: 18
+            y: row.unreadOffset + 6
+            width: hoverActionsRow.implicitWidth + 12
+            height: 30
+            radius: Tokens.radiusSm
+            color: Tokens.surfaceRaised
+            border.width: 1
+            border.color: Tokens.borderSubtle
+            readonly property bool shown: !row.warningRow && root.actionsEnabled && !row.pendingDelete
+                && (row.rowHovered || row.selectedRow || rowMenu.visible)
+            opacity: shown ? 1 : 0
+            visible: opacity > 0.01
 
-                    TimelineActionChip {
-                        label: "Edit"
-                        tooltip: "Edit message"
-                        minimumWidth: 44
-                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
-                            && !Boolean(row.modelData.bodyTruncated)
-                        onActivated: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
-                    }
+            Behavior on opacity {
+                enabled: Tokens.motionEnabled
+                NumberAnimation {
+                    duration: Tokens.motionQuickMs
+                    easing.type: Easing.OutCubic
+                }
+            }
 
-                    TimelineActionChip {
-                        label: "Delete"
-                        tooltip: "Delete message"
-                        minimumWidth: 56
-                        destructive: true
-                        visible: root.actionsEnabled && Boolean(row.modelData.messageId) && !row.modelData.deleted
-                        onActivated: root.deleteRequested(row.modelData.messageId || "")
+            Row {
+                id: hoverActionsRow
+                anchors.centerIn: parent
+                spacing: 4
+
+                Repeater {
+                    model: root.quickReactionEntries(row.modelData.myReactions)
+
+                    delegate: TimelineQuickReactionChip {
+                        id: quickReactionChip
+                        required property var modelData
+                        readonly property string reactionText: String(quickReactionChip.modelData || "")
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        messageId: row.rowMessageId
+                        reaction: quickReactionChip.reactionText
+                        actionsEnabled: root.actionsEnabled
+                        messageDeleted: row.messageDeleted
+                        warningRow: row.warningRow
+                        onAddRequested: function (messageId, reaction) {
+                            root.reactionRequested(messageId, reaction)
+                        }
                     }
                 }
+
+                TimelineActionChip {
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "Reply"
+                    tooltip: "Reply in channel"
+                    minimumWidth: 52
+                    visible: Boolean(row.modelData.messageId) && !row.modelData.deleted
+                    onActivated: root.replyRequested(row.modelData)
+                }
+
+                TimelineActionChip {
+                    anchors.verticalCenter: parent.verticalCenter
+                    label: "⋯"
+                    tooltip: "More actions"
+                    minimumWidth: 30
+                    visible: row.rowMessageId.length > 0 || row.rowEventId.length > 0
+                    onActivated: rowMenu.popup()
+                }
+            }
+        }
+
+        Menu {
+            id: rowMenu
+
+            MenuItem {
+                text: "Edit message"
+                enabled: root.actionsEnabled && Boolean(row.modelData.messageId)
+                    && !row.modelData.deleted && !Boolean(row.modelData.bodyTruncated)
+                onTriggered: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
+            }
+
+            MenuItem {
+                text: "Publish proof slice"
+                enabled: root.actionsEnabled && row.rowEventId.length > 0
+                onTriggered: root.proofPublishRequested(row.rowEventId)
+            }
+
+            MenuItem {
+                text: "Delete message"
+                enabled: root.actionsEnabled && Boolean(row.modelData.messageId)
+                    && !row.modelData.deleted
+                onTriggered: root.deleteRequested(row.modelData.messageId || "")
             }
         }
     }

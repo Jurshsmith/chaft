@@ -94,6 +94,317 @@ ApplicationWindow {
     property bool autoSyncEnabled: false
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
+
+    readonly property bool systemThemeMode: chaftController.themeMode === "system"
+    readonly property bool systemPrefersDark: Application.styleHints.colorScheme !== Qt.ColorScheme.Light
+    readonly property string resolvedDarkThemeId: chaftController.darkThemeId.length > 0
+        ? chaftController.darkThemeId
+        : Themes.defaultThemeId
+    readonly property string resolvedLightThemeId: chaftController.lightThemeId.length > 0
+        ? chaftController.lightThemeId
+        : Themes.defaultLightThemeId
+
+    Binding {
+        target: Tokens
+        property: "activeThemeId"
+        value: root.systemThemeMode
+            ? (root.systemPrefersDark ? root.resolvedDarkThemeId : root.resolvedLightThemeId)
+            : (chaftController.themeId.length > 0 ? chaftController.themeId : Themes.defaultThemeId)
+    }
+
+    Binding {
+        target: Tokens
+        property: "motionEnabled"
+        value: !chaftController.reducedMotionEnabled
+    }
+
+    property var pendingDeletes: []
+    readonly property var pendingDeleteIds: root.pendingDeleteIdsForRows()
+    property bool syncDrawerOpen: false
+    property bool inspectorDetailsOpen: false
+
+    readonly property int channelCryptoExceptionCount: {
+        var rows = root.selectedTimeline || []
+        var count = 0
+        for (var i = 0; i < rows.length; ++i) {
+            var kind = String(rows[i].kind || "")
+            if (kind === "encrypted_message"
+                    || (kind === "message" && rows[i].encrypted !== true && rows[i].deleted !== true)) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    readonly property string syncPillLabel: {
+        if (chaftController.rawEventStoreMode) {
+            return "View-only store"
+        }
+        if (!chaftController.hasRuntimeWorkspace) {
+            return "Demo workspace"
+        }
+        if (chaftController.runtimeLocked) {
+            return "Locked"
+        }
+        if (chaftController.syncInFlight) {
+            return "Syncing"
+        }
+        if (chaftController.peerHosting) {
+            return "Hosting"
+        }
+        if (root.autoSyncEnabled) {
+            return "Live sync"
+        }
+        if (root.queuedPublishableEventCount > 0) {
+            return "Local-only, " + root.queuedPublishableEventCount + " queued"
+        }
+        return "Local-only"
+    }
+
+    readonly property color syncPillTone: {
+        if (chaftController.runtimeLocked) {
+            return Tokens.warning
+        }
+        if (chaftController.syncInFlight) {
+            return Tokens.textMuted
+        }
+        if (chaftController.peerHosting || root.autoSyncEnabled) {
+            return Tokens.success
+        }
+        if (root.queuedPublishableEventCount > 0) {
+            return Tokens.secure
+        }
+        return Tokens.textMuted
+    }
+
+    readonly property bool macosShortcuts: Qt.platform.os === "osx"
+    readonly property string primaryKeyLabel: macosShortcuts ? "⌘" : "Ctrl+"
+    readonly property string altKeyLabel: macosShortcuts ? "⌥" : "Alt+"
+    readonly property string shiftKeyLabel: macosShortcuts ? "⇧" : "Shift+"
+
+    // Single source for the command palette entries. Each entry:
+    // { id, label, shortcut, enabled(), run() }. The palette evaluates
+    // enabled() while building rows, so state stays live while it is open.
+    readonly property var paletteActions: [
+        {
+            id: "toggle-setup",
+            label: "Toggle setup panel",
+            shortcut: "",
+            enabled: function () {
+                return chaftController.deviceId.length > 0
+                    || chaftController.hasRuntimeWorkspace
+            },
+            run: function () { root.setupPanelOpen = !root.setupPanelOpen }
+        },
+        {
+            id: "toggle-sync-drawer",
+            label: "Toggle sync drawer",
+            shortcut: "",
+            enabled: function () { return chaftController.hasRuntimeWorkspace },
+            run: function () { root.syncDrawerOpen = !root.syncDrawerOpen }
+        },
+        {
+            id: "new-channel",
+            label: "New channel",
+            shortcut: "",
+            enabled: function () { return root.runtimeWorkReady },
+            run: function () { newChannelPopup.open() }
+        },
+        {
+            id: "focus-composer",
+            label: "Focus composer",
+            shortcut: root.primaryKeyLabel + "M",
+            enabled: function () { return true },
+            run: function () { root.focusComposer() }
+        },
+        {
+            id: "focus-search",
+            label: "Focus search",
+            shortcut: root.primaryKeyLabel + "F",
+            enabled: function () { return true },
+            run: function () { root.focusSearch() }
+        },
+        {
+            id: "jump-latest",
+            label: "Jump to latest messages",
+            shortcut: root.altKeyLabel + "End",
+            enabled: function () { return true },
+            run: function () { timelineView.scrollToLatest() }
+        },
+        {
+            id: "toggle-live-sync",
+            label: "Toggle live sync",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady
+                    && root.preferredSyncPeerEndpoint().length > 0
+            },
+            run: function () { root.autoSyncEnabled = !root.autoSyncEnabled }
+        },
+        {
+            id: "sync-now",
+            label: "Sync with peer now",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady
+                    && !chaftController.syncInFlight
+                    && root.preferredSyncPeerEndpoint().length > 0
+            },
+            run: function () { root.syncWorkspaceFromPreferredPeer() }
+        },
+        {
+            id: "backup-now",
+            label: "Back up to peer now",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady
+                    && !chaftController.syncInFlight
+                    && root.preferredManualBackupPeerEndpoint().length > 0
+            },
+            run: function () { root.backupWorkspaceToPreferredPeer() }
+        },
+        {
+            id: "pull-peer",
+            label: "Pull from peer",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady
+                    && !chaftController.syncInFlight
+                    && root.preferredSyncPeerEndpoint().length > 0
+            },
+            run: function () { root.pullWorkspaceFromPreferredPeer() }
+        },
+        {
+            id: "push-peer",
+            label: "Push to peer",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady
+                    && !chaftController.syncInFlight
+                    && root.preferredSyncPeerEndpoint().length > 0
+            },
+            run: function () { root.publishWorkspaceToPreferredPeer() }
+        },
+        {
+            id: "lock-runtime",
+            label: "Lock runtime",
+            shortcut: "",
+            enabled: function () {
+                return chaftController.hasRuntimeWorkspace
+                    && chaftController.runtimeUnlocked
+                    && chaftController.runtimeUnlockClearable
+                    && !chaftController.keyTransferInFlight
+                    && !chaftController.syncInFlight
+            },
+            run: function () { chaftController.clearRuntimeUnlock() }
+        },
+        {
+            id: "reindex-search",
+            label: "Reindex search",
+            shortcut: "",
+            enabled: function () {
+                return root.runtimeWorkReady && !chaftController.keyTransferInFlight
+            },
+            run: function () { chaftController.reindexWorkspaceSearch() }
+        },
+        {
+            id: "shortcut-overlay",
+            label: "Keyboard shortcuts",
+            shortcut: root.primaryKeyLabel + "/",
+            enabled: function () { return true },
+            run: function () { shortcutOverlay.open() }
+        }
+    ]
+
+    // Single registry behind the Ctrl/Cmd+/ overlay. Keep in sync with the
+    // Shortcut elements below and the paletteActions shortcut labels.
+    readonly property var shortcutRows: [
+        { label: "Open command palette", keys: root.primaryKeyLabel + "K" },
+        { label: "Focus search", keys: root.primaryKeyLabel + "F" },
+        { label: "Focus composer", keys: root.primaryKeyLabel + "M" },
+        { label: "Attach file to draft", keys: root.primaryKeyLabel + "O" },
+        {
+            label: "Copy selected message text",
+            keys: root.primaryKeyLabel + root.shiftKeyLabel + "C"
+        },
+        {
+            label: "Previous or next channel",
+            keys: root.altKeyLabel + "↑ " + root.altKeyLabel + "↓"
+        },
+        {
+            label: "Previous or next workspace",
+            keys: root.altKeyLabel + "← " + root.altKeyLabel + "→"
+        },
+        { label: "Jump to oldest messages", keys: root.altKeyLabel + "Home" },
+        { label: "Jump to latest messages", keys: root.altKeyLabel + "End" },
+        { label: "Keyboard shortcuts overlay", keys: root.primaryKeyLabel + "/" },
+        { label: "Close, cancel edit or reply, clear search", keys: "Esc" }
+    ]
+
+    Timer {
+        id: pendingDeleteTimer
+        repeat: false
+        onTriggered: root.flushExpiredPendingDeletes()
+    }
+
+    CommandPalette {
+        id: commandPalette
+        parent: Overlay.overlay
+        app: root
+        actions: root.paletteActions
+    }
+
+    ShortcutOverlay {
+        id: shortcutOverlay
+        parent: Overlay.overlay
+        rows: root.shortcutRows
+    }
+
+    ToastHost {
+        id: toastHost
+        parent: Overlay.overlay
+        anchors.right: parent ? parent.right : undefined
+        anchors.bottom: parent ? parent.bottom : undefined
+        anchors.margins: Tokens.space4
+        width: 340
+        z: 1000
+        onActionTriggered: function (actionId) {
+            var id = String(actionId || "")
+            if (id.indexOf("undo-delete:") === 0) {
+                root.undoMessageDelete(id.slice("undo-delete:".length))
+            }
+        }
+    }
+
+    onClosing: root.flushPendingDeletes()
+
+    ConfirmDialog {
+        id: confirmDialog
+        parent: Overlay.overlay
+        onConfirmed: function (contextId) {
+            var id = String(contextId || "")
+            if (id.indexOf("remove-member:") === 0) {
+                chaftController.removeMember(id.slice("remove-member:".length))
+            } else if (id.indexOf("revoke-channel-member:") === 0) {
+                if (chaftController.removeChannelMember(
+                        root.selectedChannelKey,
+                        id.slice("revoke-channel-member:".length))) {
+                    setupPanel.clearChannelMemberField()
+                }
+            } else if (id === "rotate-keys") {
+                chaftController.rotateWorkspaceManualKeys()
+            } else if (id.indexOf("rotate-channel-key:") === 0) {
+                chaftController.rotateChannelKey(id.slice("rotate-channel-key:".length))
+            }
+        }
+    }
+
+    // Danger-zone confirmation path shared with SetupPanel. Everything routed
+    // here renders with destructive styling; actionId dispatch stays in
+    // confirmDialog.onConfirmed above.
+    function confirmSetupAction(title, message, confirmLabel, actionId) {
+        confirmDialog.ask(title, message, confirmLabel, actionId, true)
+    }
     readonly property var publishQueue: chaftController.publishQueue || ({})
     readonly property var publishQueueSummary: publishQueue.summary || ({})
     readonly property int queuedPublishableEventCount: publishQueueSummary.publishableEventCount === undefined
@@ -708,6 +1019,119 @@ ApplicationWindow {
     function channelSidebarLabel(channel) {
         var draft = root.draftPreviewForChannel(channel.channelId)
         return draft.length > 0 ? draft : root.channelActivityLabel(channel)
+    }
+
+    function syncStatusColor(status) {
+        var normalized = String(status || "").toLowerCase()
+        if (normalized.indexOf("failed") !== -1 || normalized.indexOf("error") !== -1
+                || normalized.indexOf("rejected") !== -1 || normalized.indexOf("suspect") !== -1
+                || normalized.indexOf("invalid") !== -1) {
+            return Tokens.warningText
+        }
+        if (normalized.indexOf("synced") !== -1 || normalized.indexOf("published") !== -1
+                || normalized.indexOf("backed up") !== -1 || normalized.indexOf("complete") !== -1
+                || normalized.indexOf("verified") !== -1 || normalized.indexOf("hosting") !== -1) {
+            return Tokens.success
+        }
+        return Tokens.textMuted
+    }
+
+    function applySmokeUiState() {
+        var state = String(chaftController.smokeUiState || "")
+        if (state === "setup") {
+            root.setupPanelOpen = true
+        } else if (state === "drawer") {
+            root.syncDrawerOpen = true
+        } else if (state === "palette") {
+            commandPalette.open()
+        }
+    }
+
+    function queueMessageDelete(messageId) {
+        var id = String(messageId || "")
+        if (id.length === 0 || root.pendingDeleteIds.indexOf(id) !== -1) {
+            return
+        }
+        var next = root.pendingDeletes.slice()
+        next.push({
+            messageId: id,
+            deadlineMs: Date.now() + 5000
+        })
+        while (next.length > 8) {
+            root.dispatchMessageDelete(next.shift().messageId)
+        }
+        root.pendingDeletes = next
+        root.schedulePendingDeleteTimer()
+        toastHost.show("info", "Message deleted", "Undo", "undo-delete:" + id, 5000)
+        if (root.editingMessageId === id) {
+            root.cancelEditMessage()
+        }
+    }
+
+    function pendingDeleteIdsForRows() {
+        var ids = []
+        for (var i = 0; i < root.pendingDeletes.length; ++i) {
+            ids.push(String(root.pendingDeletes[i].messageId || ""))
+        }
+        return ids
+    }
+
+    function schedulePendingDeleteTimer() {
+        if (root.pendingDeletes.length === 0) {
+            pendingDeleteTimer.stop()
+            return
+        }
+        var now = Date.now()
+        var nextDeadline = Number(root.pendingDeletes[0].deadlineMs || now)
+        for (var i = 1; i < root.pendingDeletes.length; ++i) {
+            nextDeadline = Math.min(nextDeadline, Number(root.pendingDeletes[i].deadlineMs || now))
+        }
+        pendingDeleteTimer.interval = Math.max(1, nextDeadline - now)
+        pendingDeleteTimer.restart()
+    }
+
+    function undoMessageDelete(messageId) {
+        var id = String(messageId || "")
+        var next = []
+        for (var i = 0; i < root.pendingDeletes.length; ++i) {
+            if (String(root.pendingDeletes[i].messageId || "") !== id) {
+                next.push(root.pendingDeletes[i])
+            }
+        }
+        root.pendingDeletes = next
+        root.schedulePendingDeleteTimer()
+    }
+
+    function dispatchMessageDelete(messageId) {
+        chaftController.deleteMessage(messageId)
+    }
+
+    function flushExpiredPendingDeletes() {
+        var now = Date.now()
+        var expired = []
+        var remaining = []
+        for (var i = 0; i < root.pendingDeletes.length; ++i) {
+            var pending = root.pendingDeletes[i]
+            if (Number(pending.deadlineMs || 0) <= now) {
+                expired.push(pending.messageId)
+            } else {
+                remaining.push(pending)
+            }
+        }
+        root.pendingDeletes = remaining
+        for (var j = 0; j < expired.length; ++j) {
+            root.dispatchMessageDelete(expired[j])
+        }
+        root.schedulePendingDeleteTimer()
+    }
+
+    function flushPendingDeletes() {
+        var pending = root.pendingDeletes
+        root.pendingDeletes = []
+        pendingDeleteTimer.stop()
+        for (var i = 0; i < pending.length; ++i) {
+            root.dispatchMessageDelete(pending[i].messageId)
+        }
     }
 
     function isIncomingTimelineMessage(item) {
@@ -1773,6 +2197,7 @@ ApplicationWindow {
         root.resetTimelineForChannelContext()
         root.requestSelectedChannelTimelineIfNeeded()
         root.scheduleMarkSelectedChannelRead()
+        root.applySmokeUiState()
     }
     onAutoSyncEnabledChanged: {
         if (autoSyncEnabled) {
@@ -1871,7 +2296,19 @@ ApplicationWindow {
     Shortcut {
         sequences: ["Ctrl+K", "Meta+K"]
         context: Qt.ApplicationShortcut
+        onActivated: commandPalette.open()
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+F", "Meta+F"]
+        context: Qt.ApplicationShortcut
         onActivated: root.focusSearch()
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+/", "Meta+/"]
+        context: Qt.ApplicationShortcut
+        onActivated: shortcutOverlay.open()
     }
 
     Shortcut {
@@ -1991,13 +2428,6 @@ ApplicationWindow {
                 attachmentDialog.pendingWorkspaceId = ""
                 attachmentDialog.pendingChannelId = ""
                 attachmentDialog.pendingReplyToMessageId = ""
-                workspaceKeyField.text = ""
-                recoveryPassphraseField.text = ""
-            }
-        }
-        function onKeyTransferJsonChanged() {
-            if (chaftController.keyTransferJson.length > 0) {
-                workspaceKeyField.text = chaftController.keyTransferJson
             }
         }
     }
@@ -2024,7 +2454,7 @@ ApplicationWindow {
                 color: Tokens.textStrong
                 placeholderTextColor: Tokens.textMuted
                 background: Rectangle {
-                    radius: 7
+                    radius: Tokens.radiusMd
                     color: Tokens.sidebarInput
                 }
                 onAccepted: {
@@ -2136,17 +2566,6 @@ ApplicationWindow {
         }
     }
 
-    FileDialog {
-        id: keyPackageDialog
-        property string pendingProtocol: "openmls/key-package"
-        title: "Publish key package"
-        fileMode: FileDialog.OpenFile
-        onAccepted: {
-            var filePath = root.localPathFromUrl(selectedFile)
-            chaftController.publishDeviceKeyPackage(pendingProtocol, filePath)
-        }
-    }
-
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -2177,6 +2596,9 @@ ApplicationWindow {
                         selected: String(workspaceRailDelegate.modelData.workspaceId || "") === chaftController.selectedWorkspaceId
                             || (chaftController.selectedWorkspaceId.length === 0 && workspaceRailDelegate.index === 0)
                         actionable: root.runtimeWorkReady
+                        // Workspace summaries may not carry unreadCount yet;
+                        // degrade to no badge silently.
+                        unreadCount: Number(workspaceRailDelegate.modelData.unreadCount || 0)
                         onActivated: function(workspaceId) {
                             root.selectWorkspaceId(workspaceId)
                         }
@@ -2198,7 +2620,7 @@ ApplicationWindow {
                 Text {
                     text: root.workspaceSnapshot.name || "Chaft"
                     color: Tokens.textStrong
-                    font.pixelSize: 18
+                    font.pixelSize: Tokens.fontSizeXl
                     font.weight: Font.DemiBold
                 }
 
@@ -2226,7 +2648,7 @@ ApplicationWindow {
                     }
                     onAccepted: root.activateSearchResult()
                     background: Rectangle {
-                        radius: 7
+                        radius: Tokens.radiusMd
                         color: Tokens.sidebarInput
                     }
                 }
@@ -2245,7 +2667,7 @@ ApplicationWindow {
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         background: Rectangle {
-                            radius: 7
+                            radius: Tokens.radiusMd
                             color: Tokens.sidebarInput
                         }
                         onAccepted: {
@@ -2269,50 +2691,89 @@ ApplicationWindow {
                     visible: chaftController.hasRuntimeWorkspace
                     spacing: 6
 
-                    TextField {
-                        id: channelNameField
+                    Text {
                         Layout.fillWidth: true
-                        placeholderText: "New channel"
-                        Accessible.name: "New channel"
-                        Accessible.description: "Name for the channel to create"
-                        color: Tokens.textStrong
-                        placeholderTextColor: Tokens.textMuted
-                        background: Rectangle {
-                            radius: 7
-                            color: Tokens.sidebarInput
-                        }
-                        onAccepted: {
-                            if (root.runtimeWorkReady
-                                    && chaftController.createChannel(text, privateChannelCheck.checked)) {
-                                text = ""
-                                privateChannelCheck.checked = false
-                            }
-                        }
-                    }
-
-                    CheckBox {
-                        id: privateChannelCheck
-                        text: "Private"
-                        Accessible.name: "Private channel"
-                        Accessible.description: checked
-                            ? "New channel will require explicit member grants"
-                            : "New channel will be visible to workspace members"
-                        Layout.preferredWidth: 86
+                        text: "Channels"
+                        color: Tokens.sidebarTextMuted
+                        font.pixelSize: Tokens.fontSizeXs
+                        font.weight: Font.DemiBold
                     }
 
                     Button {
+                        id: newChannelButton
                         text: "+"
-                        Accessible.name: "Create channel"
-                        Accessible.description: privateChannelCheck.checked
-                            ? "Create private channel"
-                            : "Create public channel"
-                        implicitWidth: 36
+                        Accessible.name: "New channel"
+                        Accessible.description: "Open the channel creation form"
+                        implicitWidth: 30
                         enabled: root.runtimeWorkReady
-                            && channelNameField.text.trim().length > 0
-                        onClicked: {
-                            if (chaftController.createChannel(channelNameField.text, privateChannelCheck.checked)) {
-                                channelNameField.text = ""
-                                privateChannelCheck.checked = false
+                        onClicked: newChannelPopup.open()
+                        ToolTip.visible: hovered
+                        ToolTip.text: "New channel"
+                    }
+
+                    Popup {
+                        id: newChannelPopup
+                        parent: newChannelButton
+                        y: newChannelButton.height + 4
+                        x: newChannelButton.width - width
+                        width: 232
+                        padding: Tokens.space3
+                        modal: true
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                        onOpened: channelNameField.forceActiveFocus()
+                        onClosed: {
+                            channelNameField.text = ""
+                            privateChannelCheck.checked = false
+                        }
+
+                        function createFromForm() {
+                            if (root.runtimeWorkReady
+                                    && chaftController.createChannel(channelNameField.text, privateChannelCheck.checked)) {
+                                newChannelPopup.close()
+                            }
+                        }
+
+                        background: Rectangle {
+                            radius: Tokens.radiusMd
+                            color: Tokens.surfaceRaised
+                            border.width: 1
+                            border.color: Tokens.borderSubtle
+                        }
+
+                        contentItem: ColumnLayout {
+                            spacing: Tokens.space2
+
+                            Text {
+                                text: "Channel name"
+                                color: Tokens.textMuted
+                                font.pixelSize: Tokens.fontSizeXs
+                                font.weight: Font.DemiBold
+                            }
+
+                            TextField {
+                                id: channelNameField
+                                Layout.fillWidth: true
+                                placeholderText: "e.g. launch-plan"
+                                Accessible.name: "Channel name"
+                                onAccepted: newChannelPopup.createFromForm()
+                            }
+
+                            CheckBox {
+                                id: privateChannelCheck
+                                text: "Private channel"
+                                Accessible.name: "Private channel"
+                                Accessible.description: checked
+                                    ? "New channel will require explicit member grants"
+                                    : "New channel will be visible to workspace members"
+                            }
+
+                            Button {
+                                Layout.fillWidth: true
+                                text: privateChannelCheck.checked ? "Create private channel" : "Create channel"
+                                enabled: root.runtimeWorkReady
+                                    && channelNameField.text.trim().length > 0
+                                onClicked: newChannelPopup.createFromForm()
                             }
                         }
                     }
@@ -2341,10 +2802,14 @@ ApplicationWindow {
                             Text {
                                 visible: root.filteredChannels.length === 0
                                 Layout.fillWidth: true
-                                text: "No matching channels"
+                                text: root.channels.length === 0
+                                        && root.runtimeWorkReady
+                                        && root.normalizedSearchQuery.length === 0
+                                    ? "No channels yet — press + to create one"
+                                    : "No matching channels"
                                 color: Tokens.textMuted
-                                font.pixelSize: 13
-                                elide: Text.ElideRight
+                                font.pixelSize: Tokens.fontSizeSm
+                                wrapMode: Text.WordWrap
                             }
 
                             Repeater {
@@ -2384,554 +2849,13 @@ ApplicationWindow {
                     onClicked: root.setupPanelOpen = !root.setupPanelOpen
                 }
 
-                ScrollView {
-                    id: setupScroll
+                SetupPanel {
+                    id: setupPanel
+                    app: root
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: root.setupPanelOpen
                         && (chaftController.deviceId.length > 0 || chaftController.hasRuntimeWorkspace)
-                    clip: true
-                    contentWidth: availableWidth
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                    Item {
-                        width: setupScroll.availableWidth
-                        height: setupColumn.implicitHeight
-
-                        ColumnLayout {
-                            id: setupColumn
-                            width: parent.width
-                    spacing: 8
-
-                    Text {
-                        Layout.fillWidth: true
-                        visible: chaftController.deviceId.length > 0
-                        text: "Device " + chaftController.deviceId
-                        color: Tokens.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.WrapAnywhere
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        TextField {
-                            id: displayNameField
-                            Layout.fillWidth: true
-                            placeholderText: "Display name"
-                            color: Tokens.textStrong
-                            placeholderTextColor: Tokens.textMuted
-                            Component.onCompleted: text = root.localDeviceDisplayName()
-                            background: Rectangle {
-                                radius: 7
-                                color: Tokens.sidebarInput
-                            }
-                            onAccepted: {
-                                if (root.runtimeWorkReady
-                                        && chaftController.updateDeviceProfile(text)) {
-                                    text = root.localDeviceDisplayName()
-                                }
-                            }
-
-                            Connections {
-                                target: chaftController
-                                function onWorkspaceSnapshotChanged() {
-                                    if (!displayNameField.activeFocus) {
-                                        displayNameField.text = root.localDeviceDisplayName()
-                                    }
-                                }
-                                function onDeviceIdChanged() {
-                                    if (!displayNameField.activeFocus) {
-                                        displayNameField.text = root.localDeviceDisplayName()
-                                    }
-                                }
-                            }
-                        }
-
-                        Button {
-                            text: "Set"
-                            enabled: root.runtimeWorkReady
-                                && displayNameField.text.trim().length > 0
-                            onClicked: {
-                                if (chaftController.updateDeviceProfile(displayNameField.text)) {
-                                    displayNameField.text = root.localDeviceDisplayName()
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        TextField {
-                            id: inviteDeviceField
-                            Layout.fillWidth: true
-                            placeholderText: "Invite device ID"
-                            color: Tokens.textStrong
-                            placeholderTextColor: Tokens.textMuted
-                            background: Rectangle {
-                                radius: 7
-                                color: Tokens.sidebarInput
-                            }
-                        }
-
-                        ComboBox {
-                            id: inviteRoleBox
-                            Layout.preferredWidth: 82
-                            model: ["member", "admin", "guest"]
-                        }
-
-                        Button {
-                            text: "Add"
-                            enabled: root.runtimeWorkReady
-                                && inviteDeviceField.text.trim().length > 0
-                            onClicked: {
-                                if (chaftController.inviteMember(inviteDeviceField.text, inviteRoleBox.currentText)) {
-                                    inviteDeviceField.text = ""
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannelPrivate
-                        spacing: 6
-
-                        TextField {
-                            id: channelMemberDeviceField
-                            Layout.fillWidth: true
-                            placeholderText: "Device ID"
-                            color: Tokens.textStrong
-                            placeholderTextColor: Tokens.textMuted
-                            background: Rectangle {
-                                radius: 7
-                                color: Tokens.sidebarInput
-                            }
-                            onAccepted: {
-                                if (root.runtimeWorkReady
-                                        && chaftController.addChannelMember(root.selectedChannelKey, text)) {
-                                    text = ""
-                                }
-                            }
-                        }
-
-                        Button {
-                            text: "Grant"
-                            enabled: root.runtimeWorkReady
-                                && channelMemberDeviceField.text.trim().length > 0
-                                && root.selectedChannelKey.length > 0
-                            onClicked: {
-                                if (chaftController.addChannelMember(root.selectedChannelKey, channelMemberDeviceField.text)) {
-                                    channelMemberDeviceField.text = ""
-                                }
-                            }
-                        }
-
-                        Button {
-                            text: "Revoke"
-                            enabled: root.runtimeWorkReady
-                                && channelMemberDeviceField.text.trim().length > 0
-                                && root.selectedChannelKey.length > 0
-                            onClicked: {
-                                if (chaftController.removeChannelMember(root.selectedChannelKey, channelMemberDeviceField.text)) {
-                                    channelMemberDeviceField.text = ""
-                                }
-                            }
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            TextField {
-                                id: backupPeerField
-                                Layout.fillWidth: true
-                                placeholderText: "Backup peer"
-                                color: Tokens.textStrong
-                                placeholderTextColor: Tokens.textMuted
-                                background: Rectangle {
-                                    radius: 7
-                                    color: Tokens.sidebarInput
-                                }
-                                onAccepted: {
-                                    if (chaftController.addBackupPeerEndpoint(text)) {
-                                        text = ""
-                                    }
-                                }
-                            }
-
-                            Button {
-                                text: "Save"
-                                enabled: backupPeerField.text.trim().length > 0
-                                onClicked: {
-                                    if (chaftController.addBackupPeerEndpoint(backupPeerField.text)) {
-                                        backupPeerField.text = ""
-                                    }
-                                }
-                            }
-
-                            CheckBox {
-                                text: "Auto"
-                                checked: root.autoBackupEnabled
-                                enabled: root.hasAutoBackupTargets
-                                onToggled: root.autoBackupEnabled = checked
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 4
-                            visible: (chaftController.backupPeerEndpoints || []).length > 0
-
-                            Repeater {
-                                model: chaftController.backupPeerEndpoints
-
-                                delegate: SavedBackupPeerRow {
-                                    id: savedBackupPeerDelegate
-                                    required property string modelData
-
-                                    endpoint: savedBackupPeerDelegate.modelData
-                                    statusText: root.backupPeerStatusText(savedBackupPeerDelegate.modelData)
-                                    onRemoveRequested: function (endpoint) {
-                                        chaftController.removeBackupPeerEndpoint(endpoint)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        TextField {
-                            id: keyPackageProtocolField
-                            Layout.fillWidth: true
-                            text: "openmls/key-package"
-                            placeholderText: "Key package protocol"
-                            color: Tokens.textStrong
-                            placeholderTextColor: Tokens.textMuted
-                            background: Rectangle {
-                                radius: 7
-                                color: Tokens.sidebarInput
-                            }
-                        }
-
-                        Button {
-                            text: "Publish"
-                            enabled: root.runtimeWorkReady
-                                && keyPackageProtocolField.text.trim().length > 0
-                            onClicked: {
-                                keyPackageDialog.pendingProtocol = keyPackageProtocolField.text.trim()
-                                keyPackageDialog.open()
-                            }
-                        }
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        columns: 2
-                        columnSpacing: 6
-                        rowSpacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "MLS key"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.publishOpenMlsDeviceKeyPackage()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "MLS workspace"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.createOpenMlsWorkspaceGroup()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Join workspace"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.joinOpenMlsWorkspaceGroup("")
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Apply workspace"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.applyOpenMlsWorkspaceGroupCommits("")
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Update workspace"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.updateOpenMlsWorkspaceGroup()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Update all MLS"
-                            enabled: root.runtimeWorkReady
-                            onClicked: chaftController.updateWorkspaceOpenMlsGroups()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: root.selectedChannelPrivate
-                            text: "MLS channel"
-                            enabled: root.runtimeWorkReady
-                                && root.selectedChannelKey.length > 0
-                            onClicked: chaftController.createOpenMlsChannelGroup(root.selectedChannelKey)
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: root.selectedChannelPrivate
-                            text: "Join channel"
-                            enabled: root.runtimeWorkReady
-                                && root.selectedChannelKey.length > 0
-                            onClicked: chaftController.joinOpenMlsChannelGroup(root.selectedChannelKey, "")
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: root.selectedChannelPrivate
-                            text: "Apply channel"
-                            enabled: root.runtimeWorkReady
-                                && root.selectedChannelKey.length > 0
-                            onClicked: chaftController.applyOpenMlsChannelGroupCommits(root.selectedChannelKey, "")
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: root.selectedChannelPrivate
-                            text: "Update channel"
-                            enabled: root.runtimeWorkReady
-                                && root.selectedChannelKey.length > 0
-                            onClicked: chaftController.updateOpenMlsChannelGroup(root.selectedChannelKey)
-                        }
-                    }
-
-                    TextArea {
-                        id: workspaceKeyField
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 72
-                        placeholderText: "Key, recovery, trust, or rotation JSON"
-                        color: Tokens.textStrong
-                        placeholderTextColor: Tokens.textMuted
-                        wrapMode: TextEdit.WrapAnywhere
-                        background: Rectangle {
-                            radius: 7
-                            color: Tokens.sidebarInput
-                        }
-                    }
-
-                    TextField {
-                        id: recoveryPassphraseField
-                        Layout.fillWidth: true
-                        placeholderText: "Recovery passphrase"
-                        echoMode: TextInput.Password
-                        color: Tokens.textStrong
-                        placeholderTextColor: Tokens.textMuted
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: chaftController.hasRuntimeWorkspace
-                            text: "Export workspace"
-                            enabled: root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.exportWorkspaceKey()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Import workspace"
-                            enabled: workspaceKeyField.text.trim().length > 0
-                                && root.runtimeAccessReady
-                                && !chaftController.rawEventStoreMode
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.importWorkspaceKey(workspaceKeyField.text)
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            visible: chaftController.hasRuntimeWorkspace
-                            text: "Export recovery"
-                            enabled: recoveryPassphraseField.text.trim().length > 0
-                                && root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.exportRecoveryBundle(
-                                recoveryPassphraseField.text)
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Import recovery"
-                            enabled: workspaceKeyField.text.trim().length > 0
-                                && recoveryPassphraseField.text.trim().length > 0
-                                && root.runtimeAccessReady
-                                && !chaftController.rawEventStoreMode
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.importRecoveryBundle(
-                                workspaceKeyField.text,
-                                recoveryPassphraseField.text)
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Export trust"
-                            enabled: root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.exportTrustSnapshot()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Review"
-                            enabled: root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.detectCompromise()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Review compromise signals"
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Rotate keys"
-                            enabled: root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.rotateWorkspaceManualKeys()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Rotate OpenMLS and manual keys"
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                            && chaftController.runtimeUnlocked
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Lock runtime"
-                            enabled: chaftController.runtimeUnlockClearable
-                                && !chaftController.keyTransferInFlight
-                                && !chaftController.syncInFlight
-                            onClicked: chaftController.clearRuntimeUnlock()
-                            ToolTip.visible: hovered
-                            ToolTip.text: chaftController.runtimeUnlockClearable
-                                ? "Clear cached runtime passphrase"
-                                : "Passphrase is provided by environment"
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                            && chaftController.runtimeLocked
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Unlock runtime"
-                            enabled: !chaftController.keyTransferInFlight
-                                && !chaftController.syncInFlight
-                            onClicked: chaftController.requestRuntimeUnlock()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Show the runtime passphrase prompt"
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace
-                        spacing: 6
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Reindex search"
-                            enabled: root.runtimeWorkReady
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.reindexWorkspaceSearch()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Rebuild local message search"
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: chaftController.hasRuntimeWorkspace && root.selectedChannelPrivate
-                        spacing: 6
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Button {
-                                Layout.fillWidth: true
-                                text: "Export channel"
-                                enabled: root.runtimeWorkReady
-                                    && root.selectedChannelKey.length > 0
-                                    && !chaftController.keyTransferInFlight
-                                onClicked: chaftController.exportChannelKey(root.selectedChannelKey)
-                            }
-
-                            Button {
-                                Layout.fillWidth: true
-                                text: "Import channel"
-                                enabled: workspaceKeyField.text.trim().length > 0
-                                    && root.runtimeWorkReady
-                                    && !chaftController.rawEventStoreMode
-                                    && !chaftController.keyTransferInFlight
-                                onClicked: chaftController.importChannelKey(workspaceKeyField.text)
-                            }
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Rotate channel"
-                            enabled: root.runtimeWorkReady
-                                && root.selectedChannelKey.length > 0
-                                && !chaftController.keyTransferInFlight
-                            onClicked: chaftController.rotateChannelKey(root.selectedChannelKey)
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Rotate this private channel key"
-                        }
-                    }
-                }
-
-                    }
                 }
             }
         }
@@ -2947,7 +2871,7 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: chaftController.hasRuntimeWorkspace ? 104 : 58
+                    Layout.preferredHeight: chaftController.hasRuntimeWorkspace && root.syncDrawerOpen ? 104 : 58
                     color: Tokens.surfaceBase
 
                     ColumnLayout {
@@ -2965,17 +2889,41 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "# " + root.selectedChannelName
                                 color: Tokens.textStrong
-                                font.pixelSize: 18
-                                font.weight: Font.DemiBold
+                                font.pixelSize: Tokens.fontSizeXl
+                                font.weight: Font.Bold
                                 elide: Text.ElideRight
                             }
 
-                            Text {
-                                Layout.preferredWidth: Math.min(260, implicitWidth)
-                                text: chaftController.syncStatus || root.workspaceSnapshot.syncStatus || "local event log"
-                                color: Tokens.success
-                                font.pixelSize: 13
-                                elide: Text.ElideMiddle
+                            Rectangle {
+                                visible: root.channelCryptoExceptionCount > 0
+                                implicitHeight: 24
+                                implicitWidth: cryptoExceptionLabel.implicitWidth + 16
+                                radius: Tokens.radiusSm
+                                color: Tokens.warningSurface
+                                border.width: 1
+                                border.color: Tokens.warning
+
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: cryptoExceptionLabel.text
+
+                                Text {
+                                    id: cryptoExceptionLabel
+                                    anchors.centerIn: parent
+                                    text: String(root.channelCryptoExceptionCount)
+                                        + " unprotected row" + (root.channelCryptoExceptionCount === 1 ? "" : "s")
+                                    color: Tokens.warningText
+                                    font.pixelSize: Tokens.fontSizeXs
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            SyncStatusPill {
+                                visible: chaftController.hasRuntimeWorkspace || chaftController.rawEventStoreMode
+                                label: root.syncPillLabel
+                                tone: root.syncPillTone
+                                detail: chaftController.syncStatus || root.workspaceSnapshot.syncStatus || ""
+                                expanded: root.syncDrawerOpen
+                                onToggled: root.syncDrawerOpen = !root.syncDrawerOpen
                             }
                         }
 
@@ -2983,7 +2931,7 @@ ApplicationWindow {
                             id: syncControlsFlick
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
-                            visible: chaftController.hasRuntimeWorkspace
+                            visible: chaftController.hasRuntimeWorkspace && root.syncDrawerOpen
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             contentWidth: Math.max(width, syncControlsRow.implicitWidth + 36)
@@ -3008,7 +2956,7 @@ ApplicationWindow {
                                     color: Tokens.textStrong
                                     placeholderTextColor: Tokens.textMuted
                                     background: Rectangle {
-                                        radius: 7
+                                        radius: Tokens.radiusMd
                                         color: Tokens.surfaceRaised
                                         border.color: Tokens.borderSubtle
                                     }
@@ -3040,7 +2988,8 @@ ApplicationWindow {
                                     visible: chaftController.peerHosting
                                     text: chaftController.hostedPeerEndpoint
                                     color: Tokens.textMuted
-                                    font.pixelSize: 12
+                                    font.family: Tokens.fontMono
+                                    font.pixelSize: Tokens.fontSizeSm
                                     elide: Text.ElideMiddle
                                 }
 
@@ -3085,7 +3034,7 @@ ApplicationWindow {
                                     Component.onCompleted: text = chaftController.defaultPeerEndpoint
                                     onEditingFinished: chaftController.defaultPeerEndpoint = text.trim()
                                     background: Rectangle {
-                                        radius: 7
+                                        radius: Tokens.radiusMd
                                         color: Tokens.surfaceRaised
                                         border.color: Tokens.borderSubtle
                                     }
@@ -3197,6 +3146,7 @@ ApplicationWindow {
                     autoFollowLatest: root.normalizedSearchQuery.length === 0
                     showChannelLabels: root.runtimeSearchReady
                     selectedItemKey: root.inspectorItemKey
+                    pendingDeleteMessageIds: root.pendingDeleteIds
                     onItemSelected: function(item) {
                         root.selectInspectorItem(item)
                     }
@@ -3216,9 +3166,7 @@ ApplicationWindow {
                         root.beginEditMessage(messageId, body)
                     }
                     onDeleteRequested: function(messageId) {
-                        if (chaftController.deleteMessage(messageId) && root.editingMessageId === messageId) {
-                            root.cancelEditMessage()
-                        }
+                        root.queueMessageDelete(messageId)
                     }
                     onAttachmentSaveRequested: function(messageId, attachmentSelector, displayName) {
                         saveAttachmentDialog.messageId = messageId
@@ -3283,6 +3231,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.preferredWidth: 300
             visible: root.width >= 1400
+                && (chaftController.inspectorPinned || root.inspectorItemKey.length > 0)
             color: Tokens.surfaceRaised
             border.color: Tokens.borderSubtle
 
@@ -3318,7 +3267,7 @@ ApplicationWindow {
                                         ? "# " + root.selectedChannelName
                                         : "Details"
                                     color: Tokens.textStrong
-                                    font.pixelSize: 17
+                                    font.pixelSize: Tokens.fontSizeXl
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -3327,7 +3276,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     text: root.workspaceSnapshot.name || "Chaft"
                                     color: Tokens.textMuted
-                                    font.pixelSize: 11
+                                    font.pixelSize: Tokens.fontSizeXs
                                     elide: Text.ElideRight
                                 }
                             }
@@ -3344,9 +3293,22 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     text: root.selectedChannelPrivate ? "Private" : "Open"
                                     color: root.selectedChannelPrivate ? Tokens.secure : Tokens.textMuted
-                                    font.pixelSize: 11
+                                    font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
                                 }
+                            }
+
+                            Button {
+                                text: chaftController.inspectorPinned ? "Unpin" : "Pin"
+                                Layout.preferredWidth: 56
+                                Accessible.name: chaftController.inspectorPinned
+                                    ? "Unpin inspector"
+                                    : "Pin inspector"
+                                onClicked: chaftController.inspectorPinned = !chaftController.inspectorPinned
+                                ToolTip.visible: hovered
+                                ToolTip.text: chaftController.inspectorPinned
+                                    ? "Inspector stays open; unpin to open only on selection"
+                                    : "Keep the inspector open even with nothing selected"
                             }
                         }
 
@@ -3371,13 +3333,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Messages"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.channelTimeline.length)
                                         color: Tokens.textStrong
-                                        font.pixelSize: 18
+                                        font.pixelSize: Tokens.fontSizeXl
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3396,15 +3358,15 @@ ApplicationWindow {
                                     spacing: 2
 
                                     Text {
-                                        text: root.runtimeSearchReady ? "Hits" : "Visible"
+                                        text: root.runtimeSearchReady ? "Hits" : "Loaded"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: root.runtimeSearchReady ? root.messageSearchHitCountLabel() : String(root.selectedTimeline.length)
                                         color: Tokens.textStrong
-                                        font.pixelSize: 18
+                                        font.pixelSize: Tokens.fontSizeXl
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3425,13 +3387,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Issues"
                                         color: root.selectedChannelIssueCount > 0 ? Tokens.warningText : Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.selectedChannelIssueCount)
                                         color: root.selectedChannelIssueCount > 0 ? Tokens.warningText : Tokens.textStrong
-                                        font.pixelSize: 18
+                                        font.pixelSize: Tokens.fontSizeXl
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3452,13 +3414,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Files"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.channelAttachments.length)
                                         color: Tokens.textStrong
-                                        font.pixelSize: 18
+                                        font.pixelSize: Tokens.fontSizeXl
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3479,7 +3441,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Message"
                                 color: Tokens.textStrong
-                                font.pixelSize: 15
+                                font.pixelSize: Tokens.fontSizeLg
                                 font.weight: Font.DemiBold
                             }
 
@@ -3495,7 +3457,7 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     text: root.inspectorItemIsSelected ? "Selected" : "Latest"
                                     color: root.inspectorItemIsSelected ? Tokens.secure : Tokens.textMuted
-                                    font.pixelSize: 11
+                                    font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -3506,7 +3468,7 @@ ApplicationWindow {
                             visible: root.timelineItemKey(root.inspectorItem).length === 0
                             text: "No messages yet"
                             color: Tokens.textMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Tokens.fontSizeSm
                             elide: Text.ElideRight
                         }
 
@@ -3531,7 +3493,7 @@ ApplicationWindow {
                                     Rectangle {
                                         Layout.preferredWidth: 32
                                         Layout.preferredHeight: 32
-                                        radius: 7
+                                        radius: Tokens.radiusMd
                                         color: (root.inspectorItem.kind === "missing_history_gap" || root.inspectorItem.kind === "invalid_signature")
                                             ? Tokens.warning
                                             : (root.inspectorItem.encrypted ? Tokens.secure : Tokens.accent)
@@ -3543,8 +3505,8 @@ ApplicationWindow {
                                                 : (root.itemAuthorLabel(root.inspectorItem).length > 0
                                                     ? root.itemAuthorLabel(root.inspectorItem).slice(0, 1).toUpperCase()
                                                     : "?")
-                                            color: "white"
-                                            font.pixelSize: 13
+                                            color: Tokens.onAccent
+                                            font.pixelSize: Tokens.fontSizeSm
                                             font.weight: Font.DemiBold
                                         }
                                     }
@@ -3561,7 +3523,7 @@ ApplicationWindow {
                                                     ? "Invalid signature"
                                                 : root.itemAuthorLabel(root.inspectorItem)
                                             color: Tokens.textStrong
-                                            font.pixelSize: 13
+                                            font.pixelSize: Tokens.fontSizeSm
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideRight
                                         }
@@ -3572,7 +3534,7 @@ ApplicationWindow {
                                             color: (root.inspectorItem.kind === "missing_history_gap" || root.inspectorItem.kind === "invalid_signature")
                                                 ? Tokens.warningText
                                                 : Tokens.textMuted
-                                            font.pixelSize: 11
+                                            font.pixelSize: Tokens.fontSizeXs
                                             elide: Text.ElideRight
                                         }
                                     }
@@ -3585,7 +3547,7 @@ ApplicationWindow {
                                     color: (root.inspectorItem.kind === "missing_history_gap" || root.inspectorItem.kind === "invalid_signature")
                                         ? Tokens.warningText
                                         : Tokens.textStrong
-                                    font.pixelSize: 13
+                                    font.pixelSize: Tokens.fontSizeSm
                                     wrapMode: Text.Wrap
                                     maximumLineCount: 3
                                     elide: Text.ElideRight
@@ -3603,15 +3565,15 @@ ApplicationWindow {
                                     }
 
                                     Button {
-                                        text: "Event"
-                                        Layout.preferredWidth: 68
+                                        text: "Copy event ID"
+                                        Layout.preferredWidth: 108
                                         enabled: String(root.inspectorItem.eventId || "").length > 0
                                         onClicked: root.copyInspectorEventId()
                                     }
 
                                     Button {
-                                        text: "Message"
-                                        Layout.preferredWidth: 82
+                                        text: "Copy message ID"
+                                        Layout.preferredWidth: 126
                                         visible: String(root.inspectorItem.messageId || "").length > 0
                                         enabled: String(root.inspectorItem.messageId || "").length > 0
                                         onClicked: root.copyInspectorMessageId()
@@ -3622,8 +3584,17 @@ ApplicationWindow {
                                     }
                                 }
 
+                                Button {
+                                    text: root.inspectorDetailsOpen ? "Hide details" : "Details"
+                                    Layout.preferredWidth: 104
+                                    onClicked: root.inspectorDetailsOpen = !root.inspectorDetailsOpen
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Event and message identifiers, counts"
+                                }
+
                                 GridLayout {
                                     Layout.fillWidth: true
+                                    visible: root.inspectorDetailsOpen
                                     columns: 2
                                     columnSpacing: 10
                                     rowSpacing: 4
@@ -3631,14 +3602,15 @@ ApplicationWindow {
                                     Text {
                                         text: "Event"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         Layout.fillWidth: true
                                         text: String(root.inspectorItem.eventId || "")
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.family: Tokens.fontMono
+                                        font.pixelSize: Tokens.fontSizeXs
                                         elide: Text.ElideMiddle
                                     }
 
@@ -3646,7 +3618,7 @@ ApplicationWindow {
                                         visible: String(root.inspectorItem.messageId || "").length > 0
                                         text: "Message"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
@@ -3654,34 +3626,35 @@ ApplicationWindow {
                                         visible: String(root.inspectorItem.messageId || "").length > 0
                                         text: String(root.inspectorItem.messageId || "")
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.family: Tokens.fontMono
+                                        font.pixelSize: Tokens.fontSizeXs
                                         elide: Text.ElideMiddle
                                     }
 
                                     Text {
                                         text: "Files"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         Layout.fillWidth: true
                                         text: String((root.inspectorItem.attachments || []).length)
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: "Reactions"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         Layout.fillWidth: true
                                         text: String(root.reactionDistinctCountForItem(root.inspectorItem))
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
                                 }
 
@@ -3714,7 +3687,7 @@ ApplicationWindow {
                                         visible: root.inspectorAttachmentOverflowLabel.length > 0
                                         text: root.inspectorAttachmentOverflowLabel
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -3764,7 +3737,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Backup"
                                 color: Tokens.textStrong
-                                font.pixelSize: 15
+                                font.pixelSize: Tokens.fontSizeLg
                                 font.weight: Font.DemiBold
                             }
 
@@ -3780,7 +3753,7 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     text: root.autoBackupEnabled ? "Auto" : "Manual"
                                     color: root.autoBackupEnabled ? Tokens.secure : Tokens.textMuted
-                                    font.pixelSize: 11
+                                    font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -3807,13 +3780,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Peers"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String((chaftController.backupPeerEndpoints || []).length)
                                         color: Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3834,7 +3807,7 @@ ApplicationWindow {
                                     Text {
                                         text: "Host"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
@@ -3842,7 +3815,7 @@ ApplicationWindow {
                                             ? "Serving"
                                             : (chaftController.peerHostingInFlight ? "Busy" : "Local")
                                         color: chaftController.peerHosting ? Tokens.success : Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3863,13 +3836,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Queue"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.queuedPublishableEventCount)
                                         color: root.queuedPublishableEventCount > 0 ? Tokens.secure : Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3890,13 +3863,13 @@ ApplicationWindow {
                                     Text {
                                         text: "Issues"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.publishQueueIssueCount)
                                         color: root.publishQueueIssueCount > 0 ? Tokens.warningText : Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3917,7 +3890,7 @@ ApplicationWindow {
                                     Text {
                                         text: "Cache"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
@@ -3925,7 +3898,7 @@ ApplicationWindow {
                                             ? String(root.storageHealthAttentionCount)
                                             : "-"
                                         color: root.storageHealthHasIssue ? Tokens.warningText : Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3946,7 +3919,7 @@ ApplicationWindow {
                                     Text {
                                         text: "Rows"
                                         color: Tokens.textMuted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
@@ -3954,7 +3927,7 @@ ApplicationWindow {
                                             ? String(root.storageTotalEventCount)
                                             : "-"
                                         color: Tokens.textStrong
-                                        font.pixelSize: 15
+                                        font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -3968,7 +3941,7 @@ ApplicationWindow {
                             color: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
                                 ? Tokens.warningText
                                 : Tokens.textMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Tokens.fontSizeSm
                             elide: Text.ElideRight
                         }
 
@@ -3980,7 +3953,7 @@ ApplicationWindow {
                             color: root.storageHealthHasIssue
                                 ? Tokens.warningText
                                 : Tokens.textMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Tokens.fontSizeSm
                             elide: Text.ElideRight
                         }
 
@@ -4003,14 +3976,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Discovered"
                                 color: Tokens.textStrong
-                                font.pixelSize: 13
+                                font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
                             }
 
                             Text {
                                 text: String(root.peerEndpointCount)
                                 color: Tokens.textMuted
-                                font.pixelSize: 11
+                                font.pixelSize: Tokens.fontSizeXs
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -4054,7 +4027,7 @@ ApplicationWindow {
                             visible: (chaftController.backupPeerEndpoints || []).length === 0
                             text: "No backup peers"
                             color: Tokens.textMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Tokens.fontSizeSm
                             elide: Text.ElideRight
                         }
 
@@ -4093,14 +4066,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Members"
                                 color: Tokens.textStrong
-                                font.pixelSize: 15
+                                font.pixelSize: Tokens.fontSizeLg
                                 font.weight: Font.DemiBold
                             }
 
                             Text {
                                 text: String(root.memberCount)
                                 color: Tokens.textMuted
-                                font.pixelSize: 12
+                                font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -4127,7 +4100,14 @@ ApplicationWindow {
                                 canRemove: chaftController.hasRuntimeWorkspace
                                     && memberRowDelegate.deviceId !== chaftController.deviceId
                                 onRemoveRequested: function (deviceId) {
-                                    chaftController.removeMember(deviceId)
+                                    confirmDialog.ask(
+                                        "Remove member",
+                                        "Remove device " + deviceId + " from the workspace? "
+                                            + "This writes a signed removal event and triggers key rotation "
+                                            + "so the device cannot read new messages.",
+                                        "Remove member",
+                                        "remove-member:" + deviceId,
+                                        true)
                                 }
                             }
                         }
@@ -4157,14 +4137,14 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: "Keys"
                                 color: Tokens.textStrong
-                                font.pixelSize: 15
+                                font.pixelSize: Tokens.fontSizeLg
                                 font.weight: Font.DemiBold
                             }
 
                             Text {
                                 text: String(root.keyPackageCount)
                                 color: Tokens.textMuted
-                                font.pixelSize: 12
+                                font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -4174,7 +4154,7 @@ ApplicationWindow {
                             visible: root.keyPackages.length === 0
                             text: "No key packages"
                             color: Tokens.textMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Tokens.fontSizeSm
                             elide: Text.ElideRight
                         }
 

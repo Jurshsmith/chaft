@@ -47,14 +47,14 @@ ColumnLayout {
             Layout.fillWidth: true
             text: "Media"
             color: Tokens.textStrong
-            font.pixelSize: 15
+            font.pixelSize: Tokens.fontSizeLg
             font.weight: Font.DemiBold
         }
 
         Text {
             text: String(root.attachmentCount)
             color: Tokens.textMuted
-            font.pixelSize: 12
+            font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
             Accessible.role: Accessible.StaticText
             Accessible.name: root.attachmentCount === 1 ? "1 channel file" : String(root.attachmentCount) + " channel files"
@@ -66,7 +66,7 @@ ColumnLayout {
         visible: root.attachmentCount === 0
         text: "No channel files"
         color: Tokens.textMuted
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         elide: Text.ElideRight
     }
 

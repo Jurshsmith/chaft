@@ -31,7 +31,7 @@ Rectangle {
         anchors.centerIn: parent
         text: "Repair"
         color: root.repairEnabled ? Tokens.textMuted : Tokens.warningText
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
     }
 

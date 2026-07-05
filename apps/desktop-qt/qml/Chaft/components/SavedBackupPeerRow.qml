@@ -24,7 +24,7 @@ RowLayout {
             Layout.fillWidth: true
             text: root.endpoint
             color: Tokens.textMuted
-            font.pixelSize: 12
+            font.pixelSize: Tokens.fontSizeSm
             elide: Text.ElideMiddle
         }
 
@@ -33,7 +33,7 @@ RowLayout {
             text: root.statusText
             color: Tokens.textMuted
             opacity: 0.72
-            font.pixelSize: 11
+            font.pixelSize: Tokens.fontSizeXs
             elide: Text.ElideRight
         }
     }

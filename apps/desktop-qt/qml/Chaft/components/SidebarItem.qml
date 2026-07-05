@@ -32,9 +32,13 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: Tokens.radiusSm
-        color: root.selected ? "#313746" : "transparent"
+        color: root.selected
+            ? Tokens.sidebarActive
+            : channelMouse.containsMouse && channelMouse.enabled
+                ? Qt.rgba(Tokens.sidebarActive.r, Tokens.sidebarActive.g, Tokens.sidebarActive.b, 0.55)
+                : "transparent"
         border.color: root.activeFocus ? Tokens.accent : "transparent"
-        border.width: root.activeFocus ? 1 : 0
+        border.width: root.activeFocus ? 2 : 0
     }
 
     Column {
@@ -48,8 +52,8 @@ Item {
         Text {
             width: parent.width
             text: "# " + root.label
-            color: root.selected ? "white" : "#c7ccd8"
-            font.pixelSize: 14
+            color: root.selected ? Tokens.sidebarTextStrong : Tokens.sidebarText
+            font.pixelSize: Tokens.fontSizeMd
             font.weight: root.unreadCount > 0 ? Font.DemiBold : Font.Normal
             elide: Text.ElideRight
         }
@@ -57,24 +61,28 @@ Item {
         Text {
             visible: root.hasSecondaryLabel
             width: parent.width
-            text: root.secondaryLabel
-            color: root.hasDraft ? Tokens.accent : (root.selected ? "#d8deea" : "#8e96a8")
-            font.pixelSize: 11
+            text: (root.hasDraft ? "✎ " : "") + root.secondaryLabel
+            color: root.hasDraft
+                ? (root.selected ? Tokens.sidebarTextStrong : Tokens.sidebarTextSoft)
+                : (root.selected ? Tokens.sidebarTextSoft : Tokens.sidebarTextMuted)
+            font.pixelSize: Tokens.fontSizeXs
             font.weight: root.hasDraft ? Font.DemiBold : Font.Normal
             elide: Text.ElideRight
         }
     }
 
-    Rectangle {
+    Text {
         id: privateDot
         visible: root.privateChannel
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: root.unreadCount > 0 ? unreadBadge.left : parent.right
         anchors.rightMargin: 8
-        width: 6
-        height: 6
-        radius: 3
+        text: "🔒"
         color: Tokens.secure
+        font.pixelSize: Tokens.fontSizeXs - 1
+
+        Accessible.role: Accessible.StaticText
+        Accessible.name: "Private channel"
     }
 
     Rectangle {
@@ -85,14 +93,14 @@ Item {
         anchors.rightMargin: 8
         width: 24
         height: 20
-        radius: 7
+        radius: Tokens.radiusMd
         color: Tokens.accent
 
         Text {
             anchors.centerIn: parent
             text: String(root.unreadCount)
-            color: "white"
-            font.pixelSize: 12
+            color: Tokens.onAccent
+            font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
         }
     }

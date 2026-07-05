@@ -23,7 +23,7 @@ Rectangle {
         width: parent.width - 14
         text: root.label
         color: Tokens.textMuted
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
         elide: Text.ElideRight
     }

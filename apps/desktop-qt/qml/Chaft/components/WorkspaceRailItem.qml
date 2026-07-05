@@ -9,6 +9,8 @@ Rectangle {
     property string initial: "C"
     property bool selected: false
     property bool actionable: true
+    property int unreadCount: 0
+    readonly property string unreadLabel: unreadCount > 99 ? "99+" : String(unreadCount)
     signal activated(string workspaceId)
 
     width: 40
@@ -18,7 +20,9 @@ Rectangle {
     opacity: railMouse.enabled ? 1 : 0.58
 
     Accessible.role: Accessible.Button
-    Accessible.name: workspaceName
+    Accessible.name: root.unreadCount > 0
+        ? workspaceName + ", " + root.unreadLabel + " unread"
+        : workspaceName
     Accessible.description: selected ? "Current workspace" : "Switch workspace"
     Accessible.onPressAction: {
         if (railMouse.enabled) {
@@ -26,11 +30,18 @@ Rectangle {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        visible: !root.selected && railMouse.enabled && railMouse.containsMouse
+        color: Qt.rgba(Tokens.railText.r, Tokens.railText.g, Tokens.railText.b, 0.12)
+    }
+
     Text {
         anchors.centerIn: parent
         text: root.initial
-        color: "white"
-        font.pixelSize: 15
+        color: root.selected ? Tokens.onAccent : Tokens.railText
+        font.pixelSize: Tokens.fontSizeLg
         font.weight: Font.DemiBold
     }
 
@@ -43,6 +54,32 @@ Rectangle {
         onClicked: root.activated(root.workspaceId)
     }
 
+    Rectangle {
+        id: unreadBadge
+        visible: root.unreadCount > 0
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: -4
+        anchors.rightMargin: -4
+        width: Math.max(16, unreadBadgeText.implicitWidth + 8)
+        height: 16
+        radius: Tokens.radiusMd
+        color: Tokens.accent
+        border.width: 1
+        border.color: Tokens.rail
+
+        Text {
+            id: unreadBadgeText
+            anchors.centerIn: parent
+            text: root.unreadLabel
+            color: Tokens.onAccent
+            font.pixelSize: Tokens.fontSizeXs
+            font.weight: Font.DemiBold
+        }
+    }
+
     ToolTip.visible: railMouse.containsMouse
-    ToolTip.text: root.workspaceName
+    ToolTip.text: root.unreadCount > 0
+        ? root.workspaceName + " — " + root.unreadLabel + " unread"
+        : root.workspaceName
 }

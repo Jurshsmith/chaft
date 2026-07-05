@@ -35,7 +35,7 @@ Rectangle {
         anchors.centerIn: parent
         text: root.label
         color: root.destructive ? Tokens.warningText : Tokens.textMuted
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
     }
 

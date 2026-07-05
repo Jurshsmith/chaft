@@ -36,7 +36,7 @@ Rectangle {
         anchors.centerIn: parent
         text: root.reaction
         color: Tokens.textMuted
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
     }
 

@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHostAddress>
 #include <QIODevice>
@@ -899,6 +901,7 @@ QString desktopConfigPath(const QString &runtimeDir) {
 
 constexpr qint64 kMaxDesktopConfigBytes = 64LL * 1024;
 constexpr qsizetype kMaxWorkspaceIdBytes = 128;
+constexpr qsizetype kMaxThemeIdBytes = 64;
 
 QJsonObject loadDesktopConfig(const QString &runtimeDir) {
   const auto configPath = desktopConfigPath(runtimeDir);
@@ -944,6 +947,44 @@ QString loadDefaultPeerEndpoint(const QString &runtimeDir) {
   return loadDesktopConfig(runtimeDir)
       .value(QStringLiteral("defaultPeerEndpoint"))
       .toString();
+}
+
+QString normalizedThemeId(QString themeId) {
+  const auto normalized = themeId.trimmed();
+  if (normalized.isEmpty() || normalized.toUtf8().size() > kMaxThemeIdBytes) {
+    return {};
+  }
+  return normalized;
+}
+
+QString loadThemeId(const QString &runtimeDir) {
+  return normalizedThemeId(loadDesktopConfig(runtimeDir)
+                               .value(QStringLiteral("themeId"))
+                               .toString());
+}
+
+QString normalizedThemeMode(QString themeMode) {
+  const auto normalized = themeMode.trimmed().toLower();
+  return normalized == QStringLiteral("system") ? normalized
+                                                : QStringLiteral("manual");
+}
+
+QString loadThemeMode(const QString &runtimeDir) {
+  return normalizedThemeMode(loadDesktopConfig(runtimeDir)
+                                 .value(QStringLiteral("themeMode"))
+                                 .toString());
+}
+
+QString loadDarkThemeId(const QString &runtimeDir) {
+  return normalizedThemeId(loadDesktopConfig(runtimeDir)
+                               .value(QStringLiteral("darkThemeId"))
+                               .toString());
+}
+
+QString loadLightThemeId(const QString &runtimeDir) {
+  return normalizedThemeId(loadDesktopConfig(runtimeDir)
+                               .value(QStringLiteral("lightThemeId"))
+                               .toString());
 }
 
 QStringList normalizedPeerEndpoints(QStringList endpoints) {
@@ -1840,11 +1881,26 @@ bool loadAutoBackupEnabled(const QString &runtimeDir) {
       .toBool(false);
 }
 
+bool loadInspectorPinned(const QString &runtimeDir) {
+  return loadDesktopConfig(runtimeDir)
+      .value(QStringLiteral("inspectorPinned"))
+      .toBool(false);
+}
+
+bool loadReducedMotionEnabled(const QString &runtimeDir) {
+  return loadDesktopConfig(runtimeDir)
+      .value(QStringLiteral("reducedMotionEnabled"))
+      .toBool(false);
+}
+
 void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
                        const QString &defaultPeerEndpoint,
                        const QStringList &backupPeerEndpoints,
                        const QVariantMap &backupPeerStatuses,
-                       bool autoBackupEnabled) {
+                       bool autoBackupEnabled, const QString &themeId,
+                       const QString &themeMode, const QString &darkThemeId,
+                       const QString &lightThemeId, bool inspectorPinned,
+                       bool reducedMotionEnabled) {
   const auto configPath = desktopConfigPath(runtimeDir);
   if (configPath.isEmpty()) {
     return;
@@ -1877,6 +1933,27 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
   }
   if (autoBackupEnabled) {
     config.insert(QStringLiteral("autoBackupEnabled"), autoBackupEnabled);
+  }
+  const auto normalizedTheme = normalizedThemeId(themeId);
+  if (!normalizedTheme.isEmpty()) {
+    config.insert(QStringLiteral("themeId"), normalizedTheme);
+  }
+  if (normalizedThemeMode(themeMode) == QStringLiteral("system")) {
+    config.insert(QStringLiteral("themeMode"), QStringLiteral("system"));
+  }
+  const auto normalizedDarkTheme = normalizedThemeId(darkThemeId);
+  if (!normalizedDarkTheme.isEmpty()) {
+    config.insert(QStringLiteral("darkThemeId"), normalizedDarkTheme);
+  }
+  const auto normalizedLightTheme = normalizedThemeId(lightThemeId);
+  if (!normalizedLightTheme.isEmpty()) {
+    config.insert(QStringLiteral("lightThemeId"), normalizedLightTheme);
+  }
+  if (inspectorPinned) {
+    config.insert(QStringLiteral("inspectorPinned"), inspectorPinned);
+  }
+  if (reducedMotionEnabled) {
+    config.insert(QStringLiteral("reducedMotionEnabled"), reducedMotionEnabled);
   }
 
   const auto bytes = QJsonDocument(config).toJson(QJsonDocument::Indented);
@@ -1922,6 +1999,19 @@ class ChaftController : public QObject {
                  NOTIFY workspaceStorageHealthChanged)
   Q_PROPERTY(bool autoBackupEnabled READ autoBackupEnabled WRITE
                  setAutoBackupEnabled NOTIFY autoBackupEnabledChanged)
+  Q_PROPERTY(
+      QString themeId READ themeId WRITE setThemeId NOTIFY themeIdChanged)
+  Q_PROPERTY(QString themeMode READ themeMode WRITE setThemeMode NOTIFY
+                 themeModeChanged)
+  Q_PROPERTY(QString darkThemeId READ darkThemeId WRITE setDarkThemeId NOTIFY
+                 darkThemeIdChanged)
+  Q_PROPERTY(QString lightThemeId READ lightThemeId WRITE setLightThemeId
+                 NOTIFY lightThemeIdChanged)
+  Q_PROPERTY(QString smokeUiState READ smokeUiState CONSTANT)
+  Q_PROPERTY(bool inspectorPinned READ inspectorPinned WRITE setInspectorPinned
+                 NOTIFY inspectorPinnedChanged)
+  Q_PROPERTY(bool reducedMotionEnabled READ reducedMotionEnabled WRITE
+                 setReducedMotionEnabled NOTIFY reducedMotionEnabledChanged)
   Q_PROPERTY(bool hasRuntimeWorkspace READ hasRuntimeWorkspace NOTIFY
                  runtimeWorkspaceChanged)
   Q_PROPERTY(bool rawEventStoreMode READ rawEventStoreMode CONSTANT)
@@ -1997,9 +2087,24 @@ public:
     m_backupPeerStatuses =
         loadBackupPeerStatuses(m_runtimeDir, m_backupPeerEndpoints);
     m_autoBackupEnabled = loadAutoBackupEnabled(m_runtimeDir);
+    m_inspectorPinned = loadInspectorPinned(m_runtimeDir);
+    m_reducedMotionEnabled = loadReducedMotionEnabled(m_runtimeDir);
     const auto configuredAutoBackup = qEnvironmentVariable("CHAFT_AUTO_BACKUP");
     if (!configuredAutoBackup.isEmpty()) {
       m_autoBackupEnabled = parseEnabledFlag(configuredAutoBackup);
+    }
+    m_themeId = loadThemeId(m_runtimeDir);
+    m_themeMode = loadThemeMode(m_runtimeDir);
+    m_darkThemeId = loadDarkThemeId(m_runtimeDir);
+    m_lightThemeId = loadLightThemeId(m_runtimeDir);
+    const auto configuredTheme = qEnvironmentVariable("CHAFT_THEME");
+    if (!configuredTheme.isEmpty() &&
+        configuredTheme.toUtf8().size() <= kMaxThemeIdBytes) {
+      const auto normalizedConfiguredTheme = normalizedThemeId(configuredTheme);
+      if (!normalizedConfiguredTheme.isEmpty()) {
+        m_themeId = normalizedConfiguredTheme;
+        m_themeMode = QStringLiteral("manual");
+      }
     }
     loadFfi();
     if (m_ffiReady) {
@@ -2041,6 +2146,19 @@ public:
     return m_workspaceStorageHealth;
   }
   bool autoBackupEnabled() const { return m_autoBackupEnabled; }
+  bool inspectorPinned() const { return m_inspectorPinned; }
+  bool reducedMotionEnabled() const { return m_reducedMotionEnabled; }
+  QString themeId() const { return m_themeId; }
+  QString themeMode() const { return m_themeMode; }
+  QString darkThemeId() const { return m_darkThemeId; }
+  QString lightThemeId() const { return m_lightThemeId; }
+  QString smokeUiState() const {
+    const auto state = qEnvironmentVariable("CHAFT_SMOKE_UI_STATE");
+    if (state.toUtf8().size() > 32) {
+      return {};
+    }
+    return state.trimmed().toLower();
+  }
   QString deviceId() const { return m_deviceId; }
   QVariantList messageSearchHits() const { return m_messageSearchHits; }
   QString messageSearchQuery() const { return m_messageSearchQuery; }
@@ -2195,6 +2313,64 @@ public:
     m_autoBackupEnabled = autoBackupEnabled;
     persistDesktopConfig();
     emit autoBackupEnabledChanged();
+  }
+
+  void setThemeId(const QString &themeId) {
+    const auto normalized = normalizedThemeId(themeId);
+    if (normalized.isEmpty() || m_themeId == normalized) {
+      return;
+    }
+    m_themeId = normalized;
+    persistDesktopConfig();
+    emit themeIdChanged();
+  }
+
+  void setInspectorPinned(bool inspectorPinned) {
+    if (m_inspectorPinned == inspectorPinned) {
+      return;
+    }
+    m_inspectorPinned = inspectorPinned;
+    persistDesktopConfig();
+    emit inspectorPinnedChanged();
+  }
+
+  void setReducedMotionEnabled(bool reducedMotionEnabled) {
+    if (m_reducedMotionEnabled == reducedMotionEnabled) {
+      return;
+    }
+    m_reducedMotionEnabled = reducedMotionEnabled;
+    persistDesktopConfig();
+    emit reducedMotionEnabledChanged();
+  }
+
+  void setThemeMode(const QString &themeMode) {
+    const auto normalized = normalizedThemeMode(themeMode);
+    if (m_themeMode == normalized) {
+      return;
+    }
+    m_themeMode = normalized;
+    persistDesktopConfig();
+    emit themeModeChanged();
+  }
+
+  void setDarkThemeId(const QString &darkThemeId) {
+    const auto normalized = normalizedThemeId(darkThemeId);
+    if (normalized.isEmpty() || m_darkThemeId == normalized) {
+      return;
+    }
+    m_darkThemeId = normalized;
+    persistDesktopConfig();
+    emit darkThemeIdChanged();
+  }
+
+  void setLightThemeId(const QString &lightThemeId) {
+    const auto normalized = normalizedThemeId(lightThemeId);
+    if (normalized.isEmpty() || m_lightThemeId == normalized) {
+      return;
+    }
+    m_lightThemeId = normalized;
+    persistDesktopConfig();
+    emit lightThemeIdChanged();
   }
 
   Q_INVOKABLE bool addBackupPeerEndpoint(const QString &peerEndpoint) {
@@ -4122,6 +4298,12 @@ signals:
   void publishQueueChanged();
   void workspaceStorageHealthChanged();
   void autoBackupEnabledChanged();
+  void themeIdChanged();
+  void inspectorPinnedChanged();
+  void reducedMotionEnabledChanged();
+  void themeModeChanged();
+  void darkThemeIdChanged();
+  void lightThemeIdChanged();
   void runtimeWorkspaceChanged();
   void deviceIdChanged();
   void messageSearchChanged();
@@ -5262,7 +5444,9 @@ private:
   void persistDesktopConfig() {
     saveDesktopConfig(m_runtimeDir, m_workspaceId, m_defaultPeerEndpoint,
                       m_backupPeerEndpoints, m_backupPeerStatuses,
-                      m_autoBackupEnabled);
+                      m_autoBackupEnabled, m_themeId, m_themeMode,
+                      m_darkThemeId, m_lightThemeId, m_inspectorPinned,
+                      m_reducedMotionEnabled);
   }
 
   bool backupPeerInCooldown(const QString &peerEndpoint,
@@ -9998,6 +10182,12 @@ private:
   bool m_peerHostingInFlight = false;
   bool m_keyTransferInFlight = false;
   bool m_autoBackupEnabled = false;
+  bool m_inspectorPinned = false;
+  bool m_reducedMotionEnabled = false;
+  QString m_themeId;
+  QString m_themeMode = QStringLiteral("manual");
+  QString m_darkThemeId;
+  QString m_lightThemeId;
   bool m_rawEventStoreMode = false;
   bool m_runtimeUnlockRequired = false;
   QString m_runtimeDir;
@@ -10275,14 +10465,44 @@ void applyDesktopLaunchEnvironment(int argc, char *argv[]) {
   }
 }
 
+namespace {
+
+void loadBundledDesktopFonts() {
+  const QStringList fontResources = {
+      QStringLiteral(":/fonts/SpaceGrotesk-Regular.ttf"),
+      QStringLiteral(":/fonts/SpaceGrotesk-Medium.ttf"),
+      QStringLiteral(":/fonts/SpaceGrotesk-Bold.ttf"),
+      QStringLiteral(":/fonts/JetBrainsMono-Regular.ttf"),
+      QStringLiteral(":/fonts/JetBrainsMono-Medium.ttf"),
+      QStringLiteral(":/fonts/JetBrainsMono-SemiBold.ttf"),
+  };
+  for (const auto &fontResource : fontResources) {
+    if (QFontDatabase::addApplicationFont(fontResource) < 0) {
+      qWarning("chaft desktop could not load bundled font %s",
+               qPrintable(fontResource));
+    }
+  }
+  // Missing bundled families fall back to the platform font instead of
+  // blocking startup.
+  if (QFontDatabase::hasFamily(QStringLiteral("Space Grotesk"))) {
+    QGuiApplication::setFont(QFont(QStringLiteral("Space Grotesk")));
+  }
+}
+
+} // namespace
+
 int main(int argc, char *argv[]) {
   applyDesktopLaunchEnvironment(argc, argv);
 
   if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
-    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
+    qputenv("QT_QUICK_CONTROLS_STYLE", "ChaftStyle");
+  }
+  if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_FALLBACK_STYLE")) {
+    qputenv("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic");
   }
 
   QGuiApplication app(argc, argv);
+  loadBundledDesktopFonts();
 
   ChaftController chaftController(initialWorkspaceSnapshot());
   QQmlApplicationEngine engine;

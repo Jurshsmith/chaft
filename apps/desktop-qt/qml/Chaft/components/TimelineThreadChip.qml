@@ -32,7 +32,7 @@ Rectangle {
         anchors.centerIn: parent
         text: root.label
         color: Tokens.secure
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
     }
 

@@ -39,7 +39,7 @@ Rectangle {
         width: parent.width - 14
         text: root.displayName
         color: root.available ? Tokens.textStrong : Tokens.warningText
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
         elide: Text.ElideMiddle
     }

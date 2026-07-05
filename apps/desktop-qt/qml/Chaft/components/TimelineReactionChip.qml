@@ -14,7 +14,7 @@ Rectangle {
     readonly property bool canRemove: actionsEnabled && mine && reaction.length > 0 && messageId.length > 0 && !messageDeleted && !warningRow
     signal removeRequested(string messageId, string reaction)
 
-    width: Math.max(44, reactionLabel.implicitWidth + 16)
+    width: Math.max(44, reactionLabel.implicitWidth + countPill.width + 20)
     height: 24
     radius: Tokens.radiusSm
     color: mine ? (reactionMouse.containsMouse && canRemove ? Tokens.surfaceRaised : Tokens.secureSurface) : Tokens.surfaceRaised
@@ -34,11 +34,36 @@ Rectangle {
 
     Text {
         id: reactionLabel
-        anchors.centerIn: parent
-        text: root.reaction + " " + String(root.count)
+        anchors.left: parent.left
+        anchors.leftMargin: 8
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.reaction
         color: root.mine ? Tokens.secure : Tokens.textMuted
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
+    }
+
+    Rectangle {
+        id: countPill
+        anchors.right: parent.right
+        anchors.rightMargin: 4
+        anchors.verticalCenter: parent.verticalCenter
+        width: countLabel.implicitWidth + 8
+        height: 16
+        radius: Tokens.radiusXs
+        color: root.mine
+            ? Qt.rgba(Tokens.secure.r, Tokens.secure.g, Tokens.secure.b, 0.18)
+            : Qt.rgba(Tokens.textMuted.r, Tokens.textMuted.g, Tokens.textMuted.b, 0.14)
+
+        Text {
+            id: countLabel
+            anchors.centerIn: parent
+            text: String(root.count)
+            color: root.mine ? Tokens.secure : Tokens.textMuted
+            font.family: Tokens.fontMono
+            font.pixelSize: Tokens.fontSizeXs
+            font.weight: Font.DemiBold
+        }
     }
 
     MouseArea {

@@ -42,7 +42,8 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.deviceId
                     color: Tokens.textStrong
-                    font.pixelSize: 12
+                    font.family: Tokens.fontMono
+                    font.pixelSize: Tokens.fontSizeSm
                     font.weight: Font.DemiBold
                     elide: Text.ElideMiddle
                 }
@@ -51,7 +52,8 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.keyPackageId
                     color: Tokens.textMuted
-                    font.pixelSize: 10
+                    font.family: Tokens.fontMono
+                    font.pixelSize: Tokens.fontSizeXs
                     elide: Text.ElideMiddle
                 }
             }
@@ -59,7 +61,7 @@ Rectangle {
             Text {
                 text: root.openMls ? "OpenMLS" : "Key"
                 color: Tokens.textMuted
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
             }
         }

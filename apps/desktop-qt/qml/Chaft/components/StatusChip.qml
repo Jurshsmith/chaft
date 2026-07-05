@@ -14,7 +14,7 @@ Rectangle {
 
     Layout.preferredWidth: Math.min(maxWidth, Math.max(minWidth, chipText.implicitWidth + horizontalPadding * 2))
     Layout.preferredHeight: 30
-    radius: 7
+    radius: Tokens.radiusMd
     color: warning ? Tokens.warningSurface : (secure ? Tokens.secureSurface : Tokens.surfaceRaised)
     border.color: warning ? Tokens.warning : Tokens.borderSubtle
     clip: true
@@ -31,7 +31,7 @@ Rectangle {
         verticalAlignment: Text.AlignVCenter
         text: root.text
         color: root.warning ? Tokens.warningText : (root.secure ? Tokens.secure : Tokens.textMuted)
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
         elide: Text.ElideRight
     }

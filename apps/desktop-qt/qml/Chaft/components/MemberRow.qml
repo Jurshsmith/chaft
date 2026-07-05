@@ -32,14 +32,14 @@ Rectangle {
         Rectangle {
             Layout.preferredWidth: 30
             Layout.preferredHeight: 30
-            radius: 7
+            radius: Tokens.radiusMd
             color: root.owner ? Tokens.accent : Tokens.secure
 
             Text {
                 anchors.centerIn: parent
                 text: root.initial
-                color: "white"
-                font.pixelSize: 12
+                color: Tokens.onAccent
+                font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
             }
         }
@@ -52,7 +52,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.displayLabel
                 color: Tokens.textStrong
-                font.pixelSize: 12
+                font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -61,7 +61,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.deviceId
                 color: Tokens.textMuted
-                font.pixelSize: 10
+                font.pixelSize: Tokens.fontSizeXs
                 elide: Text.ElideMiddle
             }
         }
@@ -69,7 +69,7 @@ Rectangle {
         Text {
             text: root.roleLabel
             color: Tokens.textMuted
-            font.pixelSize: 11
+            font.pixelSize: Tokens.fontSizeXs
             font.weight: Font.DemiBold
         }
 

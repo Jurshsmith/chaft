@@ -41,7 +41,8 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.endpoint
                 color: Tokens.textStrong
-                font.pixelSize: 12
+                font.family: Tokens.fontMono
+                font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
@@ -49,7 +50,7 @@ Rectangle {
             Text {
                 text: root.kindLabel
                 color: root.backupPeer ? Tokens.secure : Tokens.textMuted
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
             }
         }
@@ -62,7 +63,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.detailLabel
                 color: Tokens.textMuted
-                font.pixelSize: 11
+                font.pixelSize: Tokens.fontSizeXs
                 elide: Text.ElideRight
             }
 

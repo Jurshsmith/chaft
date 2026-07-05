@@ -11,7 +11,7 @@ Rectangle {
 
     Layout.preferredWidth: 148
     Layout.preferredHeight: 30
-    radius: 7
+    radius: Tokens.radiusMd
     color: warning ? Tokens.warningSurface : Tokens.secureSurface
     border.color: warning ? Tokens.warning : Tokens.borderSubtle
     clip: true
@@ -28,7 +28,7 @@ Rectangle {
         verticalAlignment: Text.AlignVCenter
         text: root.label
         color: root.warning ? Tokens.warningText : Tokens.secure
-        font.pixelSize: 12
+        font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold
         elide: Text.ElideRight
     }

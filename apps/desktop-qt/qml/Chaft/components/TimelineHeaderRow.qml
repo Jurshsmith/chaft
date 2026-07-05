@@ -31,7 +31,7 @@ RowLayout {
         Layout.fillWidth: true
         text: root.primaryLabel
         color: Tokens.textStrong
-        font.pixelSize: 14
+        font.pixelSize: Tokens.fontSizeMd
         font.weight: Font.DemiBold
         elide: Text.ElideRight
     }
@@ -41,7 +41,7 @@ RowLayout {
         text: root.channelLabel
         visible: text.length > 0
         color: Tokens.textMuted
-        font.pixelSize: 11
+        font.pixelSize: Tokens.fontSizeXs
         font.weight: Font.DemiBold
         elide: Text.ElideRight
     }
@@ -50,7 +50,8 @@ RowLayout {
         text: root.timeLabel
         visible: text.length > 0
         color: Tokens.textMuted
-        font.pixelSize: 11
+        font.family: Tokens.fontMono
+        font.pixelSize: Tokens.fontSizeXs
         font.weight: Font.DemiBold
     }
 }
