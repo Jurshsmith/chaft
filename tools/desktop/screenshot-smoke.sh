@@ -194,7 +194,7 @@ rm -f "$empty_output"
 python3 "$script_dir/screenshot-baseline.py" "$empty_output" "$empty_baseline"
 printf 'screenshot state verified: empty at %s\n' "$empty_output"
 
-ui_states="${CHAFT_SMOKE_UI_STATES:-setup,drawer,palette}"
+ui_states="${CHAFT_SMOKE_UI_STATES:-setup,drawer,palette,entry}"
 for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   state_output="$(dirname "$output_path")/visual-smoke-$ui_state.png"
   state_baseline="$script_dir/screenshot-baseline-$ui_state.json"
