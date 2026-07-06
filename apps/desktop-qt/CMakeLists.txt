@@ -53,7 +53,9 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/BackupPeerStatusRow.qml
         qml/Chaft/components/KeyPackageRow.qml
         qml/Chaft/components/MemberRow.qml
+        qml/Chaft/components/OnboardingActionCard.qml
         qml/Chaft/components/PeerEndpointHintRow.qml
+        qml/Chaft/components/PeerMeshBackdrop.qml
         qml/Chaft/components/PeerRouteChip.qml
         qml/Chaft/components/SavedBackupPeerRow.qml
         qml/Chaft/components/SetupSection.qml
@@ -76,6 +78,8 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/TimelineReplyPreview.qml
         qml/Chaft/components/TimelineThreadChip.qml
         qml/Chaft/components/WorkspaceRailItem.qml
+        qml/Chaft/features/onboarding/EmptyWorkspaceView.qml
+        qml/Chaft/features/onboarding/WorkspaceEntryDialog.qml
         qml/Chaft/features/palette/CommandPalette.qml
         qml/Chaft/features/palette/ShortcutOverlay.qml
         qml/Chaft/features/setup/SetupPanel.qml

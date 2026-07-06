@@ -6,7 +6,9 @@ AttachmentRow 1.0 components/AttachmentRow.qml
 BackupPeerStatusRow 1.0 components/BackupPeerStatusRow.qml
 KeyPackageRow 1.0 components/KeyPackageRow.qml
 MemberRow 1.0 components/MemberRow.qml
+OnboardingActionCard 1.0 components/OnboardingActionCard.qml
 PeerEndpointHintRow 1.0 components/PeerEndpointHintRow.qml
+PeerMeshBackdrop 1.0 components/PeerMeshBackdrop.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
 SavedBackupPeerRow 1.0 components/SavedBackupPeerRow.qml
 SetupSection 1.0 components/SetupSection.qml
@@ -31,6 +33,8 @@ TimelineThreadChip 1.0 components/TimelineThreadChip.qml
 WorkspaceRailItem 1.0 components/WorkspaceRailItem.qml
 TimelineView 1.0 features/timeline/TimelineView.qml
 SetupPanel 1.0 features/setup/SetupPanel.qml
+EmptyWorkspaceView 1.0 features/onboarding/EmptyWorkspaceView.qml
+WorkspaceEntryDialog 1.0 features/onboarding/WorkspaceEntryDialog.qml
 CommandPalette 1.0 features/palette/CommandPalette.qml
 ShortcutOverlay 1.0 features/palette/ShortcutOverlay.qml
 ComposerBar 1.0 features/composer/ComposerBar.qml

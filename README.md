@@ -365,6 +365,15 @@ usable `CHAFT_IDENTITY_PASSPHRASE` keep the lock control disabled because the
 process can still read the environment fallback.
 Raw event-store mode is view-only: runtime write, search, sync, and hosting
 controls remain disabled because there is no local runtime identity/key context.
+When no workspace exists yet, the shell shows a first-run surface instead of a
+placeholder: a token-colored peer-mesh backdrop (deterministic layout, drift
+and pulse gated by the Reduced motion setting), a display-size hero, create and
+join action cards that reuse the workspace entry flow, a three-step overview of
+the local-first model, a live theme swatch row, and a read-only demo tour that
+renders the built-in bootstrap snapshot entirely in QML with an explicit exit
+banner and no runtime writes; idle controller status strings are suppressed on
+this surface while errors and lock states still show. Raw event-store mode
+reuses the same surface with view-only copy.
 The shell first paints the built-in bootstrap snapshot, then runtime and
 raw-store hydration prefer the latest-window FFI snapshot exports when
 available, loading the latest 500 timeline rows plus `timelineWindow` metadata

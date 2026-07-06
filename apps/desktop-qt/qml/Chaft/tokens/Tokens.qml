@@ -38,6 +38,7 @@ QtObject {
     readonly property int fontSizeMd: 14
     readonly property int fontSizeLg: 15
     readonly property int fontSizeXl: 18
+    readonly property int fontSizeDisplay: 42
     readonly property int radiusXs: 3
     readonly property int radiusSm: 6
     readonly property int radiusMd: 8
