@@ -36,7 +36,9 @@ ColumnLayout {
     }
 
     function attachmentDetailLabel(attachment) {
-        return String((attachment && attachment.mediaType) || "application/octet-stream") + " | " + root.byteSizeLabel(Number((attachment && attachment.byteLen) || 0)) + ((attachment && attachment.localBlobAvailable === false) ? " | missing locally" : "");
+        return String((attachment && attachment.mediaType) || "application/octet-stream")
+            + " - " + root.byteSizeLabel(Number((attachment && attachment.byteLen) || 0))
+            + ((attachment && attachment.localBlobAvailable === false) ? " - missing on this device" : "");
     }
 
     RowLayout {
@@ -57,14 +59,14 @@ ColumnLayout {
             font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
             Accessible.role: Accessible.StaticText
-            Accessible.name: root.attachmentCount === 1 ? "1 channel file" : String(root.attachmentCount) + " channel files"
+            Accessible.name: root.attachmentCount === 1 ? "1 conversation file" : String(root.attachmentCount) + " conversation files"
         }
     }
 
     Text {
         Layout.fillWidth: true
         visible: root.attachmentCount === 0
-        text: "No channel files"
+        text: "No conversation files"
         color: Tokens.textMuted
         font.pixelSize: Tokens.fontSizeSm
         elide: Text.ElideRight

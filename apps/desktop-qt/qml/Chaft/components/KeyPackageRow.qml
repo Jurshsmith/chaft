@@ -9,11 +9,45 @@ Rectangle {
     property string keyPackageId: ""
     property bool openMls: false
     property bool runtimeReady: false
+    property bool canManageAccess: true
+    property string accessUnavailableReason: "Only owners and admins can change workspace access."
     property bool privateChannelSelected: false
     property string selectedChannelId: ""
     readonly property bool hasKeyPackage: keyPackageId.length > 0
+    readonly property string shortDeviceLabel: {
+        var value = String(root.deviceId || "")
+        return value.length > 14 ? value.slice(0, 7) + "..." + value.slice(value.length - 4) : value
+    }
+    readonly property string rowTitle: shortDeviceLabel.length > 0
+        ? "Access file for support code " + shortDeviceLabel
+        : "Access file"
+    readonly property string supportDetailText: keyPackageId.trim().length > 0
+        ? "Support detail: " + keyPackageId
+        : "No access file detail"
+    readonly property string accessUpdateStatusText: openMls
+        ? "Access file ready."
+        : "Access file unavailable."
     signal workspaceMlsRequested(string keyPackageId)
     signal channelMlsRequested(string channelId, string keyPackageId)
+
+    function accessActionUnavailableReason(scope) {
+        if (!root.runtimeReady) {
+            return "Open a workspace before changing access."
+        }
+        if (!root.canManageAccess) {
+            return root.accessUnavailableReason
+        }
+        if (!root.openMls) {
+            return "This access file is not ready."
+        }
+        if (!root.hasKeyPackage) {
+            return "This access file is missing."
+        }
+        if (scope === "channel" && root.selectedChannelId.length === 0) {
+            return "Choose a private room first."
+        }
+        return ""
+    }
 
     width: parent ? parent.width : 360
     height: privateChannelSelected ? 96 : 76
@@ -22,8 +56,8 @@ Rectangle {
     border.color: Tokens.borderSubtle
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: deviceId
-    Accessible.description: (openMls ? "OpenMLS key package. " : "Key package. ") + keyPackageId
+    Accessible.name: rowTitle
+    Accessible.description: accessUpdateStatusText + " " + supportDetailText
 
     ColumnLayout {
         anchors.fill: parent
@@ -40,9 +74,8 @@ Rectangle {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.deviceId
+                    text: root.rowTitle
                     color: Tokens.textStrong
-                    font.family: Tokens.fontMono
                     font.pixelSize: Tokens.fontSizeSm
                     font.weight: Font.DemiBold
                     elide: Text.ElideMiddle
@@ -50,7 +83,7 @@ Rectangle {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.keyPackageId
+                    text: root.supportDetailText
                     color: Tokens.textMuted
                     font.family: Tokens.fontMono
                     font.pixelSize: Tokens.fontSizeXs
@@ -59,10 +92,19 @@ Rectangle {
             }
 
             Text {
-                text: root.openMls ? "OpenMLS" : "Key"
+                text: root.openMls ? "Ready" : "Missing"
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
+                ToolTip.visible: keyKindMouse.containsMouse
+                ToolTip.text: root.openMls ? "Access file ready" : "Access file missing"
+
+                MouseArea {
+                    id: keyKindMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                }
             }
         }
 
@@ -72,20 +114,35 @@ Rectangle {
 
             Button {
                 Layout.fillWidth: true
-                text: "Workspace MLS"
-                enabled: root.runtimeReady && root.openMls && root.hasKeyPackage
-                Accessible.name: "Add to workspace MLS"
-                Accessible.description: enabled ? root.keyPackageId : "Workspace MLS add is unavailable"
+                text: "Grant workspace access"
+                enabled: root.runtimeReady && root.canManageAccess && root.openMls && root.hasKeyPackage
+                Accessible.name: "Grant workspace access"
+                Accessible.description: enabled
+                    ? "Advanced: add this access file to the workspace for support code "
+                        + root.shortDeviceLabel
+                    : root.accessActionUnavailableReason("workspace")
+                ToolTip.visible: hovered
+                ToolTip.text: enabled
+                    ? "Advanced: add this access file to the workspace"
+                    : root.accessActionUnavailableReason("workspace")
                 onClicked: root.workspaceMlsRequested(root.keyPackageId)
             }
 
             Button {
                 Layout.fillWidth: true
                 visible: root.privateChannelSelected
-                text: "Channel MLS"
-                enabled: root.runtimeReady && root.openMls && root.selectedChannelId.length > 0 && root.hasKeyPackage
-                Accessible.name: "Add to channel MLS"
-                Accessible.description: enabled ? root.keyPackageId : "Channel MLS add is unavailable"
+                text: "Grant room access"
+                enabled: root.runtimeReady && root.canManageAccess && root.openMls
+                    && root.selectedChannelId.length > 0 && root.hasKeyPackage
+                Accessible.name: "Grant room access"
+                Accessible.description: enabled
+                    ? "Advanced: add this access file to the room for support code "
+                        + root.shortDeviceLabel
+                    : root.accessActionUnavailableReason("channel")
+                ToolTip.visible: hovered
+                ToolTip.text: enabled
+                    ? "Advanced: add this access file to the room"
+                    : root.accessActionUnavailableReason("channel")
                 onClicked: root.channelMlsRequested(root.selectedChannelId, root.keyPackageId)
             }
         }

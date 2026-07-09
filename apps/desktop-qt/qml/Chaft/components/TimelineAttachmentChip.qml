@@ -12,7 +12,7 @@ Rectangle {
     property bool available: true
     property bool actionsEnabled: false
     readonly property bool actionable: actionsEnabled && available && selector.length > 0 && messageId.length > 0
-    readonly property string detailText: mediaType + " - " + String(byteLen) + " bytes" + (available ? "" : " - missing locally")
+    readonly property string detailText: mediaType + " - " + String(byteLen) + " bytes" + (available ? "" : " - missing on this device")
     signal saveRequested(string messageId, string selector, string displayName)
 
     width: Math.min(220, Math.max(92, attachmentLabel.implicitWidth + 18))

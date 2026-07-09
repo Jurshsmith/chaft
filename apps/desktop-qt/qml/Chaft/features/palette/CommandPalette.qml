@@ -118,11 +118,18 @@ Popup {
     }
 
     function channelRow(channel) {
+        var directMessage = palette.app && palette.app.channelIsDirectMessage(channel)
+        var archived = palette.app && palette.app.channelArchived(channel)
+        var displayName = palette.app
+            ? palette.app.channelDisplayName(channel)
+            : String(channel.name || "")
         return {
             kind: "channel",
             rowId: "channel:" + String(channel.channelId || ""),
-            label: "# " + String(channel.name || ""),
-            detail: Boolean(channel.isPrivate) ? "Private channel" : "Channel",
+            label: (directMessage ? "@ " : "# ") + displayName,
+            detail: directMessage
+                ? "Direct message"
+                : (archived ? "Archived room" : (Boolean(channel.isPrivate) ? "Private room" : "Room")),
             keys: "",
             enabledNow: true,
             channelId: String(channel.channelId || ""),
@@ -174,10 +181,14 @@ Popup {
             return rows
         }
 
-        // Channels rank first on non-empty queries, preserving the old
-        // Ctrl/Cmd+K jump-to-channel muscle memory.
+        // Conversations rank first on non-empty queries, preserving the old
+        // Ctrl/Cmd+K jump muscle memory.
         var scoredChannels = palette.scoredRows(channels, function (channel) {
-            return String(channel.name || "") + " " + String(channel.channelId || "")
+            var displayName = palette.app
+                ? palette.app.channelDisplayName(channel)
+                : String(channel.name || "")
+            return displayName + " " + String(channel.name || "") + " "
+                + String(channel.channelId || "")
         })
         for (i = 0; i < scoredChannels.length && i < palette.maxChannelResults; i++) {
             rows.push(palette.channelRow(scoredChannels[i].entry))
@@ -235,9 +246,9 @@ Popup {
         TextField {
             id: queryField
             Layout.fillWidth: true
-            placeholderText: "Type a command or channel"
+            placeholderText: "Search actions, rooms, or DMs"
             Accessible.name: "Command palette"
-            Accessible.description: "Search actions and channels; Up and Down move, Enter runs"
+            Accessible.description: "Search actions, rooms, and DMs; Up and Down move, Enter runs"
             onTextChanged: {
                 palette.selectedIndex = 0
                 channelSearchDebounce.restart()
@@ -259,7 +270,7 @@ Popup {
         Text {
             Layout.fillWidth: true
             visible: palette.results.length === 0
-            text: "No matching commands or channels"
+            text: "No matching actions, rooms, or DMs"
             color: Tokens.textMuted
             font.pixelSize: Tokens.fontSizeSm
             elide: Text.ElideRight

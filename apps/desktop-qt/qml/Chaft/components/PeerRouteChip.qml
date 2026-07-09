@@ -9,8 +9,10 @@ Rectangle {
     property string detail: ""
     property bool warning: false
 
-    Layout.preferredWidth: 148
-    Layout.preferredHeight: 30
+    implicitWidth: 148
+    implicitHeight: 30
+    Layout.preferredWidth: implicitWidth
+    Layout.preferredHeight: implicitHeight
     radius: Tokens.radiusMd
     color: warning ? Tokens.warningSurface : Tokens.secureSurface
     border.color: warning ? Tokens.warning : Tokens.borderSubtle

@@ -12,16 +12,16 @@ Rectangle {
     property bool runtimeReady: false
     readonly property string displayName: String((attachment && attachment.displayName) || "attachment")
     readonly property string attachmentId: String((attachment && attachment.attachmentId) || "")
-    readonly property string copyActionLabel: attachmentId.length > 0 ? "Copy attachment ID" : "Copy blob hash"
+    readonly property string copyActionLabel: "Copy file support ID"
     readonly property bool missingLocalBlob: Boolean(attachment && attachment.localBlobAvailable === false)
-    readonly property string availabilityLabel: missingLocalBlob ? "Blob is missing locally" : "Blob is available locally"
+    readonly property string availabilityLabel: missingLocalBlob ? "File is missing on this device" : "File is available on this device"
     readonly property string saveBlockedReason: {
         if (!runtimeReady)
-            return "Runtime is not ready";
+            return "Open a workspace before saving files";
         if (missingLocalBlob)
-            return "Blob is missing locally";
+            return "File is missing on this device";
         if (selector.length <= 0 || messageId.length <= 0)
-            return "Attachment is missing a save selector";
+            return "File cannot be saved yet";
         return "";
     }
     signal saveRequested(string messageId, var attachment)
@@ -77,15 +77,15 @@ Rectangle {
         }
 
         Button {
-            text: root.attachmentId.length > 0 ? "Copy ID" : "Copy hash"
-            Layout.preferredWidth: 82
+            text: "Copy support"
+            Layout.preferredWidth: 92
             enabled: root.selector.length > 0
             Accessible.name: root.copyActionLabel + " for " + root.displayName
-            Accessible.description: enabled ? root.copyActionLabel : "Attachment has no copyable identifier"
+            Accessible.description: enabled ? root.copyActionLabel : "File has no support ID"
             onClicked: root.copyRequested(root.attachment)
 
             ToolTip.visible: hovered
-            ToolTip.text: enabled ? root.copyActionLabel : "No copyable identifier"
+            ToolTip.text: enabled ? root.copyActionLabel : "No file support ID"
         }
     }
 }

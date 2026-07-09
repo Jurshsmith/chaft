@@ -11,6 +11,8 @@ ListView {
     property string emptyText: "No messages yet"
     property bool actionsEnabled: false
     property bool historyRepairEnabled: false
+    property bool historyRepairHasAddress: false
+    property bool historyRepairBusy: false
     property bool autoFollowLatest: true
     property bool showChannelLabels: false
     property string selectedItemKey: ""
@@ -20,13 +22,35 @@ ListView {
     property bool preservingPrepend: false
     property real preservedContentHeight: 0
     property real preservedContentY: 0
-    property var quickReactions: ["+1", "ship", "eyes", "done"]
-    property var pendingDeleteMessageIds: []
-    readonly property var utcWeekdayLabels: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    readonly property var utcMonthLabels: [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    property var quickReactions: ["👍", "🚀", "👀", "✅"]
+    property var reactionChoices: [
+        { emoji: "👍", label: "Thumbs up", keywords: "yes agree approve like" },
+        { emoji: "👎", label: "Thumbs down", keywords: "no disagree dislike" },
+        { emoji: "❤️", label: "Heart", keywords: "love favorite thanks" },
+        { emoji: "😂", label: "Laugh", keywords: "funny haha lol" },
+        { emoji: "🎉", label: "Celebrate", keywords: "party congrats win" },
+        { emoji: "🚀", label: "Rocket", keywords: "ship launch go fast" },
+        { emoji: "👀", label: "Eyes", keywords: "looking seen watch" },
+        { emoji: "✅", label: "Done", keywords: "check complete approved" },
+        { emoji: "🙌", label: "Raised hands", keywords: "praise hooray great" },
+        { emoji: "🔥", label: "Fire", keywords: "hot strong great" },
+        { emoji: "💯", label: "Hundred", keywords: "perfect exactly agree" },
+        { emoji: "👏", label: "Clap", keywords: "applause nice" },
+        { emoji: "🙏", label: "Thanks", keywords: "please thank grateful" },
+        { emoji: "😄", label: "Smile", keywords: "happy glad" },
+        { emoji: "😮", label: "Surprised", keywords: "wow unexpected" },
+        { emoji: "😢", label: "Sad", keywords: "sorry upset" },
+        { emoji: "😡", label: "Angry", keywords: "mad blocked bad" },
+        { emoji: "🤔", label: "Thinking", keywords: "question maybe consider" },
+        { emoji: "💡", label: "Idea", keywords: "lightbulb thought insight" },
+        { emoji: "⭐", label: "Star", keywords: "important favorite" },
+        { emoji: "📌", label: "Pin", keywords: "save remember" },
+        { emoji: "⚠️", label: "Warning", keywords: "alert caution risk" },
+        { emoji: "❓", label: "Question", keywords: "help ask unsure" },
+        { emoji: "➕", label: "Plus one", keywords: "add support plus" }
     ]
+    property bool openReactionPickerOnLoad: false
+    property var pendingDeleteMessageIds: []
     readonly property bool showJumpToLatest: root.autoFollowLatest
         && root.count > 0
         && root.contentHeight > root.height + 48
@@ -41,16 +65,24 @@ ListView {
     signal threadRequested(var item)
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId)
+    signal externalLinkRequested(string link)
     signal attachmentSaveRequested(string messageId, string attachmentSelector, string displayName)
     signal proofPublishRequested(string eventId)
     signal historyRepairRequested(string eventId)
+    signal cryptoBadgeRequested(string title, string message)
 
     function authorLabel(authorDisplayName, authorDeviceId) {
         var displayName = String(authorDisplayName || "").trim()
         if (displayName.length > 0) {
             return displayName
         }
-        return String(authorDeviceId || "")
+        var deviceId = String(authorDeviceId || "")
+        return deviceId.length > 0 ? "Unnamed person " + root.shortDeviceId(deviceId) : ""
+    }
+
+    function shortDeviceId(deviceId) {
+        var value = String(deviceId || "")
+        return value.length > 14 ? value.slice(0, 7) + "..." + value.slice(value.length - 4) : value
     }
 
     function authorInitial(authorDisplayName, authorDeviceId) {
@@ -60,9 +92,19 @@ ListView {
         }
         var words = value.split(/[\s_-]+/).filter(function (word) { return word.length > 0 })
         if (words.length >= 2) {
-            return (words[0].slice(0, 1) + words[1].slice(0, 1)).toUpperCase()
+            return String(words[0].slice(0, 1) + words[1].slice(0, 1)).toUpperCase()
         }
         return value.slice(0, 1).toUpperCase()
+    }
+
+    function exceptionLabel(kind) {
+        if (kind === "missing_history_gap") {
+            return "History missing"
+        }
+        if (kind === "invalid_signature") {
+            return "Security check failed"
+        }
+        return ""
     }
 
     function dayLabel(physicalMs) {
@@ -74,10 +116,7 @@ ListView {
         if (isNaN(date.getTime())) {
             return ""
         }
-        return root.utcWeekdayLabels[date.getUTCDay()] + ", "
-            + root.utcMonthLabels[date.getUTCMonth()] + " "
-            + String(date.getUTCDate()) + " "
-            + String(date.getUTCFullYear()) + " UTC"
+        return Qt.formatDateTime(date, "ddd, MMM d yyyy")
     }
 
     function timeLabel(physicalMs) {
@@ -483,6 +522,26 @@ ListView {
             enabled: !row.pendingDelete
         }
 
+        Timer {
+            id: smokeReactionPickerTimer
+            interval: 850
+            repeat: false
+            onTriggered: {
+                if (root.openReactionPickerOnLoad
+                        && row.index === 0
+                        && row.rowMessageId.length > 0
+                        && !reactionPicker.visible) {
+                    reactionPicker.open()
+                }
+            }
+        }
+
+        Component.onCompleted: {
+            if (root.openReactionPickerOnLoad && row.index === 0) {
+                smokeReactionPickerTimer.restart()
+            }
+        }
+
         Item {
             visible: row.dayBoundary
             anchors.top: parent.top
@@ -614,9 +673,9 @@ ListView {
                     Layout.fillWidth: true
                     visible: !row.grouped
                     primaryLabel: row.historyGapRow
-                        ? "History gap"
+                        ? root.exceptionLabel(row.modelData.kind)
                         : row.invalidSignatureRow
-                            ? "Invalid signature"
+                            ? root.exceptionLabel(row.modelData.kind)
                             : root.authorLabel(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
                     channelLabel: root.channelLabel(row.modelData.channelName, row.modelData.channelId)
                     timeLabel: root.timeLabel(row.modelData.physicalMs)
@@ -638,11 +697,16 @@ ListView {
                         Layout.preferredHeight: Math.min(bodyText.implicitHeight, row.bodyMaxHeight)
                         Layout.maximumHeight: row.bodyMaxHeight
                         text: row.modelData.body
+                        textFormat: Text.MarkdownText
                         color: row.warningRow ? Tokens.warningText : Tokens.textStrong
+                        linkColor: Tokens.accent
                         font.pixelSize: Tokens.fontSizeMd
                         wrapMode: Text.Wrap
                         maximumLineCount: row.bodyLineLimit
                         elide: Text.ElideRight
+                        onLinkActivated: function(link) {
+                            root.externalLinkRequested(link)
+                        }
                     }
 
                     TimelineEncryptedBadge {
@@ -651,13 +715,20 @@ ListView {
                         encrypted: row.modelData.encrypted
                         kind: String(row.modelData.kind || "")
                         warningRow: row.warningRow
+                        bodyDecrypted: Boolean(row.modelData.bodyDecrypted)
+                        messageDeleted: row.messageDeleted
+                        onActivated: function (title, message) {
+                            root.cryptoBadgeRequested(title, message)
+                        }
                     }
 
                     TimelineRepairChip {
                         visible: row.historyGapRow
                         Layout.preferredHeight: 24
-                        Layout.preferredWidth: 62
+                        Layout.preferredWidth: 108
                         repairEnabled: root.historyRepairEnabled
+                        addressAvailable: root.historyRepairHasAddress
+                        busy: root.historyRepairBusy
                         onRepairRequested: root.historyRepairRequested(row.rowEventId)
                     }
                 }
@@ -750,7 +821,7 @@ ListView {
             border.width: 1
             border.color: Tokens.borderSubtle
             readonly property bool shown: !row.warningRow && root.actionsEnabled && !row.pendingDelete
-                && (row.rowHovered || row.selectedRow || rowMenu.visible)
+                && (row.rowHovered || row.selectedRow || reactionPicker.visible || rowMenu.visible)
             opacity: shown ? 1 : 0
             visible: opacity > 0.01
 
@@ -775,7 +846,7 @@ ListView {
                         required property var modelData
                         readonly property string reactionText: String(quickReactionChip.modelData || "")
 
-                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenter: hoverActionsRow.verticalCenter
                         messageId: row.rowMessageId
                         reaction: quickReactionChip.reactionText
                         actionsEnabled: root.actionsEnabled
@@ -788,9 +859,18 @@ ListView {
                 }
 
                 TimelineActionChip {
+                    anchors.verticalCenter: hoverActionsRow.verticalCenter
+                    label: "+"
+                    tooltip: "Add reaction"
+                    minimumWidth: 30
+                    visible: Boolean(row.modelData.messageId) && !row.modelData.deleted
+                    onActivated: reactionPicker.open()
+                }
+
+                TimelineActionChip {
                     anchors.verticalCenter: parent.verticalCenter
                     label: "Reply"
-                    tooltip: "Reply in channel"
+                    tooltip: "Reply in conversation"
                     minimumWidth: 52
                     visible: Boolean(row.modelData.messageId) && !row.modelData.deleted
                     onActivated: root.replyRequested(row.modelData)
@@ -807,6 +887,24 @@ ListView {
             }
         }
 
+        ReactionPicker {
+            id: reactionPicker
+
+            anchorItem: hoverActions
+            choices: root.reactionChoices
+            myReactions: row.modelData.myReactions || []
+            messageId: row.rowMessageId
+            actionsEnabled: root.actionsEnabled
+            messageDeleted: row.messageDeleted
+            warningRow: row.warningRow
+            onReactionRequested: function (messageId, reaction) {
+                root.reactionRequested(messageId, reaction)
+            }
+            onReactionRemoveRequested: function (messageId, reaction) {
+                root.reactionRemoveRequested(messageId, reaction)
+            }
+        }
+
         Menu {
             id: rowMenu
 
@@ -818,7 +916,7 @@ ListView {
             }
 
             MenuItem {
-                text: "Publish proof slice"
+                text: "Share message support info"
                 enabled: root.actionsEnabled && row.rowEventId.length > 0
                 onTriggered: root.proofPublishRequested(row.rowEventId)
             }

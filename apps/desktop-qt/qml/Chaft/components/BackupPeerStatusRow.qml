@@ -8,16 +8,20 @@ Rectangle {
     property string statusText: ""
     property string stateLabel: ""
     property color stateColor: Tokens.textMuted
+    readonly property string supportDetailText: endpoint.trim().length > 0
+        ? "Support detail: " + endpoint
+        : "No backup address"
 
     width: parent ? parent.width : 320
-    height: 54
+    height: 72
     radius: Tokens.radiusSm
     color: Tokens.surfaceBase
     border.color: Tokens.borderSubtle
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: endpoint
-    Accessible.description: stateLabel.length > 0 ? stateLabel + ". " + statusText : statusText
+    Accessible.name: "Backup address"
+    Accessible.description: (stateLabel.length > 0 ? stateLabel + ". " : "")
+        + statusText + ". " + supportDetailText
 
     ColumnLayout {
         anchors.fill: parent
@@ -30,11 +34,11 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: root.endpoint
+                text: "Backup address"
                 color: Tokens.textStrong
                 font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
-                elide: Text.ElideMiddle
+                elide: Text.ElideRight
             }
 
             Text {
@@ -43,6 +47,15 @@ Rectangle {
                 font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
             }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: root.supportDetailText
+            color: Tokens.textMuted
+            font.family: Tokens.fontMono
+            font.pixelSize: Tokens.fontSizeXs
+            elide: Text.ElideMiddle
         }
 
         Text {

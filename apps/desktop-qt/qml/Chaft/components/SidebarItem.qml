@@ -9,20 +9,31 @@ Item {
     property bool selected: false
     property int unreadCount: 0
     property bool privateChannel: false
+    property bool directMessage: false
     property bool hasDraft: false
+    property bool muted: false
+    property bool archived: false
     property bool actionable: true
     readonly property bool hasSecondaryLabel: secondaryLabel.length > 0
-    readonly property string channelKindLabel: privateChannel ? "Private channel" : "Channel"
+    readonly property bool showPrivateAffordance: privateChannel && !directMessage
+    readonly property string itemPrefix: directMessage ? "@ " : "# "
+    readonly property string channelKindLabel: archived
+        ? "Archived room"
+        : (directMessage ? "Direct message" : (privateChannel ? "Private room" : "Room"))
+    readonly property string selectedLabel: selected
+        ? (directMessage ? "Current direct message" : "Current room")
+        : (directMessage ? "Open direct message" : "Open room")
     readonly property string unreadLabel: unreadCount > 0 ? String(unreadCount) + " unread" : "No unread messages"
+    readonly property string mutedLabel: muted ? ". Muted" : ""
     height: hasSecondaryLabel ? 48 : 34
     width: parent ? parent.width : 220
     activeFocusOnTab: root.actionable
-    opacity: channelMouse.enabled ? 1 : 0.58
+    opacity: channelMouse.enabled ? (root.muted || root.archived ? 0.78 : 1) : 0.58
     signal activated
 
     Accessible.role: Accessible.Button
-    Accessible.name: "# " + label
-    Accessible.description: channelKindLabel + ". " + (selected ? "Current channel" : "Switch channel") + ". " + unreadLabel + (hasDraft ? ". Draft saved" : "")
+    Accessible.name: itemPrefix + label
+    Accessible.description: channelKindLabel + ". " + selectedLabel + ". " + unreadLabel + mutedLabel + (hasDraft ? ". Draft saved" : "")
     Accessible.onPressAction: {
         if (channelMouse.enabled) {
             root.activated();
@@ -43,7 +54,7 @@ Item {
 
     Column {
         anchors.left: parent.left
-        anchors.right: root.unreadCount > 0 ? unreadBadge.left : (root.privateChannel ? privateDot.left : parent.right)
+        anchors.right: root.unreadCount > 0 ? unreadBadge.left : (root.showPrivateAffordance ? privateDot.left : parent.right)
         anchors.leftMargin: 10
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
@@ -51,10 +62,12 @@ Item {
 
         Text {
             width: parent.width
-            text: "# " + root.label
-            color: root.selected ? Tokens.sidebarTextStrong : Tokens.sidebarText
+            text: root.itemPrefix + root.label
+            color: root.selected
+                ? Tokens.sidebarTextStrong
+                : (root.muted || root.archived ? Tokens.sidebarTextMuted : Tokens.sidebarText)
             font.pixelSize: Tokens.fontSizeMd
-            font.weight: root.unreadCount > 0 ? Font.DemiBold : Font.Normal
+            font.weight: root.unreadCount > 0 && !root.muted && !root.archived ? Font.DemiBold : Font.Normal
             elide: Text.ElideRight
         }
 
@@ -73,7 +86,7 @@ Item {
 
     Text {
         id: privateDot
-        visible: root.privateChannel
+        visible: root.showPrivateAffordance
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: root.unreadCount > 0 ? unreadBadge.left : parent.right
         anchors.rightMargin: 8
@@ -82,7 +95,7 @@ Item {
         font.pixelSize: Tokens.fontSizeXs - 1
 
         Accessible.role: Accessible.StaticText
-        Accessible.name: "Private channel"
+        Accessible.name: "Private room"
     }
 
     Rectangle {
@@ -94,14 +107,16 @@ Item {
         width: 24
         height: 20
         radius: Tokens.radiusMd
-        color: Tokens.accent
+        color: root.muted ? Tokens.surfaceRaised : Tokens.accent
+        border.width: root.muted ? 1 : 0
+        border.color: root.muted ? Tokens.borderSubtle : "transparent"
 
         Text {
             anchors.centerIn: parent
             text: String(root.unreadCount)
-            color: Tokens.onAccent
+            color: root.muted ? Tokens.sidebarTextMuted : Tokens.onAccent
             font.pixelSize: Tokens.fontSizeSm
-            font.weight: Font.DemiBold
+            font.weight: root.muted ? Font.Normal : Font.DemiBold
         }
     }
 
@@ -117,6 +132,8 @@ Item {
 
     ToolTip.visible: channelMouse.containsMouse
     ToolTip.text: root.label
+        + (root.archived ? " (archived)" : "")
+        + (root.muted ? " (muted)" : "")
 
     Keys.onPressed: function (event) {
         if (!root.actionable) {

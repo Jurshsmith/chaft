@@ -27,7 +27,13 @@ ColumnLayout {
         if (displayName.length > 0) {
             return displayName;
         }
-        return String(authorDeviceId || "");
+        var deviceId = String(authorDeviceId || "");
+        return deviceId.length > 0 ? "Unnamed person " + root.shortDeviceId(deviceId) : "";
+    }
+
+    function shortDeviceId(deviceId) {
+        var value = String(deviceId || "");
+        return value.length > 14 ? value.slice(0, 7) + "..." + value.slice(value.length - 4) : value;
     }
 
     function compactInlineText(value, fallback) {

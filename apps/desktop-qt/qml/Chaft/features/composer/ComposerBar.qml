@@ -6,6 +6,7 @@ import Chaft
 Rectangle {
     id: root
     property string channelName: "general"
+    property bool directMessage: false
     property bool editMode: false
     property bool replyMode: false
     property string replyLabel: ""
@@ -133,7 +134,9 @@ Rectangle {
                         id: messageField
                         width: messageScroll.availableWidth
                         height: Math.max(root.inputHeight, contentHeight)
-                        placeholderText: root.editMode ? "Edit message" : "Message #" + root.channelName
+                        placeholderText: root.editMode
+                            ? "Edit message"
+                            : "Message " + (root.directMessage ? "@" : "#") + root.channelName
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         enabled: root.enabled

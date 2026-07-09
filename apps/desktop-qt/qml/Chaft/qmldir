@@ -10,6 +10,7 @@ OnboardingActionCard 1.0 components/OnboardingActionCard.qml
 PeerEndpointHintRow 1.0 components/PeerEndpointHintRow.qml
 PeerMeshBackdrop 1.0 components/PeerMeshBackdrop.qml
 PeerRouteChip 1.0 components/PeerRouteChip.qml
+ReactionPicker 1.0 components/ReactionPicker.qml
 SavedBackupPeerRow 1.0 components/SavedBackupPeerRow.qml
 SetupSection 1.0 components/SetupSection.qml
 SidebarItem 1.0 components/SidebarItem.qml

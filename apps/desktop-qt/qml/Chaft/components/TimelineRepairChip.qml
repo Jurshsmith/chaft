@@ -5,10 +5,21 @@ import Chaft
 Rectangle {
     id: root
     property bool repairEnabled: false
-    readonly property string tooltip: repairEnabled ? "Pull missing history from peer" : "Set a peer endpoint to repair history"
+    property bool addressAvailable: false
+    property bool busy: false
+    readonly property string actionLabel: busy
+        ? "Fetching..."
+        : (addressAvailable ? "Fetch history" : "Add address")
+    readonly property string tooltip: busy
+        ? "Chaft is already fetching history"
+        : (addressAvailable
+            ? (repairEnabled
+                ? "Fetch missing history from a saved teammate"
+                : "History fetch is unavailable right now")
+            : "Add a teammate address, then fetch history")
     signal repairRequested
 
-    width: 62
+    width: 108
     height: 24
     radius: Tokens.radiusSm
     color: repairMouse.containsMouse && repairEnabled ? Tokens.secureSurface : Tokens.surfaceRaised
@@ -17,7 +28,7 @@ Rectangle {
     activeFocusOnTab: visible && repairEnabled
 
     Accessible.role: repairEnabled ? Accessible.Button : Accessible.StaticText
-    Accessible.name: "Repair"
+    Accessible.name: actionLabel
     Accessible.description: tooltip
     Accessible.onPressAction: root.activate()
 
@@ -29,7 +40,7 @@ Rectangle {
 
     Text {
         anchors.centerIn: parent
-        text: "Repair"
+        text: root.actionLabel
         color: root.repairEnabled ? Tokens.textMuted : Tokens.warningText
         font.pixelSize: Tokens.fontSizeSm
         font.weight: Font.DemiBold

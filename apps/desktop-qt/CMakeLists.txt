@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 
-find_package(Qt6 REQUIRED COMPONENTS Network Qml Quick)
+find_package(Qt6 REQUIRED COMPONENTS Network Qml Quick Widgets)
 qt_standard_project_setup(REQUIRES 6.8)
 
 if(DEFINED QT_KNOWN_POLICY_QTP0004)
@@ -57,6 +57,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/PeerEndpointHintRow.qml
         qml/Chaft/components/PeerMeshBackdrop.qml
         qml/Chaft/components/PeerRouteChip.qml
+        qml/Chaft/components/ReactionPicker.qml
         qml/Chaft/components/SavedBackupPeerRow.qml
         qml/Chaft/components/SetupSection.qml
         qml/Chaft/components/SidebarItem.qml
@@ -128,7 +129,7 @@ if(APPLE)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/Chaft/QML/qmldir" "module QML\n")
 endif()
 
-target_link_libraries(ChaftDesktop PRIVATE Qt6::Network Qt6::Qml Qt6::Quick)
+target_link_libraries(ChaftDesktop PRIVATE Qt6::Network Qt6::Qml Qt6::Quick Qt6::Widgets)
 
 install(TARGETS ChaftDesktop
     BUNDLE DESTINATION .

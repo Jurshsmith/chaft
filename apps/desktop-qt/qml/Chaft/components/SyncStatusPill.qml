@@ -19,8 +19,8 @@ Rectangle {
     activeFocusOnTab: true
 
     Accessible.role: Accessible.Button
-    Accessible.name: "Sync status: " + label
-    Accessible.description: (expanded ? "Hide" : "Show") + " network controls. " + detail
+    Accessible.name: "Update status: " + label
+    Accessible.description: (expanded ? "Hide" : "Show") + " sharing controls. " + detail
     Accessible.onPressAction: root.toggled()
 
     Row {

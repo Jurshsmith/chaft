@@ -14,19 +14,24 @@ Rectangle {
     property bool syncInFlight: false
     property bool savedAsBackup: false
     readonly property bool hasEndpoint: endpoint.trim().length > 0
+    readonly property string rowTitle: kindLabel.length > 0 ? kindLabel : "Teammate address"
+    readonly property string supportDetailText: hasEndpoint
+        ? "Support detail: " + endpoint
+        : "No teammate address"
     signal useRequested(string endpoint)
     signal syncRequested(string endpoint)
     signal saveRequested(string endpoint)
 
     width: parent ? parent.width : 360
-    height: 82
+    height: 98
     radius: Tokens.radiusSm
     color: backupPeer ? Tokens.secureSurface : Tokens.surfaceBase
     border.color: Tokens.borderSubtle
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: endpoint
-    Accessible.description: kindLabel + ". " + detailLabel
+    Accessible.name: rowTitle
+    Accessible.description: (detailLabel.length > 0 ? detailLabel + ". " : "")
+        + supportDetailText
 
     ColumnLayout {
         anchors.fill: parent
@@ -39,20 +44,21 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: root.endpoint
+                text: root.rowTitle
                 color: Tokens.textStrong
-                font.family: Tokens.fontMono
                 font.pixelSize: Tokens.fontSizeSm
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
+        }
 
-            Text {
-                text: root.kindLabel
-                color: root.backupPeer ? Tokens.secure : Tokens.textMuted
-                font.pixelSize: Tokens.fontSizeXs
-                font.weight: Font.DemiBold
-            }
+        Text {
+            Layout.fillWidth: true
+            text: root.supportDetailText
+            color: Tokens.textMuted
+            font.family: Tokens.fontMono
+            font.pixelSize: Tokens.fontSizeXs
+            elide: Text.ElideMiddle
         }
 
         RowLayout {
@@ -71,17 +77,21 @@ Rectangle {
                 text: "Use"
                 Layout.preferredWidth: 48
                 enabled: !root.expired && root.hasEndpoint
-                Accessible.name: "Use peer endpoint"
-                Accessible.description: enabled ? root.endpoint : "Peer endpoint is expired or empty"
+                Accessible.name: "Use teammate address"
+                Accessible.description: enabled
+                    ? "Use this address when fetching history later"
+                    : "Teammate address is expired or empty"
                 onClicked: root.useRequested(root.endpoint)
             }
 
             Button {
-                text: "Sync"
+                text: "Fetch"
                 Layout.preferredWidth: 54
                 enabled: root.runtimeReady && !root.syncInFlight && !root.expired && root.hasEndpoint
-                Accessible.name: "Sync peer endpoint"
-                Accessible.description: enabled ? root.endpoint : "Sync is unavailable for this peer endpoint"
+                Accessible.name: "Fetch from teammate address"
+                Accessible.description: enabled
+                    ? "Load history from this teammate"
+                    : "History fetch is unavailable for this teammate address"
                 onClicked: root.syncRequested(root.endpoint)
             }
 
@@ -89,8 +99,10 @@ Rectangle {
                 text: root.savedAsBackup ? "Saved" : "Save"
                 Layout.preferredWidth: 60
                 enabled: !root.savedAsBackup && !root.expired && root.hasEndpoint
-                Accessible.name: root.savedAsBackup ? "Backup peer saved" : "Save backup peer"
-                Accessible.description: enabled ? root.endpoint : "Backup peer is already saved, expired, or empty"
+                Accessible.name: root.savedAsBackup ? "Backup address saved" : "Save as backup address"
+                Accessible.description: enabled
+                    ? "Save this teammate address as a backup"
+                    : "Backup address is already saved, expired, or empty"
                 onClicked: root.saveRequested(root.endpoint)
             }
         }

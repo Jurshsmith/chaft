@@ -7,14 +7,17 @@ RowLayout {
     id: root
     property string endpoint: ""
     property string statusText: ""
+    readonly property string supportDetailText: endpoint.trim().length > 0
+        ? "Support detail: " + endpoint
+        : "No backup address"
     signal removeRequested(string endpoint)
 
     Layout.fillWidth: true
     spacing: 6
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: endpoint
-    Accessible.description: statusText
+    Accessible.name: "Backup address"
+    Accessible.description: statusText + ". " + supportDetailText
 
     ColumnLayout {
         Layout.fillWidth: true
@@ -22,9 +25,19 @@ RowLayout {
 
         Text {
             Layout.fillWidth: true
-            text: root.endpoint
-            color: Tokens.textMuted
+            text: "Backup address"
+            color: Tokens.textStrong
             font.pixelSize: Tokens.fontSizeSm
+            font.weight: Font.DemiBold
+            elide: Text.ElideRight
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: root.supportDetailText
+            color: Tokens.textMuted
+            font.family: Tokens.fontMono
+            font.pixelSize: Tokens.fontSizeXs
             elide: Text.ElideMiddle
         }
 
@@ -39,10 +52,10 @@ RowLayout {
     }
 
     Button {
-        text: "x"
-        implicitWidth: 28
-        Accessible.name: "Remove backup peer"
-        Accessible.description: root.endpoint
+        text: "Remove"
+        implicitWidth: 74
+        Accessible.name: "Remove backup address"
+        Accessible.description: "Remove this saved backup address"
         onClicked: root.removeRequested(root.endpoint)
     }
 }
