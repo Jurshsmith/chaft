@@ -1,14 +1,16 @@
 use std::{ffi::c_char, path::PathBuf};
 
+use chaft_net_direct::{DirectTransport, MAX_JOIN_REQUEST_SUBMISSION_BYTES};
 use chaft_runtime::{
     BlobTransferRetryReport, PEER_ENDPOINT_MAX_BYTES, PublishedWorkspace, PulledWorkspace,
     SyncedWorkspace,
 };
 use chaft_types::{EventId, WorkspaceId};
+use serde::Serialize;
 
 use crate::{
     direct_network::run_direct_runtime_command,
-    envelope::{FfiResult, result_envelope},
+    envelope::{FfiResult, ffi_error, result_envelope},
     id_args::{direct_event_id_arg, direct_workspace_id_arg},
     input::{
         PEER_ENDPOINT_LIST_TEXT_MAX_BYTES, optional_c_string, read_c_string,
@@ -19,8 +21,17 @@ use crate::{
         sample_blob_transfer_retry_report, sample_published_workspace_report,
         sample_pulled_workspace_report, sample_synced_workspace_report,
     },
-    worker::run_runtime_future,
+    worker::{run_on_worker_thread, run_runtime_future},
 };
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubmittedJoinRequestDirect {
+    peer_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_id: Option<String>,
+    request_byte_len: usize,
+}
 
 pub(crate) fn runtime_publish_workspace_direct_result(
     data_dir: *const c_char,
@@ -207,6 +218,61 @@ pub(crate) fn runtime_retry_blob_transfers_direct_result(
                 "runtime_retry_blob_transfers_failed",
             )
             .map(sample_blob_transfer_retry_report)
+        })
+    })
+}
+
+pub(crate) fn runtime_submit_join_request_direct_result(
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    request_json: *const c_char,
+) -> FfiResult<SubmittedJoinRequestDirect> {
+    result_envelope(|| {
+        let peer_endpoint = read_c_string_with_max_bytes(
+            peer_endpoint,
+            "peer_endpoint",
+            PEER_ENDPOINT_MAX_BYTES,
+            "peer_endpoint_too_large",
+            "peer endpoint",
+        )?;
+        let peer = direct_peer_address(peer_endpoint.clone())?;
+        let workspace_id = optional_c_string(workspace_id, "workspace_id")?
+            .map(|workspace_id| workspace_id.trim().to_owned())
+            .filter(|workspace_id| !workspace_id.is_empty())
+            .map(direct_workspace_id_arg)
+            .transpose()?
+            .map(WorkspaceId);
+        let request_json = read_c_string_with_max_bytes(
+            request_json,
+            "request_json",
+            MAX_JOIN_REQUEST_SUBMISSION_BYTES,
+            "join_request_too_large",
+            "join request",
+        )?;
+        let request_bytes = request_json.into_bytes();
+        let request_byte_len = request_bytes.len();
+        let result_workspace_id = workspace_id.as_ref().map(|id| id.0.clone());
+        let result_peer_endpoint = peer_endpoint.trim().to_owned();
+
+        run_on_worker_thread(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            runtime
+                .block_on(DirectTransport.submit_join_request(
+                    &peer,
+                    workspace_id.as_ref(),
+                    request_bytes,
+                ))
+                .map_err(|error| {
+                    ffi_error("runtime_submit_join_request_failed", error.to_string())
+                })?;
+            Ok(SubmittedJoinRequestDirect {
+                peer_endpoint: result_peer_endpoint,
+                workspace_id: result_workspace_id,
+                request_byte_len,
+            })
         })
     })
 }

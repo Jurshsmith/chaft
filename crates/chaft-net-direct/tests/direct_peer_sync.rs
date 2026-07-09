@@ -1,7 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use chaft_core::WorkspaceState;
 use chaft_identity::DeviceIdentity;
 use chaft_net::{ChaftTransport, PeerAddress, PeerId};
-use chaft_net_direct::{DirectPeerServer, DirectTransport, MAX_INVENTORY_EVENT_IDS_PER_RESPONSE};
+use chaft_net_direct::{
+    DirectPeerServer, DirectTransport, JoinRequestInbox, MAX_INVENTORY_EVENT_IDS_PER_RESPONSE,
+};
 use chaft_store::EventStore;
 use chaft_sync::EventInventory;
 use chaft_types::{
@@ -18,6 +22,59 @@ use tokio::{
     sync::oneshot,
     time::{Duration, sleep, timeout},
 };
+
+#[derive(Default)]
+struct MemoryJoinRequestInbox {
+    submissions: Mutex<Vec<(Option<String>, Vec<u8>)>>,
+}
+
+impl JoinRequestInbox for MemoryJoinRequestInbox {
+    fn submit_join_request(
+        &self,
+        workspace_id: Option<&str>,
+        request: Vec<u8>,
+    ) -> Result<(), chaft_net::NetError> {
+        self.submissions
+            .lock()
+            .unwrap()
+            .push((workspace_id.map(str::to_owned), request));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn direct_peer_accepts_join_request_submission_into_configured_inbox() {
+    let store = EventStore::open_in_memory().unwrap();
+    let inbox = Arc::new(MemoryJoinRequestInbox::default());
+    let server =
+        DirectPeerServer::bind_with_join_request_inbox("127.0.0.1:0", store, inbox.clone())
+            .await
+            .unwrap();
+    let endpoint = server.local_addr().unwrap().to_string();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        server.serve_until_shutdown(shutdown_rx).await.unwrap();
+    });
+
+    let peer = PeerAddress {
+        peer_id: PeerId("admin-inbox".to_owned()),
+        endpoint,
+    };
+    let workspace_id = WorkspaceId::new();
+    let request = br#"{"kind":"chaft.workspace-join-request.v1","deviceId":"dev_joiner"}"#.to_vec();
+    DirectTransport
+        .submit_join_request(&peer, Some(&workspace_id), request.clone())
+        .await
+        .unwrap();
+
+    let submissions = inbox.submissions.lock().unwrap();
+    assert_eq!(submissions.len(), 1);
+    assert_eq!(submissions[0].0.as_deref(), Some(workspace_id.0.as_str()));
+    assert_eq!(submissions[0].1, request);
+    drop(submissions);
+    let _ = shutdown_tx.send(());
+    server_task.await.unwrap();
+}
 
 #[tokio::test]
 async fn direct_peers_fetch_missing_events_over_tcp_without_central_server() {

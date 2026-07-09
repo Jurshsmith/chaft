@@ -20,7 +20,17 @@ pub const EVENT_AUTHOR_PUBLIC_KEY_MAX_BYTES: usize = 32;
 pub const EVENT_SIGNATURE_MAX_BYTES: usize = 64;
 pub const WORKSPACE_NAME_MAX_BYTES: usize = 128;
 pub const CHANNEL_NAME_MAX_BYTES: usize = 128;
+pub const CHANNEL_TOPIC_MAX_BYTES: usize = 512;
 pub const DEVICE_DISPLAY_NAME_MAX_BYTES: usize = 128;
+pub const PERSON_ID_MAX_BYTES: usize = 128;
+pub const PERSON_ID_PREFIX: &str = "person_";
+pub const WORKSPACE_INVITE_ID_MAX_BYTES: usize = 128;
+pub const WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES: usize = 64;
+pub const WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES: usize = 32;
+pub const WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES: usize = 64;
+pub const WORKSPACE_ACCESS_POLICY_MAX_BYTES: usize = 32;
+pub const WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES: usize = 128;
+pub const WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES: usize = 512;
 pub const DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES: usize = 128;
 pub const PEER_ENDPOINT_ID_MAX_BYTES: usize = 2304;
 pub const PEER_ENDPOINT_MAX_BYTES: usize = 2048;
@@ -73,6 +83,9 @@ pub struct DeviceKeyPackageId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PersonId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdValidationError {
@@ -135,6 +148,10 @@ pub fn validate_event_id_str(value: &str) -> Result<(), IdValidationError> {
 
 pub fn validate_device_id_str(value: &str) -> Result<(), IdValidationError> {
     validate_id_bytes("device ID", value, DEVICE_ID_MAX_BYTES)
+}
+
+pub fn validate_person_id_str(value: &str) -> Result<(), IdValidationError> {
+    validate_id_bytes("person ID", value, PERSON_ID_MAX_BYTES)
 }
 
 pub fn validate_workspace_id(value: &WorkspaceId) -> Result<(), IdValidationError> {
@@ -440,6 +457,45 @@ pub enum EventBody {
         invitee_device_id: DeviceId,
         role: WorkspaceRole,
     },
+    MemberRoleUpdated {
+        member_device_id: DeviceId,
+        role: WorkspaceRole,
+    },
+    WorkspaceAccessPolicyUpdated {
+        policy: WorkspaceAccessPolicy,
+    },
+    WorkspaceInviteRecorded {
+        invite_id: String,
+        invitee_device_id: DeviceId,
+        display_name: String,
+        role: WorkspaceRole,
+        request_id: Option<String>,
+        expires_at: String,
+        approval_policy: String,
+        sync_expectation: String,
+    },
+    WorkspaceInviteResolved {
+        invite_id: String,
+        resolution: WorkspaceInviteResolution,
+    },
+    WorkspaceJoinRequestRecorded {
+        request_id: String,
+        requester_device_id: DeviceId,
+        display_name: String,
+        note: String,
+        #[serde(default)]
+        source_type: String,
+        #[serde(default)]
+        source_invite_id: String,
+        #[serde(default)]
+        source_display_name: String,
+        #[serde(default)]
+        source_approval_policy: String,
+    },
+    WorkspaceJoinRequestResolved {
+        request_id: String,
+        resolution: WorkspaceJoinRequestResolution,
+    },
     MemberRemoved {
         removed_device_id: DeviceId,
     },
@@ -447,6 +503,17 @@ pub enum EventBody {
         channel_id: ChannelId,
         name: String,
         is_private: bool,
+    },
+    DirectMessageChannelCreated {
+        channel_id: ChannelId,
+        name: String,
+        participant_device_ids: Vec<DeviceId>,
+    },
+    ChannelDetailsUpdated {
+        channel_id: ChannelId,
+        name: Option<String>,
+        topic: Option<String>,
+        archived: Option<bool>,
     },
     ChannelMemberAdded {
         channel_id: ChannelId,
@@ -457,6 +524,14 @@ pub enum EventBody {
         member_device_id: DeviceId,
     },
     DeviceProfileUpdated {
+        display_name: String,
+    },
+    PersonDeviceLinked {
+        person_id: PersonId,
+        device_id: DeviceId,
+    },
+    PersonProfileUpdated {
+        person_id: PersonId,
         display_name: String,
     },
     DeviceKeyPackagePublished {
@@ -599,6 +674,28 @@ pub enum WorkspaceRole {
     Guest,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceAccessPolicy {
+    InviteOnly,
+    RequestAccess,
+    Discoverable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceInviteResolution {
+    Revoked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceJoinRequestResolution {
+    Approved,
+    Declined,
+    Revoked,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignableEvent {
     pub schema_version: u32,
@@ -645,6 +742,12 @@ pub struct TrustSnapshotEventChannel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustSnapshotPersonDeviceLink {
+    pub person_id: PersonId,
+    pub device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustSnapshot {
     pub schema_version: u32,
     pub workspace_id: WorkspaceId,
@@ -654,6 +757,8 @@ pub struct TrustSnapshot {
     pub channels: Vec<TrustSnapshotChannel>,
     pub messages: Vec<TrustSnapshotMessage>,
     pub event_channels: Vec<TrustSnapshotEventChannel>,
+    #[serde(default)]
+    pub person_device_links: Vec<TrustSnapshotPersonDeviceLink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -716,6 +821,12 @@ impl DeviceId {
     pub fn from_public_key_bytes(bytes: &[u8]) -> Self {
         let hash = blake3::hash(bytes);
         Self(format!("dev_{}", hash.to_hex()))
+    }
+}
+
+impl PersonId {
+    pub fn new() -> Self {
+        Self(format!("{}{}", PERSON_ID_PREFIX, Uuid::new_v4().simple()))
     }
 }
 
@@ -831,6 +942,7 @@ mod tests {
         assert!(MessageId::new().0.len() <= MESSAGE_ID_MAX_BYTES);
         assert!(DeviceKeyPackageId::new().0.len() <= DEVICE_KEY_PACKAGE_ID_MAX_BYTES);
         assert!(DeviceId::from_public_key_bytes(b"public key").0.len() <= DEVICE_ID_MAX_BYTES);
+        assert!(PersonId::new().0.len() <= PERSON_ID_MAX_BYTES);
 
         let signed = SignedEvent::from_signed_bytes(
             SignableEvent {
@@ -1112,6 +1224,16 @@ mod tests {
                 field: "event ID",
                 actual_bytes: EVENT_ID_MAX_BYTES + 1,
                 max_bytes: EVENT_ID_MAX_BYTES,
+            })
+        );
+
+        let oversized_person_id = "x".repeat(PERSON_ID_MAX_BYTES + 1);
+        assert_eq!(
+            validate_person_id_str(&oversized_person_id),
+            Err(IdValidationError {
+                field: "person ID",
+                actual_bytes: PERSON_ID_MAX_BYTES + 1,
+                max_bytes: PERSON_ID_MAX_BYTES,
             })
         );
     }

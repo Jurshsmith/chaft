@@ -22,6 +22,16 @@ pub(crate) fn current_private_channel_member_ids_from_events(
             } if channel_id == expected_channel_id && *is_private => {
                 member_ids.insert(event.event.author_device_id.0.clone());
             }
+            EventBody::DirectMessageChannelCreated {
+                channel_id,
+                participant_device_ids,
+                ..
+            } if channel_id == expected_channel_id => {
+                for participant_device_id in participant_device_ids {
+                    member_ids.insert(participant_device_id.0.clone());
+                }
+                member_ids.insert(event.event.author_device_id.0.clone());
+            }
             EventBody::ChannelMemberAdded {
                 channel_id,
                 member_device_id,

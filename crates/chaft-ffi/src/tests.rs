@@ -388,6 +388,22 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
         "chaft_runtime_create_workspace_result_json",
         created.clone(),
     );
+    let policy_tempdir = tempfile::tempdir().unwrap();
+    let policy_data_dir = CString::new(policy_tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let request_access_policy = CString::new("request_access").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_create_workspace_with_access_policy_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_create_workspace_with_access_policy_result_json(
+                policy_data_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_name.as_ptr(),
+                channel_name.as_ptr(),
+                request_access_policy.as_ptr(),
+            )
+        }),
+    );
     let runtime_workspace_id =
         CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
     let runtime_channel_id = CString::new(created["value"]["channelId"].as_str().unwrap()).unwrap();
@@ -409,6 +425,31 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
                 std::ptr::null(),
                 runtime_workspace_id.as_ptr(),
                 display_name.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_update_local_person_profile_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_update_local_person_profile_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                display_name.as_ptr(),
+            )
+        }),
+    );
+    let discoverable_policy = CString::new("discoverable").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_update_workspace_access_policy_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_update_workspace_access_policy_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                discoverable_policy.as_ptr(),
             )
         }),
     );
@@ -691,6 +732,23 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
         "chaft_runtime_start_direct_peer_result_json",
         started_direct_peer.clone(),
     );
+    let hosted_endpoint =
+        CString::new(started_direct_peer["value"]["endpoint"].as_str().unwrap()).unwrap();
+    let contract_join_request = CString::new(
+        r#"{"kind":"chaft.workspace-join-request.v1","schemaVersion":1,"requestId":"req_contract_direct","deviceId":"dev_contract_joiner","displayName":"Contract Joiner"}"#,
+    )
+    .unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_submit_join_request_direct_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_submit_join_request_direct_result_json(
+                hosted_endpoint.as_ptr(),
+                runtime_workspace_id.as_ptr(),
+                contract_join_request.as_ptr(),
+            )
+        }),
+    );
     let hosted_peer_id =
         CString::new(started_direct_peer["value"]["peerId"].as_str().unwrap()).unwrap();
     insert_contract_shape(
@@ -698,6 +756,38 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
         "chaft_runtime_stop_direct_peer_result_json",
         parse_ffi_json(unsafe {
             chaft_runtime_stop_direct_peer_result_json(hosted_peer_id.as_ptr())
+        }),
+    );
+    let inbox_dir = tempdir.path().join("join-request-inbox");
+    std::fs::create_dir_all(&inbox_dir).unwrap();
+    std::fs::write(
+        inbox_dir.join("jr_contract_1.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schemaVersion": 1,
+            "entryId": "jr_contract_1",
+            "workspaceId": runtime_workspace_id.to_str().unwrap(),
+            "receivedAtUnixMs": 1_700_000_000_000_u64,
+            "requestText": "{\"deviceId\":\"dev_contract_joiner\",\"displayName\":\"Contract Joiner\"}"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_list_join_request_inbox_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_list_join_request_inbox_result_json(data_dir.as_ptr(), 10)
+        }),
+    );
+    let inbox_entry_id = CString::new("jr_contract_1").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_ack_join_request_inbox_entry_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_ack_join_request_inbox_entry_result_json(
+                data_dir.as_ptr(),
+                inbox_entry_id.as_ptr(),
+            )
         }),
     );
     insert_contract_shape(
@@ -2882,6 +2972,55 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
     assert_eq!(profile["value"]["workspaceId"], workspace_id);
     assert_eq!(profile["value"]["displayName"], "Mira");
 
+    let person_profile_json = unsafe {
+        take_ffi_string(chaft_runtime_update_local_person_profile_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            display_name.as_ptr(),
+        ))
+    };
+    let person_profile = serde_json::from_str::<Value>(&person_profile_json).unwrap();
+    assert_eq!(person_profile["ok"], true);
+    assert_eq!(person_profile["value"]["workspaceId"], workspace_id);
+    assert_eq!(
+        person_profile["value"]["deviceId"],
+        profile["value"]["deviceId"]
+    );
+    assert_eq!(person_profile["value"]["displayName"], "Mira");
+    assert!(
+        person_profile["value"]["personId"]
+            .as_str()
+            .unwrap()
+            .starts_with("person_")
+    );
+    assert!(person_profile["value"]["linkEventId"].is_string());
+    assert!(person_profile["value"]["profileEventId"].is_string());
+
+    let profile_snapshot_json = unsafe {
+        take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+        ))
+    };
+    let profile_snapshot = serde_json::from_str::<Value>(&profile_snapshot_json).unwrap();
+    assert_eq!(profile_snapshot["ok"], true);
+    assert_eq!(profile_snapshot["value"]["personProfileCount"], 1);
+    assert_eq!(profile_snapshot["value"]["personDeviceLinkCount"], 1);
+    assert_eq!(
+        profile_snapshot["value"]["personProfiles"][0]["personId"],
+        person_profile["value"]["personId"]
+    );
+    assert_eq!(
+        profile_snapshot["value"]["personProfiles"][0]["displayName"],
+        "Mira"
+    );
+    assert_eq!(
+        profile_snapshot["value"]["personDeviceLinks"][0]["personDisplayName"],
+        "Mira"
+    );
+
     let key_package_path = tempdir.path().join("openmls-key-package.bin");
     std::fs::write(&key_package_path, [1_u8, 2, 3, 4]).unwrap();
     let key_package_protocol = CString::new("openmls/key-package").unwrap();
@@ -4399,6 +4538,104 @@ fn runtime_direct_peer_ffi_hosts_runtime_store_and_blobs() {
     let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
     assert_eq!(stopped["ok"], true);
     assert_eq!(stopped["value"]["endpoint"], endpoint);
+}
+
+#[test]
+fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
+    let alice_dir = tempfile::tempdir().unwrap();
+    let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+    let created = alice
+        .create_workspace("Chaft FFI Join Request Host", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(alice);
+
+    let alice_dir_c = CString::new(alice_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            alice_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+
+    let request_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_joiner_123",
+        "deviceId": "dev_joiner_123",
+        "displayName": "Joiner Person",
+        "message": "Please add me"
+    }))
+    .unwrap();
+    let endpoint_c = CString::new(endpoint.clone()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let request_payload_c = CString::new(request_payload).unwrap();
+    let submitted_json = unsafe {
+        take_ffi_string(chaft_runtime_submit_join_request_direct_result_json(
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            request_payload_c.as_ptr(),
+        ))
+    };
+    let submitted = serde_json::from_str::<Value>(&submitted_json).unwrap();
+    assert_eq!(submitted["ok"], true);
+    assert_eq!(submitted["value"]["workspaceId"], workspace_id.0);
+    assert_eq!(submitted["value"]["peerEndpoint"], endpoint);
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
+            alice_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["workspaceId"], workspace_id.0);
+    let request_text = entries[0]["requestText"].as_str().unwrap();
+    let request_value = serde_json::from_str::<Value>(request_text).unwrap();
+    assert_eq!(request_value["deviceId"], "dev_joiner_123");
+    assert_eq!(request_value["displayName"], "Joiner Person");
+
+    let entry_id = CString::new(entries[0]["entryId"].as_str().unwrap()).unwrap();
+    let acked_json = unsafe {
+        take_ffi_string(chaft_runtime_ack_join_request_inbox_entry_result_json(
+            alice_dir_c.as_ptr(),
+            entry_id.as_ptr(),
+        ))
+    };
+    let acked = serde_json::from_str::<Value>(&acked_json).unwrap();
+    assert_eq!(acked["ok"], true);
+    assert_eq!(
+        acked["value"]["entryId"],
+        entries[0]["entryId"].as_str().unwrap()
+    );
+
+    let relisted_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
+            alice_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let relisted = serde_json::from_str::<Value>(&relisted_json).unwrap();
+    assert_eq!(relisted["ok"], true);
+    assert_eq!(relisted["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
 }
 
 #[test]

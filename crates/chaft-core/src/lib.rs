@@ -4,21 +4,27 @@ use chaft_types::{
     ATTACHMENT_BLOB_HASH_MAX_BYTES, ATTACHMENT_CIPHERTEXT_MAX_BYTES,
     ATTACHMENT_DISPLAY_NAME_MAX_BYTES, ATTACHMENT_ID_MAX_BYTES, ATTACHMENT_KEY_ID_MAX_BYTES,
     ATTACHMENT_MEDIA_TYPE_MAX_BYTES, ATTACHMENT_PLAINTEXT_MAX_BYTES, AttachmentRef,
-    CHANNEL_ID_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, CONTENT_KEY_ALGORITHM_MAX_BYTES,
-    CONTENT_KEY_ID_MAX_BYTES, ChannelId, ContentKeyScope, DEVICE_DISPLAY_NAME_MAX_BYTES,
-    DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES,
-    DeviceId, DeviceKeyPackageId, EVENT_AUTHOR_PUBLIC_KEY_MAX_BYTES, EVENT_ID_MAX_BYTES,
-    EVENT_SIGNATURE_MAX_BYTES, EventBody, EventId, MESSAGE_ATTACHMENT_MAX_COUNT,
-    MESSAGE_ID_MAX_BYTES, MESSAGE_MARKDOWN_MAX_BYTES, MessageId, OPENMLS_CIPHERSUITE_MAX_BYTES,
-    OPENMLS_COMMIT_MAX_BYTES, OPENMLS_GROUP_ID_MAX_BYTES, OPENMLS_KEY_PACKAGE_MAX_BYTES,
-    OPENMLS_KEY_PACKAGE_REF_MAX_BYTES, OPENMLS_PROTOCOL_MAX_BYTES, OPENMLS_RATCHET_TREE_MAX_BYTES,
-    OPENMLS_WELCOME_MAX_BYTES, PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_MAX_BYTES,
-    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REACTION_TEXT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES,
-    ReplicaStorageClass, SEALED_MESSAGE_MARKDOWN_MAX_BYTES, SEALED_PAYLOAD_AAD_MAX_BYTES,
+    CHANNEL_ID_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, CHANNEL_TOPIC_MAX_BYTES,
+    CONTENT_KEY_ALGORITHM_MAX_BYTES, CONTENT_KEY_ID_MAX_BYTES, ChannelId, ContentKeyScope,
+    DEVICE_DISPLAY_NAME_MAX_BYTES, DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES,
+    DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, DeviceId, DeviceKeyPackageId,
+    EVENT_AUTHOR_PUBLIC_KEY_MAX_BYTES, EVENT_ID_MAX_BYTES, EVENT_SIGNATURE_MAX_BYTES, EventBody,
+    EventId, MESSAGE_ATTACHMENT_MAX_COUNT, MESSAGE_ID_MAX_BYTES, MESSAGE_MARKDOWN_MAX_BYTES,
+    MessageId, OPENMLS_CIPHERSUITE_MAX_BYTES, OPENMLS_COMMIT_MAX_BYTES, OPENMLS_GROUP_ID_MAX_BYTES,
+    OPENMLS_KEY_PACKAGE_MAX_BYTES, OPENMLS_KEY_PACKAGE_REF_MAX_BYTES, OPENMLS_PROTOCOL_MAX_BYTES,
+    OPENMLS_RATCHET_TREE_MAX_BYTES, OPENMLS_WELCOME_MAX_BYTES, PEER_ENDPOINT_ID_MAX_BYTES,
+    PEER_ENDPOINT_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES, PERSON_ID_MAX_BYTES, PersonId,
+    REACTION_TEXT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES, ReplicaStorageClass,
+    SEALED_MESSAGE_MARKDOWN_MAX_BYTES, SEALED_PAYLOAD_AAD_MAX_BYTES,
     SEALED_PAYLOAD_KEY_ID_MAX_BYTES, SEALED_PAYLOAD_NONCE_MAX_BYTES, SealedPayload, SignedEvent,
     TrustSnapshot, TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage,
-    TrustSnapshotRole, WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceId,
-    WorkspaceRole, peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
+    TrustSnapshotPersonDeviceLink, TrustSnapshotRole, WORKSPACE_ACCESS_POLICY_MAX_BYTES,
+    WORKSPACE_ID_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+    WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES, WORKSPACE_INVITE_ID_MAX_BYTES,
+    WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+    WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
+    WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
+    peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
 };
 use thiserror::Error;
 
@@ -68,10 +74,42 @@ pub enum AuthorizationError {
     },
     #[error("read marker target event {event_id:?} is not authorized by workspace history")]
     ReadMarkerTargetNotFound { event_id: EventId },
+    #[error("join request {request_id:?} is not authorized by workspace history")]
+    JoinRequestNotFound { request_id: String },
+    #[error("invite {invite_id:?} is not authorized by workspace history")]
+    InviteNotFound { invite_id: String },
     #[error("device {device_id:?} is not a workspace member")]
     NotAMember { device_id: DeviceId },
+    #[error("device {device_id:?} cannot edit person profile {person_id:?}")]
+    PersonProfileUpdateDenied {
+        person_id: PersonId,
+        device_id: DeviceId,
+    },
+    #[error("device {device_id:?} cannot link device {linked_device_id:?} to a person")]
+    PersonDeviceLinkDenied {
+        device_id: DeviceId,
+        linked_device_id: DeviceId,
+    },
+    #[error(
+        "device {device_id:?} is already linked to person {existing_person_id:?}, not {requested_person_id:?}"
+    )]
+    PersonDeviceAlreadyLinked {
+        device_id: DeviceId,
+        existing_person_id: PersonId,
+        requested_person_id: PersonId,
+    },
+    #[error(
+        "person {person_id:?} is already linked to device {existing_device_id:?}, not {requested_device_id:?}"
+    )]
+    PersonAlreadyLinked {
+        person_id: PersonId,
+        existing_device_id: DeviceId,
+        requested_device_id: DeviceId,
+    },
     #[error("workspace root device {device_id:?} cannot be removed")]
     WorkspaceRootCannotBeRemoved { device_id: DeviceId },
+    #[error("workspace root device {device_id:?} must remain an owner")]
+    WorkspaceRootRoleCannotBeChanged { device_id: DeviceId },
     #[error("role {role:?} cannot perform {action}")]
     InsufficientRole {
         role: WorkspaceRole,
@@ -105,7 +143,12 @@ pub enum AuthorizationError {
 pub struct ChannelView {
     pub channel_id: ChannelId,
     pub name: String,
+    pub topic: String,
+    pub archived: bool,
     pub is_private: bool,
+    pub member_device_ids: Vec<DeviceId>,
+    pub direct_message: bool,
+    pub direct_message_participant_device_ids: Vec<DeviceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +240,21 @@ pub struct DeviceProfileView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonProfileView {
+    pub person_id: PersonId,
+    pub display_name: String,
+    pub updated_event_id: EventId,
+    pub updated_by_device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonDeviceLinkView {
+    pub person_id: PersonId,
+    pub device_id: DeviceId,
+    pub linked_event_id: EventId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceKeyPackageView {
     pub device_id: DeviceId,
     pub key_package_id: DeviceKeyPackageId,
@@ -227,16 +285,86 @@ pub struct WorkspaceMemberView {
     pub membership_event_id: EventId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceInviteStatus {
+    Invited,
+    Accepted,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceInviteView {
+    pub invite_id: String,
+    pub invitee_device_id: DeviceId,
+    pub display_name: String,
+    pub role: WorkspaceRole,
+    pub request_id: Option<String>,
+    pub expires_at: String,
+    pub approval_policy: String,
+    pub sync_expectation: String,
+    pub created_event_id: EventId,
+    pub created_by_device_id: DeviceId,
+    pub created_physical_ms: i64,
+    pub status: WorkspaceInviteStatus,
+    pub accepted_event_id: Option<EventId>,
+    pub accepted_physical_ms: Option<i64>,
+    pub resolved_event_id: Option<EventId>,
+    pub resolved_by_device_id: Option<DeviceId>,
+    pub resolved_physical_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceJoinRequestStatus {
+    Waiting,
+    Approved,
+    Declined,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceJoinRequestView {
+    pub request_id: String,
+    pub requester_device_id: DeviceId,
+    pub display_name: String,
+    pub note: String,
+    pub source_type: String,
+    pub source_invite_id: String,
+    pub source_display_name: String,
+    pub source_approval_policy: String,
+    pub requested_event_id: EventId,
+    pub requested_by_device_id: DeviceId,
+    pub requested_physical_ms: i64,
+    pub status: WorkspaceJoinRequestStatus,
+    pub resolved_event_id: Option<EventId>,
+    pub resolved_by_device_id: Option<DeviceId>,
+    pub resolved_physical_ms: Option<i64>,
+}
+
+fn join_request_status_for_resolution(
+    resolution: WorkspaceJoinRequestResolution,
+) -> WorkspaceJoinRequestStatus {
+    match resolution {
+        WorkspaceJoinRequestResolution::Approved => WorkspaceJoinRequestStatus::Approved,
+        WorkspaceJoinRequestResolution::Declined => WorkspaceJoinRequestStatus::Declined,
+        WorkspaceJoinRequestResolution::Revoked => WorkspaceJoinRequestStatus::Revoked,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceState {
     pub workspace_id: WorkspaceId,
     pub name: Option<String>,
+    pub access_policy: WorkspaceAccessPolicy,
     pub channels: HashMap<ChannelId, ChannelView>,
     pub messages: HashMap<MessageId, MessageView>,
     pub members: HashMap<DeviceId, WorkspaceMemberView>,
     pub profiles: HashMap<DeviceId, DeviceProfileView>,
+    pub person_profiles: HashMap<PersonId, PersonProfileView>,
+    pub person_device_links: HashMap<DeviceId, PersonDeviceLinkView>,
     pub key_packages: HashMap<DeviceKeyPackageId, DeviceKeyPackageView>,
     pub peer_endpoints: HashMap<(DeviceId, String), PeerEndpointView>,
+    pub invites: HashMap<String, WorkspaceInviteView>,
+    pub join_requests: HashMap<String, WorkspaceJoinRequestView>,
     pub read_markers: HashMap<DeviceId, HashMap<ChannelId, EventId>>,
     pub applied_events: Vec<EventId>,
     access_index: WorkspaceAccessIndex,
@@ -259,12 +387,17 @@ impl WorkspaceState {
         Self {
             workspace_id: workspace_id.clone(),
             name: None,
+            access_policy: WorkspaceAccessPolicy::InviteOnly,
             channels: HashMap::new(),
             messages: HashMap::new(),
             members: HashMap::new(),
             profiles: HashMap::new(),
+            person_profiles: HashMap::new(),
+            person_device_links: HashMap::new(),
             key_packages: HashMap::new(),
             peer_endpoints: HashMap::new(),
+            invites: HashMap::new(),
+            join_requests: HashMap::new(),
             read_markers: HashMap::new(),
             applied_events: Vec::new(),
             access_index: WorkspaceAccessIndex::new(workspace_id),
@@ -369,11 +502,32 @@ impl WorkspaceState {
             .channel_accessible_to(channel_id, device_id)
     }
 
+    fn approve_join_request_from_invite(
+        &mut self,
+        request_id: &str,
+        invitee_device_id: &DeviceId,
+        resolved_event_id: EventId,
+        resolved_by_device_id: DeviceId,
+        resolved_physical_ms: i64,
+    ) {
+        if let Some(request) = self.join_requests.get_mut(request_id) {
+            if request.requester_device_id == *invitee_device_id
+                && request.status == WorkspaceJoinRequestStatus::Waiting
+            {
+                request.status = WorkspaceJoinRequestStatus::Approved;
+                request.resolved_event_id = Some(resolved_event_id);
+                request.resolved_by_device_id = Some(resolved_by_device_id);
+                request.resolved_physical_ms = Some(resolved_physical_ms);
+            }
+        }
+    }
+
     fn apply_ready_event(&mut self, signed: &SignedEvent) -> Result<(), CoreError> {
         if signed.event.workspace_id != self.workspace_id {
             return Err(CoreError::WrongWorkspace);
         }
         self.access_index.authorize_and_apply(signed)?;
+        self.mark_invites_accepted_by_event(signed);
 
         match &signed.event.body {
             EventBody::WorkspaceCreated { name } => {
@@ -400,23 +554,233 @@ impl WorkspaceState {
                         membership_event_id: signed.event_id.clone(),
                     },
                 );
+                for request in self.join_requests.values_mut() {
+                    if request.requester_device_id == *invitee_device_id
+                        && request.status == WorkspaceJoinRequestStatus::Waiting
+                    {
+                        request.status = WorkspaceJoinRequestStatus::Approved;
+                        request.resolved_event_id = Some(signed.event_id.clone());
+                        request.resolved_by_device_id = Some(signed.event.author_device_id.clone());
+                        request.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                    }
+                }
+            }
+            EventBody::MemberRoleUpdated {
+                member_device_id,
+                role,
+            } => {
+                if let Some(member) = self.members.get_mut(member_device_id) {
+                    member.role = *role;
+                    member.membership_event_id = signed.event_id.clone();
+                }
+            }
+            EventBody::WorkspaceAccessPolicyUpdated { policy } => {
+                self.access_policy = *policy;
+            }
+            EventBody::WorkspaceInviteRecorded {
+                invite_id,
+                invitee_device_id,
+                display_name,
+                role,
+                request_id,
+                expires_at,
+                approval_policy,
+                sync_expectation,
+            } => {
+                self.invites.insert(
+                    invite_id.clone(),
+                    WorkspaceInviteView {
+                        invite_id: invite_id.clone(),
+                        invitee_device_id: invitee_device_id.clone(),
+                        display_name: display_name.clone(),
+                        role: *role,
+                        request_id: request_id.clone(),
+                        expires_at: expires_at.clone(),
+                        approval_policy: approval_policy.clone(),
+                        sync_expectation: sync_expectation.clone(),
+                        created_event_id: signed.event_id.clone(),
+                        created_by_device_id: signed.event.author_device_id.clone(),
+                        created_physical_ms: signed.event.timestamp.physical_ms,
+                        status: WorkspaceInviteStatus::Invited,
+                        accepted_event_id: None,
+                        accepted_physical_ms: None,
+                        resolved_event_id: None,
+                        resolved_by_device_id: None,
+                        resolved_physical_ms: None,
+                    },
+                );
+                if let Some(request_id) = request_id {
+                    self.approve_join_request_from_invite(
+                        request_id,
+                        invitee_device_id,
+                        signed.event_id.clone(),
+                        signed.event.author_device_id.clone(),
+                        signed.event.timestamp.physical_ms,
+                    );
+                }
+            }
+            EventBody::WorkspaceInviteResolved {
+                invite_id,
+                resolution,
+            } => {
+                if let Some(invite) = self.invites.get_mut(invite_id) {
+                    match resolution {
+                        WorkspaceInviteResolution::Revoked => {
+                            invite.status = WorkspaceInviteStatus::Revoked;
+                        }
+                    }
+                    invite.resolved_event_id = Some(signed.event_id.clone());
+                    invite.resolved_by_device_id = Some(signed.event.author_device_id.clone());
+                    invite.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                }
+            }
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id,
+                requester_device_id,
+                display_name,
+                note,
+                source_type,
+                source_invite_id,
+                source_display_name,
+                source_approval_policy,
+            } => {
+                let existing_member = self.members.get(requester_device_id);
+                let existing_invite = self
+                    .invites
+                    .values()
+                    .find(|invite| {
+                        invite.request_id.as_deref() == Some(request_id.as_str())
+                            && invite.invitee_device_id == *requester_device_id
+                    })
+                    .map(|invite| {
+                        (
+                            invite.created_event_id.clone(),
+                            invite.created_by_device_id.clone(),
+                            invite.created_physical_ms,
+                        )
+                    });
+                let status = if existing_member.is_some() || existing_invite.is_some() {
+                    WorkspaceJoinRequestStatus::Approved
+                } else {
+                    WorkspaceJoinRequestStatus::Waiting
+                };
+                self.join_requests.insert(
+                    request_id.clone(),
+                    WorkspaceJoinRequestView {
+                        request_id: request_id.clone(),
+                        requester_device_id: requester_device_id.clone(),
+                        display_name: display_name.clone(),
+                        note: note.clone(),
+                        source_type: source_type.clone(),
+                        source_invite_id: source_invite_id.clone(),
+                        source_display_name: source_display_name.clone(),
+                        source_approval_policy: source_approval_policy.clone(),
+                        requested_event_id: signed.event_id.clone(),
+                        requested_by_device_id: signed.event.author_device_id.clone(),
+                        requested_physical_ms: signed.event.timestamp.physical_ms,
+                        status,
+                        resolved_event_id: existing_member
+                            .map(|member| member.membership_event_id.clone())
+                            .or_else(|| {
+                                existing_invite
+                                    .as_ref()
+                                    .map(|(event_id, _, _)| event_id.clone())
+                            }),
+                        resolved_by_device_id: existing_invite
+                            .as_ref()
+                            .map(|(_, device_id, _)| device_id.clone()),
+                        resolved_physical_ms: existing_invite
+                            .as_ref()
+                            .map(|(_, _, physical_ms)| *physical_ms),
+                    },
+                );
+            }
+            EventBody::WorkspaceJoinRequestResolved {
+                request_id,
+                resolution,
+            } => {
+                if let Some(request) = self.join_requests.get_mut(request_id) {
+                    request.status = join_request_status_for_resolution(*resolution);
+                    request.resolved_event_id = Some(signed.event_id.clone());
+                    request.resolved_by_device_id = Some(signed.event.author_device_id.clone());
+                    request.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                }
             }
             EventBody::MemberRemoved { removed_device_id } => {
                 self.members.remove(removed_device_id);
+                self.person_device_links.remove(removed_device_id);
+                for channel in self.channels.values_mut() {
+                    channel
+                        .member_device_ids
+                        .retain(|device_id| device_id != removed_device_id);
+                }
             }
             EventBody::ChannelCreated {
                 channel_id,
                 name,
                 is_private,
             } => {
+                let member_device_ids = if *is_private {
+                    vec![signed.event.author_device_id.clone()]
+                } else {
+                    Vec::new()
+                };
                 self.channels.insert(
                     channel_id.clone(),
                     ChannelView {
                         channel_id: channel_id.clone(),
                         name: name.clone(),
+                        topic: String::new(),
+                        archived: false,
                         is_private: *is_private,
+                        member_device_ids,
+                        direct_message: false,
+                        direct_message_participant_device_ids: Vec::new(),
                     },
                 );
+            }
+            EventBody::DirectMessageChannelCreated {
+                channel_id,
+                name,
+                participant_device_ids,
+            } => {
+                let mut member_device_ids = participant_device_ids.clone();
+                if !member_device_ids.contains(&signed.event.author_device_id) {
+                    member_device_ids.push(signed.event.author_device_id.clone());
+                }
+                member_device_ids.sort_by(|left, right| left.0.cmp(&right.0));
+                member_device_ids.dedup();
+                self.channels.insert(
+                    channel_id.clone(),
+                    ChannelView {
+                        channel_id: channel_id.clone(),
+                        name: name.clone(),
+                        topic: String::new(),
+                        archived: false,
+                        is_private: true,
+                        member_device_ids,
+                        direct_message: true,
+                        direct_message_participant_device_ids: participant_device_ids.clone(),
+                    },
+                );
+            }
+            EventBody::ChannelDetailsUpdated {
+                channel_id,
+                name,
+                topic,
+                archived,
+            } => {
+                if let Some(channel) = self.channels.get_mut(channel_id) {
+                    if let Some(name) = name {
+                        channel.name.clone_from(name);
+                    }
+                    if let Some(topic) = topic {
+                        channel.topic.clone_from(topic);
+                    }
+                    if let Some(archived) = archived {
+                        channel.archived = *archived;
+                    }
+                }
             }
             EventBody::DeviceProfileUpdated { display_name } => {
                 let device_id = signed.event.author_device_id.clone();
@@ -426,6 +790,33 @@ impl WorkspaceState {
                         device_id,
                         display_name: display_name.clone(),
                         updated_event_id: signed.event_id.clone(),
+                    },
+                );
+            }
+            EventBody::PersonDeviceLinked {
+                person_id,
+                device_id,
+            } => {
+                self.person_device_links.insert(
+                    device_id.clone(),
+                    PersonDeviceLinkView {
+                        person_id: person_id.clone(),
+                        device_id: device_id.clone(),
+                        linked_event_id: signed.event_id.clone(),
+                    },
+                );
+            }
+            EventBody::PersonProfileUpdated {
+                person_id,
+                display_name,
+            } => {
+                self.person_profiles.insert(
+                    person_id.clone(),
+                    PersonProfileView {
+                        person_id: person_id.clone(),
+                        display_name: display_name.clone(),
+                        updated_event_id: signed.event_id.clone(),
+                        updated_by_device_id: signed.event.author_device_id.clone(),
                     },
                 );
             }
@@ -621,12 +1012,51 @@ impl WorkspaceState {
                     .or_default()
                     .insert(channel_id.clone(), event_id.clone());
             }
-            EventBody::ChannelMemberAdded { .. } => {}
-            EventBody::ChannelMemberRemoved { .. } => {}
+            EventBody::ChannelMemberAdded {
+                channel_id,
+                member_device_id,
+            } => {
+                if let Some(channel) = self.channels.get_mut(channel_id)
+                    && !channel.member_device_ids.contains(member_device_id)
+                {
+                    channel.member_device_ids.push(member_device_id.clone());
+                    channel
+                        .member_device_ids
+                        .sort_by(|left, right| left.0.cmp(&right.0));
+                }
+            }
+            EventBody::ChannelMemberRemoved {
+                channel_id,
+                member_device_id,
+            } => {
+                if let Some(channel) = self.channels.get_mut(channel_id) {
+                    channel
+                        .member_device_ids
+                        .retain(|device_id| device_id != member_device_id);
+                }
+            }
         }
 
         self.applied_events.push(signed.event_id.clone());
         Ok(())
+    }
+
+    fn mark_invites_accepted_by_event(&mut self, signed: &SignedEvent) {
+        if matches!(
+            signed.event.body,
+            EventBody::WorkspaceInviteRecorded { .. } | EventBody::WorkspaceInviteResolved { .. }
+        ) {
+            return;
+        }
+        for invite in self.invites.values_mut() {
+            if invite.invitee_device_id == signed.event.author_device_id
+                && invite.status == WorkspaceInviteStatus::Invited
+            {
+                invite.status = WorkspaceInviteStatus::Accepted;
+                invite.accepted_event_id = Some(signed.event_id.clone());
+                invite.accepted_physical_ms = Some(signed.event.timestamp.physical_ms);
+            }
+        }
     }
 }
 
@@ -637,6 +1067,9 @@ pub struct WorkspaceAccessIndex {
     channels: HashMap<ChannelId, ChannelAccess>,
     messages: HashMap<MessageId, ChannelId>,
     event_channels: HashMap<EventId, ChannelId>,
+    invites: HashSet<String>,
+    join_requests: HashSet<String>,
+    person_links: HashMap<DeviceId, PersonId>,
     root_device_id: Option<DeviceId>,
     root_seen: bool,
 }
@@ -656,6 +1089,9 @@ impl WorkspaceAccessIndex {
             channels: HashMap::new(),
             messages: HashMap::new(),
             event_channels: HashMap::new(),
+            invites: HashSet::new(),
+            join_requests: HashSet::new(),
+            person_links: HashMap::new(),
             root_device_id: None,
             root_seen: false,
         }
@@ -699,6 +1135,23 @@ impl WorkspaceAccessIndex {
                     members,
                 },
             );
+        }
+        let mut linked_person_ids = HashMap::<PersonId, DeviceId>::new();
+        for link in &snapshot.person_device_links {
+            if !index.roles.contains_key(&link.device_id)
+                || index
+                    .person_links
+                    .insert(link.device_id.clone(), link.person_id.clone())
+                    .is_some()
+            {
+                return Err(AuthorizationError::InvalidTrustSnapshot);
+            }
+            if linked_person_ids
+                .insert(link.person_id.clone(), link.device_id.clone())
+                .is_some()
+            {
+                return Err(AuthorizationError::InvalidTrustSnapshot);
+            }
         }
         for message in &snapshot.messages {
             if !index.channels.contains_key(&message.channel_id)
@@ -766,6 +1219,61 @@ impl WorkspaceAccessIndex {
                     require_role(author_role, Action::InviteMember)
                 }
             }
+            EventBody::MemberRoleUpdated {
+                member_device_id,
+                role,
+            } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                let existing_role = self.require_rooted_member(member_device_id)?;
+                if self.root_device_id.as_ref() == Some(member_device_id) {
+                    return Err(AuthorizationError::WorkspaceRootRoleCannotBeChanged {
+                        device_id: member_device_id.clone(),
+                    });
+                }
+                if *role == WorkspaceRole::Owner || existing_role == WorkspaceRole::Owner {
+                    require_role(author_role, Action::GrantOwner)
+                } else {
+                    require_role(author_role, Action::UpdateMemberRole)
+                }
+            }
+            EventBody::WorkspaceAccessPolicyUpdated { .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::ManageWorkspaceSettings)
+            }
+            EventBody::WorkspaceInviteRecorded { role, .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                if *role == WorkspaceRole::Owner {
+                    require_role(author_role, Action::GrantOwner)
+                } else {
+                    require_role(author_role, Action::InviteMember)
+                }
+            }
+            EventBody::WorkspaceInviteResolved { invite_id, .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::InviteMember)?;
+                if self.invites.contains(invite_id) {
+                    Ok(())
+                } else {
+                    Err(AuthorizationError::InviteNotFound {
+                        invite_id: invite_id.clone(),
+                    })
+                }
+            }
+            EventBody::WorkspaceJoinRequestRecorded { .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::ManageJoinRequests)
+            }
+            EventBody::WorkspaceJoinRequestResolved { request_id, .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::ManageJoinRequests)?;
+                if self.join_requests.contains(request_id) {
+                    Ok(())
+                } else {
+                    Err(AuthorizationError::JoinRequestNotFound {
+                        request_id: request_id.clone(),
+                    })
+                }
+            }
             EventBody::MemberRemoved { removed_device_id } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 let removed_role = self.require_rooted_member(removed_device_id)?;
@@ -784,9 +1292,48 @@ impl WorkspaceAccessIndex {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 require_role(author_role, Action::CreateChannel)
             }
+            EventBody::DirectMessageChannelCreated {
+                participant_device_ids,
+                ..
+            } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::CreateChannel)?;
+                if participant_device_ids.len() != 2 {
+                    return Err(AuthorizationError::EventItemCountTooLarge {
+                        label: "direct message participants",
+                        actual_count: participant_device_ids.len(),
+                        max_count: 2,
+                    });
+                }
+                if !participant_device_ids.contains(&event.event.author_device_id) {
+                    return Err(AuthorizationError::EventPayloadRequired {
+                        label: "direct message author participant",
+                    });
+                }
+                for participant_device_id in participant_device_ids {
+                    self.require_rooted_member(participant_device_id)?;
+                }
+                Ok(())
+            }
+            EventBody::ChannelDetailsUpdated { channel_id, .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::CreateChannel)?;
+                self.require_channel_access(channel_id, &event.event.author_device_id)
+            }
             EventBody::DeviceProfileUpdated { .. } => {
                 self.require_rooted_member(&event.event.author_device_id)?;
                 Ok(())
+            }
+            EventBody::PersonDeviceLinked {
+                person_id,
+                device_id,
+            } => {
+                self.require_rooted_member(&event.event.author_device_id)?;
+                self.require_person_device_link(person_id, device_id, &event.event.author_device_id)
+            }
+            EventBody::PersonProfileUpdated { person_id, .. } => {
+                self.require_rooted_member(&event.event.author_device_id)?;
+                self.require_person_profile_update(person_id, &event.event.author_device_id)
             }
             EventBody::DeviceKeyPackagePublished { .. } => {
                 self.require_rooted_member(&event.event.author_device_id)?;
@@ -919,11 +1466,13 @@ impl WorkspaceAccessIndex {
             } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 self.require_rooted_member(member_device_id)?;
-                self.require_channel_member_grant(
-                    channel_id,
-                    &event.event.author_device_id,
-                    author_role,
-                )?;
+                if &event.event.author_device_id != member_device_id {
+                    self.require_channel_member_grant(
+                        channel_id,
+                        &event.event.author_device_id,
+                        author_role,
+                    )?;
+                }
                 self.require_channel_access(channel_id, member_device_id)
             }
             EventBody::MessageCreated { .. } | EventBody::MessageCreatedEncrypted { .. } => {
@@ -1012,8 +1561,24 @@ impl WorkspaceAccessIndex {
             } => {
                 self.roles.insert(invitee_device_id.clone(), *role);
             }
+            EventBody::MemberRoleUpdated {
+                member_device_id,
+                role,
+            } => {
+                self.roles.insert(member_device_id.clone(), *role);
+            }
+            EventBody::WorkspaceAccessPolicyUpdated { .. } => {}
+            EventBody::WorkspaceInviteRecorded { invite_id, .. } => {
+                self.invites.insert(invite_id.clone());
+            }
+            EventBody::WorkspaceInviteResolved { .. } => {}
+            EventBody::WorkspaceJoinRequestRecorded { request_id, .. } => {
+                self.join_requests.insert(request_id.clone());
+            }
+            EventBody::WorkspaceJoinRequestResolved { .. } => {}
             EventBody::MemberRemoved { removed_device_id } => {
                 self.roles.remove(removed_device_id);
+                self.person_links.remove(removed_device_id);
                 for channel in self.channels.values_mut() {
                     channel.members.remove(removed_device_id);
                 }
@@ -1038,6 +1603,31 @@ impl WorkspaceAccessIndex {
                 self.event_channels
                     .insert(event.event_id.clone(), channel_id.clone());
             }
+            EventBody::DirectMessageChannelCreated {
+                channel_id,
+                participant_device_ids,
+                ..
+            } => {
+                let mut members = participant_device_ids
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>();
+                members.insert(event.event.author_device_id.clone());
+                self.channels.insert(
+                    channel_id.clone(),
+                    ChannelAccess {
+                        is_private: true,
+                        creator_device_id: event.event.author_device_id.clone(),
+                        members,
+                    },
+                );
+                self.event_channels
+                    .insert(event.event_id.clone(), channel_id.clone());
+            }
+            EventBody::ChannelDetailsUpdated { channel_id, .. } => {
+                self.event_channels
+                    .insert(event.event_id.clone(), channel_id.clone());
+            }
             EventBody::ChannelMemberAdded {
                 channel_id,
                 member_device_id,
@@ -1059,11 +1649,19 @@ impl WorkspaceAccessIndex {
                     .insert(event.event_id.clone(), channel_id.clone());
             }
             EventBody::DeviceProfileUpdated { .. }
+            | EventBody::PersonProfileUpdated { .. }
             | EventBody::DeviceKeyPackagePublished { .. }
             | EventBody::PeerEndpointPublished { .. }
             | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
             | EventBody::OpenMlsWorkspaceGroupMemberRemoved { .. }
             | EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. } => {}
+            EventBody::PersonDeviceLinked {
+                person_id,
+                device_id,
+            } => {
+                self.person_links
+                    .insert(device_id.clone(), person_id.clone());
+            }
             EventBody::OpenMlsChannelGroupMemberAdded { channel_id, .. } => {
                 self.event_channels
                     .insert(event.event_id.clone(), channel_id.clone());
@@ -1165,6 +1763,59 @@ impl WorkspaceAccessIndex {
             })
     }
 
+    fn require_person_profile_update(
+        &self,
+        person_id: &PersonId,
+        device_id: &DeviceId,
+    ) -> Result<(), AuthorizationError> {
+        if self.person_links.get(device_id) == Some(person_id) {
+            Ok(())
+        } else {
+            Err(AuthorizationError::PersonProfileUpdateDenied {
+                person_id: person_id.clone(),
+                device_id: device_id.clone(),
+            })
+        }
+    }
+
+    fn require_person_device_link(
+        &self,
+        person_id: &PersonId,
+        device_id: &DeviceId,
+        author_device_id: &DeviceId,
+    ) -> Result<(), AuthorizationError> {
+        if device_id != author_device_id {
+            return Err(AuthorizationError::PersonDeviceLinkDenied {
+                device_id: author_device_id.clone(),
+                linked_device_id: device_id.clone(),
+            });
+        }
+        if let Some(existing_person_id) = self.person_links.get(device_id) {
+            if existing_person_id == person_id {
+                return Ok(());
+            }
+            return Err(AuthorizationError::PersonDeviceAlreadyLinked {
+                device_id: device_id.clone(),
+                existing_person_id: existing_person_id.clone(),
+                requested_person_id: person_id.clone(),
+            });
+        }
+        if let Some(existing_device_id) =
+            self.person_links
+                .iter()
+                .find_map(|(linked_device_id, linked_person_id)| {
+                    (linked_person_id == person_id).then_some(linked_device_id)
+                })
+        {
+            return Err(AuthorizationError::PersonAlreadyLinked {
+                person_id: person_id.clone(),
+                existing_device_id: existing_device_id.clone(),
+                requested_device_id: device_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn require_rooted_member(
         &self,
         device_id: &DeviceId,
@@ -1209,10 +1860,16 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::ChannelNotFound { .. }
                     | AuthorizationError::MessageNotFound { .. }
                     | AuthorizationError::ReadMarkerTargetNotFound { .. }
+                    | AuthorizationError::InviteNotFound { .. }
+                    | AuthorizationError::JoinRequestNotFound { .. }
                     | AuthorizationError::NotAMember { .. }
                     | AuthorizationError::WorkspaceRootCannotBeRemoved { .. }
+                    | AuthorizationError::WorkspaceRootRoleCannotBeChanged { .. }
                     | AuthorizationError::PrivateChannelAccessDenied { .. }
                     | AuthorizationError::ChannelMemberGrantDenied { .. }
+                    | AuthorizationError::PersonProfileUpdateDenied { .. }
+                    | AuthorizationError::PersonDeviceAlreadyLinked { .. }
+                    | AuthorizationError::PersonAlreadyLinked { .. }
                     | AuthorizationError::InsufficientRole { .. },
                 ) => {
                     index_in_pending += 1;
@@ -1231,6 +1888,7 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::EventItemCountTooLarge { .. }
                     | AuthorizationError::UnsupportedPeerEndpoint
                     | AuthorizationError::PeerEndpointTransportMismatch
+                    | AuthorizationError::PersonDeviceLinkDenied { .. }
                     | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
                 ) => return Err(error),
             }
@@ -1273,13 +1931,20 @@ pub fn trust_snapshot_from_events(
     let mut channels = HashMap::<ChannelId, TrustSnapshotChannel>::new();
     let mut messages = HashMap::<MessageId, ChannelId>::new();
     let mut event_channels = HashMap::<EventId, ChannelId>::new();
+    let mut person_device_links = HashMap::<DeviceId, PersonId>::new();
 
     for event in applied_events {
         match &event.event.body {
             EventBody::WorkspaceCreated { .. } => {}
+            EventBody::WorkspaceAccessPolicyUpdated { .. } => {}
             EventBody::DeviceProfileUpdated { .. } => {}
+            EventBody::PersonProfileUpdated { .. } => {}
             EventBody::DeviceKeyPackagePublished { .. } => {}
             EventBody::PeerEndpointPublished { .. } => {}
+            EventBody::WorkspaceInviteRecorded { .. } => {}
+            EventBody::WorkspaceInviteResolved { .. } => {}
+            EventBody::WorkspaceJoinRequestRecorded { .. } => {}
+            EventBody::WorkspaceJoinRequestResolved { .. } => {}
             EventBody::OpenMlsWorkspaceGroupMemberAdded { .. } => {}
             EventBody::OpenMlsWorkspaceGroupMemberRemoved { .. } => {}
             EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. } => {}
@@ -1303,8 +1968,15 @@ pub fn trust_snapshot_from_events(
             } => {
                 roles.insert(invitee_device_id.clone(), *role);
             }
+            EventBody::MemberRoleUpdated {
+                member_device_id,
+                role,
+            } => {
+                roles.insert(member_device_id.clone(), *role);
+            }
             EventBody::MemberRemoved { removed_device_id } => {
                 roles.remove(removed_device_id);
+                person_device_links.remove(removed_device_id);
                 for channel in channels.values_mut() {
                     channel
                         .member_device_ids
@@ -1331,6 +2003,31 @@ pub fn trust_snapshot_from_events(
                 );
                 event_channels.insert(event.event_id.clone(), channel_id.clone());
             }
+            EventBody::DirectMessageChannelCreated {
+                channel_id,
+                participant_device_ids,
+                ..
+            } => {
+                let mut member_device_ids = participant_device_ids.clone();
+                if !member_device_ids.contains(&event.event.author_device_id) {
+                    member_device_ids.push(event.event.author_device_id.clone());
+                }
+                member_device_ids.sort_by(|left, right| left.0.cmp(&right.0));
+                member_device_ids.dedup();
+                channels.insert(
+                    channel_id.clone(),
+                    TrustSnapshotChannel {
+                        channel_id: channel_id.clone(),
+                        is_private: true,
+                        creator_device_id: event.event.author_device_id.clone(),
+                        member_device_ids,
+                    },
+                );
+                event_channels.insert(event.event_id.clone(), channel_id.clone());
+            }
+            EventBody::ChannelDetailsUpdated { channel_id, .. } => {
+                event_channels.insert(event.event_id.clone(), channel_id.clone());
+            }
             EventBody::ChannelMemberAdded {
                 channel_id,
                 member_device_id,
@@ -1352,6 +2049,12 @@ pub fn trust_snapshot_from_events(
                         .retain(|device_id| device_id != member_device_id);
                 }
                 event_channels.insert(event.event_id.clone(), channel_id.clone());
+            }
+            EventBody::PersonDeviceLinked {
+                person_id,
+                device_id,
+            } => {
+                person_device_links.insert(device_id.clone(), person_id.clone());
             }
             EventBody::MessageCreated { message_id, .. }
             | EventBody::MessageCreatedEncrypted { message_id, .. }
@@ -1412,6 +2115,15 @@ pub fn trust_snapshot_from_events(
         .collect::<Vec<_>>();
     event_channels.sort_by(|left, right| left.event_id.0.cmp(&right.event_id.0));
 
+    let mut person_device_links = person_device_links
+        .into_iter()
+        .map(|(device_id, person_id)| TrustSnapshotPersonDeviceLink {
+            person_id,
+            device_id,
+        })
+        .collect::<Vec<_>>();
+    person_device_links.sort_by(|left, right| left.device_id.0.cmp(&right.device_id.0));
+
     Ok((
         TrustSnapshot {
             schema_version: 1,
@@ -1422,6 +2134,7 @@ pub fn trust_snapshot_from_events(
             channels,
             messages,
             event_channels,
+            person_device_links,
         },
         root_event.clone(),
     ))
@@ -1496,6 +2209,9 @@ fn trust_snapshot_for_events(
     snapshot
         .event_channels
         .retain(|event_channel| needed_event_channels.contains(&event_channel.event_id));
+    snapshot
+        .person_device_links
+        .retain(|link| needed_devices.contains(&link.device_id));
 
     snapshot
 }
@@ -1514,15 +2230,51 @@ fn collect_trust_snapshot_dependencies(
 
     match &event.event.body {
         EventBody::WorkspaceCreated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. } => {}
+        EventBody::WorkspaceInviteRecorded {
+            invitee_device_id, ..
+        } => {
+            needed_devices.insert(invitee_device_id.clone());
+        }
+        EventBody::WorkspaceJoinRequestRecorded {
+            requester_device_id,
+            ..
+        } => {
+            needed_devices.insert(requester_device_id.clone());
+        }
         EventBody::MemberInvited { .. } => {}
+        EventBody::MemberRoleUpdated {
+            member_device_id, ..
+        } => {
+            needed_devices.insert(member_device_id.clone());
+        }
         EventBody::MemberRemoved { removed_device_id } => {
             needed_devices.insert(removed_device_id.clone());
         }
+        EventBody::PersonDeviceLinked { device_id, .. } => {
+            needed_devices.insert(device_id.clone());
+        }
         EventBody::ChannelCreated { .. } => {}
+        EventBody::DirectMessageChannelCreated {
+            channel_id,
+            participant_device_ids,
+            ..
+        } => {
+            needed_channels.insert(channel_id.clone());
+            for participant_device_id in participant_device_ids {
+                needed_devices.insert(participant_device_id.clone());
+            }
+        }
+        EventBody::ChannelDetailsUpdated { channel_id, .. } => {
+            needed_channels.insert(channel_id.clone());
+        }
         EventBody::ChannelMemberAdded {
             channel_id,
             member_device_id,
@@ -1630,15 +2382,55 @@ fn validate_signed_event_ids(event: &SignedEvent) -> Result<(), AuthorizationErr
 fn validate_event_body_ids(body: &EventBody) -> Result<(), AuthorizationError> {
     match body {
         EventBody::WorkspaceCreated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::DeviceProfileUpdated { .. }
         | EventBody::PeerEndpointPublished { .. } => Ok(()),
+        EventBody::PersonDeviceLinked {
+            person_id,
+            device_id,
+        } => {
+            validate_person_id_size("person ID", person_id)?;
+            validate_device_id_size("linked device ID", device_id)
+        }
+        EventBody::PersonProfileUpdated { person_id, .. } => {
+            validate_person_id_size("person ID", person_id)
+        }
         EventBody::MemberInvited {
             invitee_device_id, ..
         } => validate_device_id_size("invitee device ID", invitee_device_id),
+        EventBody::MemberRoleUpdated {
+            member_device_id, ..
+        } => validate_device_id_size("member device ID", member_device_id),
+        EventBody::WorkspaceInviteRecorded {
+            invitee_device_id, ..
+        } => validate_device_id_size("invitee device ID", invitee_device_id),
+        EventBody::WorkspaceInviteResolved { .. } => Ok(()),
+        EventBody::WorkspaceJoinRequestRecorded {
+            requester_device_id,
+            ..
+        } => validate_device_id_size("requester device ID", requester_device_id),
+        EventBody::WorkspaceJoinRequestResolved { .. } => Ok(()),
         EventBody::MemberRemoved { removed_device_id } => {
             validate_device_id_size("removed device ID", removed_device_id)
         }
         EventBody::ChannelCreated { channel_id, .. } => {
+            validate_channel_id_size("channel ID", channel_id)
+        }
+        EventBody::DirectMessageChannelCreated {
+            channel_id,
+            participant_device_ids,
+            ..
+        } => {
+            validate_channel_id_size("channel ID", channel_id)?;
+            for participant_device_id in participant_device_ids {
+                validate_device_id_size(
+                    "direct message participant device ID",
+                    participant_device_id,
+                )?;
+            }
+            Ok(())
+        }
+        EventBody::ChannelDetailsUpdated { channel_id, .. } => {
             validate_channel_id_size("channel ID", channel_id)
         }
         EventBody::ChannelMemberAdded {
@@ -1766,6 +2558,10 @@ fn validate_trust_snapshot_ids(snapshot: &TrustSnapshot) -> Result<(), Authoriza
         validate_event_id_size("trust snapshot event ID", &event_channel.event_id)?;
         validate_channel_id_size("trust snapshot event channel ID", &event_channel.channel_id)?;
     }
+    for link in &snapshot.person_device_links {
+        validate_person_id_size("trust snapshot person ID", &link.person_id)?;
+        validate_device_id_size("trust snapshot person device ID", &link.device_id)?;
+    }
     Ok(())
 }
 
@@ -1808,16 +2604,159 @@ fn validate_device_id_size(
     validate_event_text_size(label, &value.0, DEVICE_ID_MAX_BYTES)
 }
 
+fn validate_person_id_size(
+    label: &'static str,
+    value: &PersonId,
+) -> Result<(), AuthorizationError> {
+    validate_event_text_size(label, &value.0, PERSON_ID_MAX_BYTES)
+}
+
 fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), AuthorizationError> {
     match body {
         EventBody::WorkspaceCreated { name } => {
             validate_event_text_size("workspace name", name, WORKSPACE_NAME_MAX_BYTES)
         }
+        EventBody::WorkspaceAccessPolicyUpdated { .. } => Ok(()),
         EventBody::ChannelCreated { name, .. } => {
             validate_event_text_size("channel name", name, CHANNEL_NAME_MAX_BYTES)
         }
+        EventBody::DirectMessageChannelCreated {
+            name,
+            participant_device_ids,
+            ..
+        } => {
+            validate_event_text_size("direct message name", name, CHANNEL_NAME_MAX_BYTES)?;
+            if participant_device_ids.len() != 2 {
+                return Err(AuthorizationError::EventItemCountTooLarge {
+                    label: "direct message participants",
+                    actual_count: participant_device_ids.len(),
+                    max_count: 2,
+                });
+            }
+            let distinct_participant_count =
+                participant_device_ids.iter().collect::<HashSet<_>>().len();
+            if distinct_participant_count != 2 {
+                return Err(AuthorizationError::EventPayloadRequired {
+                    label: "direct message distinct participants",
+                });
+            }
+            Ok(())
+        }
+        EventBody::ChannelDetailsUpdated {
+            name,
+            topic,
+            archived,
+            ..
+        } => {
+            if name.is_none() && topic.is_none() && archived.is_none() {
+                return Err(AuthorizationError::EventPayloadRequired {
+                    label: "channel details",
+                });
+            }
+            if let Some(name) = name {
+                validate_event_text_size("channel name", name, CHANNEL_NAME_MAX_BYTES)?;
+            }
+            if let Some(topic) = topic {
+                validate_event_text_size("channel topic", topic, CHANNEL_TOPIC_MAX_BYTES)?;
+            }
+            Ok(())
+        }
         EventBody::DeviceProfileUpdated { display_name } => {
             validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)
+        }
+        EventBody::PersonDeviceLinked { .. } => Ok(()),
+        EventBody::PersonProfileUpdated { display_name, .. } => {
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)
+        }
+        EventBody::WorkspaceInviteRecorded {
+            invite_id,
+            display_name,
+            request_id,
+            expires_at,
+            approval_policy,
+            sync_expectation,
+            ..
+        } => {
+            validate_event_text_required("invite ID", invite_id)?;
+            validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)?;
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            if let Some(request_id) = request_id {
+                validate_event_text_size(
+                    "join request ID",
+                    request_id,
+                    WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+                )?;
+            }
+            validate_event_text_size(
+                "invite expiry",
+                expires_at,
+                WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "invite approval policy",
+                approval_policy,
+                WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "invite sync expectation",
+                sync_expectation,
+                WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+            )
+        }
+        EventBody::WorkspaceInviteResolved { invite_id, .. } => {
+            validate_event_text_required("invite ID", invite_id)?;
+            validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)
+        }
+        EventBody::WorkspaceJoinRequestRecorded {
+            request_id,
+            display_name,
+            note,
+            source_type,
+            source_invite_id,
+            source_display_name,
+            source_approval_policy,
+            ..
+        } => {
+            validate_event_text_required("join request ID", request_id)?;
+            validate_event_text_size(
+                "join request ID",
+                request_id,
+                WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+            )?;
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            validate_event_text_size(
+                "join request note",
+                note,
+                WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "join request source",
+                source_type,
+                WORKSPACE_ACCESS_POLICY_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "source invite ID",
+                source_invite_id,
+                WORKSPACE_INVITE_ID_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "source display name",
+                source_display_name,
+                DEVICE_DISPLAY_NAME_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "source approval policy",
+                source_approval_policy,
+                WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+            )
+        }
+        EventBody::WorkspaceJoinRequestResolved { request_id, .. } => {
+            validate_event_text_required("join request ID", request_id)?;
+            validate_event_text_size(
+                "join request ID",
+                request_id,
+                WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+            )
         }
         EventBody::PeerEndpointPublished {
             endpoint_id,
@@ -2176,6 +3115,9 @@ fn validate_event_u64_size(
 enum Action {
     GrantOwner,
     InviteMember,
+    ManageWorkspaceSettings,
+    ManageJoinRequests,
+    UpdateMemberRole,
     RemoveMember,
     CreateChannel,
     RotateContentKey,
@@ -2187,6 +3129,9 @@ impl Action {
         match self {
             Self::GrantOwner => "grant_owner",
             Self::InviteMember => "invite_member",
+            Self::ManageWorkspaceSettings => "manage_workspace_settings",
+            Self::ManageJoinRequests => "manage_join_requests",
+            Self::UpdateMemberRole => "update_member_role",
             Self::RemoveMember => "remove_member",
             Self::CreateChannel => "create_channel",
             Self::RotateContentKey => "rotate_content_key",
@@ -2199,6 +3144,11 @@ fn require_role(role: WorkspaceRole, action: Action) -> Result<(), Authorization
     let allowed = match action {
         Action::GrantOwner => role == WorkspaceRole::Owner,
         Action::InviteMember => matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin),
+        Action::ManageWorkspaceSettings => {
+            matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
+        }
+        Action::ManageJoinRequests => matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin),
+        Action::UpdateMemberRole => matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin),
         Action::RemoveMember => matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin),
         Action::CreateChannel => matches!(
             role,
@@ -2420,6 +3370,7 @@ mod tests {
                 event_id: EventId("evt_channel".to_owned()),
                 channel_id,
             }],
+            person_device_links: Vec::new(),
         }
     }
 
@@ -2474,6 +3425,121 @@ mod tests {
 
         assert_eq!(state.channels.len(), 1);
         assert_eq!(state.messages[&message_id].markdown, "hello");
+    }
+
+    #[test]
+    fn materializes_channel_details_updates() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let private_channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let channel = public_channel(&workspace_id, &owner, &channel_id);
+        let rename = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::ChannelDetailsUpdated {
+                channel_id: channel_id.clone(),
+                name: Some("launch-room".to_owned()),
+                topic: Some("Launch planning and decisions".to_owned()),
+                archived: None,
+            },
+        ));
+        let private_channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: private_channel_id.clone(),
+                name: "private".to_owned(),
+                is_private: true,
+            },
+        ));
+        let private_rename = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::ChannelDetailsUpdated {
+                channel_id: private_channel_id.clone(),
+                name: Some("blocked".to_owned()),
+                topic: None,
+                archived: None,
+            },
+        ));
+        let empty_update = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelDetailsUpdated {
+                channel_id: channel_id.clone(),
+                name: None,
+                topic: None,
+                archived: None,
+            },
+        ));
+        let archive = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::ChannelDetailsUpdated {
+                channel_id: channel_id.clone(),
+                name: None,
+                topic: None,
+                archived: Some(true),
+            },
+        ));
+
+        assert!(
+            authorize_event_with_history(&[root.clone(), invite.clone(), channel.clone()], &rename)
+                .is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), invite.clone(), private_channel.clone()],
+                &private_rename
+            ),
+            Err(AuthorizationError::PrivateChannelAccessDenied {
+                channel_id: private_channel_id,
+                device_id: member,
+            })
+        );
+        assert_payload_required(
+            authorize_event_with_history(&[root.clone(), channel.clone()], &empty_update)
+                .unwrap_err(),
+            "channel details",
+        );
+        assert!(
+            authorize_event_with_history(
+                &[
+                    root.clone(),
+                    invite.clone(),
+                    channel.clone(),
+                    rename.clone()
+                ],
+                &archive
+            )
+            .is_ok()
+        );
+
+        let mut state = WorkspaceState::new(workspace_id);
+        state
+            .apply_batch(&[root, invite, channel, rename, archive])
+            .unwrap();
+        let channel = state.channels.get(&channel_id).unwrap();
+        assert_eq!(channel.name, "launch-room");
+        assert_eq!(channel.topic, "Launch planning and decisions");
+        assert!(channel.archived);
     }
 
     #[test]
@@ -4357,6 +5423,147 @@ mod tests {
     }
 
     #[test]
+    fn direct_message_channel_authorizes_exact_participants() {
+        let workspace_id = WorkspaceId::new();
+        let dm_channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let bystander = DeviceId("dev_bystander".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite_member = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let invite_bystander = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: bystander.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let dm_channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: dm_channel_id.clone(),
+                name: "Mina".to_owned(),
+                participant_device_ids: vec![owner.clone(), member.clone()],
+            },
+        ));
+        let missing_author_dm = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: ChannelId::new(),
+                name: "Missing owner".to_owned(),
+                participant_device_ids: vec![member.clone(), bystander.clone()],
+            },
+        ));
+        let oversized_dm = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: ChannelId::new(),
+                name: "Too many".to_owned(),
+                participant_device_ids: vec![owner.clone(), member.clone(), bystander.clone()],
+            },
+        ));
+        let duplicate_participant_dm = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: ChannelId::new(),
+                name: "Duplicate".to_owned(),
+                participant_device_ids: vec![owner.clone(), owner.clone()],
+            },
+        ));
+        let member_message = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(dm_channel_id.clone()),
+            member.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "member can reply".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let bystander_message = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(dm_channel_id.clone()),
+            bystander.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "bystander cannot reply".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let history = vec![
+            root.clone(),
+            invite_member.clone(),
+            invite_bystander.clone(),
+            dm_channel.clone(),
+        ];
+
+        assert!(authorize_event_with_history(&history, &member_message).is_ok());
+        assert_eq!(
+            authorize_event_with_history(&history, &bystander_message),
+            Err(AuthorizationError::PrivateChannelAccessDenied {
+                channel_id: dm_channel_id.clone(),
+                device_id: bystander
+            })
+        );
+        assert_payload_required(
+            authorize_event_with_history(
+                &[root.clone(), invite_member, invite_bystander],
+                &missing_author_dm,
+            )
+            .unwrap_err(),
+            "direct message author participant",
+        );
+        assert_item_count_too_large(
+            authorize_event_with_history(&[root.clone()], &oversized_dm).unwrap_err(),
+            "direct message participants",
+            3,
+            2,
+        );
+        assert_payload_required(
+            authorize_event_with_history(&[root.clone()], &duplicate_participant_dm).unwrap_err(),
+            "direct message distinct participants",
+        );
+
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state.apply_batch(&history).unwrap();
+        let channel = state.channels.get(&dm_channel_id).unwrap();
+        assert!(channel.is_private);
+        assert!(channel.direct_message);
+        assert_eq!(
+            channel.direct_message_participant_device_ids,
+            vec![owner.clone(), member.clone()]
+        );
+
+        let (snapshot, _) = trust_snapshot_from_events(workspace_id, &history).unwrap();
+        let snapshot_channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == dm_channel_id)
+            .unwrap();
+        assert!(snapshot_channel.is_private);
+        assert!(snapshot_channel.member_device_ids.contains(&owner));
+        assert!(snapshot_channel.member_device_ids.contains(&member));
+    }
+
+    #[test]
     fn private_channel_member_grant_authorizes_invited_member() {
         let workspace_id = WorkspaceId::new();
         let private_channel_id = ChannelId::new();
@@ -4443,6 +5650,262 @@ mod tests {
                 device_id: member
             })
         );
+    }
+
+    #[test]
+    fn private_channel_member_can_leave_self_but_not_remove_others() {
+        let workspace_id = WorkspaceId::new();
+        let private_channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let other_member = DeviceId("dev_other_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let other_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: other_member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let private_channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: private_channel_id.clone(),
+                name: "strategy".to_owned(),
+                is_private: true,
+            },
+        ));
+        let grant_member = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelMemberAdded {
+                channel_id: private_channel_id.clone(),
+                member_device_id: member.clone(),
+            },
+        ));
+        let grant_other = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::ChannelMemberAdded {
+                channel_id: private_channel_id.clone(),
+                member_device_id: other_member.clone(),
+            },
+        ));
+        let member_leaves = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::ChannelMemberRemoved {
+                channel_id: private_channel_id.clone(),
+                member_device_id: member.clone(),
+            },
+        ));
+        let member_removes_other = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            member.clone(),
+            EventBody::ChannelMemberRemoved {
+                channel_id: private_channel_id.clone(),
+                member_device_id: other_member,
+            },
+        ));
+        let history = [
+            root,
+            invite,
+            other_invite,
+            private_channel,
+            grant_member,
+            grant_other,
+        ];
+
+        assert!(authorize_event_with_history(&history, &member_leaves).is_ok());
+        assert_eq!(
+            authorize_event_with_history(&history, &member_removes_other),
+            Err(AuthorizationError::ChannelMemberGrantDenied {
+                channel_id: private_channel_id,
+                device_id: member
+            })
+        );
+    }
+
+    #[test]
+    fn person_profile_requires_self_signed_device_link() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let other = DeviceId("dev_other".to_owned());
+        let person_id = PersonId("person_owner".to_owned());
+        let other_person_id = PersonId("person_other".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let invite_other = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: other.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let bad_link = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            other.clone(),
+            EventBody::PersonDeviceLinked {
+                person_id: person_id.clone(),
+                device_id: owner.clone(),
+            },
+        ));
+        let profile_without_link = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::PersonProfileUpdated {
+                person_id: person_id.clone(),
+                display_name: "Ayo".to_owned(),
+            },
+        ));
+        let link = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::PersonDeviceLinked {
+                person_id: person_id.clone(),
+                device_id: owner.clone(),
+            },
+        ));
+        let other_claims_owner_person = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            other.clone(),
+            EventBody::PersonDeviceLinked {
+                person_id: person_id.clone(),
+                device_id: other.clone(),
+            },
+        ));
+        let owner_relinks_to_other_person = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::PersonDeviceLinked {
+                person_id: other_person_id.clone(),
+                device_id: owner.clone(),
+            },
+        ));
+        let profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::PersonProfileUpdated {
+                person_id: person_id.clone(),
+                display_name: "Ayo".to_owned(),
+            },
+        ));
+
+        assert_eq!(
+            authorize_event_with_history(&[root.clone(), invite_other.clone()], &bad_link),
+            Err(AuthorizationError::PersonDeviceLinkDenied {
+                device_id: other.clone(),
+                linked_device_id: owner.clone(),
+            })
+        );
+        assert_eq!(
+            authorize_event_with_history(std::slice::from_ref(&root), &profile_without_link),
+            Err(AuthorizationError::PersonProfileUpdateDenied {
+                person_id: person_id.clone(),
+                device_id: owner.clone(),
+            })
+        );
+        assert!(authorize_event_with_history(&[root.clone(), link.clone()], &profile).is_ok());
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), invite_other.clone(), link.clone()],
+                &other_claims_owner_person
+            ),
+            Err(AuthorizationError::PersonAlreadyLinked {
+                person_id: person_id.clone(),
+                existing_device_id: owner.clone(),
+                requested_device_id: other.clone(),
+            })
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), link.clone()],
+                &owner_relinks_to_other_person
+            ),
+            Err(AuthorizationError::PersonDeviceAlreadyLinked {
+                device_id: owner.clone(),
+                existing_person_id: person_id.clone(),
+                requested_person_id: other_person_id,
+            })
+        );
+
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state
+            .apply_batch(&[root.clone(), link.clone(), profile.clone()])
+            .unwrap();
+        assert_eq!(
+            state
+                .person_device_links
+                .get(&owner)
+                .map(|link| link.person_id.clone()),
+            Some(person_id.clone())
+        );
+        assert_eq!(
+            state
+                .person_profiles
+                .get(&person_id)
+                .map(|profile| profile.display_name.as_str()),
+            Some("Ayo")
+        );
+
+        let (snapshot, _) =
+            trust_snapshot_for_event_from_events(workspace_id, &[root, link], &profile).unwrap();
+        assert_eq!(snapshot.person_device_links.len(), 1);
+        assert!(authorize_event_with_trust_snapshot(&snapshot, &profile).is_ok());
+
+        let mut duplicate_person_snapshot = sample_trust_snapshot();
+        duplicate_person_snapshot.person_device_links = vec![
+            TrustSnapshotPersonDeviceLink {
+                person_id: PersonId("person_shared".to_owned()),
+                device_id: duplicate_person_snapshot.root_author_device_id.clone(),
+            },
+            TrustSnapshotPersonDeviceLink {
+                person_id: PersonId("person_shared".to_owned()),
+                device_id: DeviceId("dev_member".to_owned()),
+            },
+        ];
+        assert!(matches!(
+            WorkspaceAccessIndex::from_trust_snapshot(&duplicate_person_snapshot),
+            Err(AuthorizationError::InvalidTrustSnapshot)
+        ));
     }
 
     #[test]
@@ -5388,6 +6851,556 @@ mod tests {
             Err(AuthorizationError::InsufficientRole {
                 role: WorkspaceRole::Member,
                 action: "invite_member"
+            })
+        );
+    }
+
+    #[test]
+    fn admin_can_record_and_resolve_join_request_but_member_cannot() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let admin = DeviceId("dev_admin".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let requester = DeviceId("dev_requester".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let admin_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let request = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin,
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_test".to_owned(),
+                requester_device_id: requester.clone(),
+                display_name: "Rina".to_owned(),
+                note: "Joining launch".to_owned(),
+                source_type: String::new(),
+                source_invite_id: String::new(),
+                source_display_name: String::new(),
+                source_approval_policy: String::new(),
+            },
+        ));
+        let member_request = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_member".to_owned(),
+                requester_device_id: requester,
+                display_name: "Rina".to_owned(),
+                note: String::new(),
+                source_type: String::new(),
+                source_invite_id: String::new(),
+                source_display_name: String::new(),
+                source_approval_policy: String::new(),
+            },
+        ));
+        let member_resolve = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            member,
+            EventBody::WorkspaceJoinRequestResolved {
+                request_id: "req_test".to_owned(),
+                resolution: WorkspaceJoinRequestResolution::Declined,
+            },
+        ));
+
+        assert!(
+            authorize_event_with_history(&[root.clone(), admin_invite.clone()], &request).is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), admin_invite.clone(), member_invite.clone()],
+                &member_request
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Member,
+                action: "manage_join_requests"
+            })
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root, admin_invite, member_invite, request],
+                &member_resolve
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Member,
+                action: "manage_join_requests"
+            })
+        );
+    }
+
+    #[test]
+    fn join_request_recorded_after_invite_materializes_as_approved() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let requester = DeviceId("dev_requester".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: requester.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let request = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_after_invite".to_owned(),
+                requester_device_id: requester,
+                display_name: "Rina".to_owned(),
+                note: String::new(),
+                source_type: String::new(),
+                source_invite_id: String::new(),
+                source_display_name: String::new(),
+                source_approval_policy: String::new(),
+            },
+        ));
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply_batch(&[root, invite.clone(), request]).unwrap();
+
+        let request = state
+            .join_requests
+            .get("req_after_invite")
+            .expect("join request should materialize");
+        assert_eq!(request.status, WorkspaceJoinRequestStatus::Approved);
+        assert_eq!(request.resolved_event_id, Some(invite.event_id));
+    }
+
+    #[test]
+    fn workspace_invite_record_materializes_join_request_as_approved() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let requester = DeviceId("dev_requester".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let request = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_invite_record".to_owned(),
+                requester_device_id: requester.clone(),
+                display_name: "Rina".to_owned(),
+                note: String::new(),
+                source_type: String::new(),
+                source_invite_id: String::new(),
+                source_display_name: String::new(),
+                source_approval_policy: String::new(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_invite_record".to_owned(),
+                invitee_device_id: requester,
+                display_name: "Rina".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: Some("req_invite_record".to_owned()),
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "endpoint_bootstrap".to_owned(),
+            },
+        ));
+
+        let mut request_first_state = WorkspaceState::new(workspace_id.clone());
+        request_first_state
+            .apply_batch(&[root.clone(), request.clone(), invite.clone()])
+            .unwrap();
+        let request_first = request_first_state
+            .join_requests
+            .get("req_invite_record")
+            .expect("join request should materialize");
+        assert_eq!(request_first.status, WorkspaceJoinRequestStatus::Approved);
+        assert_eq!(
+            request_first.resolved_event_id,
+            Some(invite.event_id.clone())
+        );
+        assert_eq!(request_first.resolved_by_device_id, Some(owner.clone()));
+        assert_eq!(
+            request_first.resolved_physical_ms,
+            Some(invite.event.timestamp.physical_ms)
+        );
+
+        let mut invite_first_state = WorkspaceState::new(workspace_id);
+        invite_first_state
+            .apply_batch(&[root, invite.clone(), request])
+            .unwrap();
+        let invite_first = invite_first_state
+            .join_requests
+            .get("req_invite_record")
+            .expect("join request should materialize");
+        assert_eq!(invite_first.status, WorkspaceJoinRequestStatus::Approved);
+        assert_eq!(invite_first.resolved_event_id, Some(invite.event_id));
+        assert_eq!(invite_first.resolved_by_device_id, Some(owner));
+        assert_eq!(
+            invite_first.resolved_physical_ms,
+            Some(invite.event.timestamp.physical_ms)
+        );
+    }
+
+    #[test]
+    fn workspace_invite_records_require_permission_and_track_lifecycle() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let admin = DeviceId("dev_admin".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let guest = DeviceId("dev_guest".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let admin_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let invite_record = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_test".to_owned(),
+                invitee_device_id: member.clone(),
+                display_name: "Rina".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: Some("req_test".to_owned()),
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "endpoint_bootstrap".to_owned(),
+            },
+        ));
+        let member_invite_record = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_member".to_owned(),
+                invitee_device_id: guest,
+                display_name: "Guest".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: None,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "endpoint_bootstrap".to_owned(),
+            },
+        ));
+        let member_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Rina Cole".to_owned(),
+            },
+        ));
+        let invite_resolved = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin,
+            EventBody::WorkspaceInviteResolved {
+                invite_id: "inv_test".to_owned(),
+                resolution: WorkspaceInviteResolution::Revoked,
+            },
+        ));
+
+        assert!(
+            authorize_event_with_history(
+                &[root.clone(), admin_invite.clone(), member_invite.clone()],
+                &invite_record
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), admin_invite.clone(), member_invite.clone()],
+                &member_invite_record
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Member,
+                action: "invite_member"
+            })
+        );
+
+        let mut state = WorkspaceState::new(workspace_id);
+        state
+            .apply_batch(&[root, admin_invite, member_invite, invite_record.clone()])
+            .unwrap();
+        let invite = state.invites.get("inv_test").expect("invite should exist");
+        assert_eq!(invite.status, WorkspaceInviteStatus::Invited);
+        assert_eq!(invite.created_event_id, invite_record.event_id);
+        assert_eq!(invite.request_id.as_deref(), Some("req_test"));
+
+        state
+            .apply_batch(std::slice::from_ref(&member_profile))
+            .unwrap();
+        let invite = state.invites.get("inv_test").expect("invite should exist");
+        assert_eq!(invite.status, WorkspaceInviteStatus::Accepted);
+        assert_eq!(invite.accepted_event_id, Some(member_profile.event_id));
+
+        state
+            .apply_batch(std::slice::from_ref(&invite_resolved))
+            .unwrap();
+        let invite = state.invites.get("inv_test").expect("invite should exist");
+        assert_eq!(invite.status, WorkspaceInviteStatus::Revoked);
+        assert_eq!(invite.resolved_event_id, Some(invite_resolved.event_id));
+    }
+
+    #[test]
+    fn owner_and_admin_can_update_member_roles() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let admin = DeviceId("dev_admin".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let admin_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let promote_member = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let demote_member = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            admin,
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+
+        let mut state = WorkspaceState::new(root.event.workspace_id.clone());
+        state
+            .apply_batch(&[
+                root,
+                admin_invite,
+                member_invite,
+                promote_member,
+                demote_member,
+            ])
+            .unwrap();
+
+        assert_eq!(state.members[&member].role, WorkspaceRole::Member);
+    }
+
+    #[test]
+    fn member_cannot_update_roles_or_change_root_owner_role() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let member_promotes_self = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            member.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let demote_root = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            owner.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: owner.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), member_invite.clone()],
+                &member_promotes_self
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Member,
+                action: "update_member_role"
+            })
+        );
+        assert_eq!(
+            authorize_event_with_history(&[root, member_invite], &demote_root),
+            Err(AuthorizationError::WorkspaceRootRoleCannotBeChanged { device_id: owner })
+        );
+    }
+
+    #[test]
+    fn admins_can_update_workspace_access_policy() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let admin = DeviceId("dev_admin".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let admin_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let policy_update = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin,
+            EventBody::WorkspaceAccessPolicyUpdated {
+                policy: WorkspaceAccessPolicy::RequestAccess,
+            },
+        ));
+
+        let mut state = WorkspaceState::new(workspace_id);
+        state
+            .apply_batch(&[root, admin_invite, policy_update])
+            .unwrap();
+
+        assert_eq!(state.access_policy, WorkspaceAccessPolicy::RequestAccess);
+    }
+
+    #[test]
+    fn members_cannot_update_workspace_access_policy() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let policy_update = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            member,
+            EventBody::WorkspaceAccessPolicyUpdated {
+                policy: WorkspaceAccessPolicy::Discoverable,
+            },
+        ));
+
+        assert_eq!(
+            authorize_event_with_history(&[root, member_invite], &policy_update),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Member,
+                action: "manage_workspace_settings"
             })
         );
     }

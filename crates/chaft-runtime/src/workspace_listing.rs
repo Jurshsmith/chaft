@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use chaft_app::WorkspaceChannelPage;
 use chaft_core::WorkspaceState;
 use chaft_types::{SignedEvent, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -15,6 +18,16 @@ pub struct LocalWorkspaceSummary {
     pub member_count: usize,
     pub event_count: usize,
     pub has_workspace_key: bool,
+    pub unread_count: u32,
+    pub unread_channels: Vec<LocalWorkspaceUnreadChannelSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalWorkspaceUnreadChannelSummary {
+    pub channel_id: String,
+    pub unread_count: u32,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +109,7 @@ impl LocalRuntime {
     ) -> Result<LocalWorkspaceSummary, RuntimeError> {
         let verified_events = verified_local_events_for_runtime(events);
         let mut state = WorkspaceState::new(workspace_id.clone());
-        state.apply_batch(&verified_events)?;
+        let report = state.apply_batch(&verified_events)?;
         let channel_count = state
             .channels
             .values()
@@ -104,6 +117,31 @@ impl LocalRuntime {
                 state.channel_accessible_to(&channel.channel_id, self.identity.device_id())
             })
             .count();
+        let channel_page = WorkspaceChannelPage::from_state_report_for_device_and_body_overrides(
+            &state,
+            &report,
+            &verified_events,
+            self.identity.device_id(),
+            &HashMap::new(),
+            0,
+            usize::MAX,
+        );
+        let unread_channels = channel_page
+            .channels
+            .into_iter()
+            .filter(|channel| channel.unread_count > 0)
+            .map(|channel| LocalWorkspaceUnreadChannelSummary {
+                channel_id: channel.channel_id,
+                unread_count: channel.unread_count,
+                archived: channel.archived,
+            })
+            .collect::<Vec<_>>();
+        let unread_count = unread_channels
+            .iter()
+            .filter(|channel| !channel.archived)
+            .fold(0u32, |total, channel| {
+                total.saturating_add(channel.unread_count)
+            });
 
         Ok(LocalWorkspaceSummary {
             workspace_id: workspace_id.0.clone(),
@@ -112,6 +150,8 @@ impl LocalRuntime {
             member_count: state.members.len(),
             event_count,
             has_workspace_key: self.workspace_key_path(workspace_id).exists(),
+            unread_count,
+            unread_channels,
         })
     }
 }

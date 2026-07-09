@@ -45,6 +45,7 @@ mod envelope;
 mod id_args;
 mod identity_passphrase;
 mod input;
+mod join_request_inbox;
 mod peer_endpoint;
 mod peer_host;
 mod result_sampling;
@@ -72,6 +73,7 @@ use input::{
     KEY_TRANSFER_JSON_MAX_BYTES, RECOVERY_BUNDLE_JSON_MAX_BYTES, SEARCH_QUERY_MAX_BYTES,
     WORKSPACE_EVENTS_JSON_MAX_BYTES, WORKSPACE_ROLE_TEXT_MAX_BYTES,
 };
+use join_request_inbox::*;
 #[cfg(test)]
 use result_sampling::*;
 use runtime_actions::*;
@@ -570,6 +572,32 @@ pub unsafe extern "C" fn chaft_runtime_create_workspace_result_json(
     into_c_string(&result)
 }
 
+/// Creates a workspace and default channel with an explicit access policy.
+///
+/// `access_policy` accepts `invite_only`, `request_access`, or `discoverable`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_create_workspace_with_access_policy_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    name: *const c_char,
+    default_channel_name: *const c_char,
+    access_policy: *const c_char,
+) -> *mut c_char {
+    let result = runtime_create_workspace_with_access_policy_result(
+        data_dir,
+        identity_file,
+        name,
+        default_channel_name,
+        access_policy,
+    );
+    into_c_string(&result)
+}
+
 /// Creates a channel in a local runtime.
 ///
 /// # Safety
@@ -589,6 +617,81 @@ pub unsafe extern "C" fn chaft_runtime_create_channel_result_json(
     into_c_string(&result)
 }
 
+/// Creates a direct-message channel in a local runtime.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_create_direct_message_channel_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    name: *const c_char,
+    participant_device_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_create_direct_message_channel_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        name,
+        participant_device_id,
+    );
+    into_c_string(&result)
+}
+
+/// Updates signed channel name/topic metadata in a local runtime.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file`, `name`, and `topic`
+/// may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_channel_details_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    channel_id: *const c_char,
+    name: *const c_char,
+    topic: *const c_char,
+) -> *mut c_char {
+    let result = runtime_update_channel_details_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        channel_id,
+        name,
+        topic,
+    );
+    into_c_string(&result)
+}
+
+/// Archives or restores a signed channel in a local runtime.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_channel_archive_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    channel_id: *const c_char,
+    archived: bool,
+) -> *mut c_char {
+    let result = runtime_update_channel_archive_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        channel_id,
+        archived,
+    );
+    into_c_string(&result)
+}
+
 /// Updates this device's signed display profile in a local workspace.
 ///
 /// # Safety
@@ -604,6 +707,31 @@ pub unsafe extern "C" fn chaft_runtime_update_device_profile_result_json(
 ) -> *mut c_char {
     let result =
         runtime_update_device_profile_result(data_dir, identity_file, workspace_id, display_name);
+    into_c_string(&result)
+}
+
+/// Updates this device's signed person profile in a local workspace.
+///
+/// If the local device has not yet linked itself to a person in this workspace,
+/// the runtime creates that self-link before writing the profile update.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_local_person_profile_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+) -> *mut c_char {
+    let result = runtime_update_local_person_profile_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+    );
     into_c_string(&result)
 }
 
@@ -1275,6 +1403,176 @@ pub unsafe extern "C" fn chaft_runtime_invite_member_result_json(
     into_c_string(&result)
 }
 
+/// Records a workspace join request in a local runtime.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_record_workspace_join_request_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    source_type: *const c_char,
+    source_invite_id: *const c_char,
+    source_display_name: *const c_char,
+    source_approval_policy: *const c_char,
+) -> *mut c_char {
+    let result = runtime_record_workspace_join_request_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        request_id,
+        device_id,
+        display_name,
+        note,
+        source_type,
+        source_invite_id,
+        source_display_name,
+        source_approval_policy,
+    );
+    into_c_string(&result)
+}
+
+/// Records a workspace invite handoff in a local runtime.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` and `request_id` may
+/// be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_record_workspace_invite_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    invite_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    request_id: *const c_char,
+    expires_at: *const c_char,
+    approval_policy: *const c_char,
+    sync_expectation: *const c_char,
+) -> *mut c_char {
+    let result = runtime_record_workspace_invite_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        invite_id,
+        device_id,
+        display_name,
+        role,
+        request_id,
+        expires_at,
+        approval_policy,
+        sync_expectation,
+    );
+    into_c_string(&result)
+}
+
+/// Resolves a workspace invite handoff in a local runtime.
+///
+/// `resolution` accepts `revoked`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_resolve_workspace_invite_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    invite_id: *const c_char,
+    resolution: *const c_char,
+) -> *mut c_char {
+    let result = runtime_resolve_workspace_invite_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        invite_id,
+        resolution,
+    );
+    into_c_string(&result)
+}
+
+/// Resolves a workspace join request in a local runtime.
+///
+/// `resolution` accepts `approved`, `declined`, or `revoked`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_resolve_workspace_join_request_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    resolution: *const c_char,
+) -> *mut c_char {
+    let result = runtime_resolve_workspace_join_request_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        request_id,
+        resolution,
+    );
+    into_c_string(&result)
+}
+
+/// Updates a workspace member's role in a local runtime.
+///
+/// `role` accepts `owner`, `admin`, `member`, or `guest`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_member_role_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    device_id: *const c_char,
+    role: *const c_char,
+) -> *mut c_char {
+    let result =
+        runtime_update_member_role_result(data_dir, identity_file, workspace_id, device_id, role);
+    into_c_string(&result)
+}
+
+/// Updates a workspace's access policy in a local runtime.
+///
+/// `access_policy` accepts `invite_only`, `request_access`, or `discoverable`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_workspace_access_policy_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    access_policy: *const c_char,
+) -> *mut c_char {
+    let result = runtime_update_workspace_access_policy_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        access_policy,
+    );
+    into_c_string(&result)
+}
+
 /// Removes a device from a workspace in a local runtime.
 ///
 /// # Safety
@@ -1864,6 +2162,26 @@ pub unsafe extern "C" fn chaft_runtime_retry_blob_transfers_direct_result_json(
     into_c_string(&result)
 }
 
+/// Submits a prepared workspace join request directly to a reachable admin peer.
+///
+/// `workspace_id` may be null or empty when the request itself carries the
+/// target workspace context.
+///
+/// # Safety
+///
+/// `peer_endpoint` and `request_json` must be valid pointers to NUL-terminated
+/// UTF-8 strings for the duration of this call. `workspace_id` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_submit_join_request_direct_result_json(
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    request_json: *const c_char,
+) -> *mut c_char {
+    let result =
+        runtime_submit_join_request_direct_result(peer_endpoint, workspace_id, request_json);
+    into_c_string(&result)
+}
+
 /// Starts a background direct TCP peer serving a local runtime event/blob store.
 ///
 /// `listen` may be null or empty to use `127.0.0.1:0`. The returned peer ID can
@@ -1898,6 +2216,38 @@ pub unsafe extern "C" fn chaft_runtime_start_iroh_peer_result_json(
     identity_file: *const c_char,
 ) -> *mut c_char {
     let result = runtime_start_iroh_peer_result(data_dir, identity_file);
+    into_c_string(&result)
+}
+
+/// Lists incoming join requests received by runtime-hosted peers.
+///
+/// The returned string is a JSON result envelope. Passing `max_entries` as `0`
+/// uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_request_inbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_join_request_inbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Acknowledges and removes an incoming join request from the runtime inbox.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_ack_join_request_inbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_ack_join_request_inbox_entry_result(data_dir, entry_id);
     into_c_string(&result)
 }
 

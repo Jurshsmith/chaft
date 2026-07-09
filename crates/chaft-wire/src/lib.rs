@@ -1,9 +1,10 @@
 use chaft_types::{
     AttachmentRef, ChannelId, ContentKeyScope, DeviceId, DeviceKeyPackageId, EncryptedBlobRef,
-    EventBody, EventId, HybridTimestamp, MessageId, PayloadEncryption, ReplicaStorageClass,
-    SealedPayload, SignableEvent, SignedEvent, SignedTrustSnapshot, TrustSnapshot,
-    TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage, TrustSnapshotRole,
-    WorkspaceId, WorkspaceRole,
+    EventBody, EventId, HybridTimestamp, MessageId, PayloadEncryption, PersonId,
+    ReplicaStorageClass, SealedPayload, SignableEvent, SignedEvent, SignedTrustSnapshot,
+    TrustSnapshot, TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage,
+    TrustSnapshotPersonDeviceLink, TrustSnapshotRole, WorkspaceAccessPolicy, WorkspaceId,
+    WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
 };
 use prost::{Enumeration, Message, Oneof};
 use thiserror::Error;
@@ -26,6 +27,12 @@ pub enum WireError {
     PayloadEncryption(i32),
     #[error("unknown workspace role {0}")]
     WorkspaceRole(i32),
+    #[error("unknown workspace access policy {0}")]
+    WorkspaceAccessPolicy(i32),
+    #[error("unknown workspace invite resolution {0}")]
+    WorkspaceInviteResolution(i32),
+    #[error("unknown workspace join request resolution {0}")]
+    WorkspaceJoinRequestResolution(i32),
     #[error("unknown replica storage class {0}")]
     ReplicaStorageClass(String),
     #[error("event id mismatch: expected {expected}, recomputed {actual}")]
@@ -70,6 +77,31 @@ pub enum WireWorkspaceRole {
     Admin = 2,
     Member = 3,
     Guest = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum WireWorkspaceAccessPolicy {
+    Unspecified = 0,
+    InviteOnly = 1,
+    RequestAccess = 2,
+    Discoverable = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum WireWorkspaceJoinRequestResolution {
+    Unspecified = 0,
+    Approved = 1,
+    Declined = 2,
+    Revoked = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
+#[repr(i32)]
+pub enum WireWorkspaceInviteResolution {
+    Unspecified = 0,
+    Revoked = 1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
@@ -161,6 +193,76 @@ pub struct WireMemberInvited {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct WireMemberRoleUpdated {
+    #[prost(string, tag = "1")]
+    pub member_device_id: String,
+    #[prost(enumeration = "WireWorkspaceRole", tag = "2")]
+    pub role: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceAccessPolicyUpdated {
+    #[prost(enumeration = "WireWorkspaceAccessPolicy", tag = "1")]
+    pub policy: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceJoinRequestRecorded {
+    #[prost(string, tag = "1")]
+    pub request_id: String,
+    #[prost(string, tag = "2")]
+    pub requester_device_id: String,
+    #[prost(string, tag = "3")]
+    pub display_name: String,
+    #[prost(string, tag = "4")]
+    pub note: String,
+    #[prost(string, tag = "5")]
+    pub source_type: String,
+    #[prost(string, tag = "6")]
+    pub source_invite_id: String,
+    #[prost(string, tag = "7")]
+    pub source_display_name: String,
+    #[prost(string, tag = "8")]
+    pub source_approval_policy: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceInviteRecorded {
+    #[prost(string, tag = "1")]
+    pub invite_id: String,
+    #[prost(string, tag = "2")]
+    pub invitee_device_id: String,
+    #[prost(string, tag = "3")]
+    pub display_name: String,
+    #[prost(enumeration = "WireWorkspaceRole", tag = "4")]
+    pub role: i32,
+    #[prost(string, optional, tag = "5")]
+    pub request_id: Option<String>,
+    #[prost(string, tag = "6")]
+    pub expires_at: String,
+    #[prost(string, tag = "7")]
+    pub approval_policy: String,
+    #[prost(string, tag = "8")]
+    pub sync_expectation: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceInviteResolved {
+    #[prost(string, tag = "1")]
+    pub invite_id: String,
+    #[prost(enumeration = "WireWorkspaceInviteResolution", tag = "2")]
+    pub resolution: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceJoinRequestResolved {
+    #[prost(string, tag = "1")]
+    pub request_id: String,
+    #[prost(enumeration = "WireWorkspaceJoinRequestResolution", tag = "2")]
+    pub resolution: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct WireMemberRemoved {
     #[prost(string, tag = "1")]
     pub removed_device_id: String,
@@ -177,6 +279,28 @@ pub struct WireChannelCreated {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct WireDirectMessageChannelCreated {
+    #[prost(string, tag = "1")]
+    pub channel_id: String,
+    #[prost(string, tag = "2")]
+    pub name: String,
+    #[prost(string, repeated, tag = "3")]
+    pub participant_device_ids: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireChannelDetailsUpdated {
+    #[prost(string, tag = "1")]
+    pub channel_id: String,
+    #[prost(string, optional, tag = "2")]
+    pub name: Option<String>,
+    #[prost(string, optional, tag = "3")]
+    pub topic: Option<String>,
+    #[prost(bool, optional, tag = "4")]
+    pub archived: Option<bool>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct WireChannelMemberChanged {
     #[prost(string, tag = "1")]
     pub channel_id: String,
@@ -187,6 +311,22 @@ pub struct WireChannelMemberChanged {
 #[derive(Clone, PartialEq, Message)]
 pub struct WireDeviceProfileUpdated {
     #[prost(string, tag = "1")]
+    pub display_name: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WirePersonDeviceLinked {
+    #[prost(string, tag = "1")]
+    pub person_id: String,
+    #[prost(string, tag = "2")]
+    pub device_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WirePersonProfileUpdated {
+    #[prost(string, tag = "1")]
+    pub person_id: String,
+    #[prost(string, tag = "2")]
     pub display_name: String,
 }
 
@@ -448,7 +588,7 @@ pub struct WireReadMarkerUpdated {
 pub struct WireEventBody {
     #[prost(
         oneof = "wire_event_body::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36"
     )]
     pub kind: Option<wire_event_body::Kind>,
 }
@@ -511,6 +651,26 @@ pub mod wire_event_body {
         ReactionRemoved(WireReactionRemoved),
         #[prost(message, tag = "26")]
         PeerEndpointPublished(WirePeerEndpointPublished),
+        #[prost(message, tag = "27")]
+        DirectMessageChannelCreated(WireDirectMessageChannelCreated),
+        #[prost(message, tag = "28")]
+        ChannelDetailsUpdated(WireChannelDetailsUpdated),
+        #[prost(message, tag = "29")]
+        MemberRoleUpdated(WireMemberRoleUpdated),
+        #[prost(message, tag = "30")]
+        WorkspaceJoinRequestRecorded(WireWorkspaceJoinRequestRecorded),
+        #[prost(message, tag = "31")]
+        WorkspaceJoinRequestResolved(WireWorkspaceJoinRequestResolved),
+        #[prost(message, tag = "32")]
+        WorkspaceInviteRecorded(WireWorkspaceInviteRecorded),
+        #[prost(message, tag = "33")]
+        WorkspaceInviteResolved(WireWorkspaceInviteResolved),
+        #[prost(message, tag = "34")]
+        WorkspaceAccessPolicyUpdated(WireWorkspaceAccessPolicyUpdated),
+        #[prost(message, tag = "35")]
+        PersonDeviceLinked(WirePersonDeviceLinked),
+        #[prost(message, tag = "36")]
+        PersonProfileUpdated(WirePersonProfileUpdated),
     }
 }
 
@@ -530,6 +690,75 @@ fn role_from_wire(role: i32) -> Result<WorkspaceRole, WireError> {
         WireWorkspaceRole::Member => Ok(WorkspaceRole::Member),
         WireWorkspaceRole::Guest => Ok(WorkspaceRole::Guest),
         WireWorkspaceRole::Unspecified => Err(WireError::WorkspaceRole(role)),
+    }
+}
+
+fn access_policy_to_wire(policy: WorkspaceAccessPolicy) -> i32 {
+    match policy {
+        WorkspaceAccessPolicy::InviteOnly => WireWorkspaceAccessPolicy::InviteOnly as i32,
+        WorkspaceAccessPolicy::RequestAccess => WireWorkspaceAccessPolicy::RequestAccess as i32,
+        WorkspaceAccessPolicy::Discoverable => WireWorkspaceAccessPolicy::Discoverable as i32,
+    }
+}
+
+fn access_policy_from_wire(policy: i32) -> Result<WorkspaceAccessPolicy, WireError> {
+    match WireWorkspaceAccessPolicy::try_from(policy)
+        .map_err(|_| WireError::WorkspaceAccessPolicy(policy))?
+    {
+        WireWorkspaceAccessPolicy::InviteOnly => Ok(WorkspaceAccessPolicy::InviteOnly),
+        WireWorkspaceAccessPolicy::RequestAccess => Ok(WorkspaceAccessPolicy::RequestAccess),
+        WireWorkspaceAccessPolicy::Discoverable => Ok(WorkspaceAccessPolicy::Discoverable),
+        WireWorkspaceAccessPolicy::Unspecified => Err(WireError::WorkspaceAccessPolicy(policy)),
+    }
+}
+
+fn invite_resolution_to_wire(resolution: WorkspaceInviteResolution) -> i32 {
+    match resolution {
+        WorkspaceInviteResolution::Revoked => WireWorkspaceInviteResolution::Revoked as i32,
+    }
+}
+
+fn invite_resolution_from_wire(resolution: i32) -> Result<WorkspaceInviteResolution, WireError> {
+    match WireWorkspaceInviteResolution::try_from(resolution)
+        .map_err(|_| WireError::WorkspaceInviteResolution(resolution))?
+    {
+        WireWorkspaceInviteResolution::Revoked => Ok(WorkspaceInviteResolution::Revoked),
+        WireWorkspaceInviteResolution::Unspecified => {
+            Err(WireError::WorkspaceInviteResolution(resolution))
+        }
+    }
+}
+
+fn join_request_resolution_to_wire(resolution: WorkspaceJoinRequestResolution) -> i32 {
+    match resolution {
+        WorkspaceJoinRequestResolution::Approved => {
+            WireWorkspaceJoinRequestResolution::Approved as i32
+        }
+        WorkspaceJoinRequestResolution::Declined => {
+            WireWorkspaceJoinRequestResolution::Declined as i32
+        }
+        WorkspaceJoinRequestResolution::Revoked => {
+            WireWorkspaceJoinRequestResolution::Revoked as i32
+        }
+    }
+}
+
+fn join_request_resolution_from_wire(
+    resolution: i32,
+) -> Result<WorkspaceJoinRequestResolution, WireError> {
+    match WireWorkspaceJoinRequestResolution::try_from(resolution)
+        .map_err(|_| WireError::WorkspaceJoinRequestResolution(resolution))?
+    {
+        WireWorkspaceJoinRequestResolution::Approved => {
+            Ok(WorkspaceJoinRequestResolution::Approved)
+        }
+        WireWorkspaceJoinRequestResolution::Declined => {
+            Ok(WorkspaceJoinRequestResolution::Declined)
+        }
+        WireWorkspaceJoinRequestResolution::Revoked => Ok(WorkspaceJoinRequestResolution::Revoked),
+        WireWorkspaceJoinRequestResolution::Unspecified => {
+            Err(WireError::WorkspaceJoinRequestResolution(resolution))
+        }
     }
 }
 
@@ -667,6 +896,70 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             invitee_device_id: invitee_device_id.0.clone(),
             role: role_to_wire(*role),
         }),
+        EventBody::MemberRoleUpdated {
+            member_device_id,
+            role,
+        } => Kind::MemberRoleUpdated(WireMemberRoleUpdated {
+            member_device_id: member_device_id.0.clone(),
+            role: role_to_wire(*role),
+        }),
+        EventBody::WorkspaceAccessPolicyUpdated { policy } => {
+            Kind::WorkspaceAccessPolicyUpdated(WireWorkspaceAccessPolicyUpdated {
+                policy: access_policy_to_wire(*policy),
+            })
+        }
+        EventBody::WorkspaceInviteRecorded {
+            invite_id,
+            invitee_device_id,
+            display_name,
+            role,
+            request_id,
+            expires_at,
+            approval_policy,
+            sync_expectation,
+        } => Kind::WorkspaceInviteRecorded(WireWorkspaceInviteRecorded {
+            invite_id: invite_id.clone(),
+            invitee_device_id: invitee_device_id.0.clone(),
+            display_name: display_name.clone(),
+            role: role_to_wire(*role),
+            request_id: request_id.clone(),
+            expires_at: expires_at.clone(),
+            approval_policy: approval_policy.clone(),
+            sync_expectation: sync_expectation.clone(),
+        }),
+        EventBody::WorkspaceInviteResolved {
+            invite_id,
+            resolution,
+        } => Kind::WorkspaceInviteResolved(WireWorkspaceInviteResolved {
+            invite_id: invite_id.clone(),
+            resolution: invite_resolution_to_wire(*resolution),
+        }),
+        EventBody::WorkspaceJoinRequestRecorded {
+            request_id,
+            requester_device_id,
+            display_name,
+            note,
+            source_type,
+            source_invite_id,
+            source_display_name,
+            source_approval_policy,
+        } => Kind::WorkspaceJoinRequestRecorded(WireWorkspaceJoinRequestRecorded {
+            request_id: request_id.clone(),
+            requester_device_id: requester_device_id.0.clone(),
+            display_name: display_name.clone(),
+            note: note.clone(),
+            source_type: source_type.clone(),
+            source_invite_id: source_invite_id.clone(),
+            source_display_name: source_display_name.clone(),
+            source_approval_policy: source_approval_policy.clone(),
+        }),
+        EventBody::WorkspaceJoinRequestResolved {
+            request_id,
+            resolution,
+        } => Kind::WorkspaceJoinRequestResolved(WireWorkspaceJoinRequestResolved {
+            request_id: request_id.clone(),
+            resolution: join_request_resolution_to_wire(*resolution),
+        }),
         EventBody::MemberRemoved { removed_device_id } => Kind::MemberRemoved(WireMemberRemoved {
             removed_device_id: removed_device_id.0.clone(),
         }),
@@ -678,6 +971,29 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             channel_id: channel_id.0.clone(),
             name: name.clone(),
             is_private: *is_private,
+        }),
+        EventBody::DirectMessageChannelCreated {
+            channel_id,
+            name,
+            participant_device_ids,
+        } => Kind::DirectMessageChannelCreated(WireDirectMessageChannelCreated {
+            channel_id: channel_id.0.clone(),
+            name: name.clone(),
+            participant_device_ids: participant_device_ids
+                .iter()
+                .map(|device_id| device_id.0.clone())
+                .collect(),
+        }),
+        EventBody::ChannelDetailsUpdated {
+            channel_id,
+            name,
+            topic,
+            archived,
+        } => Kind::ChannelDetailsUpdated(WireChannelDetailsUpdated {
+            channel_id: channel_id.0.clone(),
+            name: name.clone(),
+            topic: topic.clone(),
+            archived: *archived,
         }),
         EventBody::ChannelMemberAdded {
             channel_id,
@@ -698,6 +1014,20 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
                 display_name: display_name.clone(),
             })
         }
+        EventBody::PersonDeviceLinked {
+            person_id,
+            device_id,
+        } => Kind::PersonDeviceLinked(WirePersonDeviceLinked {
+            person_id: person_id.0.clone(),
+            device_id: device_id.0.clone(),
+        }),
+        EventBody::PersonProfileUpdated {
+            person_id,
+            display_name,
+        } => Kind::PersonProfileUpdated(WirePersonProfileUpdated {
+            person_id: person_id.0.clone(),
+            display_name: display_name.clone(),
+        }),
         EventBody::DeviceKeyPackagePublished {
             key_package_id,
             protocol,
@@ -946,6 +1276,41 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             invitee_device_id: DeviceId(body.invitee_device_id),
             role: role_from_wire(body.role)?,
         }),
+        Kind::MemberRoleUpdated(body) => Ok(EventBody::MemberRoleUpdated {
+            member_device_id: DeviceId(body.member_device_id),
+            role: role_from_wire(body.role)?,
+        }),
+        Kind::WorkspaceAccessPolicyUpdated(body) => Ok(EventBody::WorkspaceAccessPolicyUpdated {
+            policy: access_policy_from_wire(body.policy)?,
+        }),
+        Kind::WorkspaceInviteRecorded(body) => Ok(EventBody::WorkspaceInviteRecorded {
+            invite_id: body.invite_id,
+            invitee_device_id: DeviceId(body.invitee_device_id),
+            display_name: body.display_name,
+            role: role_from_wire(body.role)?,
+            request_id: body.request_id,
+            expires_at: body.expires_at,
+            approval_policy: body.approval_policy,
+            sync_expectation: body.sync_expectation,
+        }),
+        Kind::WorkspaceInviteResolved(body) => Ok(EventBody::WorkspaceInviteResolved {
+            invite_id: body.invite_id,
+            resolution: invite_resolution_from_wire(body.resolution)?,
+        }),
+        Kind::WorkspaceJoinRequestRecorded(body) => Ok(EventBody::WorkspaceJoinRequestRecorded {
+            request_id: body.request_id,
+            requester_device_id: DeviceId(body.requester_device_id),
+            display_name: body.display_name,
+            note: body.note,
+            source_type: body.source_type,
+            source_invite_id: body.source_invite_id,
+            source_display_name: body.source_display_name,
+            source_approval_policy: body.source_approval_policy,
+        }),
+        Kind::WorkspaceJoinRequestResolved(body) => Ok(EventBody::WorkspaceJoinRequestResolved {
+            request_id: body.request_id,
+            resolution: join_request_resolution_from_wire(body.resolution)?,
+        }),
         Kind::MemberRemoved(body) => Ok(EventBody::MemberRemoved {
             removed_device_id: DeviceId(body.removed_device_id),
         }),
@@ -953,6 +1318,21 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             channel_id: ChannelId(body.channel_id),
             name: body.name,
             is_private: body.is_private,
+        }),
+        Kind::DirectMessageChannelCreated(body) => Ok(EventBody::DirectMessageChannelCreated {
+            channel_id: ChannelId(body.channel_id),
+            name: body.name,
+            participant_device_ids: body
+                .participant_device_ids
+                .into_iter()
+                .map(DeviceId)
+                .collect(),
+        }),
+        Kind::ChannelDetailsUpdated(body) => Ok(EventBody::ChannelDetailsUpdated {
+            channel_id: ChannelId(body.channel_id),
+            name: body.name,
+            topic: body.topic,
+            archived: body.archived,
         }),
         Kind::ChannelMemberAdded(body) => Ok(EventBody::ChannelMemberAdded {
             channel_id: ChannelId(body.channel_id),
@@ -963,6 +1343,14 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             member_device_id: DeviceId(body.member_device_id),
         }),
         Kind::DeviceProfileUpdated(body) => Ok(EventBody::DeviceProfileUpdated {
+            display_name: body.display_name,
+        }),
+        Kind::PersonDeviceLinked(body) => Ok(EventBody::PersonDeviceLinked {
+            person_id: PersonId(body.person_id),
+            device_id: DeviceId(body.device_id),
+        }),
+        Kind::PersonProfileUpdated(body) => Ok(EventBody::PersonProfileUpdated {
+            person_id: PersonId(body.person_id),
             display_name: body.display_name,
         }),
         Kind::DeviceKeyPackagePublished(body) => Ok(EventBody::DeviceKeyPackagePublished {
@@ -1138,6 +1526,7 @@ pub enum WireSyncRequestKind {
     PutBlobs = 4,
     FetchBlobs = 5,
     FetchBlobAvailability = 6,
+    SubmitJoinRequest = 7,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1243,6 +1632,14 @@ pub struct WireTrustSnapshotEventChannel {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct WireTrustSnapshotPersonDeviceLink {
+    #[prost(string, tag = "1")]
+    pub person_id: String,
+    #[prost(string, tag = "2")]
+    pub device_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct WireTrustSnapshot {
     #[prost(uint32, tag = "1")]
     pub schema_version: u32,
@@ -1260,6 +1657,8 @@ pub struct WireTrustSnapshot {
     pub messages: Vec<WireTrustSnapshotMessage>,
     #[prost(message, repeated, tag = "8")]
     pub event_channels: Vec<WireTrustSnapshotEventChannel>,
+    #[prost(message, repeated, tag = "9")]
+    pub person_device_links: Vec<WireTrustSnapshotPersonDeviceLink>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1432,6 +1831,24 @@ fn decode_trust_snapshot_event_channel(
     }
 }
 
+fn encode_trust_snapshot_person_device_link(
+    link: &TrustSnapshotPersonDeviceLink,
+) -> WireTrustSnapshotPersonDeviceLink {
+    WireTrustSnapshotPersonDeviceLink {
+        person_id: link.person_id.0.clone(),
+        device_id: link.device_id.0.clone(),
+    }
+}
+
+fn decode_trust_snapshot_person_device_link(
+    link: WireTrustSnapshotPersonDeviceLink,
+) -> TrustSnapshotPersonDeviceLink {
+    TrustSnapshotPersonDeviceLink {
+        person_id: PersonId(link.person_id),
+        device_id: DeviceId(link.device_id),
+    }
+}
+
 fn encode_trust_snapshot_inner(snapshot: &TrustSnapshot) -> WireTrustSnapshot {
     WireTrustSnapshot {
         schema_version: snapshot.schema_version,
@@ -1457,6 +1874,11 @@ fn encode_trust_snapshot_inner(snapshot: &TrustSnapshot) -> WireTrustSnapshot {
             .event_channels
             .iter()
             .map(encode_trust_snapshot_event_channel)
+            .collect(),
+        person_device_links: snapshot
+            .person_device_links
+            .iter()
+            .map(encode_trust_snapshot_person_device_link)
             .collect(),
     }
 }
@@ -1486,6 +1908,11 @@ fn decode_trust_snapshot_inner(snapshot: WireTrustSnapshot) -> Result<TrustSnaps
             .event_channels
             .into_iter()
             .map(decode_trust_snapshot_event_channel)
+            .collect(),
+        person_device_links: snapshot
+            .person_device_links
+            .into_iter()
+            .map(decode_trust_snapshot_person_device_link)
             .collect(),
     })
 }
@@ -1568,10 +1995,10 @@ fn validate_sync_frame_len(len: usize) -> Result<(), WireError> {
 mod tests {
     use chaft_types::{
         AttachmentRef, ChannelId, ContentKeyScope, DeviceId, DeviceKeyPackageId, EncryptedBlobRef,
-        EventBody, EventId, MessageId, PayloadEncryption, SealedPayload, SignableEvent,
+        EventBody, EventId, MessageId, PayloadEncryption, PersonId, SealedPayload, SignableEvent,
         SignedEvent, SignedTrustSnapshot, TrustSnapshot, TrustSnapshotChannel,
-        TrustSnapshotEventChannel, TrustSnapshotMessage, TrustSnapshotRole, WorkspaceId,
-        WorkspaceRole,
+        TrustSnapshotEventChannel, TrustSnapshotMessage, TrustSnapshotPersonDeviceLink,
+        TrustSnapshotRole, WorkspaceId, WorkspaceRole,
     };
     use prost::Message as _;
 
@@ -1644,6 +2071,10 @@ mod tests {
                     event_id: EventId("evt_snapshot".to_owned()),
                     channel_id: ChannelId("chn_private".to_owned()),
                 }],
+                person_device_links: vec![TrustSnapshotPersonDeviceLink {
+                    person_id: PersonId("person_member".to_owned()),
+                    device_id: DeviceId("dev_member".to_owned()),
+                }],
             },
             root_event,
             author_public_key: vec![9, 8, 7],
@@ -1691,6 +2122,41 @@ mod tests {
                 invitee_device_id: DeviceId("dev_invitee".to_owned()),
                 role: WorkspaceRole::Admin,
             },
+            EventBody::MemberRoleUpdated {
+                member_device_id: DeviceId("dev_invitee".to_owned()),
+                role: WorkspaceRole::Member,
+            },
+            EventBody::WorkspaceAccessPolicyUpdated {
+                policy: WorkspaceAccessPolicy::RequestAccess,
+            },
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_wire".to_owned(),
+                requester_device_id: DeviceId("dev_requester".to_owned()),
+                display_name: "Mina Requester".to_owned(),
+                note: "Joining the launch room".to_owned(),
+                source_type: "approval_invite".to_owned(),
+                source_invite_id: "inv_wire_source".to_owned(),
+                source_display_name: "Mira Admin".to_owned(),
+                source_approval_policy: "admin_required".to_owned(),
+            },
+            EventBody::WorkspaceJoinRequestResolved {
+                request_id: "req_wire".to_owned(),
+                resolution: WorkspaceJoinRequestResolution::Approved,
+            },
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_wire".to_owned(),
+                invitee_device_id: DeviceId("dev_invitee".to_owned()),
+                display_name: "Mina Invitee".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: Some("req_wire".to_owned()),
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "preapproved".to_owned(),
+                sync_expectation: "auto_fetch_from_invite_source".to_owned(),
+            },
+            EventBody::WorkspaceInviteResolved {
+                invite_id: "inv_wire".to_owned(),
+                resolution: WorkspaceInviteResolution::Revoked,
+            },
             EventBody::MemberRemoved {
                 removed_device_id: DeviceId("dev_removed".to_owned()),
             },
@@ -1698,6 +2164,20 @@ mod tests {
                 channel_id: ChannelId("chn_created".to_owned()),
                 name: "wire".to_owned(),
                 is_private: true,
+            },
+            EventBody::DirectMessageChannelCreated {
+                channel_id: ChannelId("chn_dm".to_owned()),
+                name: "Mina".to_owned(),
+                participant_device_ids: vec![
+                    DeviceId("dev_test".to_owned()),
+                    DeviceId("dev_mina".to_owned()),
+                ],
+            },
+            EventBody::ChannelDetailsUpdated {
+                channel_id: ChannelId("chn_created".to_owned()),
+                name: Some("renamed".to_owned()),
+                topic: Some("Launch planning".to_owned()),
+                archived: Some(true),
             },
             EventBody::ChannelMemberAdded {
                 channel_id: ChannelId("chn_created".to_owned()),
@@ -1709,6 +2189,14 @@ mod tests {
             },
             EventBody::DeviceProfileUpdated {
                 display_name: "Wire Tester".to_owned(),
+            },
+            EventBody::PersonDeviceLinked {
+                person_id: PersonId("person_wire".to_owned()),
+                device_id: DeviceId("dev_test".to_owned()),
+            },
+            EventBody::PersonProfileUpdated {
+                person_id: PersonId("person_wire".to_owned()),
+                display_name: "Wire Person".to_owned(),
             },
             EventBody::DeviceKeyPackagePublished {
                 key_package_id: DeviceKeyPackageId("dkp_wire".to_owned()),

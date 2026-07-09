@@ -1029,6 +1029,7 @@ mod tests {
             channels: Vec::new(),
             messages: Vec::new(),
             event_channels: Vec::new(),
+            person_device_links: Vec::new(),
         };
 
         let mut oversized_public_key = identity

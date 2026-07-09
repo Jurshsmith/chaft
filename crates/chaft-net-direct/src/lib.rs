@@ -47,6 +47,8 @@ pub const MAX_BLOB_UPLOAD_ENVELOPES_PER_REQUEST: usize = 128;
 pub const MAX_BLOB_UPLOAD_DESCRIPTORS_PER_REQUEST: usize = 128;
 pub const MAX_FETCH_EVENT_IDS_PER_REQUEST: usize = 128;
 pub const MAX_FETCH_BLOB_HASHES_PER_REQUEST: usize = 128;
+pub const MAX_JOIN_REQUEST_SUBMISSIONS_PER_REQUEST: usize = 1;
+pub const MAX_JOIN_REQUEST_SUBMISSION_BYTES: usize = 16 * 1024;
 pub const MAX_INVENTORY_EVENT_IDS_PER_RESPONSE: usize = 1024;
 pub const MAX_INVENTORY_EVENT_IDS_PER_PULL: usize = MAX_INVENTORY_EVENT_IDS_PER_RESPONSE * 1024;
 pub const MAX_ACTIVE_DIRECT_CONNECTIONS: usize = 256;
@@ -103,6 +105,14 @@ pub trait BlobSyncTransport: ChaftTransport {
     ) -> Result<Option<Vec<u8>>, NetError>;
 }
 
+pub trait JoinRequestInbox: Send + Sync {
+    fn submit_join_request(
+        &self,
+        workspace_id: Option<&str>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError>;
+}
+
 pub struct DirectPeerServer {
     listener: TcpListener,
     sync_store: SyncPeerStore,
@@ -112,6 +122,7 @@ pub struct DirectPeerServer {
 pub struct SyncPeerStore {
     store: Arc<Mutex<EventStore>>,
     blob_store: Option<Arc<BlobStore>>,
+    join_request_inbox: Option<Arc<dyn JoinRequestInbox>>,
 }
 
 impl SyncPeerStore {
@@ -119,6 +130,7 @@ impl SyncPeerStore {
         Self {
             store: Arc::new(Mutex::new(store)),
             blob_store: None,
+            join_request_inbox: None,
         }
     }
 
@@ -126,6 +138,30 @@ impl SyncPeerStore {
         Self {
             store: Arc::new(Mutex::new(store)),
             blob_store: Some(Arc::new(blob_store)),
+            join_request_inbox: None,
+        }
+    }
+
+    pub fn with_join_request_inbox(
+        store: EventStore,
+        join_request_inbox: Arc<dyn JoinRequestInbox>,
+    ) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(store)),
+            blob_store: None,
+            join_request_inbox: Some(join_request_inbox),
+        }
+    }
+
+    pub fn with_blobs_and_join_request_inbox(
+        store: EventStore,
+        blob_store: BlobStore,
+        join_request_inbox: Arc<dyn JoinRequestInbox>,
+    ) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(store)),
+            blob_store: Some(Arc::new(blob_store)),
+            join_request_inbox: Some(join_request_inbox),
         }
     }
 
@@ -133,7 +169,13 @@ impl SyncPeerStore {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        handle_sync_stream(stream, Arc::clone(&self.store), self.blob_store.clone()).await
+        handle_sync_stream_with_join_request_inbox(
+            stream,
+            Arc::clone(&self.store),
+            self.blob_store.clone(),
+            self.join_request_inbox.clone(),
+        )
+        .await
     }
 }
 
@@ -168,6 +210,45 @@ impl DirectPeerServer {
             sync_store: SyncPeerStore::with_blobs(store, blob_store),
         };
         Ok(server)
+    }
+
+    pub async fn bind_with_join_request_inbox(
+        addr: impl ToSocketAddrs,
+        store: EventStore,
+        join_request_inbox: Arc<dyn JoinRequestInbox>,
+    ) -> Result<Self, NetError> {
+        let addr = addr
+            .to_socket_addrs()
+            .map_err(NetError::from)?
+            .next()
+            .ok_or_else(|| NetError::Protocol("no socket address resolved".to_owned()))?;
+        let listener = TcpListener::bind(addr).await?;
+        Ok(Self {
+            listener,
+            sync_store: SyncPeerStore::with_join_request_inbox(store, join_request_inbox),
+        })
+    }
+
+    pub async fn bind_with_blobs_and_join_request_inbox(
+        addr: impl ToSocketAddrs,
+        store: EventStore,
+        blob_store: BlobStore,
+        join_request_inbox: Arc<dyn JoinRequestInbox>,
+    ) -> Result<Self, NetError> {
+        let addr = addr
+            .to_socket_addrs()
+            .map_err(NetError::from)?
+            .next()
+            .ok_or_else(|| NetError::Protocol("no socket address resolved".to_owned()))?;
+        let listener = TcpListener::bind(addr).await?;
+        Ok(Self {
+            listener,
+            sync_store: SyncPeerStore::with_blobs_and_join_request_inbox(
+                store,
+                blob_store,
+                join_request_inbox,
+            ),
+        })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, NetError> {
@@ -290,6 +371,37 @@ impl DirectTransport {
         workspace_id: &WorkspaceId,
     ) -> Result<Vec<EventId>, NetError> {
         fetch_inventory_paged(peer, Some(workspace_id)).await
+    }
+
+    pub async fn submit_join_request(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError> {
+        validate_join_request_submission_bytes(&request)?;
+        if let Some(workspace_id) = workspace_id {
+            validate_wire_workspace_id("submit-join-request", &workspace_id.0)?;
+        }
+        let request = WireSyncRequest {
+            kind: WireSyncRequestKind::SubmitJoinRequest as i32,
+            event_ids: Vec::new(),
+            events: vec![request],
+            authorization_events: Vec::new(),
+            authorization_snapshots: Vec::new(),
+            blob_hashes: Vec::new(),
+            blobs: Vec::new(),
+            blob_descriptors: Vec::new(),
+            workspace_id: workspace_id.map(|id| id.0.clone()),
+            event_envelopes: Vec::new(),
+            authorization_event_envelopes: Vec::new(),
+            authorization_snapshot_envelopes: Vec::new(),
+            inventory_start_index: None,
+            inventory_limit: None,
+        };
+        let mut response = request_peer(peer, request).await?;
+        response_error(response.error.take())?;
+        validate_empty_ack_response(&response)
     }
 
     async fn fetch_inventory_page(
@@ -1511,10 +1623,11 @@ async fn handle_connection(
     sync_store.serve_stream(&mut stream).await
 }
 
-async fn handle_sync_stream<S>(
+async fn handle_sync_stream_with_join_request_inbox<S>(
     stream: &mut S,
     store: Arc<Mutex<EventStore>>,
     blob_store: Option<Arc<BlobStore>>,
+    join_request_inbox: Option<Arc<dyn JoinRequestInbox>>,
 ) -> Result<(), NetError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -1522,8 +1635,9 @@ where
     let request_bytes = read_frame(stream).await?;
     let response = match decode_sync_request(&request_bytes)
         .map_err(|error| NetError::Protocol(error.to_string()))
-        .and_then(|request| handle_request(request, store, blob_store))
-    {
+        .and_then(|request| {
+            handle_request_with_join_request_inbox(request, store, blob_store, join_request_inbox)
+        }) {
         Ok(response) => response,
         Err(error) => sync_error_response(error),
     };
@@ -1623,10 +1737,20 @@ fn inventory_page_value(context: &str, value: u64) -> Result<usize, NetError> {
     usize::try_from(value).map_err(|_| NetError::Protocol(format!("{context} is too large")))
 }
 
+#[cfg(test)]
 fn handle_request(
     request: WireSyncRequest,
     store: Arc<Mutex<EventStore>>,
     blob_store: Option<Arc<BlobStore>>,
+) -> Result<WireSyncResponse, NetError> {
+    handle_request_with_join_request_inbox(request, store, blob_store, None)
+}
+
+fn handle_request_with_join_request_inbox(
+    request: WireSyncRequest,
+    store: Arc<Mutex<EventStore>>,
+    blob_store: Option<Arc<BlobStore>>,
+    join_request_inbox: Option<Arc<dyn JoinRequestInbox>>,
 ) -> Result<WireSyncResponse, NetError> {
     let kind = WireSyncRequestKind::try_from(request.kind)
         .map_err(|_| NetError::Protocol(format!("unknown sync request kind {}", request.kind)))?;
@@ -1812,6 +1936,53 @@ fn handle_request(
                 publish_events,
             )?;
 
+            Ok(WireSyncResponse {
+                event_ids: Vec::new(),
+                events: Vec::new(),
+                error: None,
+                blobs: Vec::new(),
+                blob_descriptors: Vec::new(),
+                blob_availability: Vec::new(),
+                event_envelopes: Vec::new(),
+                inventory_total_count: None,
+            })
+        }
+        WireSyncRequestKind::SubmitJoinRequest => {
+            validate_request_shape(
+                &request,
+                "submit-join-request",
+                AllowedRequestFields {
+                    events: true,
+                    workspace_id: true,
+                    ..AllowedRequestFields::empty()
+                },
+            )?;
+            validate_request_workspace_id_option(
+                "submit-join-request",
+                request.workspace_id.as_deref(),
+            )?;
+            validate_request_item_count(
+                "submit-join-request payload",
+                request.events.len(),
+                MAX_JOIN_REQUEST_SUBMISSIONS_PER_REQUEST,
+            )?;
+            if request.events.is_empty() {
+                return Err(NetError::Protocol(
+                    "submit-join-request payload is required".to_owned(),
+                ));
+            }
+            for submission in &request.events {
+                validate_join_request_submission_bytes(submission)?;
+            }
+            let Some(inbox) = join_request_inbox else {
+                return Err(NetError::Protocol(
+                    "join request inbox unavailable".to_owned(),
+                ));
+            };
+            let workspace_id = request.workspace_id.as_deref();
+            for submission in request.events {
+                inbox.submit_join_request(workspace_id, submission)?;
+            }
             Ok(WireSyncResponse {
                 event_ids: Vec::new(),
                 events: Vec::new(),
@@ -2020,6 +2191,22 @@ fn validate_request_items_unique(context: &str, values: &[String]) -> Result<(),
         if !seen.insert(value.as_str()) {
             return Err(NetError::Protocol(format!("{context} duplicate value")));
         }
+    }
+    Ok(())
+}
+
+fn validate_join_request_submission_bytes(request: &[u8]) -> Result<(), NetError> {
+    if request.is_empty() {
+        return Err(NetError::Protocol(
+            "submit-join-request payload is empty".to_owned(),
+        ));
+    }
+    if request.len() > MAX_JOIN_REQUEST_SUBMISSION_BYTES {
+        return Err(NetError::Protocol(format!(
+            "submit-join-request payload byte length {} exceeds max {}",
+            request.len(),
+            MAX_JOIN_REQUEST_SUBMISSION_BYTES
+        )));
     }
     Ok(())
 }
@@ -2818,11 +3005,21 @@ fn validate_replica_event_privacy_policy(event: &SignedEvent) -> Result<(), NetE
         } => validate_sealed_message_payload(sealed_markdown),
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -4429,6 +4626,34 @@ mod tests {
     }
 
     #[test]
+    fn submit_join_request_requires_configured_inbox_before_event_store_lock() {
+        let mut request = empty_sync_request(WireSyncRequestKind::SubmitJoinRequest);
+        request.workspace_id = Some("wrk_allowed".to_owned());
+        request.events = vec![br#"{"kind":"chaft.workspace-join-request.v1"}"#.to_vec()];
+
+        let error = handle_request(request, poisoned_event_store(), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("join request inbox unavailable"));
+        assert!(!error.contains("event store lock poisoned"));
+    }
+
+    #[test]
+    fn submit_join_request_rejects_oversized_payload_before_event_store_lock() {
+        let mut request = empty_sync_request(WireSyncRequestKind::SubmitJoinRequest);
+        request.workspace_id = Some("wrk_allowed".to_owned());
+        request.events = vec![vec![b'x'; MAX_JOIN_REQUEST_SUBMISSION_BYTES + 1]];
+
+        let error = handle_request(request, poisoned_event_store(), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("submit-join-request payload byte length"));
+        assert!(!error.contains("event store lock poisoned"));
+    }
+
+    #[test]
     fn fetch_events_request_rejects_unexpected_blob_fields_before_event_store_lock() {
         let mut request = empty_sync_request(WireSyncRequestKind::FetchEvents);
         request.event_ids = vec!["evt_allowed".to_owned()];
@@ -5530,6 +5755,7 @@ mod tests {
             channels: Vec::new(),
             messages: Vec::new(),
             event_channels: Vec::new(),
+            person_device_links: Vec::new(),
         };
         identity.sign_trust_snapshot(snapshot, root_event).unwrap()
     }

@@ -218,6 +218,7 @@ async fn partial_replica_accepts_message_with_compact_trust_snapshot() {
                 }],
                 messages: Vec::new(),
                 event_channels: Vec::new(),
+                person_device_links: Vec::new(),
             },
             root,
         )
@@ -304,6 +305,7 @@ async fn partial_replica_rejects_forged_compact_trust_snapshot() {
                 }],
                 messages: Vec::new(),
                 event_channels: Vec::new(),
+                person_device_links: Vec::new(),
             },
             root,
         )

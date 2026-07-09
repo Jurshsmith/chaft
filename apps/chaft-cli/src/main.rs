@@ -19,7 +19,8 @@ use chaft_types::{
     ChannelId, DeviceId, DeviceKeyPackageId, EventBody, EventId, MessageId,
     PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES,
     PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES, ReplicaStorageClass,
-    SignableEvent, SignedEvent, WorkspaceId, WorkspaceRole, is_canonical_event_id_str,
+    SignableEvent, SignedEvent, WorkspaceAccessPolicy, WorkspaceId, WorkspaceInviteResolution,
+    WorkspaceJoinRequestResolution, WorkspaceRole, is_canonical_event_id_str,
     peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
     validate_channel_id_str, validate_device_id_str, validate_device_key_package_id_str,
     validate_event_id_str, validate_message_id_str, validate_workspace_id_str,
@@ -58,6 +59,14 @@ enum Command {
         name: String,
         #[arg(long, default_value = "general")]
         channel: String,
+        #[arg(long, value_enum, default_value_t = CliWorkspaceAccessPolicy::InviteOnly)]
+        access_policy: CliWorkspaceAccessPolicy,
+    },
+    UpdateWorkspaceAccessPolicy {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long, value_enum)]
+        access_policy: CliWorkspaceAccessPolicy,
     },
     CreateChannel {
         #[arg(long)]
@@ -66,6 +75,14 @@ enum Command {
         name: String,
         #[arg(long = "private")]
         is_private: bool,
+    },
+    ArchiveChannel {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        channel_id: String,
+        #[arg(long)]
+        restore: bool,
     },
     UpdateDeviceProfile {
         #[arg(long)]
@@ -276,6 +293,70 @@ enum Command {
         #[arg(long, value_enum, default_value_t = CliWorkspaceRole::Member)]
         role: CliWorkspaceRole,
     },
+    RecordJoinRequest {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        device_id: String,
+        #[arg(long, default_value = "")]
+        display_name: String,
+        #[arg(long, default_value = "")]
+        note: String,
+        #[arg(long, default_value = "")]
+        source_type: String,
+        #[arg(long, default_value = "")]
+        source_invite_id: String,
+        #[arg(long, default_value = "")]
+        source_display_name: String,
+        #[arg(long, default_value = "")]
+        source_approval_policy: String,
+    },
+    RecordInvite {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        invite_id: String,
+        #[arg(long)]
+        device_id: String,
+        #[arg(long, default_value = "")]
+        display_name: String,
+        #[arg(long, value_enum, default_value_t = CliWorkspaceRole::Member)]
+        role: CliWorkspaceRole,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long, default_value = "")]
+        expires_at: String,
+        #[arg(long, default_value = "preapproved")]
+        approval_policy: String,
+        #[arg(long, default_value = "needs_reachable_teammate")]
+        sync_expectation: String,
+    },
+    ResolveInvite {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        invite_id: String,
+        #[arg(long, value_enum)]
+        resolution: CliInviteResolution,
+    },
+    ResolveJoinRequest {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long, value_enum)]
+        resolution: CliJoinRequestResolution,
+    },
+    UpdateMemberRole {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        device_id: String,
+        #[arg(long, value_enum)]
+        role: CliWorkspaceRole,
+    },
     RemoveMember {
         #[arg(long)]
         workspace_id: String,
@@ -460,6 +541,53 @@ impl From<CliWorkspaceRole> for WorkspaceRole {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliWorkspaceAccessPolicy {
+    InviteOnly,
+    RequestAccess,
+    Discoverable,
+}
+
+impl From<CliWorkspaceAccessPolicy> for WorkspaceAccessPolicy {
+    fn from(policy: CliWorkspaceAccessPolicy) -> Self {
+        match policy {
+            CliWorkspaceAccessPolicy::InviteOnly => Self::InviteOnly,
+            CliWorkspaceAccessPolicy::RequestAccess => Self::RequestAccess,
+            CliWorkspaceAccessPolicy::Discoverable => Self::Discoverable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliJoinRequestResolution {
+    Approved,
+    Declined,
+    Revoked,
+}
+
+impl From<CliJoinRequestResolution> for WorkspaceJoinRequestResolution {
+    fn from(resolution: CliJoinRequestResolution) -> Self {
+        match resolution {
+            CliJoinRequestResolution::Approved => Self::Approved,
+            CliJoinRequestResolution::Declined => Self::Declined,
+            CliJoinRequestResolution::Revoked => Self::Revoked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliInviteResolution {
+    Revoked,
+}
+
+impl From<CliInviteResolution> for WorkspaceInviteResolution {
+    fn from(resolution: CliInviteResolution) -> Self {
+        match resolution {
+            CliInviteResolution::Revoked => Self::Revoked,
+        }
+    }
+}
+
 #[cfg(windows)]
 const WINDOWS_CLI_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -506,13 +634,33 @@ async fn run_cli() -> Result<()> {
             let workspaces = runtime.list_workspaces()?;
             println!("{}", serde_json::to_string_pretty(&workspaces)?);
         }
-        Command::InitWorkspace { name, channel } => {
+        Command::InitWorkspace {
+            name,
+            channel,
+            access_policy,
+        } => {
             let runtime = open_runtime(
                 &data_dir,
                 identity_file.clone(),
                 cli.identity_passphrase.as_deref(),
             )?;
-            let created = runtime.create_workspace(name, channel)?;
+            let created =
+                runtime.create_workspace_with_access_policy(name, channel, access_policy.into())?;
+            println!("{}", serde_json::to_string_pretty(&created)?);
+        }
+        Command::UpdateWorkspaceAccessPolicy {
+            workspace_id,
+            access_policy,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let created = runtime.update_workspace_access_policy(
+                workspace_id_arg(workspace_id)?,
+                access_policy.into(),
+            )?;
             println!("{}", serde_json::to_string_pretty(&created)?);
         }
         Command::CreateChannel {
@@ -528,6 +676,23 @@ async fn run_cli() -> Result<()> {
             let created =
                 runtime.create_channel(workspace_id_arg(workspace_id)?, name, is_private)?;
             println!("{}", serde_json::to_string_pretty(&created)?);
+        }
+        Command::ArchiveChannel {
+            workspace_id,
+            channel_id,
+            restore,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let updated = runtime.update_channel_archive(
+                workspace_id_arg(workspace_id)?,
+                channel_id_arg(channel_id)?,
+                !restore,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         Command::UpdateDeviceProfile {
             workspace_id,
@@ -1013,6 +1178,115 @@ async fn run_cli() -> Result<()> {
                 role.into(),
             )?;
             println!("{}", serde_json::to_string_pretty(&invited)?);
+        }
+        Command::RecordJoinRequest {
+            workspace_id,
+            request_id,
+            device_id,
+            display_name,
+            note,
+            source_type,
+            source_invite_id,
+            source_display_name,
+            source_approval_policy,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let recorded = runtime.record_workspace_join_request(
+                workspace_id_arg(workspace_id)?,
+                request_id,
+                device_id_arg(device_id)?,
+                display_name,
+                note,
+                source_type,
+                source_invite_id,
+                source_display_name,
+                source_approval_policy,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&recorded)?);
+        }
+        Command::RecordInvite {
+            workspace_id,
+            invite_id,
+            device_id,
+            display_name,
+            role,
+            request_id,
+            expires_at,
+            approval_policy,
+            sync_expectation,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let recorded = runtime.record_workspace_invite(
+                workspace_id_arg(workspace_id)?,
+                invite_id,
+                device_id_arg(device_id)?,
+                display_name,
+                role.into(),
+                request_id,
+                expires_at,
+                approval_policy,
+                sync_expectation,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&recorded)?);
+        }
+        Command::ResolveInvite {
+            workspace_id,
+            invite_id,
+            resolution,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let resolved = runtime.resolve_workspace_invite(
+                workspace_id_arg(workspace_id)?,
+                invite_id,
+                resolution.into(),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&resolved)?);
+        }
+        Command::ResolveJoinRequest {
+            workspace_id,
+            request_id,
+            resolution,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let resolved = runtime.resolve_workspace_join_request(
+                workspace_id_arg(workspace_id)?,
+                request_id,
+                resolution.into(),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&resolved)?);
+        }
+        Command::UpdateMemberRole {
+            workspace_id,
+            device_id,
+            role,
+        } => {
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let updated = runtime.update_member_role(
+                workspace_id_arg(workspace_id)?,
+                device_id_arg(device_id)?,
+                role.into(),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         Command::RemoveMember {
             workspace_id,

@@ -4,11 +4,13 @@ use std::{
 };
 
 use chaft_core::{
-    CoreError, MaterializationReport, MessageView, MissingHistoryGap, WorkspaceState,
+    CoreError, MaterializationReport, MessageView, MissingHistoryGap, WorkspaceInviteStatus,
+    WorkspaceJoinRequestStatus, WorkspaceState,
 };
 use chaft_identity::verify_self_contained_event;
 use chaft_types::{
-    ChannelId, DeviceId, EventBody, EventId, MessageId, SignedEvent, WorkspaceId, WorkspaceRole,
+    ChannelId, ContentKeyScope, DeviceId, EventBody, EventId, MessageId, SignedEvent,
+    WorkspaceAccessPolicy, WorkspaceId, WorkspaceRole,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,9 +18,12 @@ const MAX_KEY_PACKAGE_SNAPSHOT_ROWS_PER_DEVICE_PROTOCOL: usize = 4;
 const MAX_CHANNEL_SNAPSHOT_ROWS: usize = 128;
 const MAX_PROFILE_SNAPSHOT_ROWS: usize = 256;
 const MAX_MEMBER_SNAPSHOT_ROWS: usize = 128;
+const MAX_INVITE_SNAPSHOT_ROWS: usize = 64;
+const MAX_JOIN_REQUEST_SNAPSHOT_ROWS: usize = 64;
 const MAX_MISSING_HISTORY_SNAPSHOT_ROWS: usize = 64;
 const MAX_INVALID_SIGNATURE_SNAPSHOT_ROWS: usize = 64;
 const MAX_PEER_ENDPOINT_SNAPSHOT_ROWS_PER_KIND: usize = 32;
+const MAX_CHANNEL_ACCESS_HISTORY_ROWS: usize = 8;
 pub const MAX_TIMELINE_WINDOW_ROWS: usize = 500;
 const MAX_TIMELINE_ATTACHMENT_SNAPSHOT_ROWS: usize = 8;
 const MAX_TIMELINE_REACTION_SNAPSHOT_ROWS: usize = 12;
@@ -30,14 +35,23 @@ const MS_PER_UTC_DAY: i64 = 86_400_000;
 pub struct WorkspaceSnapshot {
     pub workspace_id: String,
     pub name: String,
+    pub access_policy: WorkspaceAccessPolicy,
     pub channels: Vec<ChannelSnapshot>,
     pub profiles: Vec<DeviceProfileSnapshot>,
+    pub person_profiles: Vec<PersonProfileSnapshot>,
+    pub person_device_links: Vec<PersonDeviceLinkSnapshot>,
     pub members: Vec<WorkspaceMemberSnapshot>,
+    pub invites: Vec<WorkspaceInviteSnapshot>,
+    pub join_requests: Vec<WorkspaceJoinRequestSnapshot>,
     pub key_packages: Vec<DeviceKeyPackageSnapshot>,
     pub peer_endpoints: Vec<PeerEndpointSnapshot>,
     pub channel_count: usize,
     pub profile_count: usize,
+    pub person_profile_count: usize,
+    pub person_device_link_count: usize,
     pub member_count: usize,
+    pub invite_count: usize,
+    pub join_request_count: usize,
     pub key_package_count: usize,
     pub peer_endpoint_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,9 +69,31 @@ pub struct WorkspaceSnapshot {
 pub struct ChannelSnapshot {
     pub channel_id: String,
     pub name: String,
+    pub topic: String,
+    pub archived: bool,
     pub is_private: bool,
+    pub member_count: usize,
+    pub member_device_ids: Vec<String>,
+    pub direct_message: bool,
+    pub direct_message_participant_device_ids: Vec<String>,
     pub unread_count: u32,
     pub latest_activity: Option<ChannelActivitySnapshot>,
+    #[serde(default)]
+    pub access_history: Vec<ChannelAccessHistorySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelAccessHistorySnapshot {
+    pub event_id: String,
+    pub kind: String,
+    pub actor_device_id: String,
+    pub actor_display_name: Option<String>,
+    pub target_device_id: Option<String>,
+    pub target_display_name: Option<String>,
+    pub physical_ms: i64,
+    pub title: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,12 +141,79 @@ pub struct DeviceProfileSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PersonProfileSnapshot {
+    pub person_id: String,
+    pub display_name: String,
+    pub updated_event_id: String,
+    pub updated_by_device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonDeviceLinkSnapshot {
+    pub person_id: String,
+    pub person_display_name: Option<String>,
+    pub device_id: String,
+    pub device_display_name: Option<String>,
+    pub linked_event_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceMemberSnapshot {
     pub device_id: String,
     pub role: WorkspaceRole,
     pub display_name: Option<String>,
     pub profile_event_id: Option<String>,
     pub membership_event_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceJoinRequestSnapshot {
+    pub request_id: String,
+    pub requester_device_id: String,
+    pub requester_display_name: Option<String>,
+    pub display_name: String,
+    pub note: String,
+    pub source_type: String,
+    pub source_invite_id: String,
+    pub source_display_name: String,
+    pub source_approval_policy: String,
+    pub status: String,
+    pub requested_event_id: String,
+    pub requested_by_device_id: String,
+    pub requested_by_display_name: Option<String>,
+    pub requested_physical_ms: i64,
+    pub resolved_event_id: Option<String>,
+    pub resolved_by_device_id: Option<String>,
+    pub resolved_by_display_name: Option<String>,
+    pub resolved_physical_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInviteSnapshot {
+    pub invite_id: String,
+    pub invitee_device_id: String,
+    pub invitee_display_name: Option<String>,
+    pub display_name: String,
+    pub role: WorkspaceRole,
+    pub request_id: Option<String>,
+    pub expires_at: String,
+    pub approval_policy: String,
+    pub sync_expectation: String,
+    pub status: String,
+    pub created_event_id: String,
+    pub created_by_device_id: String,
+    pub created_by_display_name: Option<String>,
+    pub created_physical_ms: i64,
+    pub accepted_event_id: Option<String>,
+    pub accepted_physical_ms: Option<i64>,
+    pub resolved_event_id: Option<String>,
+    pub resolved_by_device_id: Option<String>,
+    pub resolved_by_display_name: Option<String>,
+    pub resolved_physical_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +293,8 @@ pub struct TimelineItem {
     pub grouped_with_previous: bool,
     #[serde(default)]
     pub day_boundary: bool,
+    #[serde(default)]
+    pub body_decrypted: bool,
 }
 
 const THREAD_REPLY_PREVIEW_LIMIT: usize = 5;
@@ -521,9 +626,59 @@ impl WorkspaceSnapshot {
         let profile_count = profiles.len();
         retain_bounded_profiles(&mut profiles, render_options.reader_device_id);
 
+        let mut person_profiles = state
+            .person_profiles
+            .values()
+            .map(|profile| PersonProfileSnapshot {
+                person_id: profile.person_id.0.clone(),
+                display_name: profile.display_name.clone(),
+                updated_event_id: profile.updated_event_id.0.clone(),
+                updated_by_device_id: profile.updated_by_device_id.0.clone(),
+            })
+            .collect::<Vec<_>>();
+        person_profiles.sort_by(|left, right| {
+            left.display_name
+                .cmp(&right.display_name)
+                .then_with(|| left.person_id.cmp(&right.person_id))
+        });
+        let person_profile_count = person_profiles.len();
+        person_profiles.truncate(MAX_PROFILE_SNAPSHOT_ROWS);
+
+        let mut person_device_links = state
+            .person_device_links
+            .values()
+            .map(|link| PersonDeviceLinkSnapshot {
+                person_id: link.person_id.0.clone(),
+                person_display_name: state
+                    .person_profiles
+                    .get(&link.person_id)
+                    .and_then(|profile| non_empty_string(profile.display_name.clone())),
+                device_id: link.device_id.0.clone(),
+                device_display_name: profile_display_name(state, &link.device_id),
+                linked_event_id: link.linked_event_id.0.clone(),
+            })
+            .collect::<Vec<_>>();
+        person_device_links.sort_by(|left, right| {
+            left.person_display_name
+                .cmp(&right.person_display_name)
+                .then_with(|| left.person_id.cmp(&right.person_id))
+                .then_with(|| left.device_display_name.cmp(&right.device_display_name))
+                .then_with(|| left.device_id.cmp(&right.device_id))
+        });
+        let person_device_link_count = person_device_links.len();
+        person_device_links.truncate(MAX_PROFILE_SNAPSHOT_ROWS);
+
         let mut members = member_snapshots_from_state(state);
         let member_count = members.len();
         retain_bounded_members(&mut members);
+
+        let mut invites = invite_snapshots_from_state(state);
+        let invite_count = invites.len();
+        retain_bounded_invites(&mut invites);
+
+        let mut join_requests = join_request_snapshots_from_state(state);
+        let join_request_count = join_requests.len();
+        retain_bounded_join_requests(&mut join_requests);
 
         let mut key_packages = state
             .key_packages
@@ -630,14 +785,23 @@ impl WorkspaceSnapshot {
         Self {
             workspace_id: workspace_id.0,
             name: state.name.clone().unwrap_or_else(|| "Chaft".to_owned()),
+            access_policy: state.access_policy,
             channels,
             profiles,
+            person_profiles,
+            person_device_links,
             members,
+            invites,
+            join_requests,
             key_packages,
             peer_endpoints,
             channel_count,
             profile_count,
+            person_profile_count,
+            person_device_link_count,
             member_count,
+            invite_count,
+            join_request_count,
             key_package_count,
             peer_endpoint_count,
             timeline_channel_id: render_options
@@ -905,6 +1069,7 @@ fn channel_snapshots_from_state_report(
         reader_device_id,
         body_overrides_by_event_id,
     );
+    let access_history_by_channel = channel_access_history_by_channel(state, events_by_id);
     let mut channels = state
         .channels
         .values()
@@ -916,7 +1081,25 @@ fn channel_snapshots_from_state_report(
         .map(|channel| ChannelSnapshot {
             channel_id: channel.channel_id.0.clone(),
             name: channel.name.clone(),
+            topic: channel.topic.clone(),
+            archived: channel.archived,
             is_private: channel.is_private,
+            member_count: if channel.is_private {
+                channel.member_device_ids.len()
+            } else {
+                state.members.len()
+            },
+            member_device_ids: channel
+                .member_device_ids
+                .iter()
+                .map(|device_id| device_id.0.clone())
+                .collect(),
+            direct_message: channel.direct_message,
+            direct_message_participant_device_ids: channel
+                .direct_message_participant_device_ids
+                .iter()
+                .map(|device_id| device_id.0.clone())
+                .collect(),
             unread_count: channel_projection
                 .unread_counts
                 .get(&channel.channel_id)
@@ -926,10 +1109,206 @@ fn channel_snapshots_from_state_report(
                 .latest_activity
                 .get(&channel.channel_id)
                 .cloned(),
+            access_history: access_history_by_channel
+                .get(&channel.channel_id)
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     sort_channel_snapshots(&mut channels);
     channels
+}
+
+fn channel_access_history_by_channel(
+    state: &WorkspaceState,
+    events_by_id: &HashMap<&str, &SignedEvent>,
+) -> HashMap<ChannelId, Vec<ChannelAccessHistorySnapshot>> {
+    let mut rows_by_channel: HashMap<ChannelId, Vec<ChannelAccessHistorySnapshot>> = HashMap::new();
+    let mut events = events_by_id.values().copied().collect::<Vec<_>>();
+    events.sort_by(|left, right| {
+        left.event
+            .timestamp
+            .cmp(&right.event.timestamp)
+            .then_with(|| left.event_id.0.cmp(&right.event_id.0))
+    });
+
+    for event in events {
+        let Some((channel_id, kind, target_device_id, title, detail)) =
+            channel_access_history_row_parts(state, event)
+        else {
+            continue;
+        };
+        rows_by_channel
+            .entry(channel_id)
+            .or_default()
+            .push(ChannelAccessHistorySnapshot {
+                event_id: event.event_id.0.clone(),
+                kind,
+                actor_device_id: event.event.author_device_id.0.clone(),
+                actor_display_name: profile_display_name(state, &event.event.author_device_id),
+                target_device_id: target_device_id
+                    .as_ref()
+                    .map(|device_id| device_id.0.clone()),
+                target_display_name: target_device_id
+                    .as_ref()
+                    .and_then(|device_id| profile_display_name(state, device_id)),
+                physical_ms: event.event.timestamp.physical_ms,
+                title,
+                detail,
+            });
+    }
+
+    for rows in rows_by_channel.values_mut() {
+        rows.sort_by(|left, right| {
+            right
+                .physical_ms
+                .cmp(&left.physical_ms)
+                .then_with(|| right.event_id.cmp(&left.event_id))
+        });
+        rows.truncate(MAX_CHANNEL_ACCESS_HISTORY_ROWS);
+    }
+
+    rows_by_channel
+}
+
+fn channel_access_history_row_parts(
+    state: &WorkspaceState,
+    event: &SignedEvent,
+) -> Option<(ChannelId, String, Option<DeviceId>, String, String)> {
+    match &event.event.body {
+        EventBody::ChannelCreated {
+            channel_id,
+            is_private,
+            ..
+        } => {
+            if !is_private {
+                return None;
+            }
+            Some((
+                channel_id.clone(),
+                "created".to_owned(),
+                Some(event.event.author_device_id.clone()),
+                "Private room created".to_owned(),
+                "Initial access started with the creator.".to_owned(),
+            ))
+        }
+        EventBody::DirectMessageChannelCreated { channel_id, .. } => Some((
+            channel_id.clone(),
+            "created".to_owned(),
+            Some(event.event.author_device_id.clone()),
+            "Direct message created".to_owned(),
+            "Initial access started with the participants.".to_owned(),
+        )),
+        EventBody::ChannelMemberAdded {
+            channel_id,
+            member_device_id,
+        } => Some((
+            channel_id.clone(),
+            "added".to_owned(),
+            Some(member_device_id.clone()),
+            "Access added".to_owned(),
+            format!(
+                "{} can read new messages in this room.",
+                access_history_device_label(state, member_device_id)
+            ),
+        )),
+        EventBody::ChannelMemberRemoved {
+            channel_id,
+            member_device_id,
+        } => Some((
+            channel_id.clone(),
+            "removed".to_owned(),
+            Some(member_device_id.clone()),
+            "Access removed".to_owned(),
+            format!(
+                "{} can no longer read new messages after message protection is refreshed.",
+                access_history_device_label(state, member_device_id)
+            ),
+        )),
+        EventBody::OpenMlsChannelGroupMemberAdded {
+            channel_id,
+            invitee_device_id,
+            ..
+        } => Some((
+            channel_id.clone(),
+            "secure_group_added".to_owned(),
+            Some(invitee_device_id.clone()),
+            "Private-room access prepared".to_owned(),
+            format!(
+                "{} received updated private-room access.",
+                access_history_device_label(state, invitee_device_id)
+            ),
+        )),
+        EventBody::OpenMlsChannelGroupMemberRemoved {
+            channel_id,
+            removed_device_id,
+            ..
+        } => Some((
+            channel_id.clone(),
+            "secure_group_removed".to_owned(),
+            Some(removed_device_id.clone()),
+            "Private-room access removed".to_owned(),
+            format!(
+                "{} was removed from updated private-room access.",
+                access_history_device_label(state, removed_device_id)
+            ),
+        )),
+        EventBody::OpenMlsChannelGroupSelfUpdated { channel_id, .. } => Some((
+            channel_id.clone(),
+            "secure_group_refreshed".to_owned(),
+            None,
+            "Private-room access refreshed".to_owned(),
+            "This device refreshed its private-room access.".to_owned(),
+        )),
+        EventBody::ContentKeyEpochPublished {
+            scope: ContentKeyScope::Channel { channel_id },
+            previous_key_id,
+            ..
+        } => Some((
+            channel_id.clone(),
+            "key_refreshed".to_owned(),
+            None,
+            "Message protection refreshed".to_owned(),
+            if previous_key_id.is_some() {
+                "New private messages use refreshed protection.".to_owned()
+            } else {
+                "Private messages are protected from here forward.".to_owned()
+            },
+        )),
+        EventBody::ContentKeyEpochPublished { .. } => None,
+        EventBody::WorkspaceCreated { .. }
+        | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
+        | EventBody::MemberRemoved { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
+        | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
+        | EventBody::DeviceKeyPackagePublished { .. }
+        | EventBody::PeerEndpointPublished { .. }
+        | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
+        | EventBody::OpenMlsWorkspaceGroupMemberRemoved { .. }
+        | EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. }
+        | EventBody::MessageCreated { .. }
+        | EventBody::MessageReplyCreated { .. }
+        | EventBody::MessageCreatedEncrypted { .. }
+        | EventBody::MessageReplyCreatedEncrypted { .. }
+        | EventBody::MessageEdited { .. }
+        | EventBody::MessageEditedEncrypted { .. }
+        | EventBody::MessageDeleted { .. }
+        | EventBody::ReactionAdded { .. }
+        | EventBody::ReactionRemoved { .. }
+        | EventBody::ReadMarkerUpdated { .. } => None,
+    }
+}
+
+fn access_history_device_label(state: &WorkspaceState, device_id: &DeviceId) -> String {
+    profile_display_name(state, device_id).unwrap_or_else(|| format!("Device {}", device_id.0))
 }
 
 fn sort_channel_snapshots(channels: &mut [ChannelSnapshot]) {
@@ -1036,6 +1415,89 @@ fn member_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceMemberSna
     members
 }
 
+fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSnapshot> {
+    let mut invites = state
+        .invites
+        .values()
+        .map(|invite| WorkspaceInviteSnapshot {
+            invite_id: invite.invite_id.clone(),
+            invitee_device_id: invite.invitee_device_id.0.clone(),
+            invitee_display_name: profile_display_name(state, &invite.invitee_device_id)
+                .or_else(|| non_empty_string(invite.display_name.clone())),
+            display_name: invite.display_name.clone(),
+            role: invite.role,
+            request_id: invite.request_id.clone(),
+            expires_at: invite.expires_at.clone(),
+            approval_policy: invite.approval_policy.clone(),
+            sync_expectation: invite.sync_expectation.clone(),
+            status: invite_status_label(invite.status).to_owned(),
+            created_event_id: invite.created_event_id.0.clone(),
+            created_by_device_id: invite.created_by_device_id.0.clone(),
+            created_by_display_name: profile_display_name(state, &invite.created_by_device_id),
+            created_physical_ms: invite.created_physical_ms,
+            accepted_event_id: invite
+                .accepted_event_id
+                .as_ref()
+                .map(|event_id| event_id.0.clone()),
+            accepted_physical_ms: invite.accepted_physical_ms,
+            resolved_event_id: invite
+                .resolved_event_id
+                .as_ref()
+                .map(|event_id| event_id.0.clone()),
+            resolved_by_device_id: invite
+                .resolved_by_device_id
+                .as_ref()
+                .map(|device_id| device_id.0.clone()),
+            resolved_by_display_name: invite
+                .resolved_by_device_id
+                .as_ref()
+                .and_then(|device_id| profile_display_name(state, device_id)),
+            resolved_physical_ms: invite.resolved_physical_ms,
+        })
+        .collect::<Vec<_>>();
+    sort_invite_snapshots(&mut invites);
+    invites
+}
+
+fn join_request_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceJoinRequestSnapshot> {
+    let mut requests = state
+        .join_requests
+        .values()
+        .map(|request| WorkspaceJoinRequestSnapshot {
+            request_id: request.request_id.clone(),
+            requester_device_id: request.requester_device_id.0.clone(),
+            requester_display_name: profile_display_name(state, &request.requester_device_id)
+                .or_else(|| non_empty_string(request.display_name.clone())),
+            display_name: request.display_name.clone(),
+            note: request.note.clone(),
+            source_type: request.source_type.clone(),
+            source_invite_id: request.source_invite_id.clone(),
+            source_display_name: request.source_display_name.clone(),
+            source_approval_policy: request.source_approval_policy.clone(),
+            status: join_request_status_label(request.status).to_owned(),
+            requested_event_id: request.requested_event_id.0.clone(),
+            requested_by_device_id: request.requested_by_device_id.0.clone(),
+            requested_by_display_name: profile_display_name(state, &request.requested_by_device_id),
+            requested_physical_ms: request.requested_physical_ms,
+            resolved_event_id: request
+                .resolved_event_id
+                .as_ref()
+                .map(|event_id| event_id.0.clone()),
+            resolved_by_device_id: request
+                .resolved_by_device_id
+                .as_ref()
+                .map(|device_id| device_id.0.clone()),
+            resolved_by_display_name: request
+                .resolved_by_device_id
+                .as_ref()
+                .and_then(|device_id| profile_display_name(state, device_id)),
+            resolved_physical_ms: request.resolved_physical_ms,
+        })
+        .collect::<Vec<_>>();
+    sort_join_request_snapshots(&mut requests);
+    requests
+}
+
 fn sort_member_snapshots(members: &mut [WorkspaceMemberSnapshot]) {
     members.sort_by(|left, right| {
         role_rank(left.role)
@@ -1049,8 +1511,34 @@ fn sort_member_snapshots(members: &mut [WorkspaceMemberSnapshot]) {
     });
 }
 
+fn sort_invite_snapshots(invites: &mut [WorkspaceInviteSnapshot]) {
+    invites.sort_by(|left, right| {
+        invite_status_rank(&left.status)
+            .cmp(&invite_status_rank(&right.status))
+            .then_with(|| right.created_physical_ms.cmp(&left.created_physical_ms))
+            .then_with(|| left.invite_id.cmp(&right.invite_id))
+    });
+}
+
+fn sort_join_request_snapshots(requests: &mut [WorkspaceJoinRequestSnapshot]) {
+    requests.sort_by(|left, right| {
+        join_request_status_rank(&left.status)
+            .cmp(&join_request_status_rank(&right.status))
+            .then_with(|| right.requested_physical_ms.cmp(&left.requested_physical_ms))
+            .then_with(|| left.request_id.cmp(&right.request_id))
+    });
+}
+
 fn retain_bounded_members(members: &mut Vec<WorkspaceMemberSnapshot>) {
     members.truncate(MAX_MEMBER_SNAPSHOT_ROWS);
+}
+
+fn retain_bounded_invites(invites: &mut Vec<WorkspaceInviteSnapshot>) {
+    invites.truncate(MAX_INVITE_SNAPSHOT_ROWS);
+}
+
+fn retain_bounded_join_requests(requests: &mut Vec<WorkspaceJoinRequestSnapshot>) {
+    requests.truncate(MAX_JOIN_REQUEST_SNAPSHOT_ROWS);
 }
 
 fn member_page_from_sorted_members(
@@ -1386,8 +1874,16 @@ fn applied_event_has_timeline_item(
         | EventBody::MessageReplyCreatedEncrypted { message_id, .. } => message_id,
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -1398,6 +1894,8 @@ fn applied_event_has_timeline_item(
         | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
         | EventBody::ContentKeyEpochPublished { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::MessageEdited { .. }
@@ -1639,8 +2137,16 @@ fn event_timeline_message_id(event: &SignedEvent) -> Option<&MessageId> {
         | EventBody::MessageReplyCreatedEncrypted { message_id, .. } => Some(message_id),
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -1651,6 +2157,8 @@ fn event_timeline_message_id(event: &SignedEvent) -> Option<&MessageId> {
         | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
         | EventBody::ContentKeyEpochPublished { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::MessageEdited { .. }
@@ -1704,8 +2212,16 @@ fn channel_activity_body_override_event_id(
         EventBody::MessageDeleted { message_id } => (message_id, false),
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -1716,6 +2232,8 @@ fn channel_activity_body_override_event_id(
         | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
         | EventBody::ContentKeyEpochPublished { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::ReadMarkerUpdated { .. } => return None,
@@ -1752,8 +2270,16 @@ fn collect_applied_timeline_body_override_event_ids(
         | EventBody::MessageReplyCreatedEncrypted { message_id, .. } => message_id,
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -1764,6 +2290,8 @@ fn collect_applied_timeline_body_override_event_ids(
         | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
         | EventBody::ContentKeyEpochPublished { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::MessageEdited { .. }
@@ -1813,6 +2341,53 @@ fn thread_reply_preview_body_override_event_ids(
 
 fn body_override_event_id_for_message(message: &MessageView) -> Option<EventId> {
     (!message.deleted && message.sealed_markdown.is_some()).then(|| message.author_event_id.clone())
+}
+
+fn join_request_status_label(status: WorkspaceJoinRequestStatus) -> &'static str {
+    match status {
+        WorkspaceJoinRequestStatus::Waiting => "waiting",
+        WorkspaceJoinRequestStatus::Approved => "approved",
+        WorkspaceJoinRequestStatus::Declined => "declined",
+        WorkspaceJoinRequestStatus::Revoked => "revoked",
+    }
+}
+
+fn invite_status_label(status: WorkspaceInviteStatus) -> &'static str {
+    match status {
+        WorkspaceInviteStatus::Invited => "invited",
+        WorkspaceInviteStatus::Accepted => "accepted",
+        WorkspaceInviteStatus::Revoked => "revoked",
+    }
+}
+
+fn invite_status_rank(status: &str) -> u8 {
+    match status {
+        "invited" => 0,
+        "accepted" => 1,
+        "revoked" => 2,
+        _ => 3,
+    }
+}
+
+fn join_request_status_rank(status: &str) -> u8 {
+    match status {
+        "waiting" => 0,
+        "approved" => 1,
+        "declined" => 2,
+        "revoked" => 3,
+        _ => 4,
+    }
+}
+
+fn profile_display_name(state: &WorkspaceState, device_id: &DeviceId) -> Option<String> {
+    state
+        .profiles
+        .get(device_id)
+        .and_then(|profile| non_empty_string(profile.display_name.clone()))
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
 }
 
 fn role_rank(role: WorkspaceRole) -> u8 {
@@ -2094,6 +2669,8 @@ fn timeline_item_for_applied_event(
 
             let encrypted = message.sealed_markdown.is_some();
             let deleted = message.deleted;
+            let body_decrypted =
+                !deleted && body_overrides_by_event_id.contains_key(&event.event_id.0);
             let body = if deleted {
                 "Message deleted".to_owned()
             } else if let Some(body) = body_overrides_by_event_id.get(&event.event_id.0) {
@@ -2166,12 +2743,21 @@ fn timeline_item_for_applied_event(
                 missing_parent_ids: Vec::new(),
                 grouped_with_previous: false,
                 day_boundary: false,
+                body_decrypted,
             })
         }
         EventBody::WorkspaceCreated { .. }
         | EventBody::MemberInvited { .. }
+        | EventBody::MemberRoleUpdated { .. }
+        | EventBody::WorkspaceAccessPolicyUpdated { .. }
+        | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteResolved { .. }
+        | EventBody::WorkspaceJoinRequestRecorded { .. }
+        | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::MemberRemoved { .. }
         | EventBody::DeviceProfileUpdated { .. }
+        | EventBody::PersonDeviceLinked { .. }
+        | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
         | EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
@@ -2182,6 +2768,8 @@ fn timeline_item_for_applied_event(
         | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
         | EventBody::ContentKeyEpochPublished { .. }
         | EventBody::ChannelCreated { .. }
+        | EventBody::DirectMessageChannelCreated { .. }
+        | EventBody::ChannelDetailsUpdated { .. }
         | EventBody::ChannelMemberAdded { .. }
         | EventBody::ChannelMemberRemoved { .. }
         | EventBody::MessageEdited { .. }
@@ -2319,9 +2907,14 @@ fn gap_timeline_item(gap: &MissingHistoryGap) -> TimelineItem {
         author_display_name: None,
         physical_ms: None,
         body: if gap.missing_parent_ids.is_empty() {
-            "Missing authorization context".to_owned()
+            "Chaft needs earlier access history before this can be shown.".to_owned()
         } else {
-            format!("Missing {} parent event(s)", gap.missing_parent_ids.len())
+            let missing_count = gap.missing_parent_ids.len();
+            format!(
+                "Chaft needs {} earlier item{} before this can be shown.",
+                missing_count,
+                if missing_count == 1 { "" } else { "s" }
+            )
         },
         attachment_count: 0,
         attachments: Vec::new(),
@@ -2337,6 +2930,7 @@ fn gap_timeline_item(gap: &MissingHistoryGap) -> TimelineItem {
             .collect(),
         grouped_with_previous: false,
         day_boundary: false,
+        body_decrypted: false,
     }
 }
 
@@ -2354,7 +2948,7 @@ fn invalid_signature_timeline_item(invalid: &InvalidSignatureSnapshot) -> Timeli
         author_device_id: Some(invalid.author_device_id.clone()),
         author_display_name: None,
         physical_ms: Some(invalid.physical_ms),
-        body: "Failed signature verification".to_owned(),
+        body: "Chaft could not verify this message. Ask an admin before trusting it.".to_owned(),
         attachment_count: 0,
         attachments: Vec::new(),
         reaction_count: 0,
@@ -2365,6 +2959,7 @@ fn invalid_signature_timeline_item(invalid: &InvalidSignatureSnapshot) -> Timeli
         missing_parent_ids: Vec::new(),
         grouped_with_previous: false,
         day_boundary: false,
+        body_decrypted: false,
     }
 }
 
@@ -2442,6 +3037,14 @@ mod tests {
             logical: 0,
         };
         signed(message)
+    }
+
+    fn timestamped_event(mut event: SignableEvent, physical_ms: i64) -> SignedEvent {
+        event.timestamp = HybridTimestamp {
+            physical_ms,
+            logical: 0,
+        };
+        signed(event)
     }
 
     #[test]
@@ -3427,6 +4030,70 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_includes_signed_person_identity_evidence() {
+        let workspace_id = WorkspaceId::new();
+        let device_id = DeviceId("dev_mira".to_owned());
+        let person_id = chaft_types::PersonId("person_mira".to_owned());
+        let workspace = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft Labs".to_owned(),
+            },
+        ));
+        let device_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::DeviceProfileUpdated {
+                display_name: "Mira's laptop".to_owned(),
+            },
+        ));
+        let person_link = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::PersonDeviceLinked {
+                person_id: person_id.clone(),
+                device_id: device_id.clone(),
+            },
+        ));
+        let person_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id,
+            EventBody::PersonProfileUpdated {
+                person_id: person_id.clone(),
+                display_name: "Mira Chen".to_owned(),
+            },
+        ));
+
+        let snapshot = WorkspaceSnapshot::from_events(
+            workspace_id,
+            &[workspace, device_profile, person_link, person_profile],
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.person_profile_count, 1);
+        assert_eq!(snapshot.person_device_link_count, 1);
+        assert_eq!(snapshot.person_profiles[0].person_id, person_id.0);
+        assert_eq!(snapshot.person_profiles[0].display_name, "Mira Chen");
+        assert_eq!(
+            snapshot.person_device_links[0]
+                .person_display_name
+                .as_deref(),
+            Some("Mira Chen")
+        );
+        assert_eq!(
+            snapshot.person_device_links[0]
+                .device_display_name
+                .as_deref(),
+            Some("Mira's laptop")
+        );
+    }
+
+    #[test]
     fn snapshot_caps_channel_rows_after_sorting_while_preserving_total_count() {
         let workspace_id = WorkspaceId("wrk_capped_channels".to_owned());
         let owner = DeviceId("dev_owner".to_owned());
@@ -4042,6 +4709,176 @@ mod tests {
         assert_eq!(snapshot.members[1].role, WorkspaceRole::Admin);
         assert_eq!(snapshot.members[1].display_name.as_deref(), Some("Nia"));
         assert!(snapshot.members[1].profile_event_id.is_some());
+    }
+
+    #[test]
+    fn snapshot_includes_workspace_join_requests() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let requester = DeviceId("dev_requester".to_owned());
+        let workspace = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft Labs".to_owned(),
+            },
+        ));
+        let request = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceJoinRequestRecorded {
+                request_id: "req_snapshot".to_owned(),
+                requester_device_id: requester,
+                display_name: "Rina".to_owned(),
+                note: "Product team".to_owned(),
+                source_type: "approval_invite".to_owned(),
+                source_invite_id: "inv_snapshot".to_owned(),
+                source_display_name: "Ada".to_owned(),
+                source_approval_policy: "admin_required".to_owned(),
+            },
+        ));
+        let owner_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Ada".to_owned(),
+            },
+        ));
+
+        let snapshot =
+            WorkspaceSnapshot::from_events(workspace_id, &[workspace, request, owner_profile])
+                .unwrap();
+
+        assert_eq!(snapshot.join_request_count, 1);
+        assert_eq!(snapshot.join_requests.len(), 1);
+        assert_eq!(snapshot.join_requests[0].request_id, "req_snapshot");
+        assert_eq!(snapshot.join_requests[0].display_name, "Rina");
+        assert_eq!(
+            snapshot.join_requests[0].requester_display_name.as_deref(),
+            Some("Rina")
+        );
+        assert_eq!(snapshot.join_requests[0].note, "Product team");
+        assert_eq!(snapshot.join_requests[0].source_type, "approval_invite");
+        assert_eq!(snapshot.join_requests[0].source_invite_id, "inv_snapshot");
+        assert_eq!(snapshot.join_requests[0].source_display_name, "Ada");
+        assert_eq!(
+            snapshot.join_requests[0].source_approval_policy,
+            "admin_required"
+        );
+        assert_eq!(snapshot.join_requests[0].status, "waiting");
+        assert_eq!(
+            snapshot.join_requests[0]
+                .requested_by_display_name
+                .as_deref(),
+            Some("Ada")
+        );
+    }
+
+    #[test]
+    fn snapshot_tracks_workspace_invites_until_invitee_activity_accepts() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let invitee = DeviceId("dev_invitee".to_owned());
+        let workspace = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft Labs".to_owned(),
+            },
+        ));
+        let owner_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DeviceProfileUpdated {
+                display_name: "Ada".to_owned(),
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: invitee.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_snapshot".to_owned(),
+                invitee_device_id: invitee.clone(),
+                display_name: "Rina".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: Some("req_snapshot".to_owned()),
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "endpoint_bootstrap".to_owned(),
+            },
+        ));
+        let invitee_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            invitee,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Rina Cole".to_owned(),
+            },
+        ));
+
+        let invited_snapshot = WorkspaceSnapshot::from_events(
+            workspace_id.clone(),
+            &[
+                workspace.clone(),
+                owner_profile.clone(),
+                member_invite.clone(),
+                invite.clone(),
+            ],
+        )
+        .unwrap();
+        let accepted_snapshot = WorkspaceSnapshot::from_events(
+            workspace_id,
+            &[
+                workspace,
+                owner_profile,
+                member_invite,
+                invite,
+                invitee_profile.clone(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(invited_snapshot.invite_count, 1);
+        assert_eq!(invited_snapshot.invites.len(), 1);
+        let invited = &invited_snapshot.invites[0];
+        assert_eq!(invited.invite_id, "inv_snapshot");
+        assert_eq!(invited.invitee_device_id, "dev_invitee");
+        assert_eq!(invited.invitee_display_name.as_deref(), Some("Rina"));
+        assert_eq!(invited.display_name, "Rina");
+        assert_eq!(invited.role, WorkspaceRole::Member);
+        assert_eq!(invited.request_id.as_deref(), Some("req_snapshot"));
+        assert_eq!(invited.approval_policy, "invite_file");
+        assert_eq!(invited.sync_expectation, "endpoint_bootstrap");
+        assert_eq!(invited.status, "invited");
+        assert_eq!(invited.created_by_display_name.as_deref(), Some("Ada"));
+        assert_eq!(invited.accepted_event_id, None);
+
+        let accepted = &accepted_snapshot.invites[0];
+        assert_eq!(accepted.status, "accepted");
+        assert_eq!(
+            accepted.accepted_event_id.as_deref(),
+            Some(invitee_profile.event_id.0.as_str())
+        );
+        assert_eq!(
+            accepted.accepted_physical_ms,
+            Some(invitee_profile.event.timestamp.physical_ms)
+        );
+        assert_eq!(accepted.invitee_display_name.as_deref(), Some("Rina Cole"));
     }
 
     #[test]
@@ -5133,10 +5970,264 @@ mod tests {
 
         assert_eq!(hidden.channels.len(), 1);
         assert_eq!(hidden.channels[0].channel_id, public_channel_id.0);
+        assert_eq!(hidden.channels[0].member_count, 2);
         assert!(hidden.timeline.is_empty());
         assert_eq!(visible.channels.len(), 2);
-        assert!(visible.channels.iter().any(|channel| channel.is_private));
+        let visible_private = visible
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == private_channel_id.0)
+            .expect("private channel should be visible after grant");
+        assert!(visible_private.is_private);
+        assert_eq!(visible_private.member_count, 2);
+        assert!(
+            visible_private
+                .member_device_ids
+                .contains(&"dev_owner".to_owned())
+        );
+        assert!(
+            visible_private
+                .member_device_ids
+                .contains(&"dev_member".to_owned())
+        );
         assert_eq!(visible.timeline[0].body, "private plan");
+    }
+
+    #[test]
+    fn channel_snapshot_includes_private_access_history() {
+        let workspace_id = WorkspaceId("wrk_access_history".to_owned());
+        let private_channel_id = ChannelId("chn_strategy".to_owned());
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let workspace = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::WorkspaceCreated {
+                    name: "Chaft Labs".to_owned(),
+                },
+            ),
+            1_000,
+        );
+        let owner_profile = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "Ayo".to_owned(),
+                },
+            ),
+            1_100,
+        );
+        let member_invite = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::MemberInvited {
+                    invitee_device_id: member.clone(),
+                    role: WorkspaceRole::Member,
+                },
+            ),
+            1_200,
+        );
+        let member_profile = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                member.clone(),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "Rina".to_owned(),
+                },
+            ),
+            1_300,
+        );
+        let private_channel = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::ChannelCreated {
+                    channel_id: private_channel_id.clone(),
+                    name: "strategy".to_owned(),
+                    is_private: true,
+                },
+            ),
+            1_400,
+        );
+        let grant = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::ChannelMemberAdded {
+                    channel_id: private_channel_id.clone(),
+                    member_device_id: member.clone(),
+                },
+            ),
+            1_500,
+        );
+        let secure_add = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                Some(private_channel_id.clone()),
+                owner.clone(),
+                EventBody::OpenMlsChannelGroupMemberAdded {
+                    channel_id: private_channel_id.clone(),
+                    invitee_device_id: member.clone(),
+                    invitee_key_package_id: DeviceKeyPackageId("dkp_member".to_owned()),
+                    invitee_key_package_ref: "ref_member".to_owned(),
+                    protocol: "openmls".to_owned(),
+                    ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                    group_id: "grp_strategy".to_owned(),
+                    epoch: 2,
+                    commit: vec![1, 2, 3],
+                    welcome: vec![4, 5, 6],
+                    ratchet_tree: vec![7, 8, 9],
+                },
+            ),
+            1_520,
+        );
+        let secure_self = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                Some(private_channel_id.clone()),
+                owner.clone(),
+                EventBody::OpenMlsChannelGroupSelfUpdated {
+                    channel_id: private_channel_id.clone(),
+                    protocol: "openmls".to_owned(),
+                    ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                    group_id: "grp_strategy".to_owned(),
+                    epoch: 3,
+                    commit: vec![10, 11, 12],
+                    ratchet_tree: vec![13, 14, 15],
+                },
+            ),
+            1_540,
+        );
+        let secure_remove = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                Some(private_channel_id.clone()),
+                owner.clone(),
+                EventBody::OpenMlsChannelGroupMemberRemoved {
+                    channel_id: private_channel_id.clone(),
+                    removed_device_id: member.clone(),
+                    protocol: "openmls".to_owned(),
+                    ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                    group_id: "grp_strategy".to_owned(),
+                    epoch: 4,
+                    commit: vec![16, 17, 18],
+                    ratchet_tree: vec![19, 20, 21],
+                },
+            ),
+            1_560,
+        );
+        let rotation = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                Some(private_channel_id.clone()),
+                owner.clone(),
+                EventBody::ContentKeyEpochPublished {
+                    scope: ContentKeyScope::Channel {
+                        channel_id: private_channel_id.clone(),
+                    },
+                    epoch: 2,
+                    key_id: "channel-key-2".to_owned(),
+                    previous_key_id: Some("channel-key-1".to_owned()),
+                    algorithm: "xchacha20poly1305".to_owned(),
+                },
+            ),
+            1_600,
+        );
+        let removal = timestamped_event(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::ChannelMemberRemoved {
+                    channel_id: private_channel_id.clone(),
+                    member_device_id: member,
+                },
+            ),
+            1_700,
+        );
+
+        let snapshot = WorkspaceSnapshot::from_events(
+            workspace_id,
+            &[
+                workspace,
+                owner_profile,
+                member_invite,
+                member_profile,
+                private_channel,
+                grant,
+                secure_add,
+                secure_self,
+                secure_remove,
+                rotation,
+                removal,
+            ],
+        )
+        .unwrap();
+
+        let private_channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == private_channel_id.0)
+            .expect("private channel should be visible to owner snapshot");
+        let titles = private_channel
+            .access_history
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec![
+                "Access removed",
+                "Message protection refreshed",
+                "Private-room access removed",
+                "Private-room access refreshed",
+                "Private-room access prepared",
+                "Access added",
+                "Private room created",
+            ]
+        );
+        assert_eq!(private_channel.access_history[0].kind, "removed");
+        assert_eq!(
+            private_channel.access_history[0]
+                .actor_display_name
+                .as_deref(),
+            Some("Ayo")
+        );
+        assert_eq!(
+            private_channel.access_history[0]
+                .target_display_name
+                .as_deref(),
+            Some("Rina")
+        );
+        assert_eq!(
+            private_channel.access_history[0].detail,
+            "Rina can no longer read new messages after message protection is refreshed."
+        );
+        assert_eq!(
+            private_channel.access_history[1].detail,
+            "New private messages use refreshed protection."
+        );
+        assert_eq!(
+            private_channel.access_history[2].detail,
+            "Rina was removed from updated private-room access."
+        );
+        assert_eq!(
+            private_channel.access_history[3].detail,
+            "This device refreshed its private-room access."
+        );
+        assert_eq!(
+            private_channel.access_history[4].detail,
+            "Rina received updated private-room access."
+        );
     }
 
     #[test]
@@ -5144,20 +6235,97 @@ mod tests {
         let snapshot = WorkspaceSnapshot {
             workspace_id: "wrk_test".to_owned(),
             name: "Chaft".to_owned(),
+            access_policy: WorkspaceAccessPolicy::InviteOnly,
             channels: vec![ChannelSnapshot {
                 channel_id: "chn_general".to_owned(),
                 name: "general".to_owned(),
+                topic: "Workspace updates and daily coordination".to_owned(),
+                archived: false,
                 is_private: false,
+                member_count: 1,
+                member_device_ids: Vec::new(),
+                direct_message: false,
+                direct_message_participant_device_ids: Vec::new(),
                 unread_count: 3,
                 latest_activity: None,
+                access_history: vec![ChannelAccessHistorySnapshot {
+                    event_id: "evt_access".to_owned(),
+                    kind: "added".to_owned(),
+                    actor_device_id: "dev_test".to_owned(),
+                    actor_display_name: Some("Mira".to_owned()),
+                    target_device_id: Some("dev_invitee".to_owned()),
+                    target_display_name: Some("Rina".to_owned()),
+                    physical_ms: 1_700_000_000_030,
+                    title: "Access added".to_owned(),
+                    detail: "Rina can read new messages in this room.".to_owned(),
+                }],
             }],
-            profiles: Vec::new(),
+            profiles: vec![DeviceProfileSnapshot {
+                device_id: "dev_test".to_owned(),
+                display_name: "Mira".to_owned(),
+                updated_event_id: "evt_device_profile".to_owned(),
+            }],
+            person_profiles: vec![PersonProfileSnapshot {
+                person_id: "person_mira".to_owned(),
+                display_name: "Mira Chen".to_owned(),
+                updated_event_id: "evt_person_profile".to_owned(),
+                updated_by_device_id: "dev_test".to_owned(),
+            }],
+            person_device_links: vec![PersonDeviceLinkSnapshot {
+                person_id: "person_mira".to_owned(),
+                person_display_name: Some("Mira Chen".to_owned()),
+                device_id: "dev_test".to_owned(),
+                device_display_name: Some("Mira".to_owned()),
+                linked_event_id: "evt_person_link".to_owned(),
+            }],
             members: vec![WorkspaceMemberSnapshot {
                 device_id: "dev_test".to_owned(),
                 role: WorkspaceRole::Owner,
                 display_name: Some("Mira".to_owned()),
                 profile_event_id: Some("evt_profile".to_owned()),
                 membership_event_id: "evt_workspace".to_owned(),
+            }],
+            invites: vec![WorkspaceInviteSnapshot {
+                invite_id: "inv_test".to_owned(),
+                invitee_device_id: "dev_invitee".to_owned(),
+                invitee_display_name: Some("Rina".to_owned()),
+                display_name: "Rina".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: Some("req_test".to_owned()),
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "endpoint_bootstrap".to_owned(),
+                status: "invited".to_owned(),
+                created_event_id: "evt_invite".to_owned(),
+                created_by_device_id: "dev_test".to_owned(),
+                created_by_display_name: Some("Mira".to_owned()),
+                created_physical_ms: 1_700_000_000_010,
+                accepted_event_id: None,
+                accepted_physical_ms: None,
+                resolved_event_id: None,
+                resolved_by_device_id: None,
+                resolved_by_display_name: None,
+                resolved_physical_ms: None,
+            }],
+            join_requests: vec![WorkspaceJoinRequestSnapshot {
+                request_id: "req_test".to_owned(),
+                requester_device_id: "dev_requester".to_owned(),
+                requester_display_name: Some("Rina".to_owned()),
+                display_name: "Rina".to_owned(),
+                note: "Design team".to_owned(),
+                source_type: "workspace_card".to_owned(),
+                source_invite_id: String::new(),
+                source_display_name: "Mira".to_owned(),
+                source_approval_policy: String::new(),
+                status: "waiting".to_owned(),
+                requested_event_id: "evt_request".to_owned(),
+                requested_by_device_id: "dev_test".to_owned(),
+                requested_by_display_name: Some("Mira".to_owned()),
+                requested_physical_ms: 1_700_000_000_015,
+                resolved_event_id: None,
+                resolved_by_device_id: None,
+                resolved_by_display_name: None,
+                resolved_physical_ms: None,
             }],
             key_packages: vec![DeviceKeyPackageSnapshot {
                 device_id: "dev_test".to_owned(),
@@ -5181,8 +6349,12 @@ mod tests {
                 physical_ms: 1_700_000_000_050,
             }],
             channel_count: 1,
-            profile_count: 0,
+            profile_count: 1,
+            person_profile_count: 1,
+            person_device_link_count: 1,
             member_count: 1,
+            invite_count: 1,
+            join_request_count: 1,
             key_package_count: 1,
             peer_endpoint_count: 1,
             timeline_channel_id: None,
@@ -5217,6 +6389,7 @@ mod tests {
                 missing_parent_ids: Vec::new(),
                 grouped_with_previous: true,
                 day_boundary: false,
+                body_decrypted: false,
             }],
             gap_count: 1,
             gaps: vec![MissingHistorySnapshot {
@@ -5236,14 +6409,60 @@ mod tests {
         let value = serde_json::to_value(snapshot).unwrap();
 
         assert_eq!(value["workspaceId"], "wrk_test");
+        assert_eq!(value["accessPolicy"], "invite_only");
         assert_eq!(value["channelCount"], 1);
-        assert_eq!(value["profileCount"], 0);
+        assert_eq!(value["profileCount"], 1);
+        assert_eq!(value["personProfileCount"], 1);
+        assert_eq!(value["personDeviceLinkCount"], 1);
         assert_eq!(value["memberCount"], 1);
+        assert_eq!(value["inviteCount"], 1);
+        assert_eq!(value["joinRequestCount"], 1);
         assert_eq!(value["keyPackageCount"], 1);
         assert_eq!(value["peerEndpointCount"], 1);
         assert_eq!(value["channels"][0]["channelId"], "chn_general");
+        assert_eq!(
+            value["channels"][0]["topic"],
+            "Workspace updates and daily coordination"
+        );
         assert_eq!(value["channels"][0]["isPrivate"], false);
+        assert_eq!(value["channels"][0]["memberCount"], 1);
+        assert_eq!(value["personProfiles"][0]["personId"], "person_mira");
+        assert_eq!(value["personProfiles"][0]["displayName"], "Mira Chen");
+        assert_eq!(value["personDeviceLinks"][0]["personId"], "person_mira");
+        assert_eq!(
+            value["personDeviceLinks"][0]["personDisplayName"],
+            "Mira Chen"
+        );
+        assert_eq!(value["personDeviceLinks"][0]["deviceId"], "dev_test");
+        assert_eq!(value["personDeviceLinks"][0]["deviceDisplayName"], "Mira");
+        assert_eq!(value["joinRequests"][0]["requestId"], "req_test");
+        assert_eq!(value["joinRequests"][0]["requesterDisplayName"], "Rina");
+        assert_eq!(value["joinRequests"][0]["requestedByDisplayName"], "Mira");
+        assert_eq!(value["joinRequests"][0]["sourceType"], "workspace_card");
+        assert_eq!(value["joinRequests"][0]["sourceDisplayName"], "Mira");
+        assert_eq!(value["joinRequests"][0]["status"], "waiting");
+        assert_eq!(
+            value["channels"][0]["memberDeviceIds"],
+            serde_json::Value::Array(Vec::new())
+        );
         assert_eq!(value["channels"][0]["unreadCount"], 3);
+        assert_eq!(
+            value["channels"][0]["accessHistory"][0]["eventId"],
+            "evt_access"
+        );
+        assert_eq!(value["channels"][0]["accessHistory"][0]["kind"], "added");
+        assert_eq!(
+            value["channels"][0]["accessHistory"][0]["actorDisplayName"],
+            "Mira"
+        );
+        assert_eq!(
+            value["channels"][0]["accessHistory"][0]["targetDisplayName"],
+            "Rina"
+        );
+        assert_eq!(
+            value["channels"][0]["accessHistory"][0]["physicalMs"],
+            1_700_000_000_030_i64
+        );
         assert_eq!(value["timeline"][0]["eventId"], "evt_test");
         assert_eq!(value["timeline"][0]["messageId"], "msg_test");
         assert_eq!(value["timeline"][0]["threadReplyCount"], 0);
@@ -5260,12 +6479,26 @@ mod tests {
         assert_eq!(value["timeline"][0]["physicalMs"], 1_700_000_000_000_i64);
         assert_eq!(value["timeline"][0]["groupedWithPrevious"], true);
         assert_eq!(value["timeline"][0]["dayBoundary"], false);
-        assert_eq!(value["profiles"], serde_json::json!([]));
+        assert_eq!(value["profiles"][0]["deviceId"], "dev_test");
+        assert_eq!(value["profiles"][0]["displayName"], "Mira");
+        assert_eq!(value["profiles"][0]["updatedEventId"], "evt_device_profile");
         assert_eq!(value["members"][0]["deviceId"], "dev_test");
         assert_eq!(value["members"][0]["role"], "owner");
         assert_eq!(value["members"][0]["displayName"], "Mira");
         assert_eq!(value["members"][0]["profileEventId"], "evt_profile");
         assert_eq!(value["members"][0]["membershipEventId"], "evt_workspace");
+        assert_eq!(value["invites"][0]["inviteId"], "inv_test");
+        assert_eq!(value["invites"][0]["inviteeDeviceId"], "dev_invitee");
+        assert_eq!(value["invites"][0]["inviteeDisplayName"], "Rina");
+        assert_eq!(value["invites"][0]["displayName"], "Rina");
+        assert_eq!(value["invites"][0]["role"], "member");
+        assert_eq!(value["invites"][0]["requestId"], "req_test");
+        assert_eq!(value["invites"][0]["expiresAt"], "2026-07-14T12:00:00Z");
+        assert_eq!(value["invites"][0]["approvalPolicy"], "invite_file");
+        assert_eq!(value["invites"][0]["syncExpectation"], "endpoint_bootstrap");
+        assert_eq!(value["invites"][0]["status"], "invited");
+        assert_eq!(value["invites"][0]["createdEventId"], "evt_invite");
+        assert_eq!(value["invites"][0]["createdByDisplayName"], "Mira");
         assert_eq!(value["keyPackages"][0]["deviceId"], "dev_test");
         assert_eq!(value["keyPackages"][0]["keyPackageId"], "dkp_test");
         assert_eq!(value["keyPackages"][0]["protocol"], "openmls/key-package");
@@ -5400,7 +6633,10 @@ mod tests {
             snapshot.timeline[0].kind,
             TimelineItemKind::MissingHistoryGap
         );
-        assert_eq!(snapshot.timeline[0].body, "Missing authorization context");
+        assert_eq!(
+            snapshot.timeline[0].body,
+            "Chaft needs earlier access history before this can be shown."
+        );
         assert!(snapshot.timeline[0].missing_parent_ids.is_empty());
     }
 
@@ -5456,7 +6692,10 @@ mod tests {
             snapshot.timeline[0].kind,
             TimelineItemKind::InvalidSignature
         );
-        assert_eq!(snapshot.timeline[0].body, "Failed signature verification");
+        assert_eq!(
+            snapshot.timeline[0].body,
+            "Chaft could not verify this message. Ask an admin before trusting it."
+        );
         assert!(snapshot.timeline[0].attachments.is_empty());
     }
 

@@ -1,4 +1,9 @@
-use std::{ffi::c_char, path::PathBuf, sync::mpsc, thread};
+use std::{
+    ffi::c_char,
+    path::PathBuf,
+    sync::{Arc, mpsc},
+    thread,
+};
 
 use chaft_media::BlobStore;
 use chaft_net_direct::{DirectPeerServer, SyncPeerStore};
@@ -10,6 +15,7 @@ use tokio::sync::oneshot;
 use crate::{
     envelope::{FfiResult, ffi_error, result_envelope},
     input::{optional_c_string, optional_c_string_with_max_bytes, read_c_string},
+    join_request_inbox::FileJoinRequestInbox,
     open_runtime_from_ffi, open_runtime_from_paths,
     peer_endpoint::{validate_direct_listen_endpoint_text, validate_peer_endpoint_text},
     peer_host::{
@@ -66,14 +72,22 @@ pub(crate) fn runtime_start_direct_peer_result(
                         return;
                     }
                 };
-                let server =
-                    match DirectPeerServer::bind_with_blobs(&listen, store, blob_store).await {
-                        Ok(server) => server,
-                        Err(error) => {
-                            let _ = ready_tx.send(Err(error.to_string()));
-                            return;
-                        }
-                    };
+                let join_request_inbox =
+                    Arc::new(FileJoinRequestInbox::new(paths.data_dir.clone()));
+                let server = match DirectPeerServer::bind_with_blobs_and_join_request_inbox(
+                    &listen,
+                    store,
+                    blob_store,
+                    join_request_inbox,
+                )
+                .await
+                {
+                    Ok(server) => server,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error.to_string()));
+                        return;
+                    }
+                };
                 let endpoint = match server.local_addr() {
                     Ok(endpoint) => endpoint.to_string(),
                     Err(error) => {
@@ -141,7 +155,11 @@ pub(crate) fn runtime_start_iroh_peer_result(
                         return;
                     }
                 };
-                let sync_store = SyncPeerStore::with_blobs(store, blob_store);
+                let sync_store = SyncPeerStore::with_blobs_and_join_request_inbox(
+                    store,
+                    blob_store,
+                    Arc::new(FileJoinRequestInbox::new(paths.data_dir.clone())),
+                );
                 let server =
                     match IrohSyncPeer::bind(sync_store, IrohTransportConfig::from_environment())
                         .await

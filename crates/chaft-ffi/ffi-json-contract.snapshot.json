@@ -3,10 +3,19 @@
     "error": "null",
     "ok": "bool",
     "value": {
+      "accessPolicy": "string",
       "channelCount": "number",
       "channels": {
         "arrayOf": {
+          "accessHistory": {
+            "arrayOf": "empty"
+          },
+          "archived": "bool",
           "channelId": "string",
+          "directMessage": "bool",
+          "directMessageParticipantDeviceIds": {
+            "arrayOf": "empty"
+          },
           "isPrivate": "bool",
           "latestActivity": {
             "authorDeviceId": "string",
@@ -16,7 +25,12 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "memberCount": "number",
+          "memberDeviceIds": {
+            "arrayOf": "empty"
+          },
           "name": "string",
+          "topic": "string",
           "unreadCount": "number"
         }
       },
@@ -26,6 +40,14 @@
       },
       "invalidSignatureCount": "number",
       "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "inviteCount": "number",
+      "invites": {
+        "arrayOf": "empty"
+      },
+      "joinRequestCount": "number",
+      "joinRequests": {
         "arrayOf": "empty"
       },
       "keyPackageCount": "number",
@@ -47,6 +69,25 @@
       "peerEndpoints": {
         "arrayOf": "empty"
       },
+      "personDeviceLinkCount": "number",
+      "personDeviceLinks": {
+        "arrayOf": {
+          "deviceDisplayName": "string",
+          "deviceId": "string",
+          "linkedEventId": "string",
+          "personDisplayName": "string",
+          "personId": "string"
+        }
+      },
+      "personProfileCount": "number",
+      "personProfiles": {
+        "arrayOf": {
+          "displayName": "string",
+          "personId": "string",
+          "updatedByDeviceId": "string",
+          "updatedEventId": "string"
+        }
+      },
       "profileCount": "number",
       "profiles": {
         "arrayOf": {
@@ -64,6 +105,7 @@
           "authorDeviceId": "string",
           "authorDisplayName": "string",
           "body": "string",
+          "bodyDecrypted": "bool",
           "channelId": "string",
           "dayBoundary": "bool",
           "deleted": "bool",
@@ -116,10 +158,19 @@
     "error": "null",
     "ok": "bool",
     "value": {
+      "accessPolicy": "string",
       "channelCount": "number",
       "channels": {
         "arrayOf": {
+          "accessHistory": {
+            "arrayOf": "empty"
+          },
+          "archived": "bool",
           "channelId": "string",
+          "directMessage": "bool",
+          "directMessageParticipantDeviceIds": {
+            "arrayOf": "empty"
+          },
           "isPrivate": "bool",
           "latestActivity": {
             "authorDeviceId": "string",
@@ -129,7 +180,12 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "memberCount": "number",
+          "memberDeviceIds": {
+            "arrayOf": "empty"
+          },
           "name": "string",
+          "topic": "string",
           "unreadCount": "number"
         }
       },
@@ -139,6 +195,14 @@
       },
       "invalidSignatureCount": "number",
       "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "inviteCount": "number",
+      "invites": {
+        "arrayOf": "empty"
+      },
+      "joinRequestCount": "number",
+      "joinRequests": {
         "arrayOf": "empty"
       },
       "keyPackageCount": "number",
@@ -160,6 +224,25 @@
       "peerEndpoints": {
         "arrayOf": "empty"
       },
+      "personDeviceLinkCount": "number",
+      "personDeviceLinks": {
+        "arrayOf": {
+          "deviceDisplayName": "string",
+          "deviceId": "string",
+          "linkedEventId": "string",
+          "personDisplayName": "string",
+          "personId": "string"
+        }
+      },
+      "personProfileCount": "number",
+      "personProfiles": {
+        "arrayOf": {
+          "displayName": "string",
+          "personId": "string",
+          "updatedByDeviceId": "string",
+          "updatedEventId": "string"
+        }
+      },
       "profileCount": "number",
       "profiles": {
         "arrayOf": {
@@ -177,6 +260,7 @@
           "authorDeviceId": "string",
           "authorDisplayName": "string",
           "body": "string",
+          "bodyDecrypted": "bool",
           "channelId": "string",
           "dayBoundary": "bool",
           "deleted": "bool",
@@ -226,13 +310,27 @@
     }
   },
   "chaft_demo_workspace_snapshot_json": {
+    "accessPolicy": "string",
     "channelCount": "number",
     "channels": {
       "arrayOf": {
+        "accessHistory": {
+          "arrayOf": "empty"
+        },
+        "archived": "bool",
         "channelId": "string",
+        "directMessage": "bool",
+        "directMessageParticipantDeviceIds": {
+          "arrayOf": "empty"
+        },
         "isPrivate": "bool",
         "latestActivity": "null",
+        "memberCount": "number",
+        "memberDeviceIds": {
+          "arrayOf": "empty"
+        },
         "name": "string",
+        "topic": "string",
         "unreadCount": "number"
       }
     },
@@ -242,6 +340,14 @@
     },
     "invalidSignatureCount": "number",
     "invalidSignatures": {
+      "arrayOf": "empty"
+    },
+    "inviteCount": "number",
+    "invites": {
+      "arrayOf": "empty"
+    },
+    "joinRequestCount": "number",
+    "joinRequests": {
       "arrayOf": "empty"
     },
     "keyPackageCount": "number",
@@ -270,6 +376,14 @@
     "peerEndpoints": {
       "arrayOf": "empty"
     },
+    "personDeviceLinkCount": "number",
+    "personDeviceLinks": {
+      "arrayOf": "empty"
+    },
+    "personProfileCount": "number",
+    "personProfiles": {
+      "arrayOf": "empty"
+    },
     "profileCount": "number",
     "profiles": {
       "arrayOf": {
@@ -287,6 +401,7 @@
         "authorDeviceId": "string",
         "authorDisplayName": "string",
         "body": "string",
+        "bodyDecrypted": "bool",
         "channelId": "string",
         "dayBoundary": "bool",
         "deleted": "bool",
@@ -322,6 +437,13 @@
     },
     "workspaceId": "string"
   },
+  "chaft_runtime_ack_join_request_inbox_entry_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "entryId": "string"
+    }
+  },
   "chaft_runtime_backup_workspace_direct_result_json.error": {
     "error": {
       "code": "string",
@@ -343,6 +465,21 @@
     "error": "null",
     "ok": "bool",
     "value": {
+      "accessPolicy": "string",
+      "accessPolicyEventId": "null",
+      "channelEventId": "string",
+      "channelId": "string",
+      "ownerDeviceId": "string",
+      "workspaceEventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_create_workspace_with_access_policy_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "accessPolicy": "string",
+      "accessPolicyEventId": "string",
       "channelEventId": "string",
       "channelId": "string",
       "ownerDeviceId": "string",
@@ -357,13 +494,36 @@
       "deviceId": "string"
     }
   },
+  "chaft_runtime_list_join_request_inbox_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "entries": {
+        "arrayOf": {
+          "entryId": "string",
+          "receivedAtUnixMs": "number",
+          "requestText": "string",
+          "schemaVersion": "number",
+          "workspaceId": "string"
+        }
+      }
+    }
+  },
   "chaft_runtime_list_workspace_channel_page_result_json": {
     "error": "null",
     "ok": "bool",
     "value": {
       "channels": {
         "arrayOf": {
+          "accessHistory": {
+            "arrayOf": "empty"
+          },
+          "archived": "bool",
           "channelId": "string",
+          "directMessage": "bool",
+          "directMessageParticipantDeviceIds": {
+            "arrayOf": "empty"
+          },
           "isPrivate": "bool",
           "latestActivity": {
             "authorDeviceId": "string",
@@ -373,7 +533,12 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "memberCount": "number",
+          "memberDeviceIds": {
+            "arrayOf": "empty"
+          },
           "name": "string",
+          "topic": "string",
           "unreadCount": "number"
         }
       },
@@ -420,6 +585,10 @@
           "hasWorkspaceKey": "bool",
           "memberCount": "number",
           "name": "string",
+          "unreadChannels": {
+            "arrayOf": "empty"
+          },
+          "unreadCount": "number",
           "workspaceId": "string"
         }
       }
@@ -435,6 +604,10 @@
         "hasWorkspaceKey": "bool",
         "memberCount": "number",
         "name": "string",
+        "unreadChannels": {
+          "arrayOf": "empty"
+        },
+        "unreadCount": "number",
         "workspaceId": "string"
       }
     }
@@ -536,10 +709,23 @@
     "value": {
       "channels": {
         "arrayOf": {
+          "accessHistory": {
+            "arrayOf": "empty"
+          },
+          "archived": "bool",
           "channelId": "string",
+          "directMessage": "bool",
+          "directMessageParticipantDeviceIds": {
+            "arrayOf": "empty"
+          },
           "isPrivate": "bool",
           "latestActivity": "null",
+          "memberCount": "number",
+          "memberDeviceIds": {
+            "arrayOf": "empty"
+          },
           "name": "string",
+          "topic": "string",
           "unreadCount": "number"
         }
       },
@@ -619,6 +805,15 @@
       "peerId": "string"
     }
   },
+  "chaft_runtime_submit_join_request_direct_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "peerEndpoint": "string",
+      "requestByteLen": "number",
+      "workspaceId": "string"
+    }
+  },
   "chaft_runtime_sync_workspace_direct_result_json.error": {
     "error": {
       "code": "string",
@@ -633,6 +828,27 @@
     "value": {
       "deviceId": "string",
       "displayName": "string",
+      "eventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_update_local_person_profile_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "deviceId": "string",
+      "displayName": "string",
+      "linkEventId": "string",
+      "personId": "string",
+      "profileEventId": "string",
+      "workspaceId": "string"
+    }
+  },
+  "chaft_runtime_update_workspace_access_policy_result_json": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "accessPolicy": "string",
       "eventId": "string",
       "workspaceId": "string"
     }
@@ -710,10 +926,19 @@
     "error": "null",
     "ok": "bool",
     "value": {
+      "accessPolicy": "string",
       "channelCount": "number",
       "channels": {
         "arrayOf": {
+          "accessHistory": {
+            "arrayOf": "empty"
+          },
+          "archived": "bool",
           "channelId": "string",
+          "directMessage": "bool",
+          "directMessageParticipantDeviceIds": {
+            "arrayOf": "empty"
+          },
           "isPrivate": "bool",
           "latestActivity": {
             "authorDeviceId": "string",
@@ -723,7 +948,12 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "memberCount": "number",
+          "memberDeviceIds": {
+            "arrayOf": "empty"
+          },
           "name": "string",
+          "topic": "string",
           "unreadCount": "number"
         }
       },
@@ -733,6 +963,14 @@
       },
       "invalidSignatureCount": "number",
       "invalidSignatures": {
+        "arrayOf": "empty"
+      },
+      "inviteCount": "number",
+      "invites": {
+        "arrayOf": "empty"
+      },
+      "joinRequestCount": "number",
+      "joinRequests": {
         "arrayOf": "empty"
       },
       "keyPackageCount": "number",
@@ -754,6 +992,14 @@
       "peerEndpoints": {
         "arrayOf": "empty"
       },
+      "personDeviceLinkCount": "number",
+      "personDeviceLinks": {
+        "arrayOf": "empty"
+      },
+      "personProfileCount": "number",
+      "personProfiles": {
+        "arrayOf": "empty"
+      },
       "profileCount": "number",
       "profiles": {
         "arrayOf": "empty"
@@ -767,6 +1013,7 @@
           "authorDeviceId": "string",
           "authorDisplayName": "null",
           "body": "string",
+          "bodyDecrypted": "bool",
           "channelId": "string",
           "dayBoundary": "bool",
           "deleted": "bool",

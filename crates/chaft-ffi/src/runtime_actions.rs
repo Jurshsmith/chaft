@@ -11,11 +11,13 @@ use chaft_runtime::{
     CreatedWorkspace, DeletedMessage, EditedMessage, InvitedMember, JoinedOpenMlsChannelGroup,
     JoinedOpenMlsWorkspaceGroup, MarkedChannelRead, PrunedBlobCache, PublishPeerEndpointRequest,
     PublishedDeviceKeyPackage, PublishedOpenMlsKeyPackage, PublishedPeerEndpoint,
-    RemovedChannelMember, RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls,
-    RemovedMember, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls,
-    RemovedOpenMlsChannelGroupMember, RemovedOpenMlsWorkspaceGroupMember, RemovedReaction,
-    SavedAttachment, UpdatedDeviceProfile, UpdatedOpenMlsChannelGroup,
-    UpdatedOpenMlsWorkspaceGroup, UpdatedWorkspaceOpenMlsGroups,
+    RecordedWorkspaceInvite, RecordedWorkspaceJoinRequest, RemovedChannelMember,
+    RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls, RemovedMember,
+    RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedOpenMlsChannelGroupMember,
+    RemovedOpenMlsWorkspaceGroupMember, RemovedReaction, ResolvedWorkspaceInvite,
+    ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails, UpdatedDeviceProfile,
+    UpdatedMemberRole, UpdatedOpenMlsChannelGroup, UpdatedOpenMlsWorkspaceGroup,
+    UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy, UpdatedWorkspaceOpenMlsGroups,
 };
 use chaft_types::{
     ChannelId, DeviceId, DeviceKeyPackageId, MessageId, REPLICA_RETENTION_HINT_MAX_BYTES,
@@ -28,7 +30,10 @@ use crate::{
         ffi_channel_id_arg, ffi_device_id_arg, ffi_device_key_package_id_arg, ffi_message_id_arg,
         ffi_optional_event_id_arg, ffi_optional_message_id_arg, ffi_workspace_id_arg,
     },
-    input::{optional_c_string, parse_workspace_role, read_c_string},
+    input::{
+        optional_c_string, parse_workspace_access_policy, parse_workspace_invite_resolution,
+        parse_workspace_join_request_resolution, parse_workspace_role, read_c_string,
+    },
     open_runtime_from_ffi,
     peer_endpoint::validate_peer_endpoint_hint_inputs,
     result_sampling::{
@@ -57,6 +62,25 @@ pub(crate) fn runtime_create_workspace_result(
     })
 }
 
+pub(crate) fn runtime_create_workspace_with_access_policy_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    name: *const c_char,
+    default_channel_name: *const c_char,
+    access_policy: *const c_char,
+) -> FfiResult<CreatedWorkspace> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let name = read_c_string(name, "name")?;
+        let default_channel_name = read_c_string(default_channel_name, "default_channel_name")?;
+        let access_policy =
+            parse_workspace_access_policy(&read_c_string(access_policy, "access_policy")?)?;
+        runtime
+            .create_workspace_with_access_policy(name, default_channel_name, access_policy)
+            .map_err(|error| ffi_error("runtime_create_workspace_failed", error.to_string()))
+    })
+}
+
 pub(crate) fn runtime_create_channel_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
@@ -74,6 +98,78 @@ pub(crate) fn runtime_create_channel_result(
     })
 }
 
+pub(crate) fn runtime_create_direct_message_channel_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    name: *const c_char,
+    participant_device_id: *const c_char,
+) -> FfiResult<CreatedChannel> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let name = read_c_string(name, "name")?;
+        let participant_device_id = ffi_device_id_arg(read_c_string(
+            participant_device_id,
+            "participant_device_id",
+        )?)?;
+        runtime
+            .create_direct_message_channel(
+                WorkspaceId(workspace_id),
+                name,
+                DeviceId(participant_device_id),
+            )
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_create_direct_message_channel_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+pub(crate) fn runtime_update_channel_details_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    channel_id: *const c_char,
+    name: *const c_char,
+    topic: *const c_char,
+) -> FfiResult<UpdatedChannelDetails> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let channel_id = ffi_channel_id_arg(read_c_string(channel_id, "channel_id")?)?;
+        let name = optional_c_string(name, "name")?;
+        let topic = optional_c_string(topic, "topic")?;
+        runtime
+            .update_channel_details(
+                WorkspaceId(workspace_id),
+                ChannelId(channel_id),
+                name,
+                topic,
+            )
+            .map_err(|error| ffi_error("runtime_update_channel_details_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_update_channel_archive_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    channel_id: *const c_char,
+    archived: bool,
+) -> FfiResult<UpdatedChannelDetails> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let channel_id = ffi_channel_id_arg(read_c_string(channel_id, "channel_id")?)?;
+        runtime
+            .update_channel_archive(WorkspaceId(workspace_id), ChannelId(channel_id), archived)
+            .map_err(|error| ffi_error("runtime_update_channel_archive_failed", error.to_string()))
+    })
+}
+
 pub(crate) fn runtime_update_device_profile_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
@@ -87,6 +183,27 @@ pub(crate) fn runtime_update_device_profile_result(
         runtime
             .update_device_profile(WorkspaceId(workspace_id), display_name)
             .map_err(|error| ffi_error("runtime_update_device_profile_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_update_local_person_profile_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+) -> FfiResult<UpdatedPersonProfile> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        runtime
+            .update_local_person_profile(WorkspaceId(workspace_id), display_name)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_update_local_person_profile_failed",
+                    error.to_string(),
+                )
+            })
     })
 }
 
@@ -786,6 +903,179 @@ pub(crate) fn runtime_invite_member_result(
         runtime
             .invite_member(WorkspaceId(workspace_id), DeviceId(device_id), role)
             .map_err(|error| ffi_error("runtime_invite_member_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_record_workspace_join_request_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    source_type: *const c_char,
+    source_invite_id: *const c_char,
+    source_display_name: *const c_char,
+    source_approval_policy: *const c_char,
+) -> FfiResult<RecordedWorkspaceJoinRequest> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let request_id = read_c_string(request_id, "request_id")?;
+        let device_id = ffi_device_id_arg(read_c_string(device_id, "device_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let note = read_c_string(note, "join_request_note")?;
+        let source_type = read_c_string(source_type, "join_request_source")?;
+        let source_invite_id = read_c_string(source_invite_id, "source_invite_id")?;
+        let source_display_name = read_c_string(source_display_name, "source_display_name")?;
+        let source_approval_policy =
+            read_c_string(source_approval_policy, "source_approval_policy")?;
+        runtime
+            .record_workspace_join_request(
+                WorkspaceId(workspace_id),
+                request_id,
+                DeviceId(device_id),
+                display_name,
+                note,
+                source_type,
+                source_invite_id,
+                source_display_name,
+                source_approval_policy,
+            )
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_record_workspace_join_request_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+pub(crate) fn runtime_record_workspace_invite_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    invite_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    request_id: *const c_char,
+    expires_at: *const c_char,
+    approval_policy: *const c_char,
+    sync_expectation: *const c_char,
+) -> FfiResult<RecordedWorkspaceInvite> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let invite_id = read_c_string(invite_id, "invite_id")?;
+        let device_id = ffi_device_id_arg(read_c_string(device_id, "device_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let role = parse_workspace_role(&read_c_string(role, "role")?)?;
+        let request_id = optional_c_string(request_id, "request_id")?;
+        let expires_at = read_c_string(expires_at, "timestamp")?;
+        let approval_policy = read_c_string(approval_policy, "invite_approval_policy")?;
+        let sync_expectation = read_c_string(sync_expectation, "invite_sync_expectation")?;
+        runtime
+            .record_workspace_invite(
+                WorkspaceId(workspace_id),
+                invite_id,
+                DeviceId(device_id),
+                display_name,
+                role,
+                request_id,
+                expires_at,
+                approval_policy,
+                sync_expectation,
+            )
+            .map_err(|error| ffi_error("runtime_record_workspace_invite_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_resolve_workspace_invite_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    invite_id: *const c_char,
+    resolution: *const c_char,
+) -> FfiResult<ResolvedWorkspaceInvite> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let invite_id = read_c_string(invite_id, "invite_id")?;
+        let resolution =
+            parse_workspace_invite_resolution(&read_c_string(resolution, "invite_resolution")?)?;
+        runtime
+            .resolve_workspace_invite(WorkspaceId(workspace_id), invite_id, resolution)
+            .map_err(|error| {
+                ffi_error("runtime_resolve_workspace_invite_failed", error.to_string())
+            })
+    })
+}
+
+pub(crate) fn runtime_resolve_workspace_join_request_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    resolution: *const c_char,
+) -> FfiResult<ResolvedWorkspaceJoinRequest> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let request_id = read_c_string(request_id, "request_id")?;
+        let resolution = parse_workspace_join_request_resolution(&read_c_string(
+            resolution,
+            "join_request_resolution",
+        )?)?;
+        runtime
+            .resolve_workspace_join_request(WorkspaceId(workspace_id), request_id, resolution)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_resolve_workspace_join_request_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+pub(crate) fn runtime_update_member_role_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    device_id: *const c_char,
+    role: *const c_char,
+) -> FfiResult<UpdatedMemberRole> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let device_id = ffi_device_id_arg(read_c_string(device_id, "device_id")?)?;
+        let role = parse_workspace_role(&read_c_string(role, "role")?)?;
+        runtime
+            .update_member_role(WorkspaceId(workspace_id), DeviceId(device_id), role)
+            .map_err(|error| ffi_error("runtime_update_member_role_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_update_workspace_access_policy_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    access_policy: *const c_char,
+) -> FfiResult<UpdatedWorkspaceAccessPolicy> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let access_policy =
+            parse_workspace_access_policy(&read_c_string(access_policy, "access_policy")?)?;
+        runtime
+            .update_workspace_access_policy(WorkspaceId(workspace_id), access_policy)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_update_workspace_access_policy_failed",
+                    error.to_string(),
+                )
+            })
     })
 }
 

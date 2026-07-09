@@ -164,13 +164,17 @@ pub use workspace_actions::{
     AddedChannelMember, AddedReaction, CreatedChannel, CreatedMessage, CreatedWorkspace,
     DeletedMessage, EditedMessage, InvitedMember, MarkedChannelRead, PrunedBlobCache,
     PublishPeerEndpointRequest, PublishedDeviceKeyPackage, PublishedPeerEndpoint,
-    RemovedChannelMember, RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls,
-    RemovedMember, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedReaction,
-    SavedAttachment, UpdatedDeviceProfile,
+    RecordedWorkspaceInvite, RecordedWorkspaceJoinRequest, RemovedChannelMember,
+    RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls, RemovedMember,
+    RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedReaction,
+    ResolvedWorkspaceInvite, ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails,
+    UpdatedDeviceProfile, UpdatedMemberRole, UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy,
 };
 #[cfg(test)]
 pub(crate) use workspace_listing::MAX_WORKSPACE_SUMMARY_PAGE_ROWS;
-pub use workspace_listing::{LocalWorkspaceSummary, LocalWorkspaceSummaryPage};
+pub use workspace_listing::{
+    LocalWorkspaceSummary, LocalWorkspaceSummaryPage, LocalWorkspaceUnreadChannelSummary,
+};
 
 #[cfg(test)]
 use chaft_app::WorkspaceSnapshotOptions;
@@ -1364,6 +1368,12 @@ impl LocalRuntime {
                 } if created_channel_id == channel_id => {
                     return Ok(event_id.clone());
                 }
+                EventBody::DirectMessageChannelCreated {
+                    channel_id: created_channel_id,
+                    ..
+                } if created_channel_id == channel_id => {
+                    return Ok(event_id.clone());
+                }
                 _ => {}
             }
         }
@@ -1643,8 +1653,8 @@ mod tests {
     use chaft_types::{
         ATTACHMENT_BLOB_HASH_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, ContentKeyScope,
         DEVICE_DISPLAY_NAME_MAX_BYTES, DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, EncryptedBlobRef,
-        EventBody, PEER_ENDPOINT_TRANSPORT_MAX_BYTES, SignedTrustSnapshot, WORKSPACE_ID_MAX_BYTES,
-        WORKSPACE_NAME_MAX_BYTES,
+        EventBody, PEER_ENDPOINT_TRANSPORT_MAX_BYTES, PersonId, SignedTrustSnapshot,
+        WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES,
     };
     use tokio::sync::oneshot;
 
@@ -2514,6 +2524,85 @@ mod tests {
         assert_eq!(snapshot.channels[0].name, "general");
         assert_eq!(snapshot.timeline[0].body, "Encrypted message");
         assert!(snapshot.timeline[0].encrypted);
+    }
+
+    #[test]
+    fn runtime_updates_channel_details_and_snapshot() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Chaft Runtime", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let channel_id = ChannelId(created.channel_id.clone());
+
+        let updated = runtime
+            .update_channel_details(
+                workspace_id.clone(),
+                channel_id.clone(),
+                Some("launch-room".to_owned()),
+                Some("Launch planning and decisions".to_owned()),
+            )
+            .unwrap();
+
+        assert_eq!(updated.channel_id, channel_id.0.as_str());
+        assert_eq!(updated.name.as_deref(), Some("launch-room"));
+        assert_eq!(
+            updated.topic.as_deref(),
+            Some("Launch planning and decisions")
+        );
+        assert_eq!(updated.archived, None);
+
+        let events = runtime.workspace_events(&workspace_id).unwrap();
+        assert!(matches!(
+            events.last().map(|event| &event.event.body),
+            Some(EventBody::ChannelDetailsUpdated { channel_id: event_channel_id, .. })
+                if event_channel_id == &channel_id
+        ));
+
+        let snapshot = runtime.workspace_snapshot(workspace_id.clone()).unwrap();
+        let channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == channel_id.0.as_str())
+            .unwrap();
+        assert_eq!(channel.name, "launch-room");
+        assert_eq!(channel.topic, "Launch planning and decisions");
+        assert!(!channel.archived);
+
+        let archived = runtime
+            .update_channel_archive(workspace_id.clone(), channel_id.clone(), true)
+            .unwrap();
+        assert_eq!(archived.archived, Some(true));
+        let snapshot = runtime.workspace_snapshot(workspace_id.clone()).unwrap();
+        let channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == channel_id.0.as_str())
+            .unwrap();
+        assert!(channel.archived);
+
+        let restored = runtime
+            .update_channel_archive(workspace_id.clone(), channel_id.clone(), false)
+            .unwrap();
+        assert_eq!(restored.archived, Some(false));
+        let snapshot = runtime.workspace_snapshot(workspace_id).unwrap();
+        let channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == channel_id.0.as_str())
+            .unwrap();
+        assert!(!channel.archived);
+
+        assert_required_metadata_field_error(
+            runtime.update_channel_details(
+                WorkspaceId(created.workspace_id),
+                channel_id,
+                None,
+                None,
+            ),
+            "channel details",
+        );
     }
 
     #[test]
@@ -3619,10 +3708,112 @@ mod tests {
         assert_eq!(summaries[0].member_count, 1);
         assert_eq!(summaries[0].event_count, 3);
         assert!(summaries[0].has_workspace_key);
+        assert_eq!(summaries[0].unread_count, 0);
+        assert!(summaries[0].unread_channels.is_empty());
         assert_eq!(summaries[1].workspace_id, second.workspace_id);
         assert_eq!(summaries[1].name, "Second Workspace");
         assert_eq!(summaries[1].channel_count, 1);
         assert_eq!(summaries[1].event_count, 2);
+        assert_eq!(summaries[1].unread_count, 0);
+        assert!(summaries[1].unread_channels.is_empty());
+    }
+
+    #[test]
+    fn runtime_workspace_summary_reports_unread_channels_for_reader() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Unread Workspace", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let general_channel_id = ChannelId(created.channel_id.clone());
+        let peer = DeviceIdentity::generate();
+        let invited = runtime
+            .invite_member(
+                workspace_id.clone(),
+                peer.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+
+        let mut first_message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(general_channel_id.clone()),
+            peer.device_id().clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "first message already read".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        first_message.parents = vec![EventId(invited.event_id)];
+        let first_message = peer.sign_event(first_message);
+        runtime.store.append_event(&first_message).unwrap();
+        let read_marker = runtime
+            .mark_channel_read(workspace_id.clone(), general_channel_id.clone())
+            .unwrap();
+
+        let mut second_message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(general_channel_id.clone()),
+            peer.device_id().clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "second message unread".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        second_message.parents = vec![EventId(
+            read_marker
+                .marker_event_id
+                .expect("first read mark should write a marker event"),
+        )];
+        let second_message = peer.sign_event(second_message);
+        runtime.store.append_event(&second_message).unwrap();
+
+        let archived = runtime
+            .create_channel(workspace_id.clone(), "old-room", false)
+            .unwrap();
+        let archived_channel_id = ChannelId(archived.channel_id.clone());
+        let mut archived_message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(archived_channel_id.clone()),
+            peer.device_id().clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "archived room unread".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        archived_message.parents = vec![EventId(archived.event_id)];
+        let archived_message = peer.sign_event(archived_message);
+        runtime.store.append_event(&archived_message).unwrap();
+        runtime
+            .update_channel_archive(workspace_id.clone(), archived_channel_id.clone(), true)
+            .unwrap();
+
+        let summaries = runtime.list_workspaces().unwrap();
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.workspace_id == created.workspace_id)
+            .unwrap();
+        let general_unread = summary
+            .unread_channels
+            .iter()
+            .find(|channel| channel.channel_id == general_channel_id.0)
+            .unwrap();
+        let archived_unread = summary
+            .unread_channels
+            .iter()
+            .find(|channel| channel.channel_id == archived_channel_id.0)
+            .unwrap();
+
+        assert_eq!(summary.unread_count, 1);
+        assert_eq!(summary.unread_channels.len(), 2);
+        assert_eq!(general_unread.unread_count, 1);
+        assert!(!general_unread.archived);
+        assert_eq!(archived_unread.unread_count, 1);
+        assert!(archived_unread.archived);
     }
 
     #[test]
@@ -4501,6 +4692,165 @@ mod tests {
             EventBody::DeviceProfileUpdated { display_name } if display_name == "Mira"
         ));
         assert_eq!(events[2].event.parents, vec![events[1].event_id.clone()]);
+    }
+
+    #[test]
+    fn runtime_updates_signed_person_profile_after_self_link() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime.create_workspace("Chaft", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let person_id = PersonId::new();
+        let updated = runtime
+            .update_person_profile(workspace_id.clone(), person_id.clone(), " Mira Chen ")
+            .unwrap();
+
+        let events = runtime.workspace_events(&workspace_id).unwrap();
+        let snapshot = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+
+        assert_eq!(updated.workspace_id, created.workspace_id);
+        assert_eq!(updated.person_id, person_id.0.as_str());
+        assert_eq!(updated.device_id, runtime.device_id().0);
+        assert_eq!(updated.display_name, "Mira Chen");
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            updated.link_event_id.as_deref(),
+            Some(events[2].event_id.0.as_str())
+        );
+        assert_eq!(updated.profile_event_id, events[3].event_id.0.as_str());
+        assert_eq!(events[2].event.parents, vec![events[1].event_id.clone()]);
+        assert_eq!(events[3].event.parents, vec![events[2].event_id.clone()]);
+        assert!(matches!(
+            &events[2].event.body,
+            EventBody::PersonDeviceLinked {
+                person_id: linked_person_id,
+                device_id,
+            } if linked_person_id == &person_id && device_id == runtime.device_id()
+        ));
+        assert!(matches!(
+            &events[3].event.body,
+            EventBody::PersonProfileUpdated {
+                person_id: profile_person_id,
+                display_name,
+            } if profile_person_id == &person_id && display_name == "Mira Chen"
+        ));
+        assert_eq!(snapshot.person_profile_count, 1);
+        assert_eq!(snapshot.person_device_link_count, 1);
+        assert_eq!(snapshot.person_profiles[0].person_id, person_id.0.as_str());
+        assert_eq!(snapshot.person_profiles[0].display_name, "Mira Chen");
+        assert_eq!(
+            snapshot.person_profiles[0].updated_event_id,
+            updated.profile_event_id
+        );
+        assert_eq!(
+            snapshot.person_profiles[0].updated_by_device_id,
+            runtime.device_id().0
+        );
+        assert_eq!(
+            snapshot.person_device_links[0].person_id,
+            person_id.0.as_str()
+        );
+        assert_eq!(
+            snapshot.person_device_links[0].device_id,
+            runtime.device_id().0
+        );
+        assert_eq!(
+            snapshot.person_device_links[0]
+                .person_display_name
+                .as_deref(),
+            Some("Mira Chen")
+        );
+        assert_eq!(
+            snapshot.person_device_links[0].linked_event_id,
+            updated.link_event_id.unwrap()
+        );
+
+        let updated_again = runtime
+            .update_person_profile(workspace_id.clone(), person_id.clone(), "Mira C.")
+            .unwrap();
+        let events = runtime.workspace_events(&workspace_id).unwrap();
+
+        assert_eq!(updated_again.link_event_id, None);
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[4].event.parents, vec![events[3].event_id.clone()]);
+        assert!(matches!(
+            &events[4].event.body,
+            EventBody::PersonProfileUpdated {
+                person_id: profile_person_id,
+                display_name,
+            } if profile_person_id == &person_id && display_name == "Mira C."
+        ));
+    }
+
+    #[test]
+    fn runtime_updates_local_person_profile_with_stable_self_link() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime.create_workspace("Chaft", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let updated = runtime
+            .update_local_person_profile(workspace_id.clone(), " Mira ")
+            .unwrap();
+        let updated_again = runtime
+            .update_local_person_profile(workspace_id.clone(), "Mira C.")
+            .unwrap();
+        let snapshot = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        let events = runtime.workspace_events(&workspace_id).unwrap();
+
+        assert!(updated.person_id.starts_with("person_"));
+        assert_eq!(updated.display_name, "Mira");
+        assert!(updated.link_event_id.is_some());
+        assert_eq!(updated_again.person_id, updated.person_id.as_str());
+        assert_eq!(updated_again.display_name, "Mira C.");
+        assert_eq!(updated_again.link_event_id, None);
+        assert_eq!(snapshot.person_profile_count, 1);
+        assert_eq!(snapshot.person_device_link_count, 1);
+        assert_eq!(
+            snapshot.person_profiles[0].person_id,
+            updated.person_id.as_str()
+        );
+        assert_eq!(snapshot.person_profiles[0].display_name, "Mira C.");
+        assert_eq!(
+            snapshot.person_device_links[0].person_id,
+            updated.person_id.as_str()
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|stored| matches!(stored.event.body, EventBody::PersonDeviceLinked { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn runtime_rejects_local_person_relink_without_link_flow() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime.create_workspace("Chaft", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let updated = runtime
+            .update_local_person_profile(workspace_id.clone(), "Mira")
+            .unwrap();
+        let other_person_id = PersonId::new();
+        let error = runtime
+            .update_person_profile(workspace_id, other_person_id.clone(), "Mira Alt")
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RuntimeError::Authorization(AuthorizationError::PersonDeviceAlreadyLinked {
+                device_id,
+                existing_person_id,
+                requested_person_id,
+            }) if &device_id == runtime.device_id()
+                && existing_person_id.0.as_str() == updated.person_id
+                && requested_person_id == other_person_id
+        ));
     }
 
     #[test]
@@ -7665,7 +8015,10 @@ mod tests {
         assert!(reindexed_hits.hits.is_empty());
         assert_eq!(snapshot.invalid_signatures.len(), 1);
         assert_eq!(snapshot.invalid_signatures[0].event_id, forged_event_id.0);
-        assert_eq!(snapshot.timeline[0].body, "Failed signature verification");
+        assert_eq!(
+            snapshot.timeline[0].body,
+            "Chaft could not verify this message. Ask an admin before trusting it."
+        );
     }
 
     #[test]

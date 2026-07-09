@@ -6,7 +6,12 @@ use chaft_types::{
     DEVICE_KEY_PACKAGE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, EVENT_ID_MAX_BYTES,
     MESSAGE_ID_MAX_BYTES, MESSAGE_MARKDOWN_MAX_BYTES, PEER_ENDPOINT_ID_MAX_BYTES,
     PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES,
-    REACTION_TEXT_MAX_BYTES, WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceRole,
+    REACTION_TEXT_MAX_BYTES, WORKSPACE_ACCESS_POLICY_MAX_BYTES, WORKSPACE_ID_MAX_BYTES,
+    WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
+    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+    WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES, WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
+    WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy, WorkspaceInviteResolution,
+    WorkspaceJoinRequestResolution, WorkspaceRole,
 };
 
 use crate::envelope::{FfiError, ffi_error};
@@ -112,6 +117,51 @@ fn bounded_c_string_field(field_name: &'static str) -> Option<(usize, &'static s
             WORKSPACE_ROLE_TEXT_MAX_BYTES,
             "workspace_role_too_large",
             "workspace role",
+        )),
+        "access_policy" => Some((
+            WORKSPACE_ACCESS_POLICY_MAX_BYTES,
+            "workspace_access_policy_too_large",
+            "workspace access policy",
+        )),
+        "join_request_resolution" => Some((
+            WORKSPACE_ROLE_TEXT_MAX_BYTES,
+            "join_request_resolution_too_large",
+            "join request resolution",
+        )),
+        "invite_resolution" => Some((
+            WORKSPACE_ROLE_TEXT_MAX_BYTES,
+            "invite_resolution_too_large",
+            "invite resolution",
+        )),
+        "invite_id" => Some((
+            WORKSPACE_INVITE_ID_MAX_BYTES,
+            "invite_id_too_large",
+            "invite ID",
+        )),
+        "timestamp" => Some((
+            WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
+            "timestamp_too_large",
+            "timestamp",
+        )),
+        "invite_approval_policy" => Some((
+            WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+            "invite_approval_policy_too_large",
+            "invite approval policy",
+        )),
+        "invite_sync_expectation" => Some((
+            WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+            "invite_sync_expectation_too_large",
+            "invite sync expectation",
+        )),
+        "request_id" => Some((
+            WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+            "join_request_id_too_large",
+            "join request ID",
+        )),
+        "join_request_note" => Some((
+            WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
+            "join_request_note_too_large",
+            "join request note",
         )),
         "channel_id" => Some((CHANNEL_ID_MAX_BYTES, "channel_id_too_large", "channel ID")),
         "message_id" | "reply_to_message_id" => {
@@ -230,4 +280,36 @@ pub(crate) fn parse_workspace_role(input: &str) -> Result<WorkspaceRole, FfiErro
             "expected owner, admin, member, or guest",
         )
     })
+}
+
+pub(crate) fn parse_workspace_access_policy(
+    input: &str,
+) -> Result<WorkspaceAccessPolicy, FfiError> {
+    let quoted = format!("\"{}\"", input);
+    serde_json::from_str::<WorkspaceAccessPolicy>(&quoted).map_err(|_| {
+        ffi_error(
+            "invalid_workspace_access_policy",
+            "expected invite_only, request_access, or discoverable",
+        )
+    })
+}
+
+pub(crate) fn parse_workspace_join_request_resolution(
+    input: &str,
+) -> Result<WorkspaceJoinRequestResolution, FfiError> {
+    let quoted = format!("\"{}\"", input);
+    serde_json::from_str::<WorkspaceJoinRequestResolution>(&quoted).map_err(|_| {
+        ffi_error(
+            "invalid_join_request_resolution",
+            "expected approved, declined, or revoked",
+        )
+    })
+}
+
+pub(crate) fn parse_workspace_invite_resolution(
+    input: &str,
+) -> Result<WorkspaceInviteResolution, FfiError> {
+    let quoted = format!("\"{}\"", input);
+    serde_json::from_str::<WorkspaceInviteResolution>(&quoted)
+        .map_err(|_| ffi_error("invalid_invite_resolution", "expected revoked"))
 }

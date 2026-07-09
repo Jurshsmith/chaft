@@ -6,7 +6,7 @@ use chaft_app::{
     WorkspaceSnapshotOptions,
 };
 use chaft_store::EventStore;
-use chaft_types::{ChannelId, SignedEvent, WorkspaceId, WorkspaceRole};
+use chaft_types::{ChannelId, SignedEvent, WorkspaceAccessPolicy, WorkspaceId, WorkspaceRole};
 
 use crate::{
     envelope::{FfiError, FfiResult, ffi_error, result_envelope},
@@ -166,34 +166,63 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         workspace_id: "wrk_demo".to_owned(),
         name: "Chaft Labs".to_owned(),
+        access_policy: WorkspaceAccessPolicy::InviteOnly,
         channels: vec![
             ChannelSnapshot {
                 channel_id: "chn_general".to_owned(),
                 name: "general".to_owned(),
+                topic: "Daily coordination and launch notes".to_owned(),
+                archived: false,
                 is_private: false,
+                member_count: 3,
+                member_device_ids: Vec::new(),
+                direct_message: false,
+                direct_message_participant_device_ids: Vec::new(),
                 unread_count: 0,
                 latest_activity: None,
+                access_history: Vec::new(),
             },
             ChannelSnapshot {
                 channel_id: "chn_runtime".to_owned(),
                 name: "p2p-runtime".to_owned(),
+                topic: "Sync health, transport checks, and reachable devices".to_owned(),
+                archived: false,
                 is_private: false,
+                member_count: 3,
+                member_device_ids: Vec::new(),
+                direct_message: false,
+                direct_message_participant_device_ids: Vec::new(),
                 unread_count: 2,
                 latest_activity: None,
+                access_history: Vec::new(),
             },
             ChannelSnapshot {
                 channel_id: "chn_design".to_owned(),
                 name: "design-system".to_owned(),
+                topic: "Desktop polish and user-facing flows".to_owned(),
+                archived: false,
                 is_private: false,
+                member_count: 3,
+                member_device_ids: Vec::new(),
+                direct_message: false,
+                direct_message_participant_device_ids: Vec::new(),
                 unread_count: 0,
                 latest_activity: None,
+                access_history: Vec::new(),
             },
             ChannelSnapshot {
                 channel_id: "chn_replicas".to_owned(),
                 name: "replica-nodes".to_owned(),
+                topic: "Private replica and backup-device work".to_owned(),
+                archived: false,
                 is_private: true,
+                member_count: 1,
+                member_device_ids: vec!["dev_alex".to_owned()],
+                direct_message: false,
+                direct_message_participant_device_ids: Vec::new(),
                 unread_count: 1,
                 latest_activity: None,
+                access_history: Vec::new(),
             },
         ],
         profiles: vec![DeviceProfileSnapshot {
@@ -201,6 +230,8 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
             display_name: "Mira".to_owned(),
             updated_event_id: "evt_profile_mira".to_owned(),
         }],
+        person_profiles: Vec::new(),
+        person_device_links: Vec::new(),
         members: vec![WorkspaceMemberSnapshot {
             device_id: "dev_mira".to_owned(),
             role: WorkspaceRole::Owner,
@@ -208,6 +239,8 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
             profile_event_id: Some("evt_profile_mira".to_owned()),
             membership_event_id: "evt_workspace".to_owned(),
         }],
+        invites: Vec::new(),
+        join_requests: Vec::new(),
         key_packages: vec![DeviceKeyPackageSnapshot {
             device_id: "dev_mira".to_owned(),
             key_package_id: "dkp_mira_demo".to_owned(),
@@ -219,7 +252,11 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
         peer_endpoints: Vec::new(),
         channel_count: 4,
         profile_count: 1,
+        person_profile_count: 0,
+        person_device_link_count: 0,
         member_count: 1,
+        invite_count: 0,
+        join_request_count: 0,
         key_package_count: 1,
         peer_endpoint_count: 0,
         timeline_channel_id: None,
@@ -255,6 +292,7 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
                 missing_parent_ids: Vec::new(),
                 grouped_with_previous: false,
                 day_boundary: true,
+                body_decrypted: false,
             },
             TimelineItem {
                 kind: TimelineItemKind::MissingHistoryGap,
@@ -280,6 +318,7 @@ pub(crate) fn demo_workspace_snapshot() -> WorkspaceSnapshot {
                 missing_parent_ids: vec!["evt_parent_a".to_owned(), "evt_parent_b".to_owned()],
                 grouped_with_previous: false,
                 day_boundary: false,
+                body_decrypted: false,
             },
         ],
         gap_count: 0,
