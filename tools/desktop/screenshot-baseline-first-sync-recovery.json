@@ -1,0 +1,10 @@
+{
+  "description": "Broad visual baseline for the desktop smoke workspace with the recovery-origin first-sync waiting banner visible after restoring access without a reachable teammate.",
+  "minBytes": 32768,
+  "minDistinctSampledPixels": 8,
+  "minHeight": 500,
+  "minLuminanceStddev": 4.0,
+  "minQuadrantLuminanceSpread": 1.0,
+  "minWidth": 800,
+  "version": 1
+}

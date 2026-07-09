@@ -1,0 +1,10 @@
+{
+  "description": "Broad visual baseline for the desktop empty workspace state with a pending access request that failed direct delivery and offers retry/copy/save fallback.",
+  "minBytes": 32768,
+  "minDistinctSampledPixels": 8,
+  "minHeight": 500,
+  "minLuminanceStddev": 4.0,
+  "minQuadrantLuminanceSpread": 1.0,
+  "minWidth": 800,
+  "version": 1
+}

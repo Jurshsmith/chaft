@@ -1,0 +1,10 @@
+{
+  "description": "Broad visual baseline for the recovery-kit restore dialog showing an inline failure state after a wrong or unreadable recovery passphrase.",
+  "minBytes": 32768,
+  "minDistinctSampledPixels": 8,
+  "minHeight": 500,
+  "minLuminanceStddev": 4.0,
+  "minQuadrantLuminanceSpread": 1.0,
+  "minWidth": 800,
+  "version": 1
+}

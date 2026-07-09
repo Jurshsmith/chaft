@@ -33,15 +33,48 @@ require_tool() {
   fi
 }
 
-require_tool python3
+python_bin="${CHAFT_PYTHON_BIN:-}"
+if [ -z "$python_bin" ]; then
+  if [ -x /usr/bin/python3 ]; then
+    python_bin=/usr/bin/python3
+  else
+    python_bin=python3
+  fi
+fi
+
+require_tool "$python_bin"
 
 mkdir -p "$(dirname "$output_path")"
 rm -f "$output_path"
 
-CHAFT_DESKTOP_SMOKE_SCREENSHOT="$output_path" \
-  "$script_dir/smoke.sh" "$profile"
+default_screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
+default_ui_states="setup,setup-identity,setup-add-device,setup-access-updates,setup-security,setup-backup,setup-room-access,setup-request,setup-request-approved,setup-request-lost,setup-request-reinvite,setup-invite,setup-approval-invite,setup-invite-lost,first-sync-waiting,first-sync-recovery,drawer,member-roles,direct-message,palette,entry,entry-join,entry-restore,entry-restore-failed,entry-join-invite,entry-approval-invite,entry-workspace-card,entry-workspace-card-invite-only,entry-request-sent,post-create,add-workspace,channel-details,private-channel-details,private-channel-repair-failed,private-channel-repair-saved,private-channel-inspector,channel-archived,reaction-picker,external-link"
+explicit_ui_states=0
+ui_states="${CHAFT_SMOKE_UI_STATES:-$default_ui_states}"
+if [ -n "${CHAFT_SMOKE_UI_STATES:-}" ]; then
+  explicit_ui_states=1
+fi
 
-python3 - "$output_path" <<'PY'
+state_requested() {
+  state_name="$1"
+  if [ "$explicit_ui_states" -eq 0 ]; then
+    return 0
+  fi
+  for requested_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
+    if [ "$requested_state" = "$state_name" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if state_requested default; then
+  CHAFT_DESKTOP_SMOKE_SCREENSHOT="$output_path" \
+  CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS="${CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS:-1500}" \
+  CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="$default_screenshot_timeout_ms" \
+    "$script_dir/smoke.sh" "$profile"
+
+  "$python_bin" - "$output_path" <<'PY'
 import os
 import struct
 import sys
@@ -175,27 +208,102 @@ for row in rows[::step]:
 fail("screenshot appears blank or nearly uniform")
 PY
 
-if [ -f "$baseline_path" ]; then
-  python3 "$script_dir/screenshot-baseline.py" "$output_path" "$baseline_path"
-else
-  printf 'screenshot baseline not found: %s\n' "$baseline_path" >&2
-  exit 1
+  if [ -f "$baseline_path" ]; then
+    "$python_bin" "$script_dir/screenshot-baseline.py" "$output_path" "$baseline_path"
+  else
+    printf 'screenshot baseline not found: %s\n' "$baseline_path" >&2
+    exit 1
+  fi
 fi
 
 empty_output="$(dirname "$output_path")/visual-smoke-empty.png"
 empty_baseline="$script_dir/screenshot-baseline-empty.json"
-if [ ! -f "$empty_baseline" ]; then
-  printf 'screenshot baseline not found for empty workspace: %s\n' \
-    "$empty_baseline" >&2
-  exit 1
+if state_requested empty; then
+  if [ ! -f "$empty_baseline" ]; then
+    printf 'screenshot baseline not found for empty workspace: %s\n' \
+      "$empty_baseline" >&2
+    exit 1
+  fi
+  rm -f "$empty_output"
+  "$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_output"
+  "$python_bin" "$script_dir/screenshot-baseline.py" "$empty_output" "$empty_baseline"
+  printf 'screenshot state verified: empty at %s\n' "$empty_output"
 fi
-rm -f "$empty_output"
-"$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_output"
-python3 "$script_dir/screenshot-baseline.py" "$empty_output" "$empty_baseline"
-printf 'screenshot state verified: empty at %s\n' "$empty_output"
 
-ui_states="${CHAFT_SMOKE_UI_STATES:-setup,drawer,palette,entry}"
+empty_request_output="$(dirname "$output_path")/visual-smoke-empty-request-ready.png"
+empty_request_baseline="$script_dir/screenshot-baseline-empty-request-ready.json"
+if state_requested empty-request-ready; then
+  if [ ! -f "$empty_request_baseline" ]; then
+    printf 'screenshot baseline not found for empty pending request: %s\n' \
+      "$empty_request_baseline" >&2
+    exit 1
+  fi
+  rm -f "$empty_request_output"
+  CHAFT_EMPTY_WORKSPACE_PENDING_REQUEST=1 \
+    "$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_request_output"
+  "$python_bin" "$script_dir/screenshot-baseline.py" "$empty_request_output" \
+    "$empty_request_baseline"
+  printf 'screenshot state verified: empty-request-ready at %s\n' \
+    "$empty_request_output"
+fi
+
+empty_request_sent_output="$(dirname "$output_path")/visual-smoke-empty-request-sent.png"
+empty_request_sent_baseline="$script_dir/screenshot-baseline-empty-request-sent.json"
+if state_requested empty-request-sent; then
+  if [ ! -f "$empty_request_sent_baseline" ]; then
+    printf 'screenshot baseline not found for sent empty pending request: %s\n' \
+      "$empty_request_sent_baseline" >&2
+    exit 1
+  fi
+  rm -f "$empty_request_sent_output"
+  CHAFT_EMPTY_WORKSPACE_PENDING_REQUEST=1 \
+  CHAFT_EMPTY_WORKSPACE_PENDING_REQUEST_STATUS=sent \
+    "$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_request_sent_output"
+  "$python_bin" "$script_dir/screenshot-baseline.py" "$empty_request_sent_output" \
+    "$empty_request_sent_baseline"
+  printf 'screenshot state verified: empty-request-sent at %s\n' \
+    "$empty_request_sent_output"
+fi
+
+empty_request_failed_output="$(dirname "$output_path")/visual-smoke-empty-request-failed.png"
+empty_request_failed_baseline="$script_dir/screenshot-baseline-empty-request-failed.json"
+if state_requested empty-request-failed; then
+  if [ ! -f "$empty_request_failed_baseline" ]; then
+    printf 'screenshot baseline not found for failed empty pending request: %s\n' \
+      "$empty_request_failed_baseline" >&2
+    exit 1
+  fi
+  rm -f "$empty_request_failed_output"
+  CHAFT_EMPTY_WORKSPACE_PENDING_REQUEST=1 \
+  CHAFT_EMPTY_WORKSPACE_PENDING_REQUEST_STATUS=send_failed \
+    "$script_dir/empty-workspace-smoke.sh" "$profile" "$empty_request_failed_output"
+  "$python_bin" "$script_dir/screenshot-baseline.py" "$empty_request_failed_output" \
+    "$empty_request_failed_baseline"
+  printf 'screenshot state verified: empty-request-failed at %s\n' \
+    "$empty_request_failed_output"
+fi
+
 for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
+  case "$ui_state" in
+    default)
+      # The default workspace screenshot is captured before this loop using
+      # screenshot-baseline.json. Allow CHAFT_SMOKE_UI_STATES=default as an
+      # explicit focused smoke run without looking for a duplicate baseline.
+      continue
+      ;;
+    empty|empty-request-ready|empty-request-sent|empty-request-failed)
+      # These no-workspace states are captured above with empty-workspace-smoke.
+      # Running them through the seeded visual workspace path would overwrite
+      # the intended screenshot with an unrelated workspace view.
+      continue
+      ;;
+  esac
+  ui_state_bytes="$(printf '%s' "$ui_state" | wc -c | tr -d ' ')"
+  if [ "$ui_state_bytes" -gt 32 ]; then
+    printf 'screenshot state %s is %s bytes; desktop smoke states must be <= 32 bytes\n' \
+      "$ui_state" "$ui_state_bytes" >&2
+    exit 1
+  fi
   state_output="$(dirname "$output_path")/visual-smoke-$ui_state.png"
   state_baseline="$script_dir/screenshot-baseline-$ui_state.json"
   if [ ! -f "$state_baseline" ]; then
@@ -203,10 +311,106 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
       "$ui_state" "$state_baseline" >&2
     exit 1
   fi
+  screenshot_delay_ms=250
+  screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}"
+  if [ "$ui_state" = "setup-invite" ]; then
+    screenshot_delay_ms=2500
+  elif [ "$ui_state" = "setup-identity" ]; then
+    screenshot_delay_ms=750
+  elif [ "$ui_state" = "setup-add-device" ]; then
+    screenshot_delay_ms=1000
+  elif [ "$ui_state" = "setup-access-updates" ]; then
+    screenshot_delay_ms=1500
+    screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
+  elif [ "$ui_state" = "setup-security" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-backup" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-room-access" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-approval-invite" ]; then
+    screenshot_delay_ms=2500
+  elif [ "$ui_state" = "setup-invite-lost" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "first-sync-waiting" ] || \
+       [ "$ui_state" = "first-sync-recovery" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-request-approved" ]; then
+    screenshot_delay_ms=2500
+  elif [ "$ui_state" = "setup-request-lost" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-request-reinvite" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-request" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "reaction-picker" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "member-roles" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "direct-message" ]; then
+    screenshot_delay_ms=2500
+  elif [ "$ui_state" = "entry-restore" ] || \
+       [ "$ui_state" = "entry-restore-failed" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "entry-approval-invite" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "entry-request-sent" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "post-create" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "add-workspace" ]; then
+    screenshot_delay_ms=1500
+    screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-60000}"
+  elif [ "$ui_state" = "channel-details" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "private-channel-details" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "private-channel-repair-failed" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "private-channel-repair-saved" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "private-channel-inspector" ]; then
+    screenshot_delay_ms=1500
+  elif [ "$ui_state" = "channel-archived" ]; then
+    screenshot_delay_ms=2500
+  elif [ "$ui_state" = "external-link" ]; then
+    screenshot_delay_ms=1500
+  fi
+  archive_design=0
+  if [ "$ui_state" = "channel-archived" ]; then
+    archive_design=1
+  fi
+  access_policy="${CHAFT_VISUAL_SMOKE_ACCESS_POLICY:-invite-only}"
+  if [ "$ui_state" = "setup-request" ] || \
+     [ "$ui_state" = "setup-request-approved" ] || \
+     [ "$ui_state" = "setup-request-lost" ] || \
+     [ "$ui_state" = "setup-request-reinvite" ] || \
+     [ "$ui_state" = "setup-approval-invite" ]; then
+    access_policy="request-access"
+  fi
+  reinvite_request=0
+  if [ "$ui_state" = "setup-request-reinvite" ]; then
+    reinvite_request=1
+  fi
+  request_lost_invite=0
+  if [ "$ui_state" = "setup-request-lost" ]; then
+    request_lost_invite=1
+  fi
+  lost_invite=0
+  if [ "$ui_state" = "setup-invite-lost" ]; then
+    lost_invite=1
+  fi
   rm -f "$state_output"
   CHAFT_DESKTOP_SMOKE_SCREENSHOT="$state_output" \
+  CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS="$screenshot_delay_ms" \
+  CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="$screenshot_timeout_ms" \
+  CHAFT_VISUAL_SMOKE_ARCHIVE_DESIGN="$archive_design" \
+  CHAFT_VISUAL_SMOKE_ACCESS_POLICY="$access_policy" \
+  CHAFT_VISUAL_SMOKE_REINVITE_REQUEST="$reinvite_request" \
+  CHAFT_VISUAL_SMOKE_REQUEST_LOST_INVITE="$request_lost_invite" \
+  CHAFT_VISUAL_SMOKE_LOST_INVITE="$lost_invite" \
   CHAFT_SMOKE_UI_STATE="$ui_state" \
     "$script_dir/smoke.sh" "$profile"
-  python3 "$script_dir/screenshot-baseline.py" "$state_output" "$state_baseline"
+  "$python_bin" "$script_dir/screenshot-baseline.py" "$state_output" "$state_baseline"
   printf 'screenshot state verified: %s at %s\n' "$ui_state" "$state_output"
 done

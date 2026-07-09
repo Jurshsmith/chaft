@@ -12,10 +12,19 @@ require_tool() {
   fi
 }
 
+python_bin="${CHAFT_PYTHON_BIN:-}"
+if [ -z "$python_bin" ]; then
+  if [ -x /usr/bin/python3 ]; then
+    python_bin=/usr/bin/python3
+  else
+    python_bin=python3
+  fi
+fi
+
 json_field() {
   file="$1"
   path="$2"
-  python3 - "$file" "$path" <<'PY'
+  "$python_bin" -c '
 import json
 import sys
 
@@ -29,14 +38,14 @@ if isinstance(value, bool):
     print("true" if value else "false")
 else:
     print(value)
-PY
+' "$file" "$path"
 }
 
 assert_json() {
   file="$1"
   expression="$2"
   message="$3"
-  python3 - "$file" "$expression" "$message" <<'PY'
+  "$python_bin" -c '
 import json
 import sys
 
@@ -49,7 +58,7 @@ if not eval(
     {"data": data, "len": len, "any": any, "all": all},
 ):
     raise SystemExit(sys.argv[3])
-PY
+' "$file" "$expression" "$message"
 }
 
 validate_snapshot() {
@@ -59,7 +68,7 @@ validate_snapshot() {
   attachment_message_id="$4"
   deleted_message_id="$5"
   desktop_expected_text="$6"
-  python3 - "$snapshot_file" "$parent_message_id" "$reply_message_id" \
+  "$python_bin" - "$snapshot_file" "$parent_message_id" "$reply_message_id" \
     "$attachment_message_id" "$deleted_message_id" "$desktop_expected_text" <<'PY'
 import json
 import sys
@@ -87,6 +96,24 @@ for name in ("general", "product", "design", "p2p-lab", "vault"):
 
 if not any(channel.get("name") == "vault" and channel.get("isPrivate") for channel in channels):
     fail("snapshot did not mark the vault channel as private")
+
+members = data.get("members", [])
+if not any(member.get("deviceId") == "dev_visual_smoke_admin" and member.get("role") == "admin" for member in members):
+    fail("snapshot did not include the visual smoke admin member")
+if not any(member.get("deviceId") == "dev_visual_smoke_member" and member.get("role") == "member" for member in members):
+    fail("snapshot did not include the visual smoke regular member")
+
+join_requests = data.get("joinRequests", [])
+if not any(
+    request.get("requestId") == "req_visual_smoke_joiner"
+    and request.get("requesterDeviceId") == "dev_visual_smoke_joiner"
+    and request.get("requesterDisplayName") == "Sam Rivera"
+    and request.get("sourceType") == "workspace_card"
+    and request.get("sourceDisplayName") == "Mira Chen"
+    and request.get("status") == "waiting"
+    for request in join_requests
+):
+    fail("snapshot did not include the visual smoke waiting join request")
 
 timeline = data.get("timeline", [])
 if data.get("gapCount") != 0:
@@ -156,7 +183,7 @@ cleanup() {
   fi
 }
 
-require_tool python3
+require_tool "$python_bin"
 
 cargo_args="$*"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
@@ -193,11 +220,13 @@ mkdir -p "$runtime_dir" "$artifacts_dir"
 
 workspace_name="Chaft Visual Smoke"
 desktop_expected_text="desktop visual smoke ready"
+workspace_access_policy="${CHAFT_VISUAL_SMOKE_ACCESS_POLICY:-invite-only}"
 
 created_json="$artifacts_dir/created.json"
 "$cli_bin" --data-dir "$runtime_dir" init-workspace \
   --name "$workspace_name" \
-  --channel general > "$created_json"
+  --channel general \
+  --access-policy "$workspace_access_policy" > "$created_json"
 
 workspace_id="$(json_field "$created_json" workspaceId)"
 general_channel_id="$(json_field "$created_json" channelId)"
@@ -205,6 +234,110 @@ general_channel_id="$(json_field "$created_json" channelId)"
 "$cli_bin" --data-dir "$runtime_dir" update-device-profile \
   --workspace-id "$workspace_id" \
   --display-name "Ayo" > "$artifacts_dir/profile.json"
+
+"$cli_bin" --data-dir "$runtime_dir" invite-member \
+  --workspace-id "$workspace_id" \
+  --device-id dev_visual_smoke_admin \
+  --role admin > "$artifacts_dir/invite-admin.json"
+
+"$cli_bin" --data-dir "$runtime_dir" invite-member \
+  --workspace-id "$workspace_id" \
+  --device-id dev_visual_smoke_member \
+  --role member > "$artifacts_dir/invite-member.json"
+
+"$cli_bin" --data-dir "$runtime_dir" record-invite \
+  --workspace-id "$workspace_id" \
+  --invite-id inv_visual_smoke_revoked \
+  --device-id dev_visual_smoke_member \
+  --display-name "Taylor Kim" \
+  --role member \
+  --expires-at "2026-07-14T12:00:00Z" \
+  --approval-policy preapproved \
+  --sync-expectation needs_reachable_teammate \
+  > "$artifacts_dir/record-revoked-invite.json"
+
+"$cli_bin" --data-dir "$runtime_dir" resolve-invite \
+  --workspace-id "$workspace_id" \
+  --invite-id inv_visual_smoke_revoked \
+  --resolution revoked > "$artifacts_dir/resolve-revoked-invite.json"
+
+if [ "${CHAFT_VISUAL_SMOKE_LOST_INVITE:-0}" = "1" ]; then
+  "$cli_bin" --data-dir "$runtime_dir" record-invite \
+    --workspace-id "$workspace_id" \
+    --invite-id inv_visual_smoke_lost \
+    --device-id dev_visual_smoke_lost \
+    --display-name "Jordan Lee" \
+    --role member \
+    --expires-at "2026-07-14T12:00:00Z" \
+    --approval-policy preapproved \
+    --sync-expectation needs_reachable_teammate \
+    > "$artifacts_dir/record-lost-invite.json"
+fi
+
+"$cli_bin" --data-dir "$runtime_dir" record-join-request \
+  --workspace-id "$workspace_id" \
+  --request-id req_visual_smoke_joiner \
+  --device-id dev_visual_smoke_joiner \
+  --display-name "Sam Rivera" \
+  --note "Joining the product team workspace" \
+  --source-type workspace_card \
+  --source-display-name "Mira Chen" \
+  > "$artifacts_dir/join-request.json"
+
+if [ "${CHAFT_VISUAL_SMOKE_REQUEST_LOST_INVITE:-0}" = "1" ]; then
+  "$cli_bin" --data-dir "$runtime_dir" record-join-request \
+    --workspace-id "$workspace_id" \
+    --request-id req_visual_smoke_request_lost \
+    --device-id dev_visual_smoke_request_lost \
+    --display-name "Riley Chen" \
+    --note "Needs new link" \
+    --source-type workspace_card \
+    --source-display-name "Mira Chen" \
+    > "$artifacts_dir/request-lost-invite-request.json"
+
+  "$cli_bin" --data-dir "$runtime_dir" record-invite \
+    --workspace-id "$workspace_id" \
+    --invite-id inv_visual_smoke_request_lost \
+    --device-id dev_visual_smoke_request_lost \
+    --display-name "Riley Chen" \
+    --role member \
+    --request-id req_visual_smoke_request_lost \
+    --expires-at "2026-07-14T12:00:00Z" \
+    --approval-policy preapproved \
+    --sync-expectation needs_reachable_teammate \
+    > "$artifacts_dir/request-lost-invite-record.json"
+fi
+
+if [ "${CHAFT_VISUAL_SMOKE_REINVITE_REQUEST:-0}" = "1" ]; then
+  "$cli_bin" --data-dir "$runtime_dir" record-join-request \
+    --workspace-id "$workspace_id" \
+    --request-id req_visual_smoke_reinvite \
+    --device-id dev_visual_smoke_reinvite \
+    --display-name "Mina Park" \
+    --note "Needs new invite" \
+    --source-type approval_invite \
+    --source-invite-id inv_visual_smoke_reinvite_revoked \
+    --source-display-name "Mira Chen" \
+    --source-approval-policy admin_required \
+    > "$artifacts_dir/reinvite-request.json"
+
+  "$cli_bin" --data-dir "$runtime_dir" record-invite \
+    --workspace-id "$workspace_id" \
+    --invite-id inv_visual_smoke_reinvite_revoked \
+    --device-id dev_visual_smoke_reinvite \
+    --display-name "Mina Park" \
+    --role member \
+    --request-id req_visual_smoke_reinvite \
+    --expires-at "2026-07-14T12:00:00Z" \
+    --approval-policy preapproved \
+    --sync-expectation needs_reachable_teammate \
+    > "$artifacts_dir/record-reinvite-revoked.json"
+
+  "$cli_bin" --data-dir "$runtime_dir" resolve-invite \
+    --workspace-id "$workspace_id" \
+    --invite-id inv_visual_smoke_reinvite_revoked \
+    --resolution revoked > "$artifacts_dir/resolve-reinvite-revoked.json"
+fi
 
 product_json="$artifacts_dir/product-channel.json"
 "$cli_bin" --data-dir "$runtime_dir" create-channel \
@@ -249,12 +382,12 @@ reply_message_id="$(json_field "$reply_json" messageId)"
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$product_channel_id" \
-  --text "product channel tracks fast native chat" > "$artifacts_dir/product-message.json"
+  --text "product room tracks fast native chat" > "$artifacts_dir/product-message.json"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$design_channel_id" \
-  --text "design channel keeps dense timeline polish" > "$artifacts_dir/design-message.json"
+  --text "design room keeps dense timeline polish" > "$artifacts_dir/design-message.json"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
@@ -272,7 +405,7 @@ Chaft visual smoke checklist
 - local-first send
 - reply threading
 - encrypted attachment
-- private channel
+- private room
 - desktop hydration
 EOF
 
@@ -317,6 +450,12 @@ desktop_message_json="$artifacts_dir/desktop-message.json"
   --text "$desktop_expected_text" > "$desktop_message_json"
 desktop_message_id="$(json_field "$desktop_message_json" messageId)"
 
+if [ "${CHAFT_VISUAL_SMOKE_ARCHIVE_DESIGN:-0}" = "1" ]; then
+  "$cli_bin" --data-dir "$runtime_dir" archive-channel \
+    --workspace-id "$workspace_id" \
+    --channel-id "$design_channel_id" > "$artifacts_dir/archive-design-channel.json"
+fi
+
 snapshot_json="$artifacts_dir/snapshot-decrypted.json"
 "$cli_bin" --data-dir "$runtime_dir" snapshot \
   --workspace-id "$workspace_id" \
@@ -329,6 +468,18 @@ validate_snapshot \
   "$attachment_message_id" \
   "$deleted_message_id" \
   "$desktop_expected_text"
+
+if [ "${CHAFT_VISUAL_SMOKE_ARCHIVE_DESIGN:-0}" = "1" ]; then
+  assert_json "$snapshot_json" \
+    'any(channel.get("name") == "design" and channel.get("archived") is True for channel in data.get("channels", []))' \
+    'visual smoke did not archive the design room'
+fi
+
+if [ "${CHAFT_VISUAL_SMOKE_LOST_INVITE:-0}" = "1" ]; then
+  assert_json "$snapshot_json" \
+    'any(invite.get("inviteId") == "inv_visual_smoke_lost" and invite.get("status") == "invited" for invite in data.get("invites", []))' \
+    'visual smoke did not include the lost still-open invite'
+fi
 
 search_json="$artifacts_dir/search-deterministic.json"
 "$cli_bin" --data-dir "$runtime_dir" search-workspace \
@@ -346,7 +497,7 @@ assert_json "$status_json" \
   'visual smoke storage health reported corrupt or non-servable events'
 
 manifest_json="$smoke_dir/manifest.json"
-python3 - "$manifest_json" "$runtime_dir" "$artifacts_dir" "$workspace_id" \
+"$python_bin" - "$manifest_json" "$runtime_dir" "$artifacts_dir" "$workspace_id" \
   "$general_channel_id" "$product_channel_id" "$design_channel_id" \
   "$p2p_channel_id" "$vault_channel_id" "$parent_message_id" \
   "$reply_message_id" "$attachment_message_id" "$deleted_message_id" \

@@ -1,0 +1,10 @@
+{
+  "description": "Broad visual baseline for the desktop smoke workspace with People & Access showing an approved access request whose still-open invite handoff is no longer staged.",
+  "minBytes": 32768,
+  "minDistinctSampledPixels": 8,
+  "minHeight": 500,
+  "minLuminanceStddev": 4.0,
+  "minQuadrantLuminanceSpread": 1.0,
+  "minWidth": 800,
+  "version": 1
+}
