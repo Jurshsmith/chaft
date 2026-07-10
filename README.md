@@ -346,7 +346,9 @@ launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
 admin/member role policy, request-access handling, and member removal through
 the CLI without requiring real devices.
 `tools/smoke/access-transport.sh` runs the focused request/response direct
-transport and FFI outbox/inbox tests that back the desktop access-request flow.
+transport and FFI outbox/inbox tests that back the desktop access-request flow,
+then starts local `chaft-node` peers and uses `chaft-cli` to submit and fetch
+workspace-scoped request/response envelopes.
 `tools/smoke/visual-workspace.sh` creates a deterministic public UI smoke
 runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
 temporary runtime and use the printed `runtimeDir`, `workspaceId`, and

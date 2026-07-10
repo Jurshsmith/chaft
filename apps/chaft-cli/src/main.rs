@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 use chaft_crypto::{ContentKey, seal_message_markdown};
 use chaft_identity::DeviceIdentity;
 use chaft_net::{ChaftTransport, PeerAddress, PeerId};
-use chaft_net_direct::AuthorizedPublishTransport;
+use chaft_net_direct::{AuthorizedPublishTransport, DirectTransport};
 use chaft_net_iroh::IrohTransport;
 use chaft_runtime::{
     ChannelKeyExport, LocalRuntime, PublishPeerEndpointRequest, RuntimePaths, WorkspaceKeyExport,
@@ -26,6 +26,7 @@ use chaft_types::{
     validate_event_id_str, validate_message_id_str, validate_workspace_id_str,
 };
 use clap::{Parser, Subcommand, ValueEnum};
+use serde_json::json;
 
 const DEVICE_KEY_PACKAGE_FILE_MAX_BYTES: u64 = 64 * 1024;
 const KEY_TRANSFER_JSON_FILE_MAX_BYTES: u64 = 256 * 1024;
@@ -466,6 +467,38 @@ enum Command {
         workspace_id: String,
         #[arg(long)]
         peer: String,
+    },
+    SubmitJoinRequest {
+        #[arg(long)]
+        peer: String,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        request_file: PathBuf,
+    },
+    SubmitJoinResponse {
+        #[arg(long)]
+        peer: String,
+        #[arg(long)]
+        workspace_id: Option<String>,
+        #[arg(long)]
+        response_file: PathBuf,
+    },
+    FetchJoinRequests {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        peer: String,
+        #[arg(long, default_value_t = 20)]
+        max_entries: usize,
+    },
+    FetchJoinResponses {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        peer: String,
+        #[arg(long, default_value_t = 20)]
+        max_entries: usize,
     },
     RetryBlobTransfers {
         #[arg(long)]
@@ -1541,6 +1574,90 @@ async fn run_cli() -> Result<()> {
                 .await?;
             println!("{}", serde_json::to_string_pretty(&synced)?);
         }
+        Command::SubmitJoinRequest {
+            peer,
+            workspace_id,
+            request_file,
+        } => {
+            let peer = peer_address(peer)?;
+            let workspace_id = optional_workspace_id_arg(workspace_id)?;
+            let request_file = checked_cli_path_arg(request_file, "join request file")?;
+            let request = read_key_transfer_json_file(&request_file)?;
+            DirectTransport
+                .submit_join_request(&peer, workspace_id.as_ref(), request)
+                .await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "submitted": true,
+                    "workspaceId": workspace_id.as_ref().map(|id| id.0.as_str()),
+                    "peer": peer.endpoint,
+                }))?
+            );
+        }
+        Command::SubmitJoinResponse {
+            peer,
+            workspace_id,
+            response_file,
+        } => {
+            let peer = peer_address(peer)?;
+            let workspace_id = optional_workspace_id_arg(workspace_id)?;
+            let response_file = checked_cli_path_arg(response_file, "join response file")?;
+            let response = read_key_transfer_json_file(&response_file)?;
+            DirectTransport
+                .submit_join_response(&peer, workspace_id.as_ref(), response)
+                .await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "submitted": true,
+                    "workspaceId": workspace_id.as_ref().map(|id| id.0.as_str()),
+                    "peer": peer.endpoint,
+                }))?
+            );
+        }
+        Command::FetchJoinRequests {
+            workspace_id,
+            peer,
+            max_entries,
+        } => {
+            let workspace_id = workspace_id_arg(workspace_id)?;
+            let peer = peer_address(peer)?;
+            let envelopes = DirectTransport
+                .fetch_join_requests(&peer, &workspace_id, max_entries)
+                .await?;
+            let envelopes = join_envelope_texts(envelopes, "join request")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "workspaceId": workspace_id.0,
+                    "peer": peer.endpoint,
+                    "count": envelopes.len(),
+                    "envelopes": envelopes,
+                }))?
+            );
+        }
+        Command::FetchJoinResponses {
+            workspace_id,
+            peer,
+            max_entries,
+        } => {
+            let workspace_id = workspace_id_arg(workspace_id)?;
+            let peer = peer_address(peer)?;
+            let envelopes = DirectTransport
+                .fetch_join_responses(&peer, &workspace_id, max_entries)
+                .await?;
+            let envelopes = join_envelope_texts(envelopes, "join response")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "workspaceId": workspace_id.0,
+                    "peer": peer.endpoint,
+                    "count": envelopes.len(),
+                    "envelopes": envelopes,
+                }))?
+            );
+        }
         Command::RetryBlobTransfers {
             workspace_id,
             peers,
@@ -1870,6 +1987,10 @@ fn workspace_id_arg(value: String) -> Result<WorkspaceId> {
     Ok(WorkspaceId(value))
 }
 
+fn optional_workspace_id_arg(value: Option<String>) -> Result<Option<WorkspaceId>> {
+    value.map(workspace_id_arg).transpose()
+}
+
 fn channel_id_arg(value: String) -> Result<ChannelId> {
     let value = value.trim().to_owned();
     if value.is_empty() {
@@ -1966,6 +2087,16 @@ fn peer_addresses(endpoints: Vec<String>) -> Result<Vec<PeerAddress>> {
             endpoint,
         })
         .collect())
+}
+
+fn join_envelope_texts(envelopes: Vec<Vec<u8>>, label: &str) -> Result<Vec<String>> {
+    envelopes
+        .into_iter()
+        .map(|envelope| {
+            String::from_utf8(envelope)
+                .map_err(|_| anyhow!("{label} envelope response was not UTF-8 JSON"))
+        })
+        .collect()
 }
 
 fn deduplicate_normalized_peer_endpoints(endpoints: Vec<String>) -> Result<Vec<String>> {

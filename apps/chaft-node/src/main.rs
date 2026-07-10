@@ -6,7 +6,10 @@ use std::{
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     process,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -18,7 +21,8 @@ use chaft_net::{ChaftTransport, PeerAddress, PeerId};
 #[cfg(test)]
 use chaft_net_direct::DirectTransport;
 use chaft_net_direct::{
-    BlobSyncTransport, DirectPeerServer, MAX_ACTIVE_DIRECT_CONNECTIONS, SyncPeerStore,
+    BlobSyncTransport, DirectPeerServer, JoinRequestInbox, JoinResponseInbox,
+    MAX_ACTIVE_DIRECT_CONNECTIONS, SyncPeerStore,
 };
 use chaft_net_iroh::{IrohSyncPeer, IrohTransport, IrohTransportConfig};
 use chaft_store::{EventStore, WorkspaceEventStorageHealth, WorkspaceEventStorageRepair};
@@ -43,8 +47,12 @@ const MAX_MIRROR_STATUS_ERROR_BYTES: usize = 2048;
 const MIRROR_STATUS_FILE_MAX_BYTES: usize = 1024 * 1024;
 const NODE_PATH_MAX_BYTES: usize = 64 * 1024;
 const STATUS_TRUNCATED_SUFFIX: &str = "...";
+const ACCESS_ENVELOPE_ENTRY_MAX_BYTES: usize = 512 * 1024;
+const JOIN_REQUEST_INBOX_DIR: &str = "join-request-inbox";
+const JOIN_RESPONSE_INBOX_DIR: &str = "join-response-inbox";
 
 static MIRROR_STATUS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static ACCESS_ENVELOPE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Parser)]
 #[command(name = "chaft-node")]
 #[command(about = "Headless encrypted replica node for Chaft")]
@@ -160,7 +168,14 @@ async fn main() -> Result<()> {
                 max_active_connections_arg(max_active_connections, "max active connections")?;
             let (store, blob_store) =
                 open_node_store_with_blobs(&data_dir, &store_path, &blob_path)?;
-            let server = DirectPeerServer::bind_with_blobs(&listen, store, blob_store).await?;
+            let server = DirectPeerServer::bind_with_blobs_and_access_envelope_inboxes(
+                &listen,
+                store,
+                blob_store,
+                Arc::new(NodeJoinRequestInbox::new(data_dir.clone())),
+                Arc::new(NodeJoinResponseInbox::new(data_dir.clone())),
+            )
+            .await?;
             println!(
                 "chaft-node serving {} from {}",
                 server.local_addr()?,
@@ -949,6 +964,238 @@ fn current_unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     elapsed.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+#[derive(Debug, Clone)]
+struct NodeJoinRequestInbox {
+    data_dir: PathBuf,
+}
+
+impl NodeJoinRequestInbox {
+    fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir }
+    }
+}
+
+impl JoinRequestInbox for NodeJoinRequestInbox {
+    fn submit_join_request(
+        &self,
+        workspace_id: Option<&str>,
+        request: Vec<u8>,
+    ) -> Result<(), chaft_net::NetError> {
+        let request_text = String::from_utf8(request).map_err(|_| {
+            chaft_net::NetError::Protocol("join request payload must be UTF-8 JSON".to_owned())
+        })?;
+        write_access_envelope_entry(
+            &self.data_dir,
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            workspace_id,
+            &request_text,
+        )
+        .map(|_| ())
+        .map_err(|error| chaft_net::NetError::Protocol(error.to_string()))
+    }
+
+    fn list_join_requests(
+        &self,
+        workspace_id: &str,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, chaft_net::NetError> {
+        list_access_envelope_entries(
+            &self.data_dir,
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            workspace_id,
+            max_entries,
+        )
+        .map_err(|error| chaft_net::NetError::Protocol(error.to_string()))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NodeJoinResponseInbox {
+    data_dir: PathBuf,
+}
+
+impl NodeJoinResponseInbox {
+    fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir }
+    }
+}
+
+impl JoinResponseInbox for NodeJoinResponseInbox {
+    fn submit_join_response(
+        &self,
+        workspace_id: Option<&str>,
+        response: Vec<u8>,
+    ) -> Result<(), chaft_net::NetError> {
+        let response_text = String::from_utf8(response).map_err(|_| {
+            chaft_net::NetError::Protocol("join response payload must be UTF-8 JSON".to_owned())
+        })?;
+        write_access_envelope_entry(
+            &self.data_dir,
+            JOIN_RESPONSE_INBOX_DIR,
+            "responseText",
+            workspace_id,
+            &response_text,
+        )
+        .map(|_| ())
+        .map_err(|error| chaft_net::NetError::Protocol(error.to_string()))
+    }
+
+    fn list_join_responses(
+        &self,
+        workspace_id: &str,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, chaft_net::NetError> {
+        list_access_envelope_entries(
+            &self.data_dir,
+            JOIN_RESPONSE_INBOX_DIR,
+            "responseText",
+            workspace_id,
+            max_entries,
+        )
+        .map_err(|error| chaft_net::NetError::Protocol(error.to_string()))
+    }
+}
+
+fn write_access_envelope_entry(
+    data_dir: &Path,
+    inbox_dir_name: &str,
+    text_key: &str,
+    workspace_id: Option<&str>,
+    envelope_text: &str,
+) -> Result<()> {
+    if envelope_text.trim().is_empty() {
+        bail!("access envelope payload is empty");
+    }
+    let parsed: serde_json::Value = serde_json::from_str(envelope_text)?;
+    let workspace_id = access_envelope_workspace_id(workspace_id, &parsed)?;
+    let inbox_dir = data_dir.join(inbox_dir_name);
+    fs::create_dir_all(&inbox_dir)?;
+    let entry_id = access_envelope_entry_id(&parsed).unwrap_or_else(|| {
+        format!(
+            "access_{}_{}",
+            current_unix_millis(),
+            ACCESS_ENVELOPE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        )
+    });
+    let final_path = inbox_dir.join(format!("{entry_id}.json"));
+    if final_path.exists() {
+        return Ok(());
+    }
+    let entry = json!({
+        "schemaVersion": 1,
+        "entryId": entry_id,
+        "workspaceId": workspace_id,
+        "receivedAtUnixMs": current_unix_millis(),
+        text_key: envelope_text,
+    });
+    let bytes = serde_json::to_vec_pretty(&entry)?;
+    if bytes.len() > ACCESS_ENVELOPE_ENTRY_MAX_BYTES {
+        bail!(
+            "access envelope entry is too large ({} bytes, max {})",
+            bytes.len(),
+            ACCESS_ENVELOPE_ENTRY_MAX_BYTES
+        );
+    }
+    let temp_path = inbox_dir.join(format!(".{entry_id}.tmp"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let result = (|| -> Result<()> {
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp_path, &final_path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+fn access_envelope_entry_id(parsed: &serde_json::Value) -> Option<String> {
+    let request_id = parsed.get("requestId")?.as_str()?.trim();
+    if request_id.is_empty() || request_id.len() > 128 {
+        return None;
+    }
+    if !request_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return None;
+    }
+    Some(format!("access_{request_id}"))
+}
+
+fn access_envelope_workspace_id(
+    explicit_workspace_id: Option<&str>,
+    parsed: &serde_json::Value,
+) -> Result<String> {
+    let workspace_id = explicit_workspace_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            parsed
+                .get("workspaceId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| anyhow::anyhow!("access envelope workspace ID is required"))?;
+    validate_workspace_id_str(&workspace_id).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(workspace_id)
+}
+
+fn list_access_envelope_entries(
+    data_dir: &Path,
+    inbox_dir_name: &str,
+    text_key: &str,
+    workspace_id: &str,
+    max_entries: usize,
+) -> Result<Vec<Vec<u8>>> {
+    validate_workspace_id_str(workspace_id).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let inbox_dir = data_dir.join(inbox_dir_name);
+    let mut paths = match fs::read_dir(&inbox_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    paths.sort();
+
+    let mut envelopes = Vec::new();
+    for path in paths {
+        if envelopes.len() >= max_entries {
+            break;
+        }
+        let metadata = fs::metadata(&path)?;
+        if metadata.len() > ACCESS_ENVELOPE_ENTRY_MAX_BYTES as u64 {
+            bail!("access envelope entry is too large: {}", path.display());
+        }
+        let text = fs::read_to_string(&path)?;
+        let entry: serde_json::Value = serde_json::from_str(&text)?;
+        if entry.get("workspaceId").and_then(serde_json::Value::as_str) != Some(workspace_id) {
+            continue;
+        }
+        let Some(envelope) = entry.get(text_key).and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        envelopes.push(envelope.as_bytes().to_vec());
+    }
+    Ok(envelopes)
 }
 
 fn write_mirror_success_status(
