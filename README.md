@@ -132,6 +132,8 @@ For the user-facing workspace lifecycle, see
 readiness and the later request-access transport work, see
 [`guides/workspace-manual-qa.md`](guides/workspace-manual-qa.md) and
 [`guides/request-access-transport-hardening.md`](guides/request-access-transport-hardening.md).
+Record real-device QA evidence with
+[`guides/workspace-manual-qa-report-template.md`](guides/workspace-manual-qa-report-template.md).
 
 Start the app and return to the shell immediately:
 

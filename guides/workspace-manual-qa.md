@@ -5,6 +5,10 @@ Automated smoke covers deterministic UI states; this checklist covers real
 runtime behavior, files, clipboard, peer reachability, restart persistence, and
 human handoff mistakes.
 
+For each real-device run, copy
+`guides/workspace-manual-qa-report-template.md` and fill it out with the commit,
+device details, logs, screenshots, pass/fail status, and follow-up issue IDs.
+
 ## Test Setup
 
 - Use two physical devices when possible.
@@ -13,6 +17,8 @@ human handoff mistakes.
 - Keep logs, exported credential files, and exact runtime paths for each run.
 - Start with fresh runtimes for baseline runs, then repeat without `--fresh` to
   verify persistence.
+- Record every pass/fail/blocker in the manual QA report template before
+  treating the run as release evidence.
 
 ## Create and Recover
 
