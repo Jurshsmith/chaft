@@ -157,6 +157,42 @@ chaft_desktop_find_binary() {
   return 1
 }
 
+chaft_desktop_prepare_smoke_binary() {
+  desktop_binary="$1"
+  smoke_dir="$2"
+
+  case "$(uname -s)" in
+    Darwin)
+      case "$desktop_binary" in
+        *.app/Contents/MacOS/*)
+          # Some macOS agent shells can leave direct launches from inside an
+          # .app bundle in the kernel's launched-suspended state before main().
+          # Smoke tests exercise the same executable from a temporary path that
+          # preserves @loader_path-relative bundled frameworks/resources without
+          # using a .app suffix. Normal launch/package paths keep the bundle.
+          app_bundle="${desktop_binary%%.app/Contents/MacOS/*}.app"
+          smoke_bundle="$smoke_dir/$(basename "$app_bundle" .app)-smoke"
+          smoke_binary="$smoke_bundle/Contents/MacOS/$(basename "$desktop_binary")"
+          rm -rf "$smoke_bundle"
+          mkdir -p "$smoke_bundle/Contents/MacOS"
+          rm -f "$smoke_binary"
+          cp "$desktop_binary" "$smoke_binary"
+          chmod +x "$smoke_binary"
+          for bundle_item in Frameworks PlugIns Resources Info.plist; do
+            if [ -e "$app_bundle/Contents/$bundle_item" ]; then
+              ln -s "$app_bundle/Contents/$bundle_item" "$smoke_bundle/Contents/$bundle_item"
+            fi
+          done
+          printf '%s\n' "$smoke_binary"
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  printf '%s\n' "$desktop_binary"
+}
+
 chaft_desktop_find_installed_binary() {
   repo_root="$1"
   preset="$2"

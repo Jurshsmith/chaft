@@ -50,6 +50,17 @@ fi
 cmake --build --preset "$preset"
 
 desktop_binary="$(chaft_desktop_find_binary "$repo_root" "$preset" || true)"
+if [ -n "$desktop_binary" ] \
+  && [ "$(uname -s)" = "Darwin" ] \
+  && [ "${CHAFT_DESKTOP_SKIP_CODESIGN:-0}" != "1" ] \
+  && command -v codesign >/dev/null 2>&1; then
+  case "$desktop_binary" in
+    *.app/Contents/MacOS/*)
+      app_bundle="${desktop_binary%%.app/Contents/MacOS/*}.app"
+      codesign --force --deep --sign - "$app_bundle"
+      ;;
+  esac
+fi
 
 printf 'ffi library: %s\n' "$ffi_library"
 if [ -n "$desktop_binary" ]; then

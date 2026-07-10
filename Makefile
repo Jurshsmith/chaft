@@ -65,6 +65,7 @@ help:
 		'' \
 		'Smoke/release:' \
 		'  make smoke-p2p                Run local P2P smoke' \
+		'  make smoke-lifecycle          Run workspace lifecycle/admin smoke' \
 		'  make smoke-visual             Generate visual workspace smoke data' \
 		'  make screenshot-smoke         Run screenshot smoke with PROFILE' \
 		'  make release-metadata         Generate release metadata with PACKAGE_PROFILE' \
@@ -159,9 +160,12 @@ ci:
 	$(MAKE) ci-rust
 	$(MAKE) ci-desktop
 
-.PHONY: smoke-p2p smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke
+.PHONY: smoke-p2p smoke-lifecycle smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke
 smoke-p2p:
 	tools/smoke/local-p2p.sh $(ARGS)
+
+smoke-lifecycle:
+	tools/smoke/workspace-lifecycle.sh $(ARGS)
 
 smoke-visual:
 	tools/smoke/visual-workspace.sh $(ARGS)

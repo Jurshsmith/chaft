@@ -84,6 +84,7 @@ trap cleanup EXIT INT TERM
 
 runtime_dir="$smoke_dir/runtime"
 mkdir -p "$runtime_dir"
+desktop_launch_binary="$(chaft_desktop_prepare_smoke_binary "$installed_binary" "$smoke_dir")"
 
 created_json="$smoke_dir/created.json"
 "$cli_bin" --data-dir "$runtime_dir" init-workspace \
@@ -125,4 +126,4 @@ CHAFT_WORKSPACE_ID="$workspace_id" \
 CHAFT_DESKTOP_SMOKE=1 \
 CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
 CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}" \
-  "$installed_binary"
+  "$desktop_launch_binary"

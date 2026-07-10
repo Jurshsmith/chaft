@@ -134,6 +134,7 @@ fi
 
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-desktop-smoke.XXXXXX")"
 trap cleanup EXIT INT TERM
+desktop_launch_binary="$(chaft_desktop_prepare_smoke_binary "$desktop_binary" "$smoke_dir")"
 
 manifest_json="$smoke_dir/visual-workspace.json"
 CHAFT_CLI_BIN="$cli_bin" \
@@ -181,7 +182,47 @@ esac
 watchdog_seconds=$(( ($(smoke_timeout_ms) + $(smoke_screenshot_delay_ms) + $(smoke_watchdog_margin_ms) + 999) / 1000 ))
 desktop_status=0
 
-if command -v perl >/dev/null 2>&1; then
+run_desktop_with_watchdog() {
+  watchdog_marker="$smoke_dir/watchdog-fired"
+  rm -f "$watchdog_marker"
+  "$@" &
+  desktop_pid=$!
+  (
+    sleep "$watchdog_seconds"
+    if kill -0 "$desktop_pid" 2>/dev/null; then
+      : > "$watchdog_marker"
+      kill "$desktop_pid" 2>/dev/null || true
+    fi
+  ) &
+  watchdog_pid=$!
+  cont_pid=
+  if [ "$(uname -s)" = "Darwin" ]; then
+    (
+      while kill -0 "$desktop_pid" 2>/dev/null; do
+        kill -CONT "$desktop_pid" 2>/dev/null || true
+        sleep 1
+      done
+    ) &
+    cont_pid=$!
+  fi
+
+  command_status=0
+  wait "$desktop_pid" || command_status=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  if [ -n "$cont_pid" ]; then
+    kill "$cont_pid" 2>/dev/null || true
+    wait "$cont_pid" 2>/dev/null || true
+  fi
+  if [ -f "$watchdog_marker" ]; then
+    rm -f "$watchdog_marker"
+    return 142
+  fi
+  return "$command_status"
+}
+
+run_desktop_with_watchdog \
+  env \
   CHAFT_FFI_LIBRARY="$ffi_library" \
   CHAFT_DESKTOP_QML_IMPORT_ROOT="$source_qml_root" \
   CHAFT_RUNTIME_DIR="$runtime_dir" \
@@ -189,18 +230,7 @@ if command -v perl >/dev/null 2>&1; then
   CHAFT_DESKTOP_SMOKE=1 \
   CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
   CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}" \
-    perl -e 'alarm shift @ARGV; exec @ARGV' "$watchdog_seconds" \
-      "$desktop_binary" || desktop_status=$?
-else
-  CHAFT_FFI_LIBRARY="$ffi_library" \
-  CHAFT_DESKTOP_QML_IMPORT_ROOT="$source_qml_root" \
-  CHAFT_RUNTIME_DIR="$runtime_dir" \
-  CHAFT_WORKSPACE_ID="$workspace_id" \
-  CHAFT_DESKTOP_SMOKE=1 \
-  CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
-  CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}" \
-    "$desktop_binary" || desktop_status=$?
-fi
+  "$desktop_launch_binary" || desktop_status=$?
 
 if [ "$desktop_status" -eq 142 ]; then
   printf 'desktop smoke harness timed out after %ss\n' "$watchdog_seconds" >&2

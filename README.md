@@ -117,14 +117,21 @@ tools/desktop/launch.sh debug --smoke-workspace --fresh
 ```
 
 Desktop onboarding supports creating more than one workspace and joining more
-than one workspace from exported credentials. The join form accepts workspace
-key JSON, invite-package JSON, or passphrase-protected recovery bundle JSON.
+than one workspace from exported credentials. The join form accepts Chaft access
+files (`.chaftaccess`), invite packages, request cards, access requests, older
+JSON exports, or passphrase-protected recovery kits.
 After creating a workspace, the app prompts for a recovery export so the
 credentials can be saved or copied before inviting other devices. Setup can
 stage a saved invite package from an exported workspace key plus an invitee
 device ID, role, and peer endpoint. Signed workspace invites, admin/member
 roles, member removal, and private-channel grants are available from Setup and
 the pinned details panel once a workspace is selected.
+
+For the user-facing workspace lifecycle, see
+[`guides/workspace-lifecycle.md`](guides/workspace-lifecycle.md). For release
+readiness and the later request-access transport work, see
+[`guides/workspace-manual-qa.md`](guides/workspace-manual-qa.md) and
+[`guides/request-access-transport-hardening.md`](guides/request-access-transport-hardening.md).
 
 Start the app and return to the shell immediately:
 
@@ -162,6 +169,7 @@ Recommended public checks:
 ```sh
 tools/ci/rust-gates.sh --offline
 tools/smoke/local-p2p.sh --offline
+tools/smoke/workspace-lifecycle.sh --offline
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
 tools/desktop/qml-lint.sh
@@ -331,6 +339,9 @@ cargo run -p chaft-cli -- inventory --peer 127.0.0.1:7777
 
 For desktop runs, either set `CHAFT_FFI_LIBRARY` to the built dynamic library or
 launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
+`tools/smoke/workspace-lifecycle.sh` exercises create-workspace,
+admin/member role policy, request-access handling, and member removal through
+the CLI without requiring real devices.
 `tools/smoke/visual-workspace.sh` creates a deterministic public UI smoke
 runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
 temporary runtime and use the printed `runtimeDir`, `workspaceId`, and
