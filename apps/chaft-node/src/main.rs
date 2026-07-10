@@ -1074,7 +1074,7 @@ fn write_access_envelope_entry(
     let workspace_id = access_envelope_workspace_id(workspace_id, &parsed)?;
     let inbox_dir = data_dir.join(inbox_dir_name);
     fs::create_dir_all(&inbox_dir)?;
-    let entry_id = access_envelope_entry_id(&parsed).unwrap_or_else(|| {
+    let entry_id = access_envelope_entry_id(&workspace_id, &parsed).unwrap_or_else(|| {
         format!(
             "access_{}_{}",
             current_unix_millis(),
@@ -1118,7 +1118,7 @@ fn write_access_envelope_entry(
     result
 }
 
-fn access_envelope_entry_id(parsed: &serde_json::Value) -> Option<String> {
+fn access_envelope_entry_id(workspace_id: &str, parsed: &serde_json::Value) -> Option<String> {
     let request_id = parsed.get("requestId")?.as_str()?.trim();
     if request_id.is_empty() || request_id.len() > 128 {
         return None;
@@ -1129,25 +1129,34 @@ fn access_envelope_entry_id(parsed: &serde_json::Value) -> Option<String> {
     {
         return None;
     }
-    Some(format!("access_{request_id}"))
+    let hash = blake3::hash(format!("{workspace_id}\0{request_id}").as_bytes());
+    let hash_hex = hash.to_hex();
+    Some(format!("access_{}_{}", &hash_hex[..16], request_id))
 }
 
 fn access_envelope_workspace_id(
     explicit_workspace_id: Option<&str>,
     parsed: &serde_json::Value,
 ) -> Result<String> {
-    let workspace_id = explicit_workspace_id
+    let explicit_workspace_id = explicit_workspace_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            parsed
-                .get("workspaceId")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+        .map(ToOwned::to_owned);
+    let payload_workspace_id = parsed
+        .get("workspaceId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if let (Some(explicit), Some(payload)) = (&explicit_workspace_id, &payload_workspace_id) {
+        if explicit != payload {
+            bail!(
+                "access envelope workspace ID mismatch: explicit {explicit} does not match payload {payload}"
+            );
+        }
+    }
+    let workspace_id = explicit_workspace_id
+        .or(payload_workspace_id)
         .ok_or_else(|| anyhow::anyhow!("access envelope workspace ID is required"))?;
     validate_workspace_id_str(&workspace_id).map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(workspace_id)
@@ -2007,6 +2016,114 @@ mod tests {
 
     fn test_content_key() -> ContentKey {
         ContentKey::from_bytes([31; 32])
+    }
+
+    #[test]
+    fn node_access_envelope_dedupe_is_workspace_scoped() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let one = json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "workspaceId": "wrk_access_one",
+            "requestId": "req_same",
+            "note": "first workspace"
+        })
+        .to_string();
+        let two = json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "workspaceId": "wrk_access_two",
+            "requestId": "req_same",
+            "note": "second workspace"
+        })
+        .to_string();
+
+        write_access_envelope_entry(
+            tempdir.path(),
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            None,
+            &one,
+        )
+        .unwrap();
+        write_access_envelope_entry(
+            tempdir.path(),
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            None,
+            &one,
+        )
+        .unwrap();
+        write_access_envelope_entry(
+            tempdir.path(),
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            None,
+            &two,
+        )
+        .unwrap();
+
+        let workspace_one = list_access_envelope_entries(
+            tempdir.path(),
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            "wrk_access_one",
+            20,
+        )
+        .unwrap();
+        let workspace_two = list_access_envelope_entries(
+            tempdir.path(),
+            JOIN_REQUEST_INBOX_DIR,
+            "requestText",
+            "wrk_access_two",
+            20,
+        )
+        .unwrap();
+
+        assert_eq!(workspace_one.len(), 1);
+        assert_eq!(workspace_two.len(), 1);
+        assert!(
+            String::from_utf8(workspace_one[0].clone())
+                .unwrap()
+                .contains("first workspace")
+        );
+        assert!(
+            String::from_utf8(workspace_two[0].clone())
+                .unwrap()
+                .contains("second workspace")
+        );
+    }
+
+    #[test]
+    fn node_access_envelope_rejects_workspace_mismatch() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let envelope = json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "workspaceId": "wrk_payload",
+            "requestId": "req_mismatch",
+            "resolution": "declined"
+        })
+        .to_string();
+
+        let error = write_access_envelope_entry(
+            tempdir.path(),
+            JOIN_RESPONSE_INBOX_DIR,
+            "responseText",
+            Some("wrk_explicit"),
+            &envelope,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("workspace ID mismatch"));
+        assert!(
+            list_access_envelope_entries(
+                tempdir.path(),
+                JOIN_RESPONSE_INBOX_DIR,
+                "responseText",
+                "wrk_payload",
+                20
+            )
+            .unwrap()
+            .is_empty()
+        );
     }
 
     fn sealed_attachment_fixture(

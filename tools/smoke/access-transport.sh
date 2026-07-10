@@ -145,8 +145,11 @@ start_node "$requester_node_dir" "$requester_port" "$smoke_dir/requester-node.lo
 
 workspace_id="wrk_access_transport_smoke"
 other_workspace_id="wrk_access_transport_other"
+empty_workspace_id="wrk_access_transport_empty"
 request_file="$smoke_dir/join-request.json"
+other_request_file="$smoke_dir/join-request-other.json"
 response_file="$smoke_dir/join-response.json"
+other_response_file="$smoke_dir/join-response-other.json"
 
 cat > "$request_file" <<EOF
 {
@@ -161,6 +164,19 @@ cat > "$request_file" <<EOF
 }
 EOF
 
+cat > "$other_request_file" <<EOF
+{
+  "kind": "chaft.workspace-join-request.v1",
+  "schemaVersion": 1,
+  "workspaceId": "$other_workspace_id",
+  "requestId": "req_access_transport_smoke",
+  "deviceId": "dev_access_transport_requester",
+  "displayName": "Access Transport Smoke",
+  "note": "same request id in a second workspace",
+  "responsePeerEndpoint": "direct+tcp://127.0.0.1:$requester_port"
+}
+EOF
+
 "$cli_bin" --data-dir "$smoke_dir/requester-runtime" submit-join-request \
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$workspace_id" \
@@ -169,20 +185,30 @@ EOF
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$workspace_id" \
   --request-file "$request_file" > "$smoke_dir/submit-request-duplicate.json"
+"$cli_bin" --data-dir "$smoke_dir/requester-runtime" submit-join-request \
+  --peer "127.0.0.1:$admin_port" \
+  --workspace-id "$other_workspace_id" \
+  --request-file "$other_request_file" > "$smoke_dir/submit-other-request.json"
 "$cli_bin" --data-dir "$smoke_dir/admin-runtime" fetch-join-requests \
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$workspace_id" > "$smoke_dir/fetch-requests.json"
 "$cli_bin" --data-dir "$smoke_dir/admin-runtime" fetch-join-requests \
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$other_workspace_id" > "$smoke_dir/fetch-other-requests.json"
+"$cli_bin" --data-dir "$smoke_dir/admin-runtime" fetch-join-requests \
+  --peer "127.0.0.1:$admin_port" \
+  --workspace-id "$empty_workspace_id" > "$smoke_dir/fetch-empty-requests.json"
 
 assert_json "$smoke_dir/submit-request.json" \
   'data["submitted"] is True' \
   'join request direct submit did not report success'
 assert_json "$smoke_dir/fetch-requests.json" \
-  'data["count"] == 1 and "req_access_transport_smoke" in data["envelopes"][0]' \
+  'data["count"] == 1 and "process-level access envelope smoke" in data["envelopes"][0]' \
   'known peer did not return submitted join request'
 assert_json "$smoke_dir/fetch-other-requests.json" \
+  'data["count"] == 1 and "same request id in a second workspace" in data["envelopes"][0]' \
+  'same request id in another workspace did not return its own join request'
+assert_json "$smoke_dir/fetch-empty-requests.json" \
   'data["count"] == 0' \
   'join request fetch leaked across workspace scope'
 
@@ -199,6 +225,19 @@ cat > "$response_file" <<EOF
 }
 EOF
 
+cat > "$other_response_file" <<EOF
+{
+  "kind": "chaft.workspace-join-response.v1",
+  "schemaVersion": 1,
+  "workspaceId": "$other_workspace_id",
+  "requestId": "req_access_transport_smoke",
+  "resolution": "declined",
+  "createdAt": "2026-07-10T00:00:00.000Z",
+  "responderDeviceId": "dev_access_transport_admin",
+  "responderDisplayName": "Access Transport Admin Other"
+}
+EOF
+
 "$cli_bin" --data-dir "$smoke_dir/admin-runtime" submit-join-response \
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$workspace_id" \
@@ -207,20 +246,30 @@ EOF
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$workspace_id" \
   --response-file "$response_file" > "$smoke_dir/submit-response-duplicate.json"
+"$cli_bin" --data-dir "$smoke_dir/admin-runtime" submit-join-response \
+  --peer "127.0.0.1:$requester_port" \
+  --workspace-id "$other_workspace_id" \
+  --response-file "$other_response_file" > "$smoke_dir/submit-other-response.json"
 "$cli_bin" --data-dir "$smoke_dir/requester-runtime" fetch-join-responses \
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$workspace_id" > "$smoke_dir/fetch-responses.json"
 "$cli_bin" --data-dir "$smoke_dir/requester-runtime" fetch-join-responses \
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$other_workspace_id" > "$smoke_dir/fetch-other-responses.json"
+"$cli_bin" --data-dir "$smoke_dir/requester-runtime" fetch-join-responses \
+  --peer "127.0.0.1:$requester_port" \
+  --workspace-id "$empty_workspace_id" > "$smoke_dir/fetch-empty-responses.json"
 
 assert_json "$smoke_dir/submit-response.json" \
   'data["submitted"] is True' \
   'join response direct submit did not report success'
 assert_json "$smoke_dir/fetch-responses.json" \
-  'data["count"] == 1 and "req_access_transport_smoke" in data["envelopes"][0]' \
+  'data["count"] == 1 and "Access Transport Admin" in data["envelopes"][0]' \
   'known peer did not return submitted join response'
 assert_json "$smoke_dir/fetch-other-responses.json" \
+  'data["count"] == 1 and "Access Transport Admin Other" in data["envelopes"][0]' \
+  'same request id in another workspace did not return its own join response'
+assert_json "$smoke_dir/fetch-empty-responses.json" \
   'data["count"] == 0' \
   'join response fetch leaked across workspace scope'
 

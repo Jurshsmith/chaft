@@ -581,6 +581,7 @@ name = "chaft-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "chaft-core",
  "chaft-crypto",
  "chaft-identity",
