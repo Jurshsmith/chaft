@@ -39,6 +39,8 @@ This phase supports:
   workspace handoff buffer for user-confirmed import,
 - desktop queuing and background draining of direct decline/close response
   envelopes back to a requester-advertised response endpoint,
+- desktop notification for owners/admins when the visible waiting access-request
+  count increases after the workspace has loaded,
 - bounded retry metadata for queued approval, decline, and close responses,
   including attempt counts and next-attempt timestamps after failed direct
   delivery,
@@ -142,7 +144,9 @@ This phase does not promise:
   the runtime outbox, and pending request cards can manually or quietly
   background-check a known admin endpoint for approval responses. Background
   relay selection is still pending.
-- Notify admins when new inbox requests arrive.
+- Notify admins when new inbox requests arrive. The desktop now shows a
+  toast with an `Open` action when the waiting request count increases after
+  initial workspace load; native OS notifications can come later if needed.
 - Notify requesters when an approval invite is received. The desktop now opens
   the join dialog with received approval invites preloaded, keeps the normal
   user-confirmed import step, and updates pending request cards for approval,

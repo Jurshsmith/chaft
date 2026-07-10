@@ -172,6 +172,9 @@ ApplicationWindow {
     property string pendingAccessResponseAutoCheckLastKey: ""
     property int lastNotificationUnreadCount: 0
     property bool unreadNotificationsReady: false
+    property string accessRequestNotificationWorkspaceId: ""
+    property int accessRequestNotificationBaseline: 0
+    property bool accessRequestNotificationsReady: false
     property bool pendingSmokeArchivedChannelSelection: false
     property bool pendingSmokePrivateChannelDetailsSelection: false
     property bool pendingSmokeSetupRoomAccessSelection: false
@@ -491,6 +494,8 @@ ApplicationWindow {
                 root.copyPrivateRoomHelpNote()
             } else if (id === "open-received-approval") {
                 root.openReceivedApprovalInvite(true)
+            } else if (id === "open-access-requests") {
+                root.openAccessRequestsPanel()
             }
         }
     }
@@ -982,6 +987,54 @@ ApplicationWindow {
 
     function accessRequestBadgeLabel(count) {
         return String(Number(count || 0))
+    }
+
+    function resetAccessRequestNotificationBaseline() {
+        root.accessRequestNotificationWorkspaceId = root.currentWorkspaceId()
+        root.accessRequestNotificationBaseline = root.waitingAccessRequestCount
+        root.accessRequestNotificationsReady = false
+    }
+
+    function handleAccessRequestNotification() {
+        var workspaceId = root.currentWorkspaceId()
+        var count = Number(root.waitingAccessRequestCount || 0)
+        if (!root.runtimeWorkReady
+                || workspaceId.length === 0
+                || !root.canManageWorkspaceAccess()) {
+            root.accessRequestNotificationWorkspaceId = workspaceId
+            root.accessRequestNotificationBaseline = count
+            root.accessRequestNotificationsReady = false
+            return false
+        }
+        if (root.accessRequestNotificationWorkspaceId !== workspaceId
+                || !root.accessRequestNotificationsReady) {
+            root.accessRequestNotificationWorkspaceId = workspaceId
+            root.accessRequestNotificationBaseline = count
+            root.accessRequestNotificationsReady = true
+            return false
+        }
+        if (count > root.accessRequestNotificationBaseline) {
+            var added = count - root.accessRequestNotificationBaseline
+            if (!root.setupPanelOpen) {
+                toastHost.show(
+                    "info",
+                    added === 1
+                        ? "New access request waiting."
+                        : String(added) + " new access requests waiting.",
+                    "Open",
+                    "open-access-requests",
+                    7000)
+            }
+        }
+        root.accessRequestNotificationBaseline = count
+        return true
+    }
+
+    function openAccessRequestsPanel() {
+        root.setupPanelOpen = true
+        Qt.callLater(function() {
+            setupPanel.openPeopleAccessSection()
+        })
     }
 
     function backupPeerTimeLabel(timestamp) {
@@ -6552,6 +6605,7 @@ ApplicationWindow {
                 root.pendingDraftRestoreWorkspaceId = ""
             }
             root.requestSelectedChannelTimelineIfNeeded()
+            root.handleAccessRequestNotification()
             root.scheduleMarkSelectedChannelRead()
             root.applyPendingEntryDisplayName()
             root.pullPendingJoinPeerIfReady()
@@ -6574,6 +6628,7 @@ ApplicationWindow {
             root.inspectorItemKey = ""
             root.searchQuery = ""
             searchField.text = ""
+            root.resetAccessRequestNotificationBaseline()
             timelineView.resetToLatestOnNextModel()
         }
         function onBackupPeerEndpointsChanged() {
