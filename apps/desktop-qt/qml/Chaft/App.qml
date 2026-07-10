@@ -4683,8 +4683,8 @@ ApplicationWindow {
             return ({
                 title: "Recovery kit found",
                 message: String(passphrase || "").trim().length > 0
-                    ? "Chaft can restore access. History may still need a reachable teammate."
-                    : "Enter the passphrase used when this kit was saved.",
+                    ? "This kit can restore workspace access on this device. History may still need a reachable teammate."
+                    : "Enter the passphrase used when this kit was saved. Keep the kit private; it is not an invite.",
                 rows: rows,
                 canImport: String(passphrase || "").trim().length > 0,
                 warning: String(passphrase || "").trim().length === 0
@@ -5380,71 +5380,111 @@ ApplicationWindow {
         return [ olderSupportFilter, "All files (*)" ]
     }
 
-    function fileSlug(value, fallback) {
-        var source = String(value || "").trim().toLowerCase()
-        var slug = ""
-        var lastDash = false
-        for (var i = 0; i < source.length && slug.length < 48; i += 1) {
+    function workspaceCredentialNameFilters(restoreMode) {
+        var allChaft = "All Chaft credentials (*.chaftinvite *.chaftrequest *.chaftworkspace *.chaftrecovery *.chaftaccess)"
+        var olderSupportFilter = "Older support files (*.json)"
+        if (restoreMode) {
+            return [
+                "Chaft recovery kits (*.chaftrecovery)",
+                allChaft,
+                olderSupportFilter,
+                "All files (*)"
+            ]
+        }
+        return [
+            allChaft,
+            "Chaft invites (*.chaftinvite)",
+            "Chaft request cards (*.chaftworkspace)",
+            "Chaft access requests (*.chaftrequest)",
+            "Chaft recovery kits (*.chaftrecovery)",
+            "Chaft access files (*.chaftaccess)",
+            olderSupportFilter,
+            "All files (*)"
+        ]
+    }
+
+    function fileNameSegment(value, fallback, maxLength) {
+        var source = String(value || "").trim()
+        var limit = Math.max(8, maxLength || 48)
+        var segment = ""
+        var lastSeparator = false
+        for (var i = 0; i < source.length && segment.length < limit; i += 1) {
             var ch = source.charAt(i)
             var code = source.charCodeAt(i)
-            var allowed = (code >= 48 && code <= 57) || (code >= 97 && code <= 122)
-            if (allowed) {
-                slug += ch
-                lastDash = false
-            } else if (!lastDash && slug.length > 0) {
-                slug += "-"
-                lastDash = true
+            var alnum = (code >= 48 && code <= 57)
+                || (code >= 65 && code <= 90)
+                || (code >= 97 && code <= 122)
+            var allowedPunctuation = ch === "." || ch === "-" || ch === "_"
+            if (alnum || allowedPunctuation) {
+                segment += ch
+                lastSeparator = false
+            } else if (!lastSeparator && segment.length > 0) {
+                segment += " "
+                lastSeparator = true
             }
         }
-        while (slug.charAt(slug.length - 1) === "-") {
-            slug = slug.slice(0, -1)
+        while (segment.length > 0) {
+            var tail = segment.charAt(segment.length - 1)
+            if (tail !== " " && tail !== "." && tail !== "-" && tail !== "_") {
+                break
+            }
+            segment = segment.slice(0, -1)
         }
-        if (slug.length > 0) {
-            return slug
+        while (segment.length > 0) {
+            var head = segment.charAt(0)
+            if (head !== " " && head !== "." && head !== "-" && head !== "_") {
+                break
+            }
+            segment = segment.slice(1)
+        }
+        if (segment.length > 0) {
+            return segment
         }
         if (fallback === "") {
             return ""
         }
-        return String(fallback || "item")
+        return String(fallback || "Workspace")
     }
 
     function artifactSuggestedFileName(artifact, label) {
         var value = artifact || ({})
         var normalized = String(label || root.keyTransferLabel()).toLowerCase()
         var extension = root.keyTransferFileExtension(normalized)
-        var workspace = root.fileSlug(
+        var workspace = root.fileNameSegment(
             value.workspaceName || value.workspaceId,
-            "workspace")
-        var person = root.fileSlug(
+            "Workspace",
+            48)
+        var person = root.fileNameSegment(
             value.inviteeDisplayName || value.displayName
                 || value.deliveryDisplayName || value.inviteeDeviceId
                 || value.deviceId,
-            "")
-        var date = root.fileSlug(String(value.createdAt || "").slice(0, 10), "")
-        var parts = []
+            "",
+            40)
+        var date = root.fileNameSegment(String(value.createdAt || "").slice(0, 10), "", 16)
+        var parts = [ "Chaft", workspace ]
         if (extension === ".chaftinvite") {
-            parts = [ "chaft-invite", workspace ]
+            parts.push("Invite")
             if (person.length > 0) {
                 parts.push(person)
             }
         } else if (extension === ".chaftrequest") {
-            parts = [ "chaft-request", workspace ]
+            parts.push("Access Request")
             if (person.length > 0) {
                 parts.push(person)
             }
         } else if (extension === ".chaftworkspace") {
-            parts = [ "chaft-workspace-card", workspace ]
+            parts.push("Request Card")
         } else if (extension === ".chaftrecovery") {
-            parts = [ "chaft-recovery", workspace ]
+            parts.push("Recovery Kit")
         } else if (extension === ".chaftaccess") {
-            parts = [ "chaft-access", workspace ]
+            parts.push("Access File")
         } else {
-            parts = [ "chaft-credentials", workspace ]
+            parts.push("Credentials")
         }
         if (date.length > 0) {
             parts.push(date)
         }
-        return parts.join("-") + extension
+        return parts.join(" - ") + extension
     }
 
     function keyTransferSuggestedFileName(label) {
@@ -6693,8 +6733,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: chaftController.keyTransferJson.length > 0
                             && root.keyTransferIsRecoveryBundle()
-                            ? "Recovery kit ready. Store the file privately and keep its passphrase separate."
-                            : "Recovery kit can wait. Save one when you can store it privately."
+                            ? "Recovery kit ready. Store the file privately, keep its passphrase separate, and do not send it as an invite."
+                            : "Recovery kit can wait. Save one when you can store it privately and keep the passphrase separate."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeSm
                         wrapMode: Text.WordWrap
@@ -6970,11 +7010,7 @@ ApplicationWindow {
             ? "Open recovery kit"
             : "Open invite, request link, recovery kit, or access file"
         fileMode: FileDialog.OpenFile
-        nameFilters: [
-            "Chaft credentials (*.chaftinvite *.chaftrequest *.chaftworkspace *.chaftrecovery *.chaftaccess)",
-            "Older support files (*.json)",
-            "All files (*)"
-        ]
+        nameFilters: root.workspaceCredentialNameFilters(workspaceEntryDialog.restoreMode)
         onAccepted: {
             root.loadWorkspaceCredentialUrl(selectedFile)
         }

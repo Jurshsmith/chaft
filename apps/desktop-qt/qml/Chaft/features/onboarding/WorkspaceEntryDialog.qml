@@ -1552,7 +1552,7 @@ Dialog {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "You can start chatting now, then invite teammates or save a recovery kit."
+                    text: "You can start chatting now, then invite teammates or save a private recovery kit."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap

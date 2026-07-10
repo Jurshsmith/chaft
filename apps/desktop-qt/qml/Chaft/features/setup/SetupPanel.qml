@@ -3611,7 +3611,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "This kit restores workspace access. Store the file privately, keep its passphrase separate, and do not send it in chat."
+                            text: "This kit restores workspace access on any device with the passphrase. Store the file privately, keep its passphrase separate, and do not send it as an invite."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -3637,7 +3637,7 @@ ScrollView {
                                     model: [
                                         "1. Save the recovery kit file.",
                                         "2. Open the kit in Chaft on the new device.",
-                                        "3. Keep the kit private and the passphrase separate."
+                                        "3. Keep the kit private and never share it as an invite."
                                     ]
 
                                     delegate: Text {

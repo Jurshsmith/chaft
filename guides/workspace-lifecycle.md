@@ -41,17 +41,17 @@ prepare an access request instead of joining immediately.
 
 Chaft saves user-facing handoff material with explicit extensions:
 
-- invites: `chaft-invite-<workspace>-<person>-<date>.chaftinvite`,
-- access requests: `chaft-request-<workspace>-<person>-<date>.chaftrequest`,
-- workspace request cards: `chaft-workspace-card-<workspace>-<date>.chaftworkspace`,
-- workspace access files: `chaft-access-<workspace>-<date>.chaftaccess`,
-- recovery kits: `chaft-recovery-<workspace>.chaftrecovery`.
+- invites: `Chaft - <workspace> - Invite - <person> - <date>.chaftinvite`,
+- access requests: `Chaft - <workspace> - Access Request - <person> - <date>.chaftrequest`,
+- workspace request cards: `Chaft - <workspace> - Request Card - <date>.chaftworkspace`,
+- workspace access files: `Chaft - <workspace> - Access File - <date>.chaftaccess`,
+- recovery kits: `Chaft - <workspace> - Recovery Kit.chaftrecovery`.
 
 The open/import flows also accept older JSON exports. Treat recovery kits as
-private restore material, not invitations; store the kit privately and keep its
-passphrase separate from the file. Workspace access files are less sensitive
-than recovery kits, but still grant workspace access and should only go to the
-intended teammate or device.
+private restore material, not invitations; store the kit privately, keep its
+passphrase separate from the file, and never send the kit as an invite.
+Workspace access files are less sensitive than recovery kits, but still grant
+workspace access and should only go to the intended teammate or device.
 
 ## Request Access
 
