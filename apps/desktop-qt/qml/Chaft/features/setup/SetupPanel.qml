@@ -9,6 +9,8 @@ ScrollView {
 
     // The App root window. Set by App.qml at the single instantiation site.
     property var app
+    property string category: "profile"
+    signal categoryRequested(string categoryId)
 
     readonly property var darkThemes: Themes.catalog.filter(function (theme) {
         return theme.dark === true
@@ -37,14 +39,23 @@ ScrollView {
     property bool addAnotherDeviceOpenSaveWhenReady: false
     readonly property string standardAccessUpdateProtocol: "openmls/key-package"
 
-    function clearChannelMemberField() {
-        channelMemberDeviceField.text = ""
+    onCategoryChanged: Qt.callLater(function() {
+        if (setupScroll.contentItem !== null) {
+            setupScroll.contentItem.contentY = 0
+        }
+    })
+
+    function requestCategory(categoryId) {
+        if (setupScroll.category !== categoryId) {
+            setupScroll.categoryRequested(categoryId)
+        }
     }
 
     function startAddAnotherDeviceFlow() {
         if (!chaftController.hasRuntimeWorkspace) {
             return false
         }
+        setupScroll.requestCategory("devices")
         setupScroll.addAnotherDeviceGuideVisible = true
         peopleAccessSection.expanded = false
         advancedAccessSection.expanded = true
@@ -1363,6 +1374,7 @@ ScrollView {
     }
 
     function focusInviteForm() {
+        setupScroll.requestCategory("people")
         peopleAccessSection.expanded = true
         Qt.callLater(function() {
             if (setupScroll.contentItem !== null) {
@@ -1374,6 +1386,7 @@ ScrollView {
     }
 
     function openPeopleAccessSection() {
+        setupScroll.requestCategory("people")
         peopleAccessSection.expanded = true
         Qt.callLater(function() {
             if (setupScroll.contentItem !== null) {
@@ -1693,7 +1706,6 @@ ScrollView {
                 || state === "setup-request-reinvite"
                 || state === "setup-security"
                 || state === "setup-backup"
-                || state === "setup-room-access"
             if (!handledState || setupScroll.contentItem === null) {
                 return
             }
@@ -1709,8 +1721,6 @@ ScrollView {
             } else if (state === "setup-backup") {
                 hostingBackupSection.expanded = true
                 chaftController.addBackupPeerEndpoint("127.0.0.1:44944")
-            } else if (state === "setup-room-access") {
-                roomAccessSection.expanded = true
             } else {
                 peopleAccessSection.expanded = true
             }
@@ -1735,8 +1745,6 @@ ScrollView {
                 }
                 if (state === "setup-backup") {
                     targetY = hostingBackupSection.y - Tokens.space2
-                } else if (state === "setup-room-access") {
-                    targetY = roomAccessSection.y - Tokens.space2
                 }
                 if (state === "setup-identity") {
                     targetY = identityProfileSection.y - Tokens.space2
@@ -1772,8 +1780,7 @@ ScrollView {
                 || state === "setup-invite-lost"
                 || state === "setup-access-updates"
                 || state === "setup-security"
-                || state === "setup-backup"
-                || state === "setup-room-access") {
+                || state === "setup-backup") {
             smokeSetupInviteScrollTimer.restart()
         }
     }
@@ -1885,7 +1892,9 @@ ScrollView {
             SetupSection {
                 id: identityProfileSection
                 Layout.fillWidth: true
+                visible: setupScroll.category === "profile"
                 title: "Identity & Profile"
+                collapsible: false
                 defaultExpanded: true
 
                 RowLayout {
@@ -2086,8 +2095,10 @@ ScrollView {
 
             SetupSection {
                 Layout.fillWidth: true
-                visible: chaftController.hasRuntimeWorkspace
+                visible: setupScroll.category === "workspace"
+                    && chaftController.hasRuntimeWorkspace
                 title: "Workspace Access"
+                collapsible: false
                 defaultExpanded: true
 
                 RowLayout {
@@ -2176,7 +2187,9 @@ ScrollView {
 
             SetupSection {
                 Layout.fillWidth: true
+                visible: setupScroll.category === "preferences"
                 title: "Notifications"
+                collapsible: false
                 defaultExpanded: true
 
                 CheckBox {
@@ -2232,7 +2245,9 @@ ScrollView {
 
             SetupSection {
                 Layout.fillWidth: true
+                visible: setupScroll.category === "preferences"
                 title: "Links"
+                collapsible: false
                 defaultExpanded: true
 
                 CheckBox {
@@ -2255,7 +2270,9 @@ ScrollView {
 
             SetupSection {
                 Layout.fillWidth: true
+                visible: setupScroll.category === "preferences"
                 title: "Appearance"
+                collapsible: false
                 defaultExpanded: true
 
                 CheckBox {
@@ -2344,8 +2361,10 @@ ScrollView {
             SetupSection {
                 id: peopleAccessSection
                 Layout.fillWidth: true
-                visible: chaftController.hasRuntimeWorkspace
+                visible: setupScroll.category === "people"
+                    && chaftController.hasRuntimeWorkspace
                 title: "People & Access"
+                collapsible: false
                 badgeText: setupScroll.app && setupScroll.app.waitingAccessRequestCount > 0
                     ? String(setupScroll.app.waitingAccessRequestCount) + " waiting"
                     : (setupScroll.app ? String(setupScroll.app.memberCount) : "")
@@ -3485,90 +3504,13 @@ ScrollView {
             }
 
             SetupSection {
-                id: roomAccessSection
-                Layout.fillWidth: true
-                visible: chaftController.hasRuntimeWorkspace && app.selectedChannelPrivate
-                title: "Rooms & Privacy"
-
-                Text {
-                    Layout.fillWidth: true
-                    text: app.canManageWorkspaceAccess()
-                        ? "Add or remove access to the selected private room."
-                        : app.workspaceAccessUnavailableReason()
-                    color: Tokens.textMuted
-                    font.pixelSize: Tokens.fontSizeXs
-                    wrapMode: Text.WordWrap
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Tokens.space2
-
-                    LabeledField {
-                        id: channelMemberDeviceField
-                        Layout.fillWidth: true
-                        label: "Person"
-                        placeholderText: "Paste their support code"
-                        enabled: app.runtimeWorkReady && app.canManageWorkspaceAccess()
-                        onAccepted: {
-                            if (app.runtimeWorkReady
-                                    && app.canManageWorkspaceAccess()
-                                    && chaftController.addChannelMember(app.selectedChannelKey, text)) {
-                                text = ""
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Tokens.space2
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Add access"
-                            enabled: app.runtimeWorkReady
-                                && app.canManageWorkspaceAccess()
-                                && channelMemberDeviceField.text.trim().length > 0
-                                && app.selectedChannelKey.length > 0
-                            ToolTip.visible: hovered && !enabled
-                            ToolTip.text: app.canManageWorkspaceAccess()
-                                ? "Paste the support code they sent you."
-                                : app.workspaceAccessUnavailableReason()
-                            onClicked: {
-                                if (chaftController.addChannelMember(app.selectedChannelKey, channelMemberDeviceField.text)) {
-                                    channelMemberDeviceField.text = ""
-                                }
-                            }
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: "Remove access"
-                            enabled: app.runtimeWorkReady
-                                && app.canManageWorkspaceAccess()
-                                && channelMemberDeviceField.text.trim().length > 0
-                                && app.selectedChannelKey.length > 0
-                            ToolTip.visible: hovered && !enabled
-                            ToolTip.text: app.canManageWorkspaceAccess()
-                                ? "Paste the support code they sent you."
-                                : app.workspaceAccessUnavailableReason()
-                            onClicked: app.confirmSetupAction(
-                                "Remove room access",
-                                "Remove this room access? New room messages "
-                                    + "will stay protected from them after the access refresh completes.",
-                                "Remove access",
-                                "revoke-channel-member:" + channelMemberDeviceField.text.trim())
-                        }
-                    }
-                }
-            }
-
-            SetupSection {
                 id: advancedAccessSection
                 Layout.fillWidth: true
+                visible: setupScroll.category === "devices"
                 title: setupScroll.addAnotherDeviceGuideVisible
                     ? "Access & Recovery"
                     : "Advanced Access & Recovery"
+                collapsible: false
 
                 Rectangle {
                     id: addAnotherDeviceRecoveryPanel
@@ -4047,8 +3989,10 @@ ScrollView {
             SetupSection {
                 id: hostingBackupSection
                 Layout.fillWidth: true
-                visible: chaftController.hasRuntimeWorkspace
+                visible: setupScroll.category === "backup"
+                    && chaftController.hasRuntimeWorkspace
                 title: "Sharing & Backup"
+                collapsible: false
                 badgeText: (chaftController.backupPeerEndpoints || []).length > 0
                     ? String((chaftController.backupPeerEndpoints || []).length)
                     : ""
@@ -4126,8 +4070,10 @@ ScrollView {
             SetupSection {
                 id: securityToolsSection
                 Layout.fillWidth: true
-                visible: chaftController.hasRuntimeWorkspace
+                visible: setupScroll.category === "advanced"
+                    && chaftController.hasRuntimeWorkspace
                 title: "Safety tools"
+                collapsible: false
                 danger: true
 
                 Text {

@@ -8,6 +8,7 @@ ColumnLayout {
     property string title: "Section"
     property string badgeText: ""
     property bool danger: false
+    property bool collapsible: true
     property bool defaultExpanded: false
     property bool expanded: root.defaultExpanded
     default property alias contentData: contentColumn.data
@@ -15,7 +16,15 @@ ColumnLayout {
     spacing: Tokens.space1
 
     function toggle() {
-        root.expanded = !root.expanded
+        if (root.collapsible) {
+            root.expanded = !root.expanded
+        }
+    }
+
+    onCollapsibleChanged: {
+        if (!root.collapsible) {
+            root.expanded = true
+        }
     }
 
     Rectangle {
@@ -28,12 +37,14 @@ ColumnLayout {
             : "transparent"
         border.width: sectionHeader.activeFocus ? 2 : 0
         border.color: Tokens.accent
-        activeFocusOnTab: true
+        activeFocusOnTab: root.collapsible
 
-        Accessible.role: Accessible.Button
+        Accessible.role: root.collapsible ? Accessible.Button : Accessible.StaticText
         Accessible.name: root.title
             + (root.badgeText.length > 0 ? ", " + root.badgeText : "")
-        Accessible.description: root.expanded ? "Collapse section" : "Expand section"
+        Accessible.description: root.collapsible
+            ? (root.expanded ? "Collapse section" : "Expand section")
+            : ""
         Accessible.onPressAction: root.toggle()
 
         Keys.onPressed: function (event) {
@@ -52,6 +63,7 @@ ColumnLayout {
             spacing: Tokens.space2
 
             Text {
+                visible: root.collapsible
                 text: root.expanded ? "▾" : "▸"
                 color: root.danger ? Tokens.warningText : Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeXs
@@ -83,7 +95,8 @@ ColumnLayout {
             anchors.fill: parent
             scrollGestureEnabled: false
             hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+            enabled: root.collapsible
+            cursorShape: root.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: root.toggle()
         }
     }
@@ -94,7 +107,7 @@ ColumnLayout {
         Layout.leftMargin: Tokens.space1
         Layout.rightMargin: Tokens.space1
         Layout.bottomMargin: Tokens.space1
-        visible: root.expanded
+        visible: !root.collapsible || root.expanded
         spacing: Tokens.space2
     }
 }

@@ -84,6 +84,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/features/palette/CommandPalette.qml
         qml/Chaft/features/palette/ShortcutOverlay.qml
         qml/Chaft/features/setup/SetupPanel.qml
+        qml/Chaft/features/setup/SettingsView.qml
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml
         qml/Chaft/features/inspector/ChannelMediaPanel.qml

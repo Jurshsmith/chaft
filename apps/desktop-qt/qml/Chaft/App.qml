@@ -144,7 +144,11 @@ ApplicationWindow {
     readonly property string replyTargetMessageId: String(replyTarget.messageId || "")
     property var composerDrafts: ({})
     property string pendingDraftRestoreWorkspaceId: ""
-    property bool setupPanelOpen: false
+    property string mainDestination: "conversation"
+    property string settingsCategory: "profile"
+    readonly property bool conversationDestination: mainDestination === "conversation"
+    readonly property bool settingsDestination: mainDestination === "settings"
+    readonly property bool peopleAccessDestination: mainDestination === "peopleAccess"
     property bool autoSyncEnabled: false
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
@@ -292,13 +296,13 @@ ApplicationWindow {
     readonly property var paletteActions: [
         {
             id: "toggle-setup",
-            label: "Toggle settings",
+            label: "Open settings",
             shortcut: "",
             enabled: function () {
                 return chaftController.deviceId.length > 0
                     || chaftController.hasRuntimeWorkspace
             },
-            run: function () { root.setupPanelOpen = !root.setupPanelOpen }
+            run: function () { root.openSettings(root.settingsCategory) }
         },
         {
             id: "toggle-sync-drawer",
@@ -747,9 +751,7 @@ ApplicationWindow {
                     revokeChannelId = revokeTarget.slice(0, revokeSeparator)
                     revokeDeviceId = revokeTarget.slice(revokeSeparator + 2)
                 }
-                if (chaftController.removeChannelMember(revokeChannelId, revokeDeviceId)) {
-                    setupPanel.clearChannelMemberField()
-                }
+                chaftController.removeChannelMember(revokeChannelId, revokeDeviceId)
             } else if (id.indexOf("leave-private-room:") === 0) {
                 var leaveChannelId = id.slice("leave-private-room:".length)
                 if (leaveChannelId.length > 0 && chaftController.deviceId.length > 0) {
@@ -989,6 +991,62 @@ ApplicationWindow {
         return String(Number(count || 0))
     }
 
+    function normalizedSettingsCategory(categoryId) {
+        var value = String(categoryId || "profile")
+        if (value === "profile" || value === "preferences") {
+            return value
+        }
+        if (chaftController.hasRuntimeWorkspace
+                && (value === "workspace"
+                    || value === "devices"
+                    || value === "backup"
+                    || value === "advanced")) {
+            return value
+        }
+        return "profile"
+    }
+
+    function openSettings(categoryId) {
+        if (chaftController.deviceId.length === 0
+                && !chaftController.hasRuntimeWorkspace) {
+            return false
+        }
+        root.saveCurrentDraft()
+        root.settingsCategory = root.normalizedSettingsCategory(
+            categoryId || root.settingsCategory)
+        root.mainDestination = "settings"
+        return true
+    }
+
+    function openPeopleAccess(focusInvite) {
+        if (!chaftController.hasRuntimeWorkspace) {
+            return false
+        }
+        root.saveCurrentDraft()
+        root.mainDestination = "peopleAccess"
+        Qt.callLater(function() {
+            if (focusInvite) {
+                setupPanel.focusInviteForm()
+            } else {
+                setupPanel.openPeopleAccessSection()
+            }
+        })
+        return true
+    }
+
+    function closeMainDestination(focusComposerAfterClose) {
+        if (root.conversationDestination) {
+            return false
+        }
+        root.mainDestination = "conversation"
+        if (focusComposerAfterClose && root.hasWorkspaceContent) {
+            Qt.callLater(function() {
+                composer.focusDraft()
+            })
+        }
+        return true
+    }
+
     function resetAccessRequestNotificationBaseline() {
         root.accessRequestNotificationWorkspaceId = root.currentWorkspaceId()
         root.accessRequestNotificationBaseline = root.waitingAccessRequestCount
@@ -1015,7 +1073,7 @@ ApplicationWindow {
         }
         if (count > root.accessRequestNotificationBaseline) {
             var added = count - root.accessRequestNotificationBaseline
-            if (!root.setupPanelOpen) {
+            if (!root.peopleAccessDestination) {
                 toastHost.show(
                     "info",
                     added === 1
@@ -1031,10 +1089,7 @@ ApplicationWindow {
     }
 
     function openAccessRequestsPanel() {
-        root.setupPanelOpen = true
-        Qt.callLater(function() {
-            setupPanel.openPeopleAccessSection()
-        })
+        root.openPeopleAccess(false)
     }
 
     function backupPeerTimeLabel(timestamp) {
@@ -2823,7 +2878,11 @@ ApplicationWindow {
                     && rows[i].isPrivate === true) {
                 root.pendingSmokeSetupRoomAccessSelection = false
                 root.selectChannelId(rows[i].channelId, true)
-                root.setupPanelOpen = true
+                Qt.callLater(function() {
+                    if (root.selectedChannelPrivate) {
+                        channelDetailsPopup.open()
+                    }
+                })
                 return
             }
         }
@@ -2850,40 +2909,40 @@ ApplicationWindow {
     function applySmokeUiState() {
         var state = String(chaftController.smokeUiState || "")
         if (state === "setup") {
-            root.setupPanelOpen = true
+            root.openSettings("profile")
         } else if (state === "setup-identity") {
-            root.setupPanelOpen = true
+            root.openSettings("profile")
         } else if (state === "setup-add-device") {
-            root.setupPanelOpen = true
+            root.openSettings("devices")
         } else if (state === "setup-access-updates") {
-            root.setupPanelOpen = true
+            root.openSettings("devices")
         } else if (state === "setup-security") {
-            root.setupPanelOpen = true
+            root.openSettings("advanced")
         } else if (state === "setup-backup") {
-            root.setupPanelOpen = true
+            root.openSettings("backup")
         } else if (state === "setup-room-access") {
             root.pendingSmokeSetupRoomAccessSelection = true
             root.applyPendingSmokeSetupRoomAccessSelection()
         } else if (state === "setup-invite") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
             smokeInvitePackageTimer.restart()
         } else if (state === "setup-approval-invite") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
             Qt.callLater(function() {
                 setupPanel.approvalInviteModeEnabled = true
             })
             smokeApprovalInvitePackageTimer.restart()
         } else if (state === "setup-invite-lost") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
         } else if (state === "setup-request") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
         } else if (state === "setup-request-approved") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
             smokeApprovedRequestInviteTimer.restart()
         } else if (state === "setup-request-lost") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
         } else if (state === "setup-request-reinvite") {
-            root.setupPanelOpen = true
+            root.openPeopleAccess(false)
         } else if (state === "drawer") {
             root.syncDrawerOpen = true
         } else if (state === "first-sync-waiting") {
@@ -4989,6 +5048,7 @@ ApplicationWindow {
             return false
         }
         root.saveCurrentDraft()
+        root.mainDestination = "conversation"
         if (root.selectedChannelId !== normalizedChannelId) {
             root.selectedChannelId = normalizedChannelId
             root.cancelReplyMessage()
@@ -5034,6 +5094,7 @@ ApplicationWindow {
             return false
         }
         root.saveCurrentDraft()
+        root.mainDestination = "conversation"
         if (root.editingMessageId.length > 0) {
             root.editingMessageId = ""
         }
@@ -5060,6 +5121,7 @@ ApplicationWindow {
     }
 
     function focusComposer() {
+        root.mainDestination = "conversation"
         composer.focusDraft()
     }
 
@@ -5091,6 +5153,9 @@ ApplicationWindow {
     }
 
     function dismissFocusedState() {
+        if (!root.conversationDestination) {
+            return root.closeMainDestination(true)
+        }
         if (composer.cancelEdit()) {
             return true
         }
@@ -5101,11 +5166,6 @@ ApplicationWindow {
         if (root.searchQuery.length > 0) {
             searchField.text = ""
             root.searchQuery = ""
-            root.focusComposer()
-            return true
-        }
-        if (root.setupPanelOpen) {
-            root.setupPanelOpen = false
             root.focusComposer()
             return true
         }
@@ -6240,10 +6300,7 @@ ApplicationWindow {
         if (channelDetailsPopup.opened) {
             channelDetailsPopup.close()
         }
-        root.setupPanelOpen = true
-        Qt.callLater(function() {
-            setupPanel.openPeopleAccessSection()
-        })
+        root.openPeopleAccess(false)
         toastHost.show(
             "info",
             "Message someone with this room's history, or ask an admin to add you again.",
@@ -6872,10 +6929,7 @@ ApplicationWindow {
                     enabled: root.runtimeWorkReady
                     onClicked: {
                         postCreateExportDialog.close()
-                        root.setupPanelOpen = true
-                        Qt.callLater(function() {
-                            setupPanel.focusInviteForm()
-                        })
+                        root.openPeopleAccess(true)
                     }
                 }
             }
@@ -7625,11 +7679,9 @@ ApplicationWindow {
                 ScrollView {
                     id: channelListScroll
                     Layout.fillWidth: true
-                    Layout.fillHeight: !root.setupPanelOpen
+                    Layout.fillHeight: true
                     visible: root.hasWorkspaceContent
-                    Layout.preferredHeight: root.setupPanelOpen
-                        ? Math.min(180, channelListColumn.implicitHeight + 8)
-                        : 1
+                    Layout.preferredHeight: 1
                     clip: true
                     contentWidth: availableWidth
                     contentHeight: channelListColumn.implicitHeight
@@ -7750,27 +7802,65 @@ ApplicationWindow {
                 }
 
                 Button {
+                    id: peopleAccessButton
                     Layout.fillWidth: true
-                    visible: chaftController.deviceId.length > 0 || chaftController.hasRuntimeWorkspace
-                    text: root.setupPanelOpen
-                        ? "Hide settings"
-                        : (root.waitingAccessRequestCount > 0
-                            ? "Requests (" + root.accessRequestBadgeLabel(root.waitingAccessRequestCount) + ")"
-                            : "Settings")
-                    onClicked: root.setupPanelOpen = !root.setupPanelOpen
+                    visible: chaftController.hasRuntimeWorkspace
+                    text: "People & Access"
+                    checkable: true
+                    checked: root.peopleAccessDestination
+                    Accessible.name: "People & Access"
+                    Accessible.description: root.waitingAccessRequestCount > 0
+                        ? root.accessRequestCountLabel(root.waitingAccessRequestCount) + " waiting"
+                        : "Manage members, invites, requests, and roles"
+                    onClicked: root.openPeopleAccess(false)
                     ToolTip.visible: hovered && root.waitingAccessRequestCount > 0
-                    ToolTip.text: "Open People & Access: "
-                        + root.accessRequestCountLabel(root.waitingAccessRequestCount)
+                    ToolTip.text: root.accessRequestCountLabel(root.waitingAccessRequestCount)
                         + " waiting"
+
+                    contentItem: RowLayout {
+                        spacing: Tokens.space2
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: peopleAccessButton.text
+                            color: peopleAccessButton.enabled ? Tokens.textStrong : Tokens.textMuted
+                            font: peopleAccessButton.font
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+
+                        Rectangle {
+                            visible: root.waitingAccessRequestCount > 0
+                            Layout.preferredWidth: Math.max(22, accessRequestBadgeText.implicitWidth + 10)
+                            Layout.preferredHeight: 20
+                            radius: Tokens.radiusSm
+                            color: Tokens.warningSurface
+                            border.width: 1
+                            border.color: Tokens.warning
+
+                            Text {
+                                id: accessRequestBadgeText
+                                anchors.centerIn: parent
+                                text: root.accessRequestBadgeLabel(root.waitingAccessRequestCount)
+                                color: Tokens.warningText
+                                font.pixelSize: Tokens.fontSizeXs
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
                 }
 
-                SetupPanel {
-                    id: setupPanel
-                    app: root
+                Button {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: root.setupPanelOpen
-                        && (chaftController.deviceId.length > 0 || chaftController.hasRuntimeWorkspace)
+                    visible: chaftController.deviceId.length > 0
+                        || chaftController.hasRuntimeWorkspace
+                    text: "Settings"
+                    checkable: true
+                    checked: root.settingsDestination
+                    Accessible.name: "Settings"
+                    Accessible.description: "Open personal and workspace settings"
+                    onClicked: root.openSettings(root.settingsCategory)
                 }
             }
         }
@@ -7781,7 +7871,9 @@ ApplicationWindow {
             color: Tokens.surfaceBase
 
             ColumnLayout {
+                id: conversationView
                 anchors.fill: parent
+                visible: root.conversationDestination
                 spacing: 0
 
                 EmptyWorkspaceView {
@@ -8926,12 +9018,31 @@ ApplicationWindow {
                     onCancelReplyRequested: root.cancelReplyMessage()
                 }
             }
+
+            SettingsView {
+                id: setupPanel
+                anchors.fill: parent
+                visible: !root.conversationDestination
+                    && (chaftController.deviceId.length > 0
+                        || chaftController.hasRuntimeWorkspace)
+                app: root
+                destination: root.mainDestination
+                category: root.settingsCategory
+                onCloseRequested: root.closeMainDestination(true)
+                onCategoryRequested: function(categoryId) {
+                    root.openSettings(categoryId)
+                }
+                onPeopleAccessRequested: function(focusInvite) {
+                    root.openPeopleAccess(focusInvite)
+                }
+            }
         }
 
         Rectangle {
             Layout.fillHeight: true
             Layout.preferredWidth: 300
             visible: root.width >= 1400
+                && root.conversationDestination
                 && root.hasWorkspaceContent
                 && (chaftController.inspectorPinned || root.inspectorItemKey.length > 0)
             color: Tokens.surfaceRaised
