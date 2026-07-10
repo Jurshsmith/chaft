@@ -219,6 +219,34 @@ owner_cli update-member-role \
   --device-id "$member_device_id" \
   --role member > "$smoke_dir/owner-demote-member.json"
 
+private_channel_json="$smoke_dir/private-channel.json"
+owner_cli create-channel \
+  --workspace-id "$workspace_id" \
+  --name strategy \
+  --private > "$private_channel_json"
+private_channel_id="$(json_field "$private_channel_json" channelId)"
+
+owner_cli add-channel-member \
+  --workspace-id "$workspace_id" \
+  --channel-id "$private_channel_id" \
+  --device-id "$member_device_id" > "$smoke_dir/private-channel-add-member.json"
+
+member_cli send-message \
+  --workspace-id "$workspace_id" \
+  --channel-id "$private_channel_id" \
+  --text "private room before removal" > "$smoke_dir/private-channel-member-message.json"
+
+owner_cli remove-channel-member \
+  --workspace-id "$workspace_id" \
+  --channel-id "$private_channel_id" \
+  --device-id "$member_device_id" > "$smoke_dir/private-channel-remove-member.json"
+
+expect_failure_contains 'not authorized|private channel|channel member' \
+  member_cli send-message \
+  --workspace-id "$workspace_id" \
+  --channel-id "$private_channel_id" \
+  --text "private room after removal"
+
 expect_failure_contains 'root.*owner|must remain an owner' \
   owner_cli update-member-role \
   --workspace-id "$workspace_id" \
