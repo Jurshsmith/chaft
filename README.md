@@ -171,6 +171,7 @@ Recommended public checks:
 ```sh
 tools/ci/rust-gates.sh --offline
 tools/smoke/local-p2p.sh --offline
+tools/smoke/access-transport.sh --offline
 tools/smoke/workspace-lifecycle.sh --offline
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
@@ -344,6 +345,8 @@ launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
 `tools/smoke/workspace-lifecycle.sh` exercises create-workspace,
 admin/member role policy, request-access handling, and member removal through
 the CLI without requiring real devices.
+`tools/smoke/access-transport.sh` runs the focused request/response direct
+transport and FFI outbox/inbox tests that back the desktop access-request flow.
 `tools/smoke/visual-workspace.sh` creates a deterministic public UI smoke
 runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
 temporary runtime and use the printed `runtimeDir`, `workspaceId`, and
