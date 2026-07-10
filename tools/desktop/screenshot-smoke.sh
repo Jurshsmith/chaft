@@ -72,6 +72,7 @@ if state_requested default; then
   CHAFT_DESKTOP_SMOKE_SCREENSHOT="$output_path" \
   CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS="${CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS:-1500}" \
   CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="$default_screenshot_timeout_ms" \
+  CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS:-$default_screenshot_timeout_ms}" \
     "$script_dir/smoke.sh" "$profile"
 
   "$python_bin" - "$output_path" <<'PY'
@@ -313,6 +314,8 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   fi
   screenshot_delay_ms=250
   screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}"
+  screenshot_capture_timeout_ms="${CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS:-$screenshot_timeout_ms}"
+  quick_capture_timeout_ms="${CHAFT_DESKTOP_SMOKE_QUICK_CAPTURE_TIMEOUT_MS:-60000}"
   if [ "$ui_state" = "setup-invite" ]; then
     screenshot_delay_ms=2500
   elif [ "$ui_state" = "setup-identity" ]; then
@@ -367,8 +370,12 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "private-channel-repair-failed" ]; then
     screenshot_delay_ms=1500
+    screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
+    screenshot_capture_timeout_ms="${CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS:-30000}"
   elif [ "$ui_state" = "private-channel-repair-saved" ]; then
     screenshot_delay_ms=1500
+    screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
+    screenshot_capture_timeout_ms="${CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS:-30000}"
   elif [ "$ui_state" = "private-channel-inspector" ]; then
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "channel-archived" ]; then
@@ -380,6 +387,16 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   if [ "$ui_state" = "channel-archived" ]; then
     archive_design=1
   fi
+  case "$ui_state" in
+    drawer|setup-backup|private-channel-repair-failed|private-channel-repair-saved)
+      if [ -z "${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-}" ]; then
+        screenshot_timeout_ms="$quick_capture_timeout_ms"
+      fi
+      if [ -z "${CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS:-}" ]; then
+        screenshot_capture_timeout_ms="$quick_capture_timeout_ms"
+      fi
+      ;;
+  esac
   access_policy="${CHAFT_VISUAL_SMOKE_ACCESS_POLICY:-invite-only}"
   if [ "$ui_state" = "setup-request" ] || \
      [ "$ui_state" = "setup-request-approved" ] || \
@@ -404,6 +421,7 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   CHAFT_DESKTOP_SMOKE_SCREENSHOT="$state_output" \
   CHAFT_DESKTOP_SMOKE_SCREENSHOT_DELAY_MS="$screenshot_delay_ms" \
   CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="$screenshot_timeout_ms" \
+  CHAFT_DESKTOP_SMOKE_CAPTURE_TIMEOUT_MS="$screenshot_capture_timeout_ms" \
   CHAFT_VISUAL_SMOKE_ARCHIVE_DESIGN="$archive_design" \
   CHAFT_VISUAL_SMOKE_ACCESS_POLICY="$access_policy" \
   CHAFT_VISUAL_SMOKE_REINVITE_REQUEST="$reinvite_request" \

@@ -25,6 +25,13 @@ device details, logs, screenshots, pass/fail status, and follow-up issue IDs.
 Run these gates before starting a real-device pass and record their output in
 the report:
 
+```sh
+make workspace-qa-baseline ARGS=--offline PROFILE=debug
+```
+
+That alias runs the baseline gates below in order. If it fails, rerun the
+individual gate that failed and attach the narrower output to the report.
+
 - `make smoke-lifecycle ARGS=--offline` covers create, request-access policy,
   owner/admin/member role rules, request approval/decline, member removal, and
   removed-member publish denial through CLI/runtime APIs.

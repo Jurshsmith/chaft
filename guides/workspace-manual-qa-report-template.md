@@ -27,6 +27,7 @@ the release evidence for the build under test.
 
 | Gate | Commit | Result | Evidence / notes |
 | --- | --- | --- | --- |
+| `make workspace-qa-baseline ARGS=--offline PROFILE=debug` |  |  |  |
 | `make smoke-lifecycle ARGS=--offline` |  |  |  |
 | `make smoke-access ARGS=--offline` |  |  |  |
 | `make desktop-empty-smoke` |  |  |  |

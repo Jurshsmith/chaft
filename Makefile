@@ -67,6 +67,7 @@ help:
 		'  make smoke-p2p                Run local P2P smoke' \
 		'  make smoke-access             Run access request/response transport smoke' \
 		'  make smoke-lifecycle          Run workspace lifecycle/admin smoke' \
+		'  make workspace-qa-baseline    Run documented workspace QA baseline gates' \
 		'  make smoke-visual             Generate visual workspace smoke data' \
 		'  make screenshot-smoke         Run screenshot smoke with PROFILE' \
 		'  make release-metadata         Generate release metadata with PACKAGE_PROFILE' \
@@ -161,7 +162,7 @@ ci:
 	$(MAKE) ci-rust
 	$(MAKE) ci-desktop
 
-.PHONY: smoke-p2p smoke-access smoke-lifecycle smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke
+.PHONY: smoke-p2p smoke-access smoke-lifecycle workspace-qa-baseline smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke
 smoke-p2p:
 	tools/smoke/local-p2p.sh $(ARGS)
 
@@ -170,6 +171,12 @@ smoke-access:
 
 smoke-lifecycle:
 	tools/smoke/workspace-lifecycle.sh $(ARGS)
+
+workspace-qa-baseline:
+	$(MAKE) smoke-lifecycle ARGS="$(ARGS)"
+	$(MAKE) smoke-access ARGS="$(ARGS)"
+	$(MAKE) desktop-empty-smoke PROFILE="$(PROFILE)"
+	$(MAKE) screenshot-smoke PROFILE="$(PROFILE)"
 
 smoke-visual:
 	tools/smoke/visual-workspace.sh $(ARGS)

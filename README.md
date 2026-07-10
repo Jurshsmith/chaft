@@ -173,6 +173,7 @@ tools/ci/rust-gates.sh --offline
 tools/smoke/local-p2p.sh --offline
 tools/smoke/access-transport.sh --offline
 tools/smoke/workspace-lifecycle.sh --offline
+make workspace-qa-baseline ARGS=--offline PROFILE=debug
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
 tools/desktop/qml-lint.sh
@@ -342,6 +343,10 @@ cargo run -p chaft-cli -- inventory --peer 127.0.0.1:7777
 
 For desktop runs, either set `CHAFT_FFI_LIBRARY` to the built dynamic library or
 launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
+`make workspace-qa-baseline ARGS=--offline PROFILE=debug` runs the documented
+workspace lifecycle baseline before a real-device QA pass: lifecycle/admin
+smoke, access-envelope smoke, empty-workspace desktop smoke, and screenshot
+smoke.
 `tools/smoke/workspace-lifecycle.sh` exercises create-workspace,
 admin/member role policy, request-access handling, and member removal through
 the CLI without requiring real devices.
