@@ -180,6 +180,7 @@ pub struct WorkspaceJoinRequestSnapshot {
     pub source_invite_id: String,
     pub source_display_name: String,
     pub source_approval_policy: String,
+    pub response_peer_endpoint: String,
     pub status: String,
     pub requested_event_id: String,
     pub requested_by_device_id: String,
@@ -1474,6 +1475,7 @@ fn join_request_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceJoi
             source_invite_id: request.source_invite_id.clone(),
             source_display_name: request.source_display_name.clone(),
             source_approval_policy: request.source_approval_policy.clone(),
+            response_peer_endpoint: request.response_peer_endpoint.clone(),
             status: join_request_status_label(request.status).to_owned(),
             requested_event_id: request.requested_event_id.0.clone(),
             requested_by_device_id: request.requested_by_device_id.0.clone(),
@@ -4737,6 +4739,7 @@ mod tests {
                 source_invite_id: "inv_snapshot".to_owned(),
                 source_display_name: "Ada".to_owned(),
                 source_approval_policy: "admin_required".to_owned(),
+                response_peer_endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
             },
         ));
         let owner_profile = signed(SignableEvent::new(
@@ -4767,6 +4770,10 @@ mod tests {
         assert_eq!(
             snapshot.join_requests[0].source_approval_policy,
             "admin_required"
+        );
+        assert_eq!(
+            snapshot.join_requests[0].response_peer_endpoint,
+            "direct+tcp://127.0.0.1:7777"
         );
         assert_eq!(snapshot.join_requests[0].status, "waiting");
         assert_eq!(
@@ -6317,6 +6324,7 @@ mod tests {
                 source_invite_id: String::new(),
                 source_display_name: "Mira".to_owned(),
                 source_approval_policy: String::new(),
+                response_peer_endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
                 status: "waiting".to_owned(),
                 requested_event_id: "evt_request".to_owned(),
                 requested_by_device_id: "dev_test".to_owned(),

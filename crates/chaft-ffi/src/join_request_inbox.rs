@@ -51,6 +51,22 @@ impl JoinRequestInbox for FileJoinRequestInbox {
             .map(|_| ())
             .map_err(|error| NetError::Protocol(error.message))
     }
+
+    fn list_join_requests(
+        &self,
+        workspace_id: &str,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        let entries =
+            list_join_request_inbox_entries(&self.data_dir, JOIN_REQUEST_INBOX_LIST_MAX_ENTRIES)
+                .map_err(|error| NetError::Protocol(error.message))?;
+        Ok(entries
+            .into_iter()
+            .filter(|entry| entry.workspace_id.as_deref() == Some(workspace_id))
+            .take(max_entries)
+            .map(|entry| entry.request_text.into_bytes())
+            .collect())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +136,7 @@ fn write_join_request_inbox_entry(
     workspace_id: Option<&str>,
     request_text: &str,
 ) -> Result<JoinRequestInboxEntry, FfiError> {
-    validate_join_request_payload(request_text)?;
+    let metadata = validate_join_request_payload(request_text)?;
     let inbox_dir = inbox_dir(data_dir);
     fs::create_dir_all(&inbox_dir).map_err(|error| {
         ffi_error(
@@ -129,11 +145,16 @@ fn write_join_request_inbox_entry(
         )
     })?;
     let received_at_unix_ms = current_unix_ms();
-    let entry_id = format!(
-        "jr_{}_{}",
-        received_at_unix_ms,
-        JOIN_REQUEST_INBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
+    let entry_id = metadata.request_id.unwrap_or_else(|| {
+        format!(
+            "jr_{}_{}",
+            received_at_unix_ms,
+            JOIN_REQUEST_INBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        )
+    });
+    if let Ok(existing) = read_join_request_inbox_entry(data_dir, &entry_id) {
+        return Ok(existing);
+    }
     let entry = JoinRequestInboxEntry {
         schema_version: JOIN_REQUEST_INBOX_SCHEMA_VERSION,
         entry_id: entry_id.clone(),
@@ -236,7 +257,13 @@ fn list_join_request_inbox_entries(
     Ok(entries)
 }
 
-fn validate_join_request_payload(request_text: &str) -> Result<(), FfiError> {
+struct JoinRequestPayloadMetadata {
+    request_id: Option<String>,
+}
+
+fn validate_join_request_payload(
+    request_text: &str,
+) -> Result<JoinRequestPayloadMetadata, FfiError> {
     if request_text.trim().is_empty() {
         return Err(ffi_error(
             "join_request_payload_empty",
@@ -258,13 +285,54 @@ fn validate_join_request_payload(request_text: &str) -> Result<(), FfiError> {
             format!("join request payload is not valid JSON: {error}"),
         )
     })?;
-    if !value.is_object() {
-        return Err(ffi_error(
+    let object = value.as_object().ok_or_else(|| {
+        ffi_error(
             "join_request_payload_invalid",
             "join request payload must be a JSON object",
+        )
+    })?;
+    let request_id = object
+        .get("requestId")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if let Some(request_id) = &request_id {
+        validate_join_request_inbox_entry_id(request_id)?;
+    }
+    Ok(JoinRequestPayloadMetadata { request_id })
+}
+
+fn read_join_request_inbox_entry(
+    data_dir: &Path,
+    entry_id: &str,
+) -> Result<JoinRequestInboxEntry, FfiError> {
+    validate_join_request_inbox_entry_id(entry_id)?;
+    let path = inbox_entry_path(data_dir, entry_id);
+    let text = fs::read_to_string(&path).map_err(|error| {
+        ffi_error(
+            "join_request_inbox_read_failed",
+            format!("could not read join request inbox entry: {error}"),
+        )
+    })?;
+    let entry: JoinRequestInboxEntry = serde_json::from_str(&text).map_err(|error| {
+        ffi_error(
+            "join_request_inbox_read_failed",
+            format!("could not parse join request inbox entry: {error}"),
+        )
+    })?;
+    if entry.schema_version != JOIN_REQUEST_INBOX_SCHEMA_VERSION {
+        return Err(ffi_error(
+            "join_request_inbox_schema_unsupported",
+            format!(
+                "join request inbox entry schema {} is unsupported",
+                entry.schema_version
+            ),
         ));
     }
-    Ok(())
+    validate_join_request_inbox_entry_id(&entry.entry_id)?;
+    validate_join_request_payload(&entry.request_text)?;
+    Ok(entry)
 }
 
 fn validate_join_request_inbox_entry_id(entry_id: &str) -> Result<(), FfiError> {

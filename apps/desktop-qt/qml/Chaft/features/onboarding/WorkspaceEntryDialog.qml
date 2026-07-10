@@ -196,6 +196,10 @@ Dialog {
         if (root.approvalInviteNeedsRequest) {
             return "Approval invite selected"
         }
+        if (root.workspaceInvite !== null
+                && root.app.workspaceEntryIntent === "received-approval") {
+            return "Approval received"
+        }
         return "Invite selected"
     }
 
@@ -205,6 +209,10 @@ Dialog {
         }
         if (root.workspaceCard !== null) {
             return "Open another request link or drop one here to replace it."
+        }
+        if (root.workspaceInvite !== null
+                && root.app.workspaceEntryIntent === "received-approval") {
+            return "Review the invite, then join this workspace when ready."
         }
         return "Open another invite or drop one here to replace it."
     }
@@ -237,7 +245,7 @@ Dialog {
             ? root.app.credentialImportFailureSummary(source, status)
             : ({
                 title: "Couldn't open this item",
-                message: "Check the invite, request link, or recovery kit and try again.",
+                message: "Check the invite, request link, recovery kit, or access file and try again.",
                 detail: String(status || "")
             })
         root.credentialImportFailureTitle = String(summary.title || "")
@@ -629,7 +637,7 @@ Dialog {
                             ? "Start a private workspace for your team here."
                             : (root.restoreMode
                                 ? "Restore access with a saved recovery kit."
-                                : "Open an invite, request link, or recovery kit.")
+                                : "Open an invite, request link, recovery kit, or access file.")
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeSm
                     wrapMode: Text.WordWrap
@@ -696,7 +704,7 @@ Dialog {
                             ? "Recovery kit"
                             : (root.workspaceCard !== null
                                 ? "Request link"
-                                : "Invite, request link, or recovery kit")
+                                : "Invite, request link, recovery kit, or access file")
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeXs
                         font.weight: Font.DemiBold
@@ -704,12 +712,12 @@ Dialog {
                     }
 
                     Button {
-                        text: root.restoreMode ? "Open recovery kit" : "Open invite or request"
+                        text: root.restoreMode ? "Open recovery kit" : "Open invite or access file"
                         enabled: root.app.runtimeAccessReady
                         Accessible.name: text
                         Accessible.description: root.restoreMode
                             ? "Choose a recovery kit file"
-                            : "Choose an invite, request link, or recovery kit file"
+                            : "Choose an invite, request link, recovery kit, or access file"
                         onClicked: root.app.openWorkspaceCredentialFile()
                     }
                 }
@@ -725,8 +733,8 @@ Dialog {
                         visible: !root.credentialTextSummaryVisible
                         placeholderText: root.restoreMode
                             ? "Paste a recovery kit"
-                            : "Paste an invite, request link, or recovery kit"
-                        Accessible.name: "Workspace invite, request link, or recovery kit"
+                            : "Paste an invite, request link, recovery kit, or access file"
+                        Accessible.name: "Workspace invite, request link, recovery kit, or access file"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         font.family: Tokens.fontMono
@@ -806,7 +814,7 @@ Dialog {
                             width: parent.width - Tokens.space4 * 2
                             text: root.restoreMode
                                 ? "Drop recovery kit"
-                                : "Drop invite, request link, or recovery kit"
+                                : "Drop invite, request link, recovery kit, or access file"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
                             font.weight: Font.DemiBold

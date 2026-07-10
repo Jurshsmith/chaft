@@ -491,6 +491,8 @@ pub enum EventBody {
         source_display_name: String,
         #[serde(default)]
         source_approval_policy: String,
+        #[serde(default)]
+        response_peer_endpoint: String,
     },
     WorkspaceJoinRequestResolved {
         request_id: String,

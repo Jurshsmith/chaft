@@ -235,7 +235,7 @@ Item {
 
                             GridLayout {
                                 Layout.fillWidth: true
-                                columns: root.width > 640 ? 5 : (root.width > 460 ? 3 : 2)
+                                columns: root.width > 720 ? 6 : (root.width > 460 ? 3 : 2)
                                 columnSpacing: Tokens.space2
                                 rowSpacing: Tokens.space2
 
@@ -249,6 +249,7 @@ Item {
 
                                 Button {
                                     Layout.fillWidth: true
+                                    visible: pendingRequestCard.modelData.canShareRequest
                                     text: "Copy link"
                                     enabled: !chaftController.joinRequestSubmitInFlight
                                     Accessible.name: "Copy request link"
@@ -257,6 +258,7 @@ Item {
 
                                 Button {
                                     Layout.fillWidth: true
+                                    visible: pendingRequestCard.modelData.canShareRequest
                                     text: "Save file"
                                     enabled: !chaftController.joinRequestSubmitInFlight
                                     Accessible.name: "Save request file"
@@ -265,6 +267,16 @@ Item {
 
                                 Button {
                                     Layout.fillWidth: true
+                                    visible: pendingRequestCard.modelData.canCheckResponse
+                                    text: chaftController.accessEnvelopePullInFlight ? "Checking..." : "Check"
+                                    enabled: !chaftController.joinRequestSubmitInFlight && !chaftController.accessEnvelopePullInFlight
+                                    Accessible.name: "Check for access approval"
+                                    onClicked: root.app.checkPendingAccessRequestResponse(pendingRequestCard.modelData)
+                                }
+
+                                Button {
+                                    Layout.fillWidth: true
+                                    visible: pendingRequestCard.modelData.canOpenInvite
                                     text: "Open invite"
                                     enabled: !chaftController.joinRequestSubmitInFlight
                                     onClicked: root.app.openWorkspaceEntry("join")
@@ -305,7 +317,7 @@ Item {
                     Layout.fillWidth: true
                     glyph: "⇄"
                     title: "Join workspace"
-                    body: "Have an invite or request link? Open it here to join or request access."
+                    body: "Have an invite, request link, or access file? Open it here to join or request access."
                     actionable: root.app.runtimeAccessReady
                     onActivated: root.app.openWorkspaceEntry("join")
                 }

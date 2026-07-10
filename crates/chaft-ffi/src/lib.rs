@@ -46,6 +46,9 @@ mod id_args;
 mod identity_passphrase;
 mod input;
 mod join_request_inbox;
+mod join_request_outbox;
+mod join_response_inbox;
+mod join_response_outbox;
 mod peer_endpoint;
 mod peer_host;
 mod result_sampling;
@@ -74,6 +77,9 @@ use input::{
     WORKSPACE_EVENTS_JSON_MAX_BYTES, WORKSPACE_ROLE_TEXT_MAX_BYTES,
 };
 use join_request_inbox::*;
+use join_request_outbox::*;
+use join_response_inbox::*;
+use join_response_outbox::*;
 #[cfg(test)]
 use result_sampling::*;
 use runtime_actions::*;
@@ -1439,6 +1445,45 @@ pub unsafe extern "C" fn chaft_runtime_record_workspace_join_request_result_json
     into_c_string(&result)
 }
 
+/// Records a workspace join request with an optional requester response route.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` and
+/// `response_peer_endpoint` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_record_workspace_join_request_with_response_route_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    source_type: *const c_char,
+    source_invite_id: *const c_char,
+    source_display_name: *const c_char,
+    source_approval_policy: *const c_char,
+    response_peer_endpoint: *const c_char,
+) -> *mut c_char {
+    let result = runtime_record_workspace_join_request_with_response_route_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        request_id,
+        device_id,
+        display_name,
+        note,
+        source_type,
+        source_invite_id,
+        source_display_name,
+        source_approval_policy,
+        response_peer_endpoint,
+    );
+    into_c_string(&result)
+}
+
 /// Records a workspace invite handoff in a local runtime.
 ///
 /// # Safety
@@ -2182,6 +2227,58 @@ pub unsafe extern "C" fn chaft_runtime_submit_join_request_direct_result_json(
     into_c_string(&result)
 }
 
+/// Pulls pending workspace join-request envelopes from a known direct peer into
+/// the local runtime inbox.
+///
+/// This is a workspace-scoped known-peer exchange; it does not discover
+/// workspaces or peers.
+///
+/// # Safety
+///
+/// All pointers must be valid pointers to NUL-terminated UTF-8 strings for the
+/// duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_pull_join_requests_direct_result_json(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_pull_join_requests_direct_result(
+        data_dir,
+        peer_endpoint,
+        workspace_id,
+        max_entries,
+    );
+    into_c_string(&result)
+}
+
+/// Pulls pending workspace join-response envelopes from a known direct peer
+/// into the local runtime inbox.
+///
+/// This is a workspace-scoped known-peer exchange; it does not discover
+/// workspaces or peers.
+///
+/// # Safety
+///
+/// All pointers must be valid pointers to NUL-terminated UTF-8 strings for the
+/// duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_pull_join_responses_direct_result_json(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_pull_join_responses_direct_result(
+        data_dir,
+        peer_endpoint,
+        workspace_id,
+        max_entries,
+    );
+    into_c_string(&result)
+}
+
 /// Starts a background direct TCP peer serving a local runtime event/blob store.
 ///
 /// `listen` may be null or empty to use `127.0.0.1:0`. The returned peer ID can
@@ -2248,6 +2345,260 @@ pub unsafe extern "C" fn chaft_runtime_ack_join_request_inbox_entry_result_json(
     entry_id: *const c_char,
 ) -> *mut c_char {
     let result = runtime_ack_join_request_inbox_entry_result(data_dir, entry_id);
+    into_c_string(&result)
+}
+
+/// Queues a prepared workspace join request for durable retry/delivery.
+///
+/// `workspace_id` and `peer_endpoint` may be null or empty when the request
+/// itself carries the target workspace context or must be handed off manually.
+///
+/// # Safety
+///
+/// `data_dir` and `request_json` must be valid pointers to NUL-terminated
+/// UTF-8 strings for the duration of this call. `workspace_id` and
+/// `peer_endpoint` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_queue_join_request_outbox_result_json(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    request_json: *const c_char,
+) -> *mut c_char {
+    let result = runtime_queue_join_request_outbox_result(
+        data_dir,
+        peer_endpoint,
+        workspace_id,
+        request_json,
+    );
+    into_c_string(&result)
+}
+
+/// Lists queued workspace join requests waiting for delivery or acknowledgement.
+///
+/// Passing `max_entries` as `0` uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_request_outbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_join_request_outbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Lists queued workspace join requests that are due for direct retry.
+///
+/// Delivered, acknowledged, peerless, and backoff-delayed entries are omitted.
+/// Passing `max_entries` as `0` uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_due_join_request_outbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_due_join_request_outbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Updates queued join-request delivery state.
+///
+/// `status` accepts `pending`, `delivered`, `failed`, or `acknowledged`.
+/// `error` may be null or empty.
+///
+/// # Safety
+///
+/// All non-null pointers must be valid pointers to NUL-terminated UTF-8 strings
+/// for the duration of this call. `error` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_mark_join_request_outbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+    status: *const c_char,
+    error: *const c_char,
+) -> *mut c_char {
+    let result = runtime_mark_join_request_outbox_entry_result(data_dir, entry_id, status, error);
+    into_c_string(&result)
+}
+
+/// Submits one queued join request directly to its stored peer endpoint.
+///
+/// The outbox entry is marked `delivered` on success and `failed` on transport
+/// failure.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_submit_join_request_outbox_entry_direct_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_submit_join_request_outbox_entry_direct_result(data_dir, entry_id);
+    into_c_string(&result)
+}
+
+/// Acknowledges and removes an outbound join request from the durable outbox.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_ack_join_request_outbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_ack_join_request_outbox_entry_result(data_dir, entry_id);
+    into_c_string(&result)
+}
+
+/// Lists incoming join responses received by runtime-hosted peers.
+///
+/// The returned string is a JSON result envelope. Passing `max_entries` as `0`
+/// uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_response_inbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_join_response_inbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Acknowledges and removes an incoming join response from the runtime inbox.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_ack_join_response_inbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_ack_join_response_inbox_entry_result(data_dir, entry_id);
+    into_c_string(&result)
+}
+
+/// Queues a prepared workspace join response for durable retry/delivery.
+///
+/// `response_json` is an approval invite package or a join-response envelope.
+///
+/// # Safety
+///
+/// All non-null pointers must be valid pointers to NUL-terminated UTF-8 strings
+/// for the duration of this call. `workspace_id` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_queue_join_response_outbox_result_json(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    response_json: *const c_char,
+) -> *mut c_char {
+    let result = runtime_queue_join_response_outbox_result(
+        data_dir,
+        peer_endpoint,
+        workspace_id,
+        response_json,
+    );
+    into_c_string(&result)
+}
+
+/// Lists queued workspace join responses waiting for delivery or acknowledgement.
+///
+/// Passing `max_entries` as `0` uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_response_outbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_join_response_outbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Lists queued workspace join responses that are due for direct retry.
+///
+/// Delivered, acknowledged, and backoff-delayed entries are omitted. Passing
+/// `max_entries` as `0` uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_due_join_response_outbox_result_json(
+    data_dir: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_due_join_response_outbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Updates queued join-response delivery state.
+///
+/// `status` accepts `pending`, `delivered`, `failed`, or `acknowledged`.
+/// `error` may be null or empty.
+///
+/// # Safety
+///
+/// All non-null pointers must be valid pointers to NUL-terminated UTF-8 strings
+/// for the duration of this call. `error` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_mark_join_response_outbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+    status: *const c_char,
+    error: *const c_char,
+) -> *mut c_char {
+    let result = runtime_mark_join_response_outbox_entry_result(data_dir, entry_id, status, error);
+    into_c_string(&result)
+}
+
+/// Submits one queued join response directly to its stored peer endpoint.
+///
+/// The outbox entry is marked `delivered` on success and `failed` on transport
+/// failure.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_submit_join_response_outbox_entry_direct_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_submit_join_response_outbox_entry_direct_result(data_dir, entry_id);
+    into_c_string(&result)
+}
+
+/// Acknowledges and removes an outbound join response from the durable outbox.
+///
+/// # Safety
+///
+/// `data_dir` and `entry_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_ack_join_response_outbox_entry_result_json(
+    data_dir: *const c_char,
+    entry_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_ack_join_response_outbox_entry_result(data_dir, entry_id);
     into_c_string(&result)
 }
 

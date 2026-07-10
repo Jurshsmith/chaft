@@ -224,6 +224,8 @@ pub struct WireWorkspaceJoinRequestRecorded {
     pub source_display_name: String,
     #[prost(string, tag = "8")]
     pub source_approval_policy: String,
+    #[prost(string, tag = "9")]
+    pub response_peer_endpoint: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -943,6 +945,7 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             source_invite_id,
             source_display_name,
             source_approval_policy,
+            response_peer_endpoint,
         } => Kind::WorkspaceJoinRequestRecorded(WireWorkspaceJoinRequestRecorded {
             request_id: request_id.clone(),
             requester_device_id: requester_device_id.0.clone(),
@@ -952,6 +955,7 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             source_invite_id: source_invite_id.clone(),
             source_display_name: source_display_name.clone(),
             source_approval_policy: source_approval_policy.clone(),
+            response_peer_endpoint: response_peer_endpoint.clone(),
         }),
         EventBody::WorkspaceJoinRequestResolved {
             request_id,
@@ -1306,6 +1310,7 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             source_invite_id: body.source_invite_id,
             source_display_name: body.source_display_name,
             source_approval_policy: body.source_approval_policy,
+            response_peer_endpoint: body.response_peer_endpoint,
         }),
         Kind::WorkspaceJoinRequestResolved(body) => Ok(EventBody::WorkspaceJoinRequestResolved {
             request_id: body.request_id,
@@ -1527,6 +1532,9 @@ pub enum WireSyncRequestKind {
     FetchBlobs = 5,
     FetchBlobAvailability = 6,
     SubmitJoinRequest = 7,
+    SubmitJoinResponse = 8,
+    FetchJoinRequests = 9,
+    FetchJoinResponses = 10,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -2138,6 +2146,7 @@ mod tests {
                 source_invite_id: "inv_wire_source".to_owned(),
                 source_display_name: "Mira Admin".to_owned(),
                 source_approval_policy: "admin_required".to_owned(),
+                response_peer_endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
             },
             EventBody::WorkspaceJoinRequestResolved {
                 request_id: "req_wire".to_owned(),

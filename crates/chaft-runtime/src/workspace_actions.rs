@@ -979,6 +979,33 @@ impl LocalRuntime {
         source_display_name: String,
         source_approval_policy: String,
     ) -> Result<RecordedWorkspaceJoinRequest, RuntimeError> {
+        self.record_workspace_join_request_with_response_route(
+            workspace_id,
+            request_id,
+            requester_device_id,
+            display_name,
+            note,
+            source_type,
+            source_invite_id,
+            source_display_name,
+            source_approval_policy,
+            String::new(),
+        )
+    }
+
+    pub fn record_workspace_join_request_with_response_route(
+        &self,
+        workspace_id: WorkspaceId,
+        request_id: String,
+        requester_device_id: DeviceId,
+        display_name: String,
+        note: String,
+        source_type: String,
+        source_invite_id: String,
+        source_display_name: String,
+        source_approval_policy: String,
+        response_peer_endpoint: String,
+    ) -> Result<RecordedWorkspaceJoinRequest, RuntimeError> {
         validate_device_id_reference(&requester_device_id)?;
         let request_id = request_id.trim().to_owned();
         let display_name = display_name.trim().to_owned();
@@ -987,6 +1014,7 @@ impl LocalRuntime {
         let source_invite_id = source_invite_id.trim().to_owned();
         let source_display_name = source_display_name.trim().to_owned();
         let source_approval_policy = source_approval_policy.trim().to_owned();
+        let response_peer_endpoint = response_peer_endpoint.trim().to_owned();
         if request_id.is_empty() {
             return Err(RuntimeError::MetadataFieldRequired {
                 field: "join request ID",
@@ -1023,6 +1051,11 @@ impl LocalRuntime {
             &source_approval_policy,
             WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
         )?;
+        validate_metadata_field_size(
+            "join request response peer endpoint",
+            &response_peer_endpoint,
+            PEER_ENDPOINT_MAX_BYTES,
+        )?;
 
         let context = self.workspace_write_context(&workspace_id)?;
         let mut request = SignableEvent::new(
@@ -1038,6 +1071,7 @@ impl LocalRuntime {
                 source_invite_id: source_invite_id.clone(),
                 source_display_name: source_display_name.clone(),
                 source_approval_policy: source_approval_policy.clone(),
+                response_peer_endpoint: response_peer_endpoint.clone(),
             },
         );
         request.parents = context.head_event_ids.clone();

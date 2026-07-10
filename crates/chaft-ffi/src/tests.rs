@@ -4588,6 +4588,16 @@ fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
     assert_eq!(submitted["value"]["workspaceId"], workspace_id.0);
     assert_eq!(submitted["value"]["peerEndpoint"], endpoint);
 
+    let resubmitted_json = unsafe {
+        take_ffi_string(chaft_runtime_submit_join_request_direct_result_json(
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            request_payload_c.as_ptr(),
+        ))
+    };
+    let resubmitted = serde_json::from_str::<Value>(&resubmitted_json).unwrap();
+    assert_eq!(resubmitted["ok"], true);
+
     let listed_json = unsafe {
         take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
             alice_dir_c.as_ptr(),
@@ -4599,6 +4609,7 @@ fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
     let entries = listed["value"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["workspaceId"], workspace_id.0);
+    assert_eq!(entries[0]["entryId"], "req_joiner_123");
     let request_text = entries[0]["requestText"].as_str().unwrap();
     let request_value = serde_json::from_str::<Value>(request_text).unwrap();
     assert_eq!(request_value["deviceId"], "dev_joiner_123");
@@ -4627,6 +4638,694 @@ fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
     let relisted = serde_json::from_str::<Value>(&relisted_json).unwrap();
     assert_eq!(relisted["ok"], true);
     assert_eq!(relisted["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_pull_join_requests_direct_ffi_imports_known_peer_inbox() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let local_dir = tempfile::tempdir().unwrap();
+    let relay = LocalRuntime::open(relay_dir.path(), None).unwrap();
+    let created = relay
+        .create_workspace("Chaft FFI Join Request Relay", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(relay);
+
+    let relay_dir_c = CString::new(relay_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let local_dir_c = CString::new(local_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            relay_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+
+    let request_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_pull_joiner_123",
+        "workspaceId": workspace_id.0,
+        "deviceId": "dev_pull_joiner_123",
+        "displayName": "Pull Joiner"
+    }))
+    .unwrap();
+    let endpoint_c = CString::new(endpoint.clone()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let request_payload_c = CString::new(request_payload).unwrap();
+    let submitted_json = unsafe {
+        take_ffi_string(chaft_runtime_submit_join_request_direct_result_json(
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            request_payload_c.as_ptr(),
+        ))
+    };
+    let submitted = serde_json::from_str::<Value>(&submitted_json).unwrap();
+    assert_eq!(submitted["ok"], true);
+
+    let pulled_json = unsafe {
+        take_ffi_string(chaft_runtime_pull_join_requests_direct_result_json(
+            local_dir_c.as_ptr(),
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            10,
+        ))
+    };
+    let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
+    assert_eq!(pulled["ok"], true);
+    assert_eq!(pulled["value"]["requestCount"], 1);
+    assert_eq!(pulled["value"]["workspaceId"], workspace_id.0);
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
+            local_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["workspaceId"], workspace_id.0);
+    assert_eq!(entries[0]["entryId"], "req_pull_joiner_123");
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_join_request_outbox_ffi_queues_marks_and_acks_entries() {
+    let outbox_dir = tempfile::tempdir().unwrap();
+    let outbox_dir_c = CString::new(outbox_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let workspace_id = CString::new("wrk_outbox_123").unwrap();
+    let request_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_outbox_123",
+        "workspaceId": "wrk_outbox_123",
+        "deviceId": "dev_outbox_123",
+        "displayName": "Outbox Person"
+    }))
+    .unwrap();
+    let request_payload_c = CString::new(request_payload).unwrap();
+
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            endpoint.as_ptr(),
+            workspace_id.as_ptr(),
+            request_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], true);
+    assert_eq!(queued["value"]["entry"]["entryId"], "req_outbox_123");
+    assert_eq!(queued["value"]["entry"]["status"], "pending");
+    assert_eq!(queued["value"]["entry"]["attemptCount"], 0);
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["requestId"], "req_outbox_123");
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 1);
+
+    let entry_id = CString::new("req_outbox_123").unwrap();
+    let failed = CString::new("failed").unwrap();
+    let error = CString::new("peer offline").unwrap();
+    let marked_json = unsafe {
+        take_ffi_string(chaft_runtime_mark_join_request_outbox_entry_result_json(
+            outbox_dir_c.as_ptr(),
+            entry_id.as_ptr(),
+            failed.as_ptr(),
+            error.as_ptr(),
+        ))
+    };
+    let marked = serde_json::from_str::<Value>(&marked_json).unwrap();
+    assert_eq!(marked["ok"], true);
+    assert_eq!(marked["value"]["entry"]["status"], "failed");
+    assert_eq!(marked["value"]["entry"]["error"], "peer offline");
+    assert_eq!(marked["value"]["entry"]["attemptCount"], 1);
+    let last_attempt_at = marked["value"]["entry"]["lastAttemptAtUnixMs"]
+        .as_u64()
+        .unwrap();
+    let next_attempt_after = marked["value"]["entry"]["nextAttemptAfterUnixMs"]
+        .as_u64()
+        .unwrap();
+    assert!(next_attempt_after > last_attempt_at);
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let acked_json = unsafe {
+        take_ffi_string(chaft_runtime_ack_join_request_outbox_entry_result_json(
+            outbox_dir_c.as_ptr(),
+            entry_id.as_ptr(),
+        ))
+    };
+    let acked = serde_json::from_str::<Value>(&acked_json).unwrap();
+    assert_eq!(acked["ok"], true);
+    assert_eq!(acked["value"]["entryId"], "req_outbox_123");
+
+    let relisted_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let relisted = serde_json::from_str::<Value>(&relisted_json).unwrap();
+    assert_eq!(relisted["ok"], true);
+    assert_eq!(relisted["value"]["entries"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
+    let alice_dir = tempfile::tempdir().unwrap();
+    let bob_dir = tempfile::tempdir().unwrap();
+    let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+    let created = alice
+        .create_workspace("Chaft FFI Outbox Host", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(alice);
+
+    let alice_dir_c = CString::new(alice_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let bob_dir_c = CString::new(bob_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            alice_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+
+    let request_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_outbox_direct_123",
+        "workspaceId": workspace_id.0,
+        "deviceId": "dev_joiner_outbox_123",
+        "displayName": "Queued Joiner",
+        "message": "Please add me from the outbox"
+    }))
+    .unwrap();
+    let endpoint_c = CString::new(endpoint.clone()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let request_payload_c = CString::new(request_payload).unwrap();
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_request_outbox_result_json(
+            bob_dir_c.as_ptr(),
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            request_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], true);
+    assert_eq!(queued["value"]["entry"]["status"], "pending");
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
+            bob_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 1);
+
+    let entry_id = CString::new("req_outbox_direct_123").unwrap();
+    let submitted_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_submit_join_request_outbox_entry_direct_result_json(
+                bob_dir_c.as_ptr(),
+                entry_id.as_ptr(),
+            ),
+        )
+    };
+    let submitted = serde_json::from_str::<Value>(&submitted_json).unwrap();
+    assert_eq!(submitted["ok"], true);
+    assert_eq!(submitted["value"]["entry"]["status"], "delivered");
+    assert_eq!(submitted["value"]["entry"]["attemptCount"], 1);
+    assert!(
+        submitted["value"]["entry"]
+            .get("nextAttemptAfterUnixMs")
+            .is_none()
+    );
+    assert_eq!(submitted["value"]["entry"]["peerEndpoint"], endpoint);
+
+    let inbox_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
+            alice_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let inbox = serde_json::from_str::<Value>(&inbox_json).unwrap();
+    assert_eq!(inbox["ok"], true);
+    let inbox_entries = inbox["value"]["entries"].as_array().unwrap();
+    assert_eq!(inbox_entries.len(), 1);
+    let request_text = inbox_entries[0]["requestText"].as_str().unwrap();
+    let request_value = serde_json::from_str::<Value>(request_text).unwrap();
+    assert_eq!(request_value["requestId"], "req_outbox_direct_123");
+    assert_eq!(request_value["deviceId"], "dev_joiner_outbox_123");
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
+            bob_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    assert_eq!(
+        listed["value"]["entries"][0]["status"],
+        Value::String("delivered".to_owned())
+    );
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
+            bob_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_join_response_outbox_ffi_queues_marks_and_acks_entries() {
+    let outbox_dir = tempfile::tempdir().unwrap();
+    let outbox_dir_c = CString::new(outbox_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let workspace_id = CString::new("wrk_response_outbox_123").unwrap();
+    let response_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-invite.v1",
+        "schemaVersion": 1,
+        "requestId": "req_response_outbox_123",
+        "workspaceId": "wrk_response_outbox_123",
+        "inviteId": "inv_response_outbox_123",
+        "inviteeDeviceId": "dev_response_outbox_123",
+        "role": "member"
+    }))
+    .unwrap();
+    let response_payload_c = CString::new(response_payload).unwrap();
+
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            endpoint.as_ptr(),
+            workspace_id.as_ptr(),
+            response_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], true);
+    assert_eq!(
+        queued["value"]["entry"]["entryId"],
+        "req_response_outbox_123"
+    );
+    assert_eq!(queued["value"]["entry"]["status"], "pending");
+    assert_eq!(queued["value"]["entry"]["attemptCount"], 0);
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["requestId"], "req_response_outbox_123");
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 1);
+
+    let entry_id = CString::new("req_response_outbox_123").unwrap();
+    let failed = CString::new("failed").unwrap();
+    let error = CString::new("requester offline").unwrap();
+    let marked_json = unsafe {
+        take_ffi_string(chaft_runtime_mark_join_response_outbox_entry_result_json(
+            outbox_dir_c.as_ptr(),
+            entry_id.as_ptr(),
+            failed.as_ptr(),
+            error.as_ptr(),
+        ))
+    };
+    let marked = serde_json::from_str::<Value>(&marked_json).unwrap();
+    assert_eq!(marked["ok"], true);
+    assert_eq!(marked["value"]["entry"]["status"], "failed");
+    assert_eq!(marked["value"]["entry"]["error"], "requester offline");
+    assert_eq!(marked["value"]["entry"]["attemptCount"], 1);
+    let last_attempt_at = marked["value"]["entry"]["lastAttemptAtUnixMs"]
+        .as_u64()
+        .unwrap();
+    let next_attempt_after = marked["value"]["entry"]["nextAttemptAfterUnixMs"]
+        .as_u64()
+        .unwrap();
+    assert!(next_attempt_after > last_attempt_at);
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let acked_json = unsafe {
+        take_ffi_string(chaft_runtime_ack_join_response_outbox_entry_result_json(
+            outbox_dir_c.as_ptr(),
+            entry_id.as_ptr(),
+        ))
+    };
+    let acked = serde_json::from_str::<Value>(&acked_json).unwrap();
+    assert_eq!(acked["ok"], true);
+    assert_eq!(acked["value"]["entryId"], "req_response_outbox_123");
+
+    let relisted_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let relisted = serde_json::from_str::<Value>(&relisted_json).unwrap();
+    assert_eq!(relisted["ok"], true);
+    assert_eq!(relisted["value"]["entries"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn runtime_join_response_outbox_ffi_rejects_invalid_resolution() {
+    let outbox_dir = tempfile::tempdir().unwrap();
+    let outbox_dir_c = CString::new(outbox_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let workspace_id = CString::new("wrk_response_invalid_resolution_123").unwrap();
+    let response_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_response_invalid_resolution_123",
+        "workspaceId": "wrk_response_invalid_resolution_123",
+        "resolution": "ignored"
+    }))
+    .unwrap();
+    let response_payload_c = CString::new(response_payload).unwrap();
+
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_response_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            endpoint.as_ptr(),
+            workspace_id.as_ptr(),
+            response_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], false);
+    assert_eq!(queued["error"]["code"], "join_response_resolution_invalid");
+}
+
+#[test]
+fn runtime_join_response_outbox_ffi_submits_queued_entry_directly() {
+    let requester_dir = tempfile::tempdir().unwrap();
+    let admin_dir = tempfile::tempdir().unwrap();
+    let requester = LocalRuntime::open(requester_dir.path(), None).unwrap();
+    let created = requester
+        .create_workspace("Chaft FFI Response Receiver", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(requester);
+
+    let requester_dir_c = CString::new(requester_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            requester_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+
+    let response_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-invite.v1",
+        "schemaVersion": 1,
+        "requestId": "req_response_direct_123",
+        "workspaceId": workspace_id.0,
+        "inviteId": "inv_response_direct_123",
+        "inviteeDeviceId": "dev_response_direct_123",
+        "role": "member"
+    }))
+    .unwrap();
+    let endpoint_c = CString::new(endpoint.clone()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let response_payload_c = CString::new(response_payload).unwrap();
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_response_outbox_result_json(
+            admin_dir_c.as_ptr(),
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            response_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], true);
+    assert_eq!(queued["value"]["entry"]["status"], "pending");
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_response_outbox_result_json(
+            admin_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 1);
+
+    let entry_id = CString::new("req_response_direct_123").unwrap();
+    let submitted_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_submit_join_response_outbox_entry_direct_result_json(
+                admin_dir_c.as_ptr(),
+                entry_id.as_ptr(),
+            ),
+        )
+    };
+    let submitted = serde_json::from_str::<Value>(&submitted_json).unwrap();
+    assert_eq!(submitted["ok"], true);
+    assert_eq!(submitted["value"]["entry"]["status"], "delivered");
+    assert_eq!(submitted["value"]["entry"]["attemptCount"], 1);
+    assert!(
+        submitted["value"]["entry"]
+            .get("nextAttemptAfterUnixMs")
+            .is_none()
+    );
+    assert_eq!(submitted["value"]["entry"]["peerEndpoint"], endpoint);
+
+    let inbox_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_result_json(
+            requester_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let inbox = serde_json::from_str::<Value>(&inbox_json).unwrap();
+    assert_eq!(inbox["ok"], true);
+    let inbox_entries = inbox["value"]["entries"].as_array().unwrap();
+    assert_eq!(inbox_entries.len(), 1);
+    assert_eq!(inbox_entries[0]["workspaceId"], workspace_id.0);
+    assert_eq!(inbox_entries[0]["entryId"], "req_response_direct_123");
+    let response_text = inbox_entries[0]["responseText"].as_str().unwrap();
+    let response_value = serde_json::from_str::<Value>(response_text).unwrap();
+    assert_eq!(response_value["inviteId"], "inv_response_direct_123");
+    assert_eq!(response_value["inviteeDeviceId"], "dev_response_direct_123");
+
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_response_outbox_result_json(
+            admin_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 0);
+
+    let response_entry_id = CString::new(inbox_entries[0]["entryId"].as_str().unwrap()).unwrap();
+    let acked_json = unsafe {
+        take_ffi_string(chaft_runtime_ack_join_response_inbox_entry_result_json(
+            requester_dir_c.as_ptr(),
+            response_entry_id.as_ptr(),
+        ))
+    };
+    let acked = serde_json::from_str::<Value>(&acked_json).unwrap();
+    assert_eq!(acked["ok"], true);
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_pull_join_responses_direct_ffi_imports_known_peer_inbox() {
+    let relay_dir = tempfile::tempdir().unwrap();
+    let local_dir = tempfile::tempdir().unwrap();
+    let admin_dir = tempfile::tempdir().unwrap();
+    let relay = LocalRuntime::open(relay_dir.path(), None).unwrap();
+    let created = relay
+        .create_workspace("Chaft FFI Join Response Relay", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(relay);
+
+    let relay_dir_c = CString::new(relay_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let local_dir_c = CString::new(local_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            relay_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+
+    let response_payload = serde_json::to_string(&json!({
+        "kind": "chaft.workspace-join-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_pull_response_123",
+        "workspaceId": workspace_id.0,
+        "resolution": "declined",
+        "message": "Try again later"
+    }))
+    .unwrap();
+    let endpoint_c = CString::new(endpoint.clone()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let response_payload_c = CString::new(response_payload).unwrap();
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_response_outbox_result_json(
+            admin_dir_c.as_ptr(),
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            response_payload_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], true);
+
+    let entry_id = CString::new("req_pull_response_123").unwrap();
+    let submitted_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_submit_join_response_outbox_entry_direct_result_json(
+                admin_dir_c.as_ptr(),
+                entry_id.as_ptr(),
+            ),
+        )
+    };
+    let submitted = serde_json::from_str::<Value>(&submitted_json).unwrap();
+    assert_eq!(submitted["ok"], true);
+
+    let pulled_json = unsafe {
+        take_ffi_string(chaft_runtime_pull_join_responses_direct_result_json(
+            local_dir_c.as_ptr(),
+            endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            10,
+        ))
+    };
+    let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
+    assert_eq!(pulled["ok"], true);
+    assert_eq!(pulled["value"]["responseCount"], 1);
+    assert_eq!(pulled["value"]["workspaceId"], workspace_id.0);
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_result_json(
+            local_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["workspaceId"], workspace_id.0);
+    assert_eq!(entries[0]["entryId"], "req_pull_response_123");
 
     let peer_id_c = CString::new(peer_id).unwrap();
     let stopped_json = unsafe {

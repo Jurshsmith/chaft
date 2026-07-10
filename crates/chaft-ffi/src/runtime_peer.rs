@@ -16,6 +16,7 @@ use crate::{
     envelope::{FfiResult, ffi_error, result_envelope},
     input::{optional_c_string, optional_c_string_with_max_bytes, read_c_string},
     join_request_inbox::FileJoinRequestInbox,
+    join_response_inbox::FileJoinResponseInbox,
     open_runtime_from_ffi, open_runtime_from_paths,
     peer_endpoint::{validate_direct_listen_endpoint_text, validate_peer_endpoint_text},
     peer_host::{
@@ -74,11 +75,14 @@ pub(crate) fn runtime_start_direct_peer_result(
                 };
                 let join_request_inbox =
                     Arc::new(FileJoinRequestInbox::new(paths.data_dir.clone()));
-                let server = match DirectPeerServer::bind_with_blobs_and_join_request_inbox(
+                let join_response_inbox =
+                    Arc::new(FileJoinResponseInbox::new(paths.data_dir.clone()));
+                let server = match DirectPeerServer::bind_with_blobs_and_access_envelope_inboxes(
                     &listen,
                     store,
                     blob_store,
                     join_request_inbox,
+                    join_response_inbox,
                 )
                 .await
                 {
@@ -155,10 +159,11 @@ pub(crate) fn runtime_start_iroh_peer_result(
                         return;
                     }
                 };
-                let sync_store = SyncPeerStore::with_blobs_and_join_request_inbox(
+                let sync_store = SyncPeerStore::with_blobs_and_access_envelope_inboxes(
                     store,
                     blob_store,
                     Arc::new(FileJoinRequestInbox::new(paths.data_dir.clone())),
+                    Arc::new(FileJoinResponseInbox::new(paths.data_dir.clone())),
                 );
                 let server =
                     match IrohSyncPeer::bind(sync_store, IrohTransportConfig::from_environment())

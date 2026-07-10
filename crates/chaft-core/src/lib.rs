@@ -331,6 +331,7 @@ pub struct WorkspaceJoinRequestView {
     pub source_invite_id: String,
     pub source_display_name: String,
     pub source_approval_policy: String,
+    pub response_peer_endpoint: String,
     pub requested_event_id: EventId,
     pub requested_by_device_id: DeviceId,
     pub requested_physical_ms: i64,
@@ -643,6 +644,7 @@ impl WorkspaceState {
                 source_invite_id,
                 source_display_name,
                 source_approval_policy,
+                response_peer_endpoint,
             } => {
                 let existing_member = self.members.get(requester_device_id);
                 let existing_invite = self
@@ -675,6 +677,7 @@ impl WorkspaceState {
                         source_invite_id: source_invite_id.clone(),
                         source_display_name: source_display_name.clone(),
                         source_approval_policy: source_approval_policy.clone(),
+                        response_peer_endpoint: response_peer_endpoint.clone(),
                         requested_event_id: signed.event_id.clone(),
                         requested_by_device_id: signed.event.author_device_id.clone(),
                         requested_physical_ms: signed.event.timestamp.physical_ms,
@@ -1213,8 +1216,8 @@ impl WorkspaceAccessIndex {
             }
             EventBody::MemberInvited { role, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
-                if *role == WorkspaceRole::Owner {
-                    require_role(author_role, Action::GrantOwner)
+                if matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin) {
+                    require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::InviteMember)
                 }
@@ -1230,8 +1233,10 @@ impl WorkspaceAccessIndex {
                         device_id: member_device_id.clone(),
                     });
                 }
-                if *role == WorkspaceRole::Owner || existing_role == WorkspaceRole::Owner {
-                    require_role(author_role, Action::GrantOwner)
+                if matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
+                    || matches!(existing_role, WorkspaceRole::Owner | WorkspaceRole::Admin)
+                {
+                    require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::UpdateMemberRole)
                 }
@@ -1242,8 +1247,8 @@ impl WorkspaceAccessIndex {
             }
             EventBody::WorkspaceInviteRecorded { role, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
-                if *role == WorkspaceRole::Owner {
-                    require_role(author_role, Action::GrantOwner)
+                if matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin) {
+                    require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::InviteMember)
                 }
@@ -1282,8 +1287,8 @@ impl WorkspaceAccessIndex {
                         device_id: removed_device_id.clone(),
                     });
                 }
-                if removed_role == WorkspaceRole::Owner {
-                    require_role(author_role, Action::GrantOwner)
+                if matches!(removed_role, WorkspaceRole::Owner | WorkspaceRole::Admin) {
+                    require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::RemoveMember)
                 }
@@ -1360,8 +1365,8 @@ impl WorkspaceAccessIndex {
                         device_id: removed_device_id.clone(),
                     });
                 }
-                if removed_role == WorkspaceRole::Owner {
-                    require_role(author_role, Action::GrantOwner)
+                if matches!(removed_role, WorkspaceRole::Owner | WorkspaceRole::Admin) {
+                    require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::ManageOpenMlsGroup)
                 }
@@ -2715,6 +2720,7 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             source_invite_id,
             source_display_name,
             source_approval_policy,
+            response_peer_endpoint,
             ..
         } => {
             validate_event_text_required("join request ID", request_id)?;
@@ -2748,6 +2754,11 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
                 "source approval policy",
                 source_approval_policy,
                 WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "join request response peer endpoint",
+                response_peer_endpoint,
+                PEER_ENDPOINT_MAX_BYTES,
             )
         }
         EventBody::WorkspaceJoinRequestResolved { request_id, .. } => {
@@ -3113,7 +3124,7 @@ fn validate_event_u64_size(
 
 #[derive(Debug, Clone, Copy)]
 enum Action {
-    GrantOwner,
+    ManagePrivilegedRoles,
     InviteMember,
     ManageWorkspaceSettings,
     ManageJoinRequests,
@@ -3127,7 +3138,7 @@ enum Action {
 impl Action {
     fn label(self) -> &'static str {
         match self {
-            Self::GrantOwner => "grant_owner",
+            Self::ManagePrivilegedRoles => "manage_privileged_roles",
             Self::InviteMember => "invite_member",
             Self::ManageWorkspaceSettings => "manage_workspace_settings",
             Self::ManageJoinRequests => "manage_join_requests",
@@ -3142,7 +3153,7 @@ impl Action {
 
 fn require_role(role: WorkspaceRole, action: Action) -> Result<(), AuthorizationError> {
     let allowed = match action {
-        Action::GrantOwner => role == WorkspaceRole::Owner,
+        Action::ManagePrivilegedRoles => role == WorkspaceRole::Owner,
         Action::InviteMember => matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin),
         Action::ManageWorkspaceSettings => {
             matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
@@ -5990,6 +6001,7 @@ mod tests {
         let workspace_id = WorkspaceId::new();
         let root_owner = DeviceId("dev_root_owner".to_owned());
         let admin = DeviceId("dev_admin".to_owned());
+        let other_admin = DeviceId("dev_other_admin".to_owned());
         let root = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
@@ -6007,20 +6019,73 @@ mod tests {
                 role: WorkspaceRole::Admin,
             },
         ));
-        let remove_root = signed(SignableEvent::new(
-            workspace_id,
+        let invite_other_admin = signed(SignableEvent::new(
+            workspace_id.clone(),
             None,
-            admin,
+            root_owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: other_admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let remove_root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
             EventBody::MemberRemoved {
                 removed_device_id: root_owner.clone(),
             },
         ));
+        let remove_other_admin_by_admin = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin,
+            EventBody::MemberRemoved {
+                removed_device_id: other_admin.clone(),
+            },
+        ));
+        let remove_admin_by_owner = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            root_owner.clone(),
+            EventBody::MemberRemoved {
+                removed_device_id: other_admin,
+            },
+        ));
 
         assert_eq!(
-            authorize_event_with_history(&[root, invite_admin], &remove_root),
+            authorize_event_with_history(
+                &[
+                    root.clone(),
+                    invite_admin.clone(),
+                    invite_other_admin.clone()
+                ],
+                &remove_root
+            ),
             Err(AuthorizationError::WorkspaceRootCannotBeRemoved {
-                device_id: root_owner
+                device_id: root_owner.clone()
             })
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[
+                    root.clone(),
+                    invite_admin.clone(),
+                    invite_other_admin.clone()
+                ],
+                &remove_other_admin_by_admin
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Admin,
+                action: "manage_privileged_roles"
+            })
+        );
+        assert!(
+            authorize_event_with_history(
+                &[root, invite_admin, invite_other_admin],
+                &remove_admin_by_owner
+            )
+            .is_ok()
         );
     }
 
@@ -6798,6 +6863,7 @@ mod tests {
         let workspace_id = WorkspaceId::new();
         let owner = DeviceId("dev_owner".to_owned());
         let admin = DeviceId("dev_admin".to_owned());
+        let other_admin = DeviceId("dev_other_admin".to_owned());
         let member = DeviceId("dev_member".to_owned());
         let guest = DeviceId("dev_guest".to_owned());
         let root = signed(SignableEvent::new(
@@ -6811,7 +6877,7 @@ mod tests {
         let admin_invite = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
-            owner,
+            owner.clone(),
             EventBody::MemberInvited {
                 invitee_device_id: admin.clone(),
                 role: WorkspaceRole::Admin,
@@ -6820,10 +6886,19 @@ mod tests {
         let member_invite_by_admin = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
-            admin,
+            admin.clone(),
             EventBody::MemberInvited {
                 invitee_device_id: member.clone(),
                 role: WorkspaceRole::Member,
+            },
+        ));
+        let admin_invite_by_admin = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: other_admin,
+                role: WorkspaceRole::Admin,
             },
         ));
         let guest_invite_by_member = signed(SignableEvent::new(
@@ -6842,6 +6917,16 @@ mod tests {
                 &member_invite_by_admin
             )
             .is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), admin_invite.clone()],
+                &admin_invite_by_admin
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Admin,
+                action: "manage_privileged_roles"
+            })
         );
         assert_eq!(
             authorize_event_with_history(
@@ -6901,6 +6986,7 @@ mod tests {
                 source_invite_id: String::new(),
                 source_display_name: String::new(),
                 source_approval_policy: String::new(),
+                response_peer_endpoint: String::new(),
             },
         ));
         let member_request = signed(SignableEvent::new(
@@ -6916,6 +7002,7 @@ mod tests {
                 source_invite_id: String::new(),
                 source_display_name: String::new(),
                 source_approval_policy: String::new(),
+                response_peer_endpoint: String::new(),
             },
         ));
         let member_resolve = signed(SignableEvent::new(
@@ -6988,6 +7075,7 @@ mod tests {
                 source_invite_id: String::new(),
                 source_display_name: String::new(),
                 source_approval_policy: String::new(),
+                response_peer_endpoint: String::new(),
             },
         ));
         let mut state = WorkspaceState::new(workspace_id);
@@ -7027,6 +7115,7 @@ mod tests {
                 source_invite_id: String::new(),
                 source_display_name: String::new(),
                 source_approval_policy: String::new(),
+                response_peer_endpoint: String::new(),
             },
         ));
         let invite = signed(SignableEvent::new(
@@ -7205,11 +7294,12 @@ mod tests {
     }
 
     #[test]
-    fn owner_and_admin_can_update_member_roles() {
+    fn owner_controls_admin_roles_and_admins_manage_regular_roles() {
         let workspace_id = WorkspaceId::new();
         let owner = DeviceId("dev_owner".to_owned());
         let admin = DeviceId("dev_admin".to_owned());
         let member = DeviceId("dev_member".to_owned());
+        let guest = DeviceId("dev_guest".to_owned());
         let root = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
@@ -7230,13 +7320,40 @@ mod tests {
         let member_invite = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
-            owner,
+            owner.clone(),
             EventBody::MemberInvited {
                 invitee_device_id: member.clone(),
                 role: WorkspaceRole::Member,
             },
         ));
-        let promote_member = signed(SignableEvent::new(
+        let guest_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: guest.clone(),
+                role: WorkspaceRole::Guest,
+            },
+        ));
+        let admin_promotes_guest_to_member = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: guest.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let admin_demotes_member_to_guest = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Guest,
+            },
+        ));
+        let admin_promotes_member_to_admin = signed(SignableEvent::new(
             workspace_id.clone(),
             None,
             admin.clone(),
@@ -7245,8 +7362,17 @@ mod tests {
                 role: WorkspaceRole::Admin,
             },
         ));
-        let demote_member = signed(SignableEvent::new(
-            workspace_id,
+        let owner_promotes_member_to_admin = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let admin_demotes_admin_to_member = signed(SignableEvent::new(
+            workspace_id.clone(),
             None,
             admin,
             EventBody::MemberRoleUpdated {
@@ -7254,6 +7380,54 @@ mod tests {
                 role: WorkspaceRole::Member,
             },
         ));
+        let owner_demotes_admin_to_member = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            owner,
+            EventBody::MemberRoleUpdated {
+                member_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+
+        let base_history = [
+            root.clone(),
+            admin_invite.clone(),
+            member_invite.clone(),
+            guest_invite.clone(),
+        ];
+        assert!(
+            authorize_event_with_history(&base_history, &admin_promotes_guest_to_member).is_ok()
+        );
+        assert!(
+            authorize_event_with_history(&base_history, &admin_demotes_member_to_guest).is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(&base_history, &admin_promotes_member_to_admin),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Admin,
+                action: "manage_privileged_roles"
+            })
+        );
+        assert!(
+            authorize_event_with_history(&base_history, &owner_promotes_member_to_admin).is_ok()
+        );
+        assert_eq!(
+            authorize_event_with_history(
+                &[
+                    root.clone(),
+                    admin_invite.clone(),
+                    member_invite.clone(),
+                    guest_invite.clone(),
+                    owner_promotes_member_to_admin.clone(),
+                ],
+                &admin_demotes_admin_to_member,
+            ),
+            Err(AuthorizationError::InsufficientRole {
+                role: WorkspaceRole::Admin,
+                action: "manage_privileged_roles"
+            })
+        );
 
         let mut state = WorkspaceState::new(root.event.workspace_id.clone());
         state
@@ -7261,12 +7435,16 @@ mod tests {
                 root,
                 admin_invite,
                 member_invite,
-                promote_member,
-                demote_member,
+                guest_invite,
+                admin_promotes_guest_to_member,
+                admin_demotes_member_to_guest,
+                owner_promotes_member_to_admin,
+                owner_demotes_admin_to_member,
             ])
             .unwrap();
 
         assert_eq!(state.members[&member].role, WorkspaceRole::Member);
+        assert_eq!(state.members[&guest].role, WorkspaceRole::Member);
     }
 
     #[test]
@@ -7317,7 +7495,7 @@ mod tests {
             ),
             Err(AuthorizationError::InsufficientRole {
                 role: WorkspaceRole::Member,
-                action: "update_member_role"
+                action: "manage_privileged_roles"
             })
         );
         assert_eq!(

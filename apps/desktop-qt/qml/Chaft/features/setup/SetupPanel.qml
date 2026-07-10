@@ -247,6 +247,17 @@ ScrollView {
             : "Create invite"
     }
 
+    function inviteRoleOptions() {
+        var options = [
+            { label: "Member", role: "member" },
+            { label: "Guest", role: "guest" }
+        ]
+        if (setupScroll.app && setupScroll.app.canManageWorkspaceOwners()) {
+            options.splice(1, 0, { label: "Admin", role: "admin" })
+        }
+        return options
+    }
+
     // Preserves the manual-vs-system slot routing: in system mode a pick
     // updates the matching dark/light slot, otherwise the single manual theme.
     function applyThemeChoice(themeId) {
@@ -423,6 +434,15 @@ ScrollView {
                 || parsed.aes_256_gcm_siv_key !== undefined)
     }
 
+    function keyTransferIsAccessFile() {
+        var parsed = setupScroll.keyTransferObject()
+        return setupScroll.keyTransferIsWorkspaceKey()
+            || (parsed !== null
+                && parsed.channelId !== undefined
+                && (parsed.aes256GcmSivKey !== undefined
+                    || parsed.aes_256_gcm_siv_key !== undefined))
+    }
+
     function keyTransferIsRecoveryBundle() {
         var parsed = setupScroll.keyTransferObject()
         return parsed !== null
@@ -445,6 +465,9 @@ ScrollView {
         }
         if (setupScroll.keyTransferIsRecoveryBundle()) {
             return "recovery kit"
+        }
+        if (setupScroll.keyTransferIsAccessFile()) {
+            return "access file"
         }
         return "support detail"
     }
@@ -1250,7 +1273,8 @@ ScrollView {
             String(request.sourceType || "").trim(),
             String(request.sourceInviteId || "").trim(),
             String(request.sourceDisplayName || "").trim(),
-            String(request.sourceApprovalPolicy || "").trim())
+            String(request.sourceApprovalPolicy || "").trim(),
+            String(request.responsePeerEndpoint || "").trim())
     }
 
     function joinRequestPayloadObject(request) {
@@ -1330,6 +1354,10 @@ ScrollView {
             return false
         }
         setupScroll.pendingJoinRequestFileText = JSON.stringify(artifact, null, 2)
+        saveTrackedJoinRequestDialog.selectedFile =
+            setupScroll.app.credentialSuggestedFileUrl(
+                setupScroll.pendingJoinRequestFileText,
+                "access request")
         saveTrackedJoinRequestDialog.open()
         return true
     }
@@ -1414,7 +1442,8 @@ ScrollView {
                     setupScroll.joinRequestDisplayName(request),
                     setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
                     "preapproved",
-                    setupScroll.joinRequestId(request))) {
+                    setupScroll.joinRequestId(request),
+                    String(request.responsePeerEndpoint || "").trim())) {
             setupScroll.loadedJoinRequestText = ""
             inviteDeviceField.text = ""
             return true
@@ -1454,12 +1483,14 @@ ScrollView {
             return false
         }
         var requestId = setupScroll.joinRequestId(request)
+        var responsePeerEndpoint = String((request && request.responsePeerEndpoint) || "").trim()
         var label = setupScroll.joinRequestLabel(request)
         return setupScroll.app.confirmSetupAction(
             "Decline request",
             "Decline " + label + "'s access request? They will need to send a new request before joining.",
             "Decline",
-            "decline-join-request:" + requestId)
+            "decline-join-request:" + encodeURIComponent(requestId)
+                + "::" + encodeURIComponent(responsePeerEndpoint))
     }
 
     function confirmRevokeJoinRequest(request) {
@@ -1467,12 +1498,14 @@ ScrollView {
             return false
         }
         var requestId = setupScroll.joinRequestId(request)
+        var responsePeerEndpoint = String((request && request.responsePeerEndpoint) || "").trim()
         var label = setupScroll.joinRequestLabel(request)
         return setupScroll.app.confirmSetupAction(
             "Close request",
             "Close " + label + "'s access request without approving it? Use this for duplicate or stale requests. They will need to send a new request before joining.",
             "Close request",
-            "revoke-join-request:" + requestId)
+            "revoke-join-request:" + encodeURIComponent(requestId)
+                + "::" + encodeURIComponent(responsePeerEndpoint))
     }
 
     function loadedJoinRequestFieldLabel(request) {
@@ -1550,8 +1583,11 @@ ScrollView {
 
     function canCreateWorkspaceInvite() {
         var request = setupScroll.loadedJoinRequestObject()
+        var role = setupScroll.inviteRoleValue()
         return setupScroll.app.runtimeWorkReady
             && setupScroll.app.canManageWorkspaceAccess()
+            && (role !== "admin" && role !== "owner"
+                || setupScroll.app.canManageWorkspaceOwners())
             && setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text).length > 0
             && (request === null || setupScroll.joinRequestTargetsCurrentWorkspace(request))
             && !chaftController.keyTransferInFlight
@@ -1563,6 +1599,11 @@ ScrollView {
         }
         if (!setupScroll.app.canManageWorkspaceAccess()) {
             return setupScroll.app.workspaceAccessUnavailableReason()
+        }
+        var role = setupScroll.inviteRoleValue()
+        if ((role === "admin" || role === "owner")
+                && !setupScroll.app.canManageWorkspaceOwners()) {
+            return "Only an owner can invite admins or owners."
         }
         if (setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text).length === 0) {
             return setupScroll.workspacePolicyEncouragesRequests()
@@ -2381,11 +2422,7 @@ ScrollView {
                         ComboBox {
                             id: inviteRoleBox
                             Layout.preferredWidth: 120
-                            model: [
-                                { label: "Member", role: "member" },
-                                { label: "Admin", role: "admin" },
-                                { label: "Guest", role: "guest" }
-                            ]
+                            model: setupScroll.inviteRoleOptions()
                             textRole: "label"
                             valueRole: "role"
                             enabled: app.runtimeWorkReady && app.canManageWorkspaceAccess()
@@ -3574,7 +3611,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "This restores workspace access only. The new device appears separately, and the passphrase should stay private."
+                            text: "This kit restores workspace access. Store the file privately, keep its passphrase separate, and do not send it in chat."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -3600,7 +3637,7 @@ ScrollView {
                                     model: [
                                         "1. Save the recovery kit file.",
                                         "2. Open the kit in Chaft on the new device.",
-                                        "3. Keep the kit and passphrase out of chat."
+                                        "3. Keep the kit private and the passphrase separate."
                                     ]
 
                                     delegate: Text {

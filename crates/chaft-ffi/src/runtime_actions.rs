@@ -919,6 +919,36 @@ pub(crate) fn runtime_record_workspace_join_request_result(
     source_display_name: *const c_char,
     source_approval_policy: *const c_char,
 ) -> FfiResult<RecordedWorkspaceJoinRequest> {
+    runtime_record_workspace_join_request_with_response_route_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        request_id,
+        device_id,
+        display_name,
+        note,
+        source_type,
+        source_invite_id,
+        source_display_name,
+        source_approval_policy,
+        std::ptr::null(),
+    )
+}
+
+pub(crate) fn runtime_record_workspace_join_request_with_response_route_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    request_id: *const c_char,
+    device_id: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    source_type: *const c_char,
+    source_invite_id: *const c_char,
+    source_display_name: *const c_char,
+    source_approval_policy: *const c_char,
+    response_peer_endpoint: *const c_char,
+) -> FfiResult<RecordedWorkspaceJoinRequest> {
     result_envelope(|| {
         let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
         let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
@@ -931,8 +961,11 @@ pub(crate) fn runtime_record_workspace_join_request_result(
         let source_display_name = read_c_string(source_display_name, "source_display_name")?;
         let source_approval_policy =
             read_c_string(source_approval_policy, "source_approval_policy")?;
+        let response_peer_endpoint =
+            optional_c_string(response_peer_endpoint, "response_peer_endpoint")?
+                .unwrap_or_default();
         runtime
-            .record_workspace_join_request(
+            .record_workspace_join_request_with_response_route(
                 WorkspaceId(workspace_id),
                 request_id,
                 DeviceId(device_id),
@@ -942,6 +975,7 @@ pub(crate) fn runtime_record_workspace_join_request_result(
                 source_invite_id,
                 source_display_name,
                 source_approval_policy,
+                response_peer_endpoint,
             )
             .map_err(|error| {
                 ffi_error(

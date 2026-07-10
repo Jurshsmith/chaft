@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QtCore
 import Chaft
 
 ApplicationWindow {
@@ -167,8 +168,8 @@ ApplicationWindow {
     property string pendingWorkspaceImportSource: ""
     property string pendingExternalLink: ""
     property string pendingAccessRequestSaveText: ""
-    property string pendingAccessRequestSaveWorkspaceName: ""
     property string pendingAccessRequestSendingKey: ""
+    property string pendingAccessResponseAutoCheckLastKey: ""
     property int lastNotificationUnreadCount: 0
     property bool unreadNotificationsReady: false
     property bool pendingSmokeArchivedChannelSelection: false
@@ -488,6 +489,8 @@ ApplicationWindow {
                 root.undoMessageDelete(id.slice("undo-delete:".length))
             } else if (id === "copy-private-room-help") {
                 root.copyPrivateRoomHelpNote()
+            } else if (id === "open-received-approval") {
+                root.openReceivedApprovalInvite(true)
             }
         }
     }
@@ -696,13 +699,31 @@ ApplicationWindow {
                     id.slice("revoke-workspace-invite:".length),
                     "revoked")
             } else if (id.indexOf("decline-join-request:") === 0) {
+                var declineTarget = id.slice("decline-join-request:".length)
+                var declineSeparator = declineTarget.indexOf("::")
+                var declineRequestId = declineSeparator >= 0
+                    ? decodeURIComponent(declineTarget.slice(0, declineSeparator))
+                    : declineTarget
+                var declineResponseEndpoint = declineSeparator >= 0
+                    ? decodeURIComponent(declineTarget.slice(declineSeparator + 2))
+                    : ""
                 chaftController.resolveWorkspaceJoinRequest(
-                    id.slice("decline-join-request:".length),
-                    "declined")
+                    declineRequestId,
+                    "declined",
+                    declineResponseEndpoint)
             } else if (id.indexOf("revoke-join-request:") === 0) {
+                var revokeJoinTarget = id.slice("revoke-join-request:".length)
+                var revokeJoinSeparator = revokeJoinTarget.indexOf("::")
+                var revokeJoinRequestId = revokeJoinSeparator >= 0
+                    ? decodeURIComponent(revokeJoinTarget.slice(0, revokeJoinSeparator))
+                    : revokeJoinTarget
+                var revokeJoinResponseEndpoint = revokeJoinSeparator >= 0
+                    ? decodeURIComponent(revokeJoinTarget.slice(revokeJoinSeparator + 2))
+                    : ""
                 chaftController.resolveWorkspaceJoinRequest(
-                    id.slice("revoke-join-request:".length),
-                    "revoked")
+                    revokeJoinRequestId,
+                    "revoked",
+                    revokeJoinResponseEndpoint)
             } else if (id.indexOf("replace-workspace-invite:") === 0) {
                 setupPanel.startPendingWorkspaceInviteReplacement(
                     id.slice("replace-workspace-invite:".length))
@@ -987,7 +1008,17 @@ ApplicationWindow {
         var status = String((row && row.status) || "").trim()
         var sentAt = root.backupPeerTimeLabel((row && row.sentAt) || "")
         var lastAttemptAt = root.backupPeerTimeLabel((row && row.lastAttemptAt) || "")
+        var resolvedAt = root.backupPeerTimeLabel((row && row.resolvedAt) || "")
         var createdAt = root.backupPeerTimeLabel((row && row.createdAt) || "")
+        if (status === "approved" && resolvedAt.length > 0) {
+            return "Approved " + resolvedAt
+        }
+        if (status === "declined" && resolvedAt.length > 0) {
+            return "Declined " + resolvedAt
+        }
+        if (status === "closed" && resolvedAt.length > 0) {
+            return "Closed " + resolvedAt
+        }
         if (status === "sent" && sentAt.length > 0) {
             return "Sent " + sentAt
         }
@@ -1012,26 +1043,35 @@ ApplicationWindow {
     function pendingAccessRequestStatusMessage(row) {
         var status = String((row && row.status) || "").trim()
         var label = String((row && row.deliveryLabel) || "an owner or admin")
+        if (status === "approved") {
+            return "An admin approved this request. Open the received invite here to finish joining."
+        }
+        if (status === "declined") {
+            return "An admin declined this request. Ask for a fresh invite or send a new request if this changed."
+        }
+        if (status === "closed") {
+            return "An admin closed this request. Send a new request if you still need access."
+        }
         if (status === "sent") {
             return row.canSendDirect
                 ? "Sent to " + label
-                    + ". Open the invite here when it arrives, or resend if they did not receive it."
-                : "Sent to " + label + ". Open the invite here after approval."
+                    + ". Check after they approve, open the invite here when it arrives, or resend if they did not receive it."
+                : "Sent to " + label + ". Check after they approve, then open the invite here."
         }
         if (status === "sending") {
             return "Sending to " + label + "."
         }
         if (status === "send_failed") {
             return "Could not reach " + label
-                + ". Copy the request link or save the file, then send it to them. Open the invite here when it arrives."
+                + ". Copy the request link or save the file, then send it to them. Check after they approve, then open the invite here."
         }
         if (status === "copied") {
             return "Send the copied request link to " + label
-                + ". Open the invite here when it arrives."
+                + ". Check after they approve, then open the invite here."
         }
         if (status === "file_ready") {
             return "Save or send the request file to " + label
-                + ". Open the invite here when it arrives."
+                + ". Check after they approve, then open the invite here."
         }
         return row.canSendDirect
             ? "Send it now, or share the request link or file with "
@@ -3955,14 +3995,13 @@ ApplicationWindow {
 
     function memberRoleOptions(member) {
         var options = []
+        var role = root.normalizedRole(member ? member.role : "")
         if (root.canManageWorkspaceOwners()) {
             options.push({ label: "Owner", role: "owner" })
+            options.push({ label: "Admin", role: "admin" })
         }
-        options.push({ label: "Admin", role: "admin" })
-        options.push({ label: "Member", role: "member" })
-
-        var role = root.normalizedRole(member ? member.role : "")
-        if (role === "guest") {
+        if (role !== "owner" && (role !== "admin" || root.canManageWorkspaceOwners())) {
+            options.push({ label: "Member", role: "member" })
             options.push({ label: "Guest", role: "guest" })
         }
         return options
@@ -3977,7 +4016,7 @@ ApplicationWindow {
             return false
         }
         var role = root.normalizedRole(member.role)
-        return role !== "owner" || root.canManageWorkspaceOwners()
+        return (role !== "owner" && role !== "admin") || root.canManageWorkspaceOwners()
     }
 
     function memberRoleUnavailableReason(member) {
@@ -3991,9 +4030,12 @@ ApplicationWindow {
                 && String(member.deviceId || "") === String(chaftController.deviceId || "")) {
             return "You cannot change your own role here."
         }
-        if (member !== null && root.normalizedRole(member.role) === "owner"
-                && !root.canManageWorkspaceOwners()) {
-            return "Only an owner can change another owner's role."
+        if (member !== null) {
+            var role = root.normalizedRole(member.role)
+            if ((role === "owner" || role === "admin")
+                    && !root.canManageWorkspaceOwners()) {
+                return "Only an owner can change admin or owner roles."
+            }
         }
         return "Choose a different role first."
     }
@@ -4007,7 +4049,7 @@ ApplicationWindow {
             return false
         }
         var role = root.normalizedRole(member.role)
-        return role !== "owner" || root.canManageWorkspaceOwners()
+        return (role !== "owner" && role !== "admin") || root.canManageWorkspaceOwners()
     }
 
     function memberRemovalUnavailableReason(member) {
@@ -4021,9 +4063,12 @@ ApplicationWindow {
                 && String(member.deviceId || "") === String(chaftController.deviceId || "")) {
             return "You cannot remove your own access here."
         }
-        if (member !== null && root.normalizedRole(member.role) === "owner"
-                && !root.canManageWorkspaceOwners()) {
-            return "Only an owner can remove another owner."
+        if (member !== null) {
+            var role = root.normalizedRole(member.role)
+            if ((role === "owner" || role === "admin")
+                    && !root.canManageWorkspaceOwners()) {
+                return "Only an owner can remove admins or owners."
+            }
         }
         return "This person cannot be removed right now."
     }
@@ -4198,6 +4243,53 @@ ApplicationWindow {
         root.workspaceEntryMode = mode === "create" ? "create" : "join"
         root.workspaceEntryIntent = String(intent || root.workspaceEntryMode)
         workspaceEntryDialog.open()
+    }
+
+    function openReceivedApprovalInvite(forceOpen) {
+        var inviteText = String(chaftController.keyTransferJson || "").trim()
+        if (inviteText.length === 0
+                || !chaftController.keyTransferFromJoinResponseInbox
+                || !root.keyTransferIsInvitePackage()) {
+            return false
+        }
+        var existingText = String(workspaceEntryDialog.credentialsText || "").trim()
+        var shouldForce = forceOpen === true
+        if (workspaceEntryDialog.visible
+                && existingText.length > 0
+                && existingText !== inviteText
+                && !shouldForce) {
+            toastHost.show(
+                "success",
+                "Approval received. Finish the open handoff or open the new invite when ready.",
+                "Open",
+                "open-received-approval",
+                9000)
+            return false
+        }
+
+        workspaceEntryDialog.resetForm()
+        root.openWorkspaceEntry("join", "received-approval")
+        Qt.callLater(function() {
+            var currentInviteText = String(chaftController.keyTransferJson || "").trim()
+            if (!chaftController.keyTransferFromJoinResponseInbox
+                    || currentInviteText.length === 0
+                    || currentInviteText !== inviteText) {
+                return
+            }
+            workspaceEntryDialog.clearCredentialImportFailure()
+            root.loadWorkspaceCredentialText(currentInviteText)
+            var endpoint = root.credentialPeerEndpoint(currentInviteText)
+            if (endpoint.length > 0) {
+                workspaceEntryDialog.peerEndpointText = endpoint
+            }
+        })
+        toastHost.show(
+            "success",
+            "Approval received. Review the invite and join when ready.",
+            "Open",
+            "open-received-approval",
+            7000)
+        return true
     }
 
     function openAddWorkspaceChooser() {
@@ -4442,7 +4534,7 @@ ApplicationWindow {
         if (parsed === null) {
             return ({
                 title: "This does not look like a Chaft file",
-                message: "Open or paste an invite, request link, or recovery kit.",
+                message: "Open or paste an invite, request link, recovery kit, or access file.",
                 rows: [],
                 canImport: false,
                 warning: true
@@ -4624,7 +4716,7 @@ ApplicationWindow {
 
         return ({
             title: "Unknown Chaft file",
-            message: "This file is valid, but it is not an invite, request link, or recovery kit.",
+            message: "This file is valid, but it is not an invite, request link, recovery kit, or access file.",
             rows: [],
             canImport: false,
             warning: true
@@ -4663,7 +4755,7 @@ ApplicationWindow {
         }
         return ({
             title: "Couldn't join workspace",
-            message: "Open the latest invite or request link. Ask an admin for a new invite if it still fails.",
+            message: "Open the latest invite, request link, or access file. Ask an admin for a new invite if it still fails.",
             detail: detail
         })
     }
@@ -4701,6 +4793,9 @@ ApplicationWindow {
                 ? chaftController.lastRecoveryImportedChannelCount
                 : -1
             root.clearPendingAccessRequestForWorkspace(workspaceId)
+            if (source === "access") {
+                chaftController.acknowledgeCurrentJoinResponseInboxEntry()
+            }
             root.clearPendingWorkspaceImport()
             workspaceEntryDialog.clearCredentialImportFailure()
             if (peerEndpoint.length > 0) {
@@ -5084,6 +5179,15 @@ ApplicationWindow {
             && parsed.sealedPayload !== undefined
     }
 
+    function keyTransferIsAccessFile() {
+        var parsed = root.keyTransferObject()
+        return root.credentialWorkspaceKeyObject(parsed) !== null
+            || (parsed !== null
+                && parsed.channelId !== undefined
+                && (parsed.aes256GcmSivKey !== undefined
+                    || parsed.aes_256_gcm_siv_key !== undefined))
+    }
+
     function keyTransferLabel() {
         if (root.keyTransferIsInvitePackage()) {
             return "invite"
@@ -5096,6 +5200,9 @@ ApplicationWindow {
         }
         if (root.keyTransferIsRecoveryBundle()) {
             return "recovery kit"
+        }
+        if (root.keyTransferIsAccessFile()) {
+            return "access file"
         }
         return "support detail"
     }
@@ -5159,17 +5266,27 @@ ApplicationWindow {
     }
 
     function keyTransferArtifactObject() {
-        var parsed = root.keyTransferObject()
+        return root.credentialArtifactForFileText(chaftController.keyTransferJson)
+    }
+
+    function credentialArtifactForFileText(text) {
+        var parsed = root.parsedJsonObject(String(text || "").trim())
         if (parsed === null) {
             return null
         }
-        if (String(parsed.kind || "") === "chaft.workspace-invite.v1") {
+        var kind = String(parsed.kind || "")
+        if (kind === "chaft.invite-file.v1"
+                || kind === "chaft.join-request-file.v1"
+                || kind === "chaft.workspace-card-file.v1") {
+            return parsed
+        }
+        if (kind === "chaft.workspace-invite.v1") {
             return root.inviteArtifactObject(parsed)
         }
-        if (String(parsed.kind || "") === "chaft.workspace-join-request.v1") {
+        if (kind === "chaft.workspace-join-request.v1") {
             return root.joinRequestArtifactObject(parsed)
         }
-        if (String(parsed.kind || "") === "chaft.workspace-card.v1") {
+        if (kind === "chaft.workspace-card.v1") {
             return root.workspaceCardArtifactObject(parsed)
         }
         return parsed
@@ -5234,6 +5351,11 @@ ApplicationWindow {
         if (normalized.indexOf("recovery") >= 0) {
             return ".chaftrecovery"
         }
+        if (normalized.indexOf("access file") >= 0
+                || normalized.indexOf("workspace access") >= 0
+                || normalized.indexOf("room access") >= 0) {
+            return ".chaftaccess"
+        }
         return ".json"
     }
 
@@ -5252,7 +5374,117 @@ ApplicationWindow {
         if (extension === ".chaftrecovery") {
             return [ "Chaft recovery kits (*.chaftrecovery)", olderSupportFilter, "All files (*)" ]
         }
+        if (extension === ".chaftaccess") {
+            return [ "Chaft access files (*.chaftaccess)", olderSupportFilter, "All files (*)" ]
+        }
         return [ olderSupportFilter, "All files (*)" ]
+    }
+
+    function fileSlug(value, fallback) {
+        var source = String(value || "").trim().toLowerCase()
+        var slug = ""
+        var lastDash = false
+        for (var i = 0; i < source.length && slug.length < 48; i += 1) {
+            var ch = source.charAt(i)
+            var code = source.charCodeAt(i)
+            var allowed = (code >= 48 && code <= 57) || (code >= 97 && code <= 122)
+            if (allowed) {
+                slug += ch
+                lastDash = false
+            } else if (!lastDash && slug.length > 0) {
+                slug += "-"
+                lastDash = true
+            }
+        }
+        while (slug.charAt(slug.length - 1) === "-") {
+            slug = slug.slice(0, -1)
+        }
+        if (slug.length > 0) {
+            return slug
+        }
+        if (fallback === "") {
+            return ""
+        }
+        return String(fallback || "item")
+    }
+
+    function artifactSuggestedFileName(artifact, label) {
+        var value = artifact || ({})
+        var normalized = String(label || root.keyTransferLabel()).toLowerCase()
+        var extension = root.keyTransferFileExtension(normalized)
+        var workspace = root.fileSlug(
+            value.workspaceName || value.workspaceId,
+            "workspace")
+        var person = root.fileSlug(
+            value.inviteeDisplayName || value.displayName
+                || value.deliveryDisplayName || value.inviteeDeviceId
+                || value.deviceId,
+            "")
+        var date = root.fileSlug(String(value.createdAt || "").slice(0, 10), "")
+        var parts = []
+        if (extension === ".chaftinvite") {
+            parts = [ "chaft-invite", workspace ]
+            if (person.length > 0) {
+                parts.push(person)
+            }
+        } else if (extension === ".chaftrequest") {
+            parts = [ "chaft-request", workspace ]
+            if (person.length > 0) {
+                parts.push(person)
+            }
+        } else if (extension === ".chaftworkspace") {
+            parts = [ "chaft-workspace-card", workspace ]
+        } else if (extension === ".chaftrecovery") {
+            parts = [ "chaft-recovery", workspace ]
+        } else if (extension === ".chaftaccess") {
+            parts = [ "chaft-access", workspace ]
+        } else {
+            parts = [ "chaft-credentials", workspace ]
+        }
+        if (date.length > 0) {
+            parts.push(date)
+        }
+        return parts.join("-") + extension
+    }
+
+    function keyTransferSuggestedFileName(label) {
+        return root.artifactSuggestedFileName(
+            root.keyTransferArtifactObject() || ({}),
+            label)
+    }
+
+    function fileUrlFromLocalPath(path) {
+        var normalized = String(path || "").replace(/\\/g, "/")
+        if (normalized.length === 0) {
+            return ""
+        }
+        if (Qt.platform.os === "windows") {
+            return "file:///" + encodeURI(normalized)
+        }
+        if (normalized.charAt(0) !== "/") {
+            return encodeURI(normalized)
+        }
+        return "file://" + encodeURI(normalized)
+    }
+
+    function keyTransferSuggestedFileUrl(label) {
+        return root.suggestedFileUrl(root.keyTransferSuggestedFileName(label))
+    }
+
+    function credentialSuggestedFileUrl(text, label) {
+        var artifact = root.credentialArtifactForFileText(text) || ({})
+        return root.suggestedFileUrl(root.artifactSuggestedFileName(artifact, label))
+    }
+
+    function suggestedFileUrl(fileName) {
+        var folder = StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
+        if (String(folder || "").length === 0) {
+            folder = StandardPaths.writableLocation(StandardPaths.HomeLocation)
+        }
+        if (String(folder || "").length === 0) {
+            return fileName
+        }
+        return root.fileUrlFromLocalPath(String(folder).replace(/\/$/, "") + "/" + fileName)
     }
 
     function joinRequestSourceLabel(request) {
@@ -5305,35 +5537,53 @@ ApplicationWindow {
                 row.deliveryHasAddress = String(row.deliveryPeerEndpoint || "").trim().length > 0
                 row.sourceLabel = root.joinRequestSourceLabel(row)
                 row.status = String(row.status || "ready_to_send").trim()
+                var badgeLabels = {
+                    approved: "Approved",
+                    closed: "Closed",
+                    copied: "Copied",
+                    declined: "Declined",
+                    file_ready: "File ready",
+                    ready_to_send: "Ready",
+                    send_failed: "Not sent",
+                    sending: "Sending",
+                    sent: "Waiting"
+                }
+                var titleLabels = {
+                    approved: "Approval received",
+                    closed: "Request closed",
+                    copied: "Request link copied",
+                    declined: "Request declined",
+                    file_ready: "Request file ready",
+                    ready_to_send: "Request ready",
+                    send_failed: "Request not sent",
+                    sending: "Sending request",
+                    sent: "Waiting for approval"
+                }
                 if (row.key === root.pendingAccessRequestSendingKey) {
                     row.status = "sending"
-                } else if (row.status !== "sent"
-                           && row.status !== "send_failed"
-                           && row.status !== "copied"
-                           && row.status !== "file_ready") {
+                } else if (!Object.prototype.hasOwnProperty.call(
+                               badgeLabels, row.status)) {
                     row.status = "ready_to_send"
                 }
-                row.statusBadgeLabel = row.status === "sent"
-                    ? "Waiting"
-                    : (row.status === "sending"
-                        ? "Sending"
-                        : (row.status === "send_failed"
-                            ? "Not sent"
-                            : (row.status === "copied"
-                                ? "Copied"
-                                : (row.status === "file_ready" ? "File ready" : "Ready"))))
-                row.statusTitle = row.status === "sent"
-                    ? "Waiting for approval"
-                    : (row.status === "sending"
-                        ? "Sending request"
-                        : (row.status === "send_failed"
-                            ? "Request not sent"
-                            : (row.status === "copied"
-                                ? "Request link copied"
-                                : (row.status === "file_ready" ? "Request file ready" : "Request ready"))))
+                row.isTerminalStatus = row.status === "approved"
+                    || row.status === "declined"
+                    || row.status === "closed"
+                row.statusBadgeLabel = badgeLabels[row.status]
+                row.statusTitle = titleLabels[row.status]
                 row.canSendDirect = row.deliveryHasAddress
                     && root.runtimeAccessReady
+                    && !row.isTerminalStatus
                     && String(row.artifact || "").trim().length > 0
+                row.canShareRequest = !row.isTerminalStatus
+                    && String(row.artifact || "").trim().length > 0
+                row.canOpenInvite = row.status !== "declined"
+                    && row.status !== "closed"
+                row.canCheckResponse = row.deliveryHasAddress
+                    && root.runtimeAccessReady
+                    && !row.isTerminalStatus
+                    && String(row.workspaceId || "").trim().length > 0
+                    && row.status !== "ready_to_send"
+                    && row.status !== "sending"
                 row.statusMessage = root.pendingAccessRequestStatusMessage(row)
                 row.receiptLabel = root.pendingAccessRequestReceiptLabel(row)
                 rows.push(row)
@@ -5381,6 +5631,10 @@ ApplicationWindow {
         if (artifactText.trim().length === 0) {
             return false
         }
+        chaftController.queueWorkspaceJoinRequestOutbox(
+            String(request.deliveryPeerEndpoint || "").trim(),
+            workspaceId,
+            artifactText)
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
         next[key] = {
             requestId: requestId,
@@ -5414,6 +5668,9 @@ ApplicationWindow {
     }
 
     function copyPendingAccessRequest(row) {
+        if ((row && row.isTerminalStatus) || !(row && row.canShareRequest)) {
+            return false
+        }
         var text = root.pendingAccessRequestCopyText(row)
         if (text.length === 0) {
             return false
@@ -5428,12 +5685,16 @@ ApplicationWindow {
     }
 
     function openSavePendingAccessRequestDialog(row) {
+        if ((row && row.isTerminalStatus) || !(row && row.canShareRequest)) {
+            return false
+        }
         var artifactText = String((row && row.artifact) || "").trim()
         if (artifactText.length === 0) {
             return false
         }
         root.pendingAccessRequestSaveText = artifactText
-        root.pendingAccessRequestSaveWorkspaceName = String((row && row.workspaceLabel) || "workspace")
+        pendingAccessRequestSaveDialog.selectedFile =
+            root.credentialSuggestedFileUrl(artifactText, "access request")
         pendingAccessRequestSaveDialog.open()
         if (String((row && row.status) || "").trim() !== "sent") {
             root.updatePendingAccessRequestStatus(row, "file_ready", "")
@@ -5485,6 +5746,9 @@ ApplicationWindow {
     }
 
     function sendPendingAccessRequest(row) {
+        if ((row && row.isTerminalStatus) || !(row && row.canSendDirect)) {
+            return false
+        }
         var key = String((row && row.key) || (row && row.workspaceId) || "").trim()
         var endpoint = String((row && row.deliveryPeerEndpoint) || "").trim()
         var payload = root.pendingAccessRequestPayload(row)
@@ -5513,6 +5777,65 @@ ApplicationWindow {
             return false
         }
         return true
+    }
+
+    function pullPendingAccessRequestResponse(row, userInitiated) {
+        if (!(row && row.canCheckResponse)) {
+            return false
+        }
+        if (chaftController.accessEnvelopePullInFlight) {
+            return false
+        }
+        var endpoint = String((row && row.deliveryPeerEndpoint) || "").trim()
+        var workspaceId = String((row && row.workspaceId) || "").trim()
+        if (endpoint.length === 0 || workspaceId.length === 0) {
+            return false
+        }
+        if (!chaftController.pullAccessResponsesFromPeer(endpoint, workspaceId)) {
+            return false
+        }
+        if (userInitiated) {
+            toastHost.show(
+                "info",
+                "Checking for approval from " + String(row.deliveryLabel || "the workspace admin") + ".",
+                "",
+                "",
+                3000)
+        }
+        return true
+    }
+
+    function checkPendingAccessRequestResponse(row) {
+        return root.pullPendingAccessRequestResponse(row, true)
+    }
+
+    function autoCheckPendingAccessRequestResponse() {
+        if (!root.runtimeAccessReady || chaftController.accessEnvelopePullInFlight) {
+            return false
+        }
+        var rows = root.pendingAccessRequests || []
+        if (rows.length === 0) {
+            root.pendingAccessResponseAutoCheckLastKey = ""
+            return false
+        }
+        var startIndex = 0
+        for (var i = 0; i < rows.length; i++) {
+            if (String((rows[i] || {}).key || "").trim()
+                    === root.pendingAccessResponseAutoCheckLastKey) {
+                startIndex = i + 1
+                break
+            }
+        }
+        for (var offset = 0; offset < rows.length; offset++) {
+            var row = rows[(startIndex + offset) % rows.length] || ({})
+            if (!row.canCheckResponse) {
+                continue
+            }
+            root.pendingAccessResponseAutoCheckLastKey =
+                String(row.key || row.workspaceId || "").trim()
+            return root.pullPendingAccessRequestResponse(row, false)
+        }
+        return false
     }
 
     function dismissPendingAccessRequest(row) {
@@ -5546,12 +5869,25 @@ ApplicationWindow {
     }
 
     function clearPendingAccessRequestForWorkspace(workspaceId) {
-        var key = String(workspaceId || "").trim()
-        if (key.length === 0) {
+        var workspaceKey = String(workspaceId || "").trim()
+        if (workspaceKey.length === 0) {
             return false
         }
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
-        if (!Object.prototype.hasOwnProperty.call(next, key)) {
+        var key = Object.prototype.hasOwnProperty.call(next, workspaceKey)
+            ? workspaceKey
+            : ""
+        if (key.length === 0) {
+            for (var candidate in next) {
+                if (Object.prototype.hasOwnProperty.call(next, candidate)
+                        && String((next[candidate] || {}).workspaceId || "").trim()
+                            === workspaceKey) {
+                    key = candidate
+                    break
+                }
+            }
+        }
+        if (key.length === 0) {
             return false
         }
         delete next[key]
@@ -5583,6 +5919,8 @@ ApplicationWindow {
             return false
         }
         saveKeyTransferDialog.transferLabel = String(label || root.keyTransferLabel())
+        saveKeyTransferDialog.selectedFile = root.keyTransferSuggestedFileUrl(
+            saveKeyTransferDialog.transferLabel)
         saveKeyTransferDialog.open()
         return true
     }
@@ -6064,6 +6402,16 @@ ApplicationWindow {
         onTriggered: chaftController.refreshHostedPeerEndpointHint()
     }
 
+    Timer {
+        id: pendingAccessResponseAutoCheckTimer
+        interval: 45000
+        repeat: true
+        running: root.runtimeAccessReady
+            && root.pendingAccessRequests.length > 0
+            && !chaftController.accessEnvelopePullInFlight
+        onTriggered: root.autoCheckPendingAccessRequestResponse()
+    }
+
     Shortcut {
         sequences: ["Ctrl+K", "Meta+K"]
         context: Qt.ApplicationShortcut
@@ -6202,6 +6550,10 @@ ApplicationWindow {
                 postCreateExportDialog.openRecoverySaveWhenReady = false
                 root.openSaveKeyTransferDialog("recovery kit")
             }
+            if (chaftController.keyTransferFromJoinResponseInbox
+                    && root.keyTransferIsInvitePackage()) {
+                root.openReceivedApprovalInvite(false)
+            }
         }
         function onAutoBackupEnabledChanged() {
             root.autoBackupEnabled = chaftController.autoBackupEnabled
@@ -6296,7 +6648,7 @@ ApplicationWindow {
             Text {
                 Layout.fillWidth: true
                 text: (root.workspaceSnapshot.name || "Your workspace")
-                    + " is ready. Start chatting now. Save a recovery kit so you can restore access later."
+                    + " is ready. Start chatting now. Save a private recovery kit so you can restore access later."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeSm
                 wrapMode: Text.WordWrap
@@ -6341,8 +6693,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: chaftController.keyTransferJson.length > 0
                             && root.keyTransferIsRecoveryBundle()
-                            ? "Recovery kit ready. Save it somewhere private."
-                            : "Recovery kit can wait. Save one when you're ready."
+                            ? "Recovery kit ready. Store the file privately and keep its passphrase separate."
+                            : "Recovery kit can wait. Save one when you can store it privately."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeSm
                         wrapMode: Text.WordWrap
@@ -6616,10 +6968,10 @@ ApplicationWindow {
         id: workspaceCredentialDialog
         title: workspaceEntryDialog.restoreMode
             ? "Open recovery kit"
-            : "Open invite, request link, or recovery kit"
+            : "Open invite, request link, recovery kit, or access file"
         fileMode: FileDialog.OpenFile
         nameFilters: [
-            "Chaft invites, requests, cards, and recovery kits (*.chaftinvite *.chaftrequest *.chaftworkspace *.chaftrecovery)",
+            "Chaft credentials (*.chaftinvite *.chaftrequest *.chaftworkspace *.chaftrecovery *.chaftaccess)",
             "Older support files (*.json)",
             "All files (*)"
         ]
@@ -6682,11 +7034,9 @@ ApplicationWindow {
                 root.pendingAccessRequestSaveText,
                 "access request")
             root.pendingAccessRequestSaveText = ""
-            root.pendingAccessRequestSaveWorkspaceName = ""
         }
         onRejected: {
             root.pendingAccessRequestSaveText = ""
-            root.pendingAccessRequestSaveWorkspaceName = ""
         }
     }
 
@@ -6806,8 +7156,8 @@ ApplicationWindow {
                     Text {
                         Layout.fillWidth: true
                         text: chaftController.hasRuntimeWorkspace
-                            ? "Join with an invite or request link, create another workspace, or restore from a recovery kit."
-                            : "Open an invite or request link, create a workspace, restore from a recovery kit, or explore a demo."
+                            ? "Join with an invite, request link, or access file; create another workspace; or restore from a recovery kit."
+                            : "Open an invite, request link, or access file; create a workspace; restore from a recovery kit; or explore a demo."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeXs
                         wrapMode: Text.WordWrap
@@ -6818,7 +7168,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "Join workspace"
                         Accessible.name: text
-                        Accessible.description: "Open an invite or request link"
+                        Accessible.description: "Open an invite, request link, or access file"
                         onClicked: root.chooseWorkspaceEntry("join")
 
                         background: Rectangle {
@@ -6855,7 +7205,7 @@ ApplicationWindow {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: "Open an invite or request link"
+                                    text: "Open an invite or access file"
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
                                     wrapMode: Text.WordWrap
