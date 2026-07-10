@@ -20,6 +20,27 @@ device details, logs, screenshots, pass/fail status, and follow-up issue IDs.
 - Record every pass/fail/blocker in the manual QA report template before
   treating the run as release evidence.
 
+## Automated Baseline
+
+Run these gates before starting a real-device pass and record their output in
+the report:
+
+- `make smoke-lifecycle ARGS=--offline` covers create, request-access policy,
+  owner/admin/member role rules, request approval/decline, member removal, and
+  removed-member publish denial through CLI/runtime APIs.
+- `make smoke-access ARGS=--offline` covers direct request/response envelope
+  submission, workspace scoping, duplicate delivery, node restart durability,
+  and known-peer fetch for access envelopes.
+- `make desktop-empty-smoke` covers the no-workspace first-run state and
+  pending access-request empty states.
+- `make screenshot-smoke` covers the deterministic visual workspace and focused
+  desktop states for join, request, approval, recovery, setup, and member-role
+  surfaces.
+
+Passing automated gates is not a substitute for real-device QA. The manual pass
+still needs evidence for file pickers, clipboard behavior, OS save dialogs,
+network reachability, app restarts, and user handoff mistakes.
+
 ## Create and Recover
 
 1. Launch device A with no workspace.

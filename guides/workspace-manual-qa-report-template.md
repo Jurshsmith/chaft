@@ -23,6 +23,15 @@ the release evidence for the build under test.
 - Follow-up issue IDs:
 - Screenshots or recordings:
 
+## Automated Baseline
+
+| Gate | Commit | Result | Evidence / notes |
+| --- | --- | --- | --- |
+| `make smoke-lifecycle ARGS=--offline` |  |  |  |
+| `make smoke-access ARGS=--offline` |  |  |  |
+| `make desktop-empty-smoke` |  |  |  |
+| `make screenshot-smoke` |  |  |  |
+
 ## Create and Recover
 
 | Check | Result | Evidence / notes |
