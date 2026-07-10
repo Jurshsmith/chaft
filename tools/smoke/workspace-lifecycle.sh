@@ -157,6 +157,7 @@ owner_cli init-workspace \
   --access-policy invite-only > "$created_json"
 
 workspace_id="$(json_field "$created_json" workspaceId)"
+channel_id="$(json_field "$created_json" channelId)"
 
 owner_cli invite-member \
   --workspace-id "$workspace_id" \
@@ -257,6 +258,12 @@ admin_cli resolve-join-request \
 admin_cli remove-member \
   --workspace-id "$workspace_id" \
   --device-id "$guest_device_id" > "$smoke_dir/admin-remove-guest.json"
+
+expect_failure_contains 'missing role|insufficient role|not.*member|workspace root' \
+  guest_cli send-message \
+  --workspace-id "$workspace_id" \
+  --channel-id "$channel_id" \
+  --text "removed member should not publish"
 
 snapshot_json="$smoke_dir/snapshot.json"
 owner_cli snapshot \
