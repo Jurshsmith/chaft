@@ -48,6 +48,25 @@ if not eval(sys.argv[2], {"__builtins__": {}}, {"data": data, "len": len, "any":
 PY
 }
 
+expect_failure_contains() {
+  pattern="$1"
+  shift
+  stdout_file="$smoke_dir/expected-failure.out"
+  stderr_file="$smoke_dir/expected-failure.err"
+  rm -f "$stdout_file" "$stderr_file"
+
+  if "$@" >"$stdout_file" 2>"$stderr_file"; then
+    printf 'expected command to fail: %s\n' "$*" >&2
+    exit 1
+  fi
+
+  if ! grep -Eiq "$pattern" "$stdout_file" "$stderr_file"; then
+    printf 'expected failure matching %s, got:\n' "$pattern" >&2
+    cat "$stdout_file" "$stderr_file" >&2
+    exit 1
+  fi
+}
+
 unused_port() {
   python3 - <<'PY'
 import socket
@@ -106,6 +125,7 @@ cleanup() {
 }
 
 require_tool cargo
+require_tool grep
 require_tool python3
 
 cargo_args="$*"
@@ -130,8 +150,9 @@ trap cleanup EXIT INT TERM
 
 app_dir="$smoke_dir/app"
 peer_dir="$smoke_dir/peer"
+recovery_dir="$smoke_dir/recovery-peer"
 node_dir="$smoke_dir/backup-node"
-mkdir -p "$app_dir" "$peer_dir" "$node_dir"
+mkdir -p "$app_dir" "$peer_dir" "$recovery_dir" "$node_dir"
 
 created_json="$smoke_dir/created.json"
 "$cli_bin" --data-dir "$app_dir" init-workspace \
@@ -142,11 +163,17 @@ workspace_id="$(json_field "$created_json" workspaceId)"
 channel_id="$(json_field "$created_json" channelId)"
 
 peer_device_id="$("$cli_bin" --data-dir "$peer_dir" device-id)"
+recovery_device_id="$("$cli_bin" --data-dir "$recovery_dir" device-id)"
 invite_json="$smoke_dir/invite-peer.json"
 "$cli_bin" --data-dir "$app_dir" invite-member \
   --workspace-id "$workspace_id" \
   --device-id "$peer_device_id" \
   --role member > "$invite_json"
+recovery_invite_json="$smoke_dir/invite-recovery.json"
+"$cli_bin" --data-dir "$app_dir" invite-member \
+  --workspace-id "$workspace_id" \
+  --device-id "$recovery_device_id" \
+  --role member > "$recovery_invite_json"
 
 message_json="$smoke_dir/message.json"
 "$cli_bin" --data-dir "$app_dir" send-message \
@@ -186,6 +213,11 @@ assert_json "$search_json" \
 workspace_key_json="$smoke_dir/workspace-key.json"
 "$cli_bin" --data-dir "$app_dir" export-workspace-key \
   --workspace-id "$workspace_id" > "$workspace_key_json"
+
+recovery_bundle_json="$smoke_dir/recovery-bundle.json"
+"$cli_bin" --data-dir "$app_dir" export-recovery-bundle \
+  --workspace-id "$workspace_id" \
+  --passphrase "local p2p recovery passphrase" > "$recovery_bundle_json"
 
 port="$(unused_port)"
 node_log="$smoke_dir/backup-node.log"
@@ -274,6 +306,46 @@ peer_search_json="$smoke_dir/peer-search.json"
 assert_json "$peer_search_json" \
   'len(data["hits"]) >= 1 and data["hits"][0]["body"] == "smoke encrypted hello"' \
   'peer search did not find the replicated decrypted message'
+
+recovery_pull_json="$smoke_dir/recovery-pull.json"
+"$cli_bin" --data-dir "$recovery_dir" pull-workspace \
+  --workspace-id "$workspace_id" \
+  --peer "127.0.0.1:$port" > "$recovery_pull_json"
+assert_json "$recovery_pull_json" \
+  'data["gapCount"] == 0 and data["missingBlobCount"] == 0' \
+  'recovery runtime did not pull complete workspace history'
+
+expect_failure_contains 'crypto|passphrase|open failed|recovery' \
+  "$cli_bin" --data-dir "$recovery_dir" import-recovery-bundle \
+  --bundle-file "$recovery_bundle_json" \
+  --passphrase "wrong local p2p recovery passphrase"
+
+expect_failure_contains 'key|decrypt|missing|open failed' \
+  "$cli_bin" --data-dir "$recovery_dir" snapshot \
+  --workspace-id "$workspace_id" \
+  --decrypt
+
+recovery_import_json="$smoke_dir/recovery-import.json"
+"$cli_bin" --data-dir "$recovery_dir" import-recovery-bundle \
+  --bundle-file "$recovery_bundle_json" \
+  --passphrase "local p2p recovery passphrase" > "$recovery_import_json"
+assert_json "$recovery_import_json" \
+  'data["workspaceId"] == "'"$workspace_id"'"' \
+  'recovery import did not return the restored workspace ID'
+assert_json "$recovery_import_json" \
+  'data["importerDeviceId"] == "'"$recovery_device_id"'"' \
+  'recovery import did not run under the invited recovery device identity'
+
+recovery_decrypted_snapshot_json="$smoke_dir/recovery-decrypted-snapshot.json"
+"$cli_bin" --data-dir "$recovery_dir" snapshot \
+  --workspace-id "$workspace_id" \
+  --decrypt > "$recovery_decrypted_snapshot_json"
+assert_json "$recovery_decrypted_snapshot_json" \
+  'any(item.get("body") == "smoke encrypted hello" for item in data["timeline"])' \
+  'recovery runtime decrypted snapshot did not include the replicated message'
+assert_json "$recovery_decrypted_snapshot_json" \
+  'any(item.get("attachmentCount") == 1 for item in data["timeline"])' \
+  'recovery runtime decrypted snapshot did not include the replicated attachment'
 
 status_json="$smoke_dir/storage-health.json"
 "$cli_bin" --data-dir "$peer_dir" storage-health \
