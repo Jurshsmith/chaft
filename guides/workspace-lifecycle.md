@@ -5,6 +5,21 @@ local-first and peer-to-peer; joining a workspace requires explicit material
 from someone with access. Broad distributed discovery is intentionally not part
 of this phase.
 
+## First Run
+
+A fresh Chaft runtime starts with no joined workspace. This is expected. The
+first screen lets you:
+
+- join a workspace from an access file, invite, request card, access request,
+  older JSON export, or recovery kit,
+- create a new workspace,
+- restore access from a recovery kit,
+- or return later if you do not have credentials yet.
+
+The seeded `Chaft Visual Smoke` workspace is only for deterministic visual
+smoke testing. Launch it explicitly with `--smoke-workspace`; it should not be
+the default user state.
+
 ## Create a Workspace
 
 1. Launch the desktop app with a fresh runtime:
@@ -19,7 +34,27 @@ of this phase.
 5. Keep the recovery passphrase separate from the exported file.
 
 The recovery export is the owner device's safety path back into the workspace.
-Treat it as sensitive access material.
+Treat it as sensitive access material. A recovery kit restores workspace and
+private-room keys; it is not an invitation for an arbitrary new member. A device
+using a recovery kit still needs workspace history from a reachable peer, and
+the visible workspace state is limited by the membership recorded in that
+history.
+
+## Share Workspace Access
+
+Do not share the recovery kit with teammates. To add another person or device:
+
+1. Ask the invitee for their Chaft device ID.
+2. Open the workspace, then open `Setup`.
+3. Use People & Access to create an invite for that device.
+4. Include a peer endpoint when the invitee needs to pull history from your
+   device or a backup peer.
+5. Save or copy the generated invite package.
+6. Send the package through a trusted channel.
+
+The invitee imports that package from `Join workspace`. If the workspace uses
+request access, send a workspace card or approval-first invite instead; the
+invitee submits a signed request and waits for an admin or owner response.
 
 ## Join a Workspace
 
@@ -34,8 +69,10 @@ Treat it as sensitive access material.
 5. Confirm the import.
 
 If the credential is a recovery bundle, the app asks for the recovery
-passphrase. If it is an approval-first invite or workspace card, the app may
-prepare an access request instead of joining immediately.
+passphrase. Recovery also needs reachable workspace history; when no peer is
+reachable, Chaft stages the restore and asks for a peer endpoint. If the
+credential is an approval-first invite or workspace card, the app may prepare an
+access request instead of joining immediately.
 
 ## Credential Files
 
