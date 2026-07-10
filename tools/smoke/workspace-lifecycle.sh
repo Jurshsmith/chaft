@@ -209,6 +209,11 @@ expect_failure_contains 'insufficient role|manage_privileged_roles' \
   --device-id "$member_device_id" \
   --role member
 
+expect_failure_contains 'insufficient role|manage_privileged_roles' \
+  admin_cli remove-member \
+  --workspace-id "$workspace_id" \
+  --device-id "$member_device_id"
+
 owner_cli update-member-role \
   --workspace-id "$workspace_id" \
   --device-id "$member_device_id" \
@@ -219,6 +224,11 @@ expect_failure_contains 'root.*owner|must remain an owner' \
   --workspace-id "$workspace_id" \
   --device-id "$owner_device_id" \
   --role admin
+
+expect_failure_contains 'root.*owner|cannot.*remove|must remain an owner' \
+  owner_cli remove-member \
+  --workspace-id "$workspace_id" \
+  --device-id "$owner_device_id"
 
 admin_cli record-join-request \
   --workspace-id "$workspace_id" \
