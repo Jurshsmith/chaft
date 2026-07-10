@@ -105,6 +105,12 @@ start_node() {
   wait_for_tcp "$port" "$log_file"
 }
 
+stop_node() {
+  pid="$1"
+  kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+}
+
 require_tool "$CARGO"
 require_tool "$PYTHON"
 
@@ -141,7 +147,9 @@ mkdir -p "$admin_node_dir" "$requester_node_dir"
 admin_port="$(unused_port)"
 requester_port="$(unused_port)"
 start_node "$admin_node_dir" "$admin_port" "$smoke_dir/admin-node.log"
+admin_node_pid="$node_pid"
 start_node "$requester_node_dir" "$requester_port" "$smoke_dir/requester-node.log"
+requester_node_pid="$node_pid"
 
 workspace_id="wrk_access_transport_smoke"
 other_workspace_id="wrk_access_transport_other"
@@ -189,6 +197,12 @@ EOF
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$other_workspace_id" \
   --request-file "$other_request_file" > "$smoke_dir/submit-other-request.json"
+
+stop_node "$admin_node_pid"
+admin_port="$(unused_port)"
+start_node "$admin_node_dir" "$admin_port" "$smoke_dir/admin-node-restarted.log"
+admin_node_pid="$node_pid"
+
 "$cli_bin" --data-dir "$smoke_dir/admin-runtime" fetch-join-requests \
   --peer "127.0.0.1:$admin_port" \
   --workspace-id "$workspace_id" > "$smoke_dir/fetch-requests.json"
@@ -250,6 +264,12 @@ EOF
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$other_workspace_id" \
   --response-file "$other_response_file" > "$smoke_dir/submit-other-response.json"
+
+stop_node "$requester_node_pid"
+requester_port="$(unused_port)"
+start_node "$requester_node_dir" "$requester_port" "$smoke_dir/requester-node-restarted.log"
+requester_node_pid="$node_pid"
+
 "$cli_bin" --data-dir "$smoke_dir/requester-runtime" fetch-join-responses \
   --peer "127.0.0.1:$requester_port" \
   --workspace-id "$workspace_id" > "$smoke_dir/fetch-responses.json"
