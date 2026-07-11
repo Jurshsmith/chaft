@@ -40,6 +40,7 @@ run_step() {
 
 cd "$repo_root"
 
+run_step "desktop instance isolation" "$script_dir/instance-smoke.sh"
 run_step "desktop preflight" "$script_dir/preflight.sh"
 run_step "QML lint" "$script_dir/qml-lint.sh"
 run_step "QML style lint" python3 "$script_dir/style-lint.py"

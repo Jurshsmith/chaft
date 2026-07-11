@@ -103,12 +103,34 @@ app to join with credentials or create a workspace:
 tools/desktop/launch.sh debug --fresh
 ```
 
-The runtime is stored under `scratch/desktop-test/runtime`. Rerun without
-`--fresh` to keep workspaces, messages, and settings created during testing:
+By default, the launcher derives a stable runtime under
+`scratch/desktop-instances/` from the canonical directory where it was invoked.
+Rerun from that directory without `--fresh` to keep workspaces, messages, and
+settings created during testing:
 
 ```sh
 tools/desktop/launch.sh debug
 ```
+
+Use named instances to run independent device identities from the same checkout:
+
+```sh
+tools/desktop/launch.sh debug --instance alice --detached
+tools/desktop/launch.sh debug --instance bob --detached
+```
+
+Each name gets its own identity, event/search databases, keys, blobs, desktop
+settings, log, and window title. Launches from different directories also get
+different profiles automatically. `--data-dir DIR` remains an explicit override,
+and `--print-instance` shows the resolved paths without building or starting the
+app. The desktop refuses a second process that targets an already-open runtime;
+do not copy or share `device.json` when the goal is to simulate separate devices.
+Run `tools/desktop/instance-smoke.sh` to verify the profile resolution rules.
+
+The local member's action menu includes **Message yourself**. This creates one
+encrypted, device-scoped private conversation per workspace. It intentionally
+belongs to the current device identity; person-wide synchronization across all
+of one user's devices requires a future multi-device person-identity model.
 
 For deterministic visual regression data, opt into the seeded smoke workspace:
 
@@ -179,6 +201,7 @@ tools/smoke/workspace-lifecycle.sh --offline
 make workspace-qa-baseline ARGS=--offline PROFILE=debug
 tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
+tools/desktop/instance-smoke.sh
 tools/desktop/qml-lint.sh
 tools/desktop/ci-gates.sh
 tools/desktop/build.sh debug

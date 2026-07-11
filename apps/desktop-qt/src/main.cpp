@@ -21,6 +21,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLibrary>
+#include <QLockFile>
 #include <QMetaObject>
 #include <QObject>
 #include <QPointer>
@@ -2704,6 +2705,7 @@ class ChaftController : public QObject {
   Q_PROPERTY(QString lightThemeId READ lightThemeId WRITE setLightThemeId
                  NOTIFY lightThemeIdChanged)
   Q_PROPERTY(QString smokeUiState READ smokeUiState CONSTANT)
+  Q_PROPERTY(QString instanceLabel READ instanceLabel CONSTANT)
   Q_PROPERTY(bool inspectorPinned READ inspectorPinned WRITE setInspectorPinned
                  NOTIFY inspectorPinnedChanged)
   Q_PROPERTY(bool reducedMotionEnabled READ reducedMotionEnabled WRITE
@@ -2921,6 +2923,11 @@ public:
       return {};
     }
     return state.trimmed().toLower();
+  }
+  QString instanceLabel() const {
+    const auto label =
+        qEnvironmentVariable("CHAFT_DESKTOP_INSTANCE_LABEL").trimmed();
+    return label.toUtf8().size() <= 64 ? label : QString();
   }
   QString deviceId() const { return m_deviceId; }
   QVariantList messageSearchHits() const { return m_messageSearchHits; }
@@ -4511,6 +4518,10 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
+    if (m_syncInFlight) {
+      setSyncStatus(QStringLiteral("another workspace update is still running"));
+      return false;
+    }
 
     const auto normalizedDeviceId = deviceId.trimmed();
     if (normalizedDeviceId.isEmpty()) {
@@ -4540,6 +4551,7 @@ public:
     }
 
     const auto generation = ++m_runtimeWriteGeneration;
+    setSyncInFlight(true);
     setSyncStatus(QStringLiteral("starting direct message..."));
     runDirectMessageCreate(channelName, normalizedDeviceId, generation);
     return true;
@@ -11623,6 +11635,7 @@ private:
                 if (guard.isNull()) {
                   return;
                 }
+                guard->setSyncInFlight(false);
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(
                       error.isEmpty(), workspaceId);
@@ -15501,6 +15514,9 @@ void applyDesktopLaunchEnvironment(int argc, char *argv[]) {
     } else if (launchOptionValue(argument, QStringLiteral("--runtime-dir"),
                                  &index, argc, argv, &value)) {
       setLaunchEnvironmentValue("CHAFT_RUNTIME_DIR", value);
+    } else if (launchOptionValue(argument, QStringLiteral("--instance-label"),
+                                 &index, argc, argv, &value)) {
+      setLaunchEnvironmentValue("CHAFT_DESKTOP_INSTANCE_LABEL", value);
     } else if (launchOptionValue(argument, QStringLiteral("--workspace-id"),
                                  &index, argc, argv, &value)) {
       setLaunchEnvironmentValue("CHAFT_WORKSPACE_ID", value);
@@ -15551,6 +15567,29 @@ int main(int argc, char *argv[]) {
   }
 
   QApplication app(argc, argv);
+  std::unique_ptr<QLockFile> runtimeLock;
+  const auto runtimeDir = defaultRuntimeDir();
+  if (!runtimeDir.isEmpty()) {
+    if (!QDir().mkpath(runtimeDir)) {
+      std::fprintf(stderr, "chaft desktop could not create runtime directory: %s\n",
+                   qPrintable(runtimeDir));
+      return 73;
+    }
+    runtimeLock = std::make_unique<QLockFile>(
+        QDir(runtimeDir).filePath(QStringLiteral("desktop-runtime.lock")));
+    if (!runtimeLock->tryLock(0)) {
+      qint64 holderPid = 0;
+      QString holderHost;
+      QString holderApplication;
+      runtimeLock->getLockInfo(&holderPid, &holderHost, &holderApplication);
+      std::fprintf(
+          stderr,
+          "chaft desktop runtime is already open: %s (pid=%lld host=%s app=%s)\n",
+          qPrintable(runtimeDir), static_cast<long long>(holderPid),
+          qPrintable(holderHost), qPrintable(holderApplication));
+      return 73;
+    }
+  }
   loadBundledDesktopFonts();
 
   ChaftController chaftController(initialWorkspaceSnapshot());

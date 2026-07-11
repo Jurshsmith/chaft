@@ -3,6 +3,7 @@ set -eu
 
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
+spawn_dir="$(pwd -P)"
 . "$script_dir/common.sh"
 
 usage() {
@@ -14,7 +15,9 @@ Builds Chaft Desktop, prepares a persistent local runtime, and launches the app.
 Options:
   --fresh            Recreate launch data before launching.
   --smoke-workspace  Seed and select the deterministic visual smoke workspace.
-  --data-dir DIR     Store launch data under DIR. Default: scratch/desktop-test.
+  --data-dir DIR     Store launch data under DIR instead of the derived instance path.
+  --instance NAME    Distinguish launches from the same directory (for example alice or bob).
+  --print-instance   Print the resolved instance paths without building or launching.
   --detached         Start the app in the background and return immediately.
   --no-build         Reuse an existing desktop build and FFI library.
   -h, --help         Show this help.
@@ -22,7 +25,9 @@ EOF
 }
 
 profile=debug
-data_root="${CHAFT_DESKTOP_LAUNCH_DIR:-$repo_root/scratch/desktop-test}"
+data_root="${CHAFT_DESKTOP_LAUNCH_DIR:-}"
+instance_name="${CHAFT_DESKTOP_INSTANCE:-}"
+print_instance=0
 fresh=0
 detached=0
 build=1
@@ -47,6 +52,17 @@ while [ "$#" -gt 0 ]; do
       data_root="$2"
       shift
       ;;
+    --instance)
+      if [ "$#" -lt 2 ]; then
+        printf 'missing value for --instance\n' >&2
+        exit 2
+      fi
+      instance_name="$2"
+      shift
+      ;;
+    --print-instance)
+      print_instance=1
+      ;;
     --detached)
       detached=1
       ;;
@@ -65,11 +81,6 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-
-case "$data_root" in
-  /*) ;;
-  *) data_root="$repo_root/$data_root" ;;
-esac
 
 case "$profile" in
   debug)
@@ -140,8 +151,78 @@ os.replace(tmp_path, config_path)
 PY
 }
 
+write_instance_manifest() {
+  output_path="$1"
+  python3 - "$output_path" "$instance_label" "$spawn_dir" "$runtime_dir" <<'PY'
+import json
+import os
+import sys
+
+output_path, instance_label, spawn_dir, runtime_dir = sys.argv[1:]
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+temporary_path = output_path + ".tmp"
+with open(temporary_path, "w", encoding="utf-8") as handle:
+    json.dump({
+        "schemaVersion": 1,
+        "instanceLabel": instance_label,
+        "spawnDirectory": spawn_dir,
+        "runtimeDirectory": runtime_dir,
+    }, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+os.replace(temporary_path, output_path)
+PY
+}
+
 chaft_desktop_add_tool_paths
 require_tool python3
+
+case "$instance_name" in
+  "") ;;
+  *[!A-Za-z0-9._-]*)
+    printf 'instance name may contain only letters, numbers, dot, underscore, and dash: %s\n' "$instance_name" >&2
+    exit 2
+    ;;
+esac
+if [ "${#instance_name}" -gt 64 ]; then
+  printf 'instance name is longer than 64 characters\n' >&2
+  exit 2
+fi
+
+instance_values="$(python3 - "$spawn_dir" "$instance_name" <<'PY'
+import hashlib
+import os
+import re
+import sys
+
+spawn_dir, instance_name = sys.argv[1:]
+basename = os.path.basename(spawn_dir.rstrip(os.sep)) or "root"
+slug = re.sub(r"[^A-Za-z0-9._-]+", "-", basename).strip("-.").lower() or "instance"
+descriptor = spawn_dir + "\0" + (instance_name or "default")
+fingerprint = hashlib.sha256(descriptor.encode("utf-8")).hexdigest()[:10]
+print(slug)
+print(fingerprint)
+PY
+)"
+spawn_slug="$(printf '%s\n' "$instance_values" | sed -n '1p')"
+instance_fingerprint="$(printf '%s\n' "$instance_values" | sed -n '2p')"
+instance_label="${instance_name:-$spawn_slug}"
+
+if [ -z "$data_root" ]; then
+  data_root="$repo_root/scratch/desktop-instances/$spawn_slug-$instance_fingerprint"
+fi
+case "$data_root" in
+  /*) ;;
+  *) data_root="$repo_root/$data_root" ;;
+esac
+runtime_dir="$data_root/runtime"
+
+if [ "$print_instance" -eq 1 ]; then
+  printf 'instance label: %s\n' "$instance_label"
+  printf 'spawn dir: %s\n' "$spawn_dir"
+  printf 'data root: %s\n' "$data_root"
+  printf 'runtime dir: %s\n' "$runtime_dir"
+  exit 0
+fi
 
 if [ "$build" -eq 1 ]; then
   "$script_dir/build.sh" "$profile"
@@ -161,7 +242,6 @@ fi
 
 manifest_json=
 workspace_id=
-runtime_dir="$data_root/runtime"
 
 if [ "$smoke_workspace" = "1" ]; then
   cli_bin="$repo_root/target/$rust_target_dir/$(chaft_desktop_cli_binary_name)"
@@ -190,12 +270,16 @@ else
 fi
 
 write_desktop_config "$runtime_dir" "$workspace_id"
+instance_manifest="$data_root/instance.json"
+write_instance_manifest "$instance_manifest"
 
 source_qml_root="$repo_root/apps/desktop-qt/qml"
 log_file="$data_root/desktop-$profile.log"
 platform="$(uname -s)"
 
 printf 'desktop binary: %s\n' "$desktop_binary"
+printf 'instance label: %s\n' "$instance_label"
+printf 'spawn dir: %s\n' "$spawn_dir"
 printf 'runtime dir: %s\n' "$runtime_dir"
 printf 'workspace id: %s\n' "${workspace_id:-"(none)"}"
 if [ -n "$manifest_json" ]; then
@@ -213,6 +297,7 @@ if [ "$detached" -eq 1 ]; then
         --ffi-library "$ffi_library" \
         --qml-import-root "$source_qml_root" \
         --runtime-dir "$runtime_dir" \
+        --instance-label "$instance_label" \
         --workspace-id "$workspace_id"
       printf 'desktop app: %s\n' "$app_bundle"
       ;;
@@ -222,6 +307,7 @@ if [ "$detached" -eq 1 ]; then
         CHAFT_FFI_LIBRARY="$ffi_library" \
         CHAFT_DESKTOP_QML_IMPORT_ROOT="$source_qml_root" \
         CHAFT_RUNTIME_DIR="$runtime_dir" \
+        CHAFT_DESKTOP_INSTANCE_LABEL="$instance_label" \
         CHAFT_WORKSPACE_ID="$workspace_id" \
         "$desktop_binary" > "$log_file" 2>&1 &
       printf 'desktop pid: %s\n' "$!"
@@ -232,6 +318,7 @@ else
   CHAFT_FFI_LIBRARY="$ffi_library" \
   CHAFT_DESKTOP_QML_IMPORT_ROOT="$source_qml_root" \
   CHAFT_RUNTIME_DIR="$runtime_dir" \
+  CHAFT_DESKTOP_INSTANCE_LABEL="$instance_label" \
   CHAFT_WORKSPACE_ID="$workspace_id" \
     "$desktop_binary"
 fi

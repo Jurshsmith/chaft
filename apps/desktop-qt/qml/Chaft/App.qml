@@ -12,9 +12,12 @@ ApplicationWindow {
     minimumWidth: 1040
     minimumHeight: 640
     visible: true
-    title: root.totalUnreadCount > 0
-        ? "Chaft (" + root.unreadCountTitleLabel(root.totalUnreadCount) + ")"
+    readonly property string windowBaseTitle: chaftController.instanceLabel.length > 0
+        ? "Chaft — " + chaftController.instanceLabel
         : "Chaft"
+    title: root.totalUnreadCount > 0
+        ? root.windowBaseTitle + " (" + root.unreadCountTitleLabel(root.totalUnreadCount) + ")"
+        : root.windowBaseTitle
     color: Tokens.surfaceBase
     readonly property var workspaceSnapshot: root.demoTourActive
         ? initialWorkspaceSnapshot
