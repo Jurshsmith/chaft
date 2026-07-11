@@ -204,6 +204,8 @@ pub struct WorkspaceInviteSnapshot {
     pub expires_at: String,
     pub approval_policy: String,
     pub sync_expectation: String,
+    pub capability_public_key: String,
+    pub claimable: bool,
     pub status: String,
     pub created_event_id: String,
     pub created_by_device_id: String,
@@ -1282,6 +1284,8 @@ fn channel_access_history_row_parts(
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -1431,6 +1435,8 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
             expires_at: invite.expires_at.clone(),
             approval_policy: invite.approval_policy.clone(),
             sync_expectation: invite.sync_expectation.clone(),
+            capability_public_key: invite.capability_public_key.clone(),
+            claimable: !invite.capability_public_key.is_empty(),
             status: invite_status_label(invite.status).to_owned(),
             created_event_id: invite.created_event_id.0.clone(),
             created_by_device_id: invite.created_by_device_id.0.clone(),
@@ -1879,6 +1885,8 @@ fn applied_event_has_timeline_item(
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -2142,6 +2150,8 @@ fn event_timeline_message_id(event: &SignedEvent) -> Option<&MessageId> {
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -2217,6 +2227,8 @@ fn channel_activity_body_override_event_id(
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -2275,6 +2287,8 @@ fn collect_applied_timeline_body_override_event_ids(
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -2753,6 +2767,8 @@ fn timeline_item_for_applied_event(
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -6302,6 +6318,8 @@ mod tests {
                 expires_at: "2026-07-14T12:00:00Z".to_owned(),
                 approval_policy: "invite_file".to_owned(),
                 sync_expectation: "endpoint_bootstrap".to_owned(),
+                capability_public_key: String::new(),
+                claimable: false,
                 status: "invited".to_owned(),
                 created_event_id: "evt_invite".to_owned(),
                 created_by_device_id: "dev_test".to_owned(),

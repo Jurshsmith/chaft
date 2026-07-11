@@ -1148,12 +1148,12 @@ fn access_envelope_workspace_id(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    if let (Some(explicit), Some(payload)) = (&explicit_workspace_id, &payload_workspace_id) {
-        if explicit != payload {
-            bail!(
-                "access envelope workspace ID mismatch: explicit {explicit} does not match payload {payload}"
-            );
-        }
+    if let (Some(explicit), Some(payload)) = (&explicit_workspace_id, &payload_workspace_id)
+        && explicit != payload
+    {
+        bail!(
+            "access envelope workspace ID mismatch: explicit {explicit} does not match payload {payload}"
+        );
     }
     let workspace_id = explicit_workspace_id
         .or(payload_workspace_id)

@@ -79,6 +79,21 @@ message MemberRemoved {
   string removed_device_id = 1;
 }
 
+message WorkspaceInviteCapabilityCreated {
+  string invite_id = 1;
+  string display_name = 2;
+  WorkspaceRole role = 3;
+  string expires_at = 4;
+  string capability_public_key = 5;
+  string sync_expectation = 6;
+}
+
+message WorkspaceInviteClaimed {
+  string invite_id = 1;
+  string invitee_device_id = 2;
+  string request_id = 3;
+}
+
 message ChannelCreated {
   string channel_id = 1;
   string name = 2;
@@ -268,6 +283,8 @@ message EventBody {
     MessageReplyCreatedEncrypted message_reply_created_encrypted = 24;
     ReactionRemoved reaction_removed = 25;
     PeerEndpointPublished peer_endpoint_published = 26;
+    WorkspaceInviteCapabilityCreated workspace_invite_capability_created = 37;
+    WorkspaceInviteClaimed workspace_invite_claimed = 38;
   }
 }
 

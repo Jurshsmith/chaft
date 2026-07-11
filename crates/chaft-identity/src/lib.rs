@@ -95,6 +95,37 @@ pub struct DeviceIdentity {
     signing_key: SigningKey,
 }
 
+#[derive(Clone)]
+pub struct InvitationCapability {
+    signing_key: SigningKey,
+}
+
+impl InvitationCapability {
+    pub fn generate() -> Self {
+        Self {
+            signing_key: SigningKey::generate(&mut OsRng),
+        }
+    }
+
+    pub fn from_secret_bytes(bytes: [u8; 32]) -> Self {
+        Self {
+            signing_key: SigningKey::from_bytes(&bytes),
+        }
+    }
+
+    pub fn secret_bytes(&self) -> [u8; 32] {
+        self.signing_key.to_bytes()
+    }
+
+    pub fn verifying_key_bytes(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+
+    pub fn sign(&self, bytes: &[u8]) -> Vec<u8> {
+        self.signing_key.sign(bytes).to_vec()
+    }
+}
+
 impl DeviceIdentity {
     pub fn generate() -> Self {
         let signing_key = SigningKey::generate(&mut OsRng);
@@ -124,6 +155,10 @@ impl DeviceIdentity {
 
     pub fn signing_key_bytes(&self) -> [u8; 32] {
         self.signing_key.to_bytes()
+    }
+
+    pub fn sign_bytes(&self, bytes: &[u8]) -> Vec<u8> {
+        self.signing_key.sign(bytes).to_vec()
     }
 
     pub fn load_or_generate(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
@@ -561,6 +596,35 @@ pub fn verify_event(
     verifying_key
         .verify(&event.event.signing_bytes(), &signature)
         .map_err(|_| IdentityError::InvalidSignature)
+}
+
+pub fn verify_detached_signature(
+    verifying_key_bytes: &[u8; 32],
+    bytes: &[u8],
+    signature_bytes: &[u8],
+) -> Result<(), IdentityError> {
+    if signature_bytes.len() != 64 {
+        return Err(IdentityError::InvalidSignature);
+    }
+    let verifying_key = VerifyingKey::from_bytes(verifying_key_bytes)
+        .map_err(|_| IdentityError::InvalidVerifyingKey)?;
+    let signature =
+        Signature::from_slice(signature_bytes).map_err(|_| IdentityError::InvalidSignature)?;
+    verifying_key
+        .verify(bytes, &signature)
+        .map_err(|_| IdentityError::InvalidSignature)
+}
+
+pub fn verify_device_detached_signature(
+    device_id: &DeviceId,
+    verifying_key_bytes: &[u8; 32],
+    bytes: &[u8],
+    signature_bytes: &[u8],
+) -> Result<(), IdentityError> {
+    if DeviceId::from_public_key_bytes(verifying_key_bytes) != *device_id {
+        return Err(IdentityError::DeviceIdMismatch);
+    }
+    verify_detached_signature(verifying_key_bytes, bytes, signature_bytes)
 }
 
 pub fn verify_self_contained_event(event: &SignedEvent) -> Result<(), IdentityError> {

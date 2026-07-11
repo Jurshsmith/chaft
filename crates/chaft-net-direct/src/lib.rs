@@ -3425,6 +3425,8 @@ fn validate_replica_event_privacy_policy(event: &SignedEvent) -> Result<(), NetE
         | EventBody::MemberRoleUpdated { .. }
         | EventBody::WorkspaceAccessPolicyUpdated { .. }
         | EventBody::WorkspaceInviteRecorded { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
+        | EventBody::WorkspaceInviteClaimed { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestRecorded { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
@@ -5246,7 +5248,7 @@ mod tests {
 
         assert_eq!(response.events, vec![allowed_request]);
         assert!(response.error.is_none());
-        assert!(!response.inventory_total_count.is_some());
+        assert!(response.inventory_total_count.is_none());
     }
 
     #[test]
@@ -5294,7 +5296,7 @@ mod tests {
 
         assert_eq!(response.events, vec![allowed_response]);
         assert!(response.error.is_none());
-        assert!(!response.inventory_total_count.is_some());
+        assert!(response.inventory_total_count.is_none());
     }
 
     #[test]

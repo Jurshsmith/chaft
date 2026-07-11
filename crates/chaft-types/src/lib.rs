@@ -28,6 +28,7 @@ pub const WORKSPACE_INVITE_ID_MAX_BYTES: usize = 128;
 pub const WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES: usize = 64;
+pub const WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES: usize = 64;
 pub const WORKSPACE_ACCESS_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES: usize = 128;
 pub const WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES: usize = 512;
@@ -474,6 +475,19 @@ pub enum EventBody {
         approval_policy: String,
         sync_expectation: String,
     },
+    WorkspaceInviteCapabilityCreated {
+        invite_id: String,
+        display_name: String,
+        role: WorkspaceRole,
+        expires_at: String,
+        capability_public_key: String,
+        sync_expectation: String,
+    },
+    WorkspaceInviteClaimed {
+        invite_id: String,
+        invitee_device_id: DeviceId,
+        request_id: String,
+    },
     WorkspaceInviteResolved {
         invite_id: String,
         resolution: WorkspaceInviteResolution,
@@ -829,6 +843,12 @@ impl DeviceId {
 impl PersonId {
     pub fn new() -> Self {
         Self(format!("{}{}", PERSON_ID_PREFIX, Uuid::new_v4().simple()))
+    }
+}
+
+impl Default for PersonId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

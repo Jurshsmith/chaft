@@ -695,7 +695,7 @@ impl LocalRuntime {
             .person_device_links
             .get(device_id)
             .map(|link| link.person_id.clone())
-            .unwrap_or_else(PersonId::new);
+            .unwrap_or_default();
 
         self.update_person_profile(workspace_id, person_id, display_name)
     }
@@ -967,6 +967,7 @@ impl LocalRuntime {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_workspace_join_request(
         &self,
         workspace_id: WorkspaceId,
@@ -993,6 +994,7 @@ impl LocalRuntime {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_workspace_join_request_with_response_route(
         &self,
         workspace_id: WorkspaceId,
@@ -1091,6 +1093,7 @@ impl LocalRuntime {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_workspace_invite(
         &self,
         workspace_id: WorkspaceId,

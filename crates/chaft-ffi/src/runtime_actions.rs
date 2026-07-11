@@ -7,8 +7,9 @@ use std::{
 use chaft_runtime::{
     AddedChannelMember, AddedOpenMlsChannelGroupMember, AddedOpenMlsWorkspaceGroupMember,
     AddedReaction, AppliedOpenMlsChannelGroupCommits, AppliedOpenMlsWorkspaceGroupCommits,
-    CreatedChannel, CreatedMessage, CreatedOpenMlsChannelGroup, CreatedOpenMlsWorkspaceGroup,
-    CreatedWorkspace, DeletedMessage, EditedMessage, InvitedMember, JoinedOpenMlsChannelGroup,
+    ClaimedWorkspaceInvite, CreatedChannel, CreatedMessage, CreatedOpenMlsChannelGroup,
+    CreatedOpenMlsWorkspaceGroup, CreatedWorkspace, CreatedWorkspaceInvite, DeletedMessage,
+    EditedMessage, ImportedWorkspaceInviteResponse, InvitedMember, JoinedOpenMlsChannelGroup,
     JoinedOpenMlsWorkspaceGroup, MarkedChannelRead, PrunedBlobCache, PublishPeerEndpointRequest,
     PublishedDeviceKeyPackage, PublishedOpenMlsKeyPackage, PublishedPeerEndpoint,
     RecordedWorkspaceInvite, RecordedWorkspaceJoinRequest, RemovedChannelMember,
@@ -18,6 +19,7 @@ use chaft_runtime::{
     ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails, UpdatedDeviceProfile,
     UpdatedMemberRole, UpdatedOpenMlsChannelGroup, UpdatedOpenMlsWorkspaceGroup,
     UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy, UpdatedWorkspaceOpenMlsGroups,
+    WorkspaceInviteArtifact, WorkspaceInviteClaim, WorkspaceInviteResponse,
 };
 use chaft_types::{
     ChannelId, DeviceId, DeviceKeyPackageId, MessageId, REPLICA_RETENTION_HINT_MAX_BYTES,
@@ -906,6 +908,104 @@ pub(crate) fn runtime_invite_member_result(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn runtime_create_workspace_invite_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    expires_at: *const c_char,
+    peer_endpoint: *const c_char,
+    sync_expectation: *const c_char,
+) -> FfiResult<CreatedWorkspaceInvite> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let role = parse_workspace_role(&read_c_string(role, "role")?)?;
+        let expires_at = read_c_string(expires_at, "expires_at")?;
+        let peer_endpoint = read_c_string(peer_endpoint, "peer_endpoint")?;
+        let sync_expectation = read_c_string(sync_expectation, "sync_expectation")?;
+        runtime
+            .create_workspace_invite(
+                WorkspaceId(workspace_id),
+                display_name,
+                role,
+                expires_at,
+                peer_endpoint,
+                sync_expectation,
+            )
+            .map_err(|error| ffi_error("runtime_create_workspace_invite_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_prepare_workspace_invite_claim_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    artifact_json: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    response_peer_endpoint: *const c_char,
+) -> FfiResult<WorkspaceInviteClaim> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let artifact_json = read_c_string(artifact_json, "artifact_json")?;
+        let artifact = serde_json::from_str::<WorkspaceInviteArtifact>(&artifact_json)
+            .map_err(|error| ffi_error("workspace_invite_invalid", error.to_string()))?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let note = read_c_string(note, "note")?;
+        let response_peer_endpoint =
+            read_c_string(response_peer_endpoint, "response_peer_endpoint")?;
+        runtime
+            .prepare_workspace_invite_claim(artifact, display_name, note, response_peer_endpoint)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_prepare_workspace_invite_claim_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+pub(crate) fn runtime_claim_workspace_invite_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    claim_json: *const c_char,
+) -> FfiResult<ClaimedWorkspaceInvite> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let claim_json = read_c_string(claim_json, "claim_json")?;
+        let claim = serde_json::from_str::<WorkspaceInviteClaim>(&claim_json)
+            .map_err(|error| ffi_error("workspace_invite_claim_invalid", error.to_string()))?;
+        runtime
+            .claim_workspace_invite(claim)
+            .map_err(|error| ffi_error("runtime_claim_workspace_invite_failed", error.to_string()))
+    })
+}
+
+pub(crate) fn runtime_import_workspace_invite_response_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    response_json: *const c_char,
+) -> FfiResult<ImportedWorkspaceInviteResponse> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let response_json = read_c_string(response_json, "response_json")?;
+        let response = serde_json::from_str::<WorkspaceInviteResponse>(&response_json)
+            .map_err(|error| ffi_error("workspace_invite_response_invalid", error.to_string()))?;
+        runtime
+            .import_workspace_invite_response(response)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_import_workspace_invite_response_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn runtime_record_workspace_join_request_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
@@ -935,6 +1035,7 @@ pub(crate) fn runtime_record_workspace_join_request_result(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn runtime_record_workspace_join_request_with_response_route_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
@@ -986,6 +1087,7 @@ pub(crate) fn runtime_record_workspace_join_request_with_response_route_result(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn runtime_record_workspace_invite_result(
     data_dir: *const c_char,
     identity_file: *const c_char,

@@ -1011,6 +1011,97 @@ fn runtime_identity_passphrase_ffi_cache_unlocks_without_environment() {
 }
 
 #[test]
+fn runtime_claimable_workspace_invite_ffi_round_trips_device_bound_access() {
+    let admin_dir = tempfile::tempdir().unwrap();
+    let invitee_dir = tempfile::tempdir().unwrap();
+    let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let invitee_dir_c = CString::new(invitee_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Claimable FFI Workspace").unwrap();
+    let channel_name = CString::new("general").unwrap();
+
+    let created_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        ))
+    };
+    let created = serde_json::from_str::<Value>(&created_json).unwrap();
+    assert_eq!(created["ok"], true);
+    let workspace_id = created["value"]["workspaceId"].as_str().unwrap();
+
+    let workspace_id_c = CString::new(workspace_id).unwrap();
+    let invite_label = CString::new("Bob").unwrap();
+    let role = CString::new("member").unwrap();
+    let empty = CString::new("").unwrap();
+    let sync_expectation = CString::new("history_after_claim").unwrap();
+    let invite_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_invite_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            invite_label.as_ptr(),
+            role.as_ptr(),
+            empty.as_ptr(),
+            empty.as_ptr(),
+            sync_expectation.as_ptr(),
+        ))
+    };
+    let invite = serde_json::from_str::<Value>(&invite_json).unwrap();
+    assert_eq!(invite["ok"], true);
+    let artifact = invite["value"]["artifact"].clone();
+    assert_eq!(artifact["kind"], "chaft.workspace-invite.v2");
+    let artifact_text = serde_json::to_string(&artifact).unwrap();
+    assert!(!artifact_text.contains("workspaceKey"));
+    assert!(!artifact_text.contains("aes256GcmSivKey"));
+
+    let artifact_c = CString::new(artifact_text).unwrap();
+    let invitee_name = CString::new("Bob Rivera").unwrap();
+    let claim_json = unsafe {
+        take_ffi_string(chaft_runtime_prepare_workspace_invite_claim_result_json(
+            invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            artifact_c.as_ptr(),
+            invitee_name.as_ptr(),
+            empty.as_ptr(),
+            empty.as_ptr(),
+        ))
+    };
+    let claim = serde_json::from_str::<Value>(&claim_json).unwrap();
+    assert_eq!(claim["ok"], true);
+    assert_eq!(claim["value"]["kind"], "chaft.workspace-invite-claim.v1");
+
+    let claim_c = CString::new(serde_json::to_string(&claim["value"]).unwrap()).unwrap();
+    let claimed_json = unsafe {
+        take_ffi_string(chaft_runtime_claim_workspace_invite_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            claim_c.as_ptr(),
+        ))
+    };
+    let claimed = serde_json::from_str::<Value>(&claimed_json).unwrap();
+    assert_eq!(claimed["ok"], true);
+    assert_eq!(
+        claimed["value"]["response"]["kind"],
+        "chaft.workspace-invite-response.v1"
+    );
+
+    let response_c =
+        CString::new(serde_json::to_string(&claimed["value"]["response"]).unwrap()).unwrap();
+    let imported_json = unsafe {
+        take_ffi_string(chaft_runtime_import_workspace_invite_response_result_json(
+            invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            response_c.as_ptr(),
+        ))
+    };
+    let imported = serde_json::from_str::<Value>(&imported_json).unwrap();
+    assert_eq!(imported["ok"], true);
+    assert_eq!(imported["value"]["workspaceId"], workspace_id);
+}
+
+#[test]
 fn snapshot_from_events_returns_result_envelope() {
     let (workspace_id, events) = sample_events();
     let workspace_id = CString::new(workspace_id.0).unwrap();

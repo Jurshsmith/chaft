@@ -1409,6 +1409,95 @@ pub unsafe extern "C" fn chaft_runtime_invite_member_result_json(
     into_c_string(&result)
 }
 
+/// Creates a one-time, claimable workspace invite.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_create_workspace_invite_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    expires_at: *const c_char,
+    peer_endpoint: *const c_char,
+    sync_expectation: *const c_char,
+) -> *mut c_char {
+    let result = runtime_create_workspace_invite_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+        role,
+        expires_at,
+        peer_endpoint,
+        sync_expectation,
+    );
+    into_c_string(&result)
+}
+
+/// Prepares a device-bound claim for a claimable workspace invite.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_prepare_workspace_invite_claim_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    artifact_json: *const c_char,
+    display_name: *const c_char,
+    note: *const c_char,
+    response_peer_endpoint: *const c_char,
+) -> *mut c_char {
+    let result = runtime_prepare_workspace_invite_claim_result(
+        data_dir,
+        identity_file,
+        artifact_json,
+        display_name,
+        note,
+        response_peer_endpoint,
+    );
+    into_c_string(&result)
+}
+
+/// Claims a workspace invite and creates its encrypted response.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_claim_workspace_invite_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    claim_json: *const c_char,
+) -> *mut c_char {
+    let result = runtime_claim_workspace_invite_result(data_dir, identity_file, claim_json);
+    into_c_string(&result)
+}
+
+/// Imports the encrypted response for a previously claimed workspace invite.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_import_workspace_invite_response_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    response_json: *const c_char,
+) -> *mut c_char {
+    let result =
+        runtime_import_workspace_invite_response_result(data_dir, identity_file, response_json);
+    into_c_string(&result)
+}
+
 /// Records a workspace join request in a local runtime.
 ///
 /// # Safety
@@ -2474,6 +2563,22 @@ pub unsafe extern "C" fn chaft_runtime_list_join_response_inbox_result_json(
     max_entries: usize,
 ) -> *mut c_char {
     let result = runtime_list_join_response_inbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Stages an incoming workspace join response in the runtime inbox.
+///
+/// # Safety
+///
+/// All arguments must be valid pointers to NUL-terminated UTF-8 strings for
+/// the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_stage_join_response_inbox_result_json(
+    data_dir: *const c_char,
+    workspace_id: *const c_char,
+    response_json: *const c_char,
+) -> *mut c_char {
+    let result = runtime_stage_join_response_inbox_result(data_dir, workspace_id, response_json);
     into_c_string(&result)
 }
 

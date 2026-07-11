@@ -55,6 +55,7 @@ mod sync_results;
 mod sync_runtime;
 mod trust_snapshot;
 mod workspace_actions;
+mod workspace_invites;
 mod workspace_listing;
 
 pub(crate) use attachment_runtime::PendingAttachment;
@@ -170,6 +171,10 @@ pub use workspace_actions::{
     ResolvedWorkspaceInvite, ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails,
     UpdatedDeviceProfile, UpdatedMemberRole, UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy,
 };
+pub use workspace_invites::{
+    ClaimedWorkspaceInvite, CreatedWorkspaceInvite, ImportedWorkspaceInviteResponse,
+    WorkspaceInviteArtifact, WorkspaceInviteClaim, WorkspaceInviteResponse,
+};
 #[cfg(test)]
 pub(crate) use workspace_listing::MAX_WORKSPACE_SUMMARY_PAGE_ROWS;
 pub use workspace_listing::{
@@ -226,6 +231,18 @@ pub enum RuntimeError {
     RecoveryBundleKdf(String),
     #[error("workspace {workspace_id:?} has no local events")]
     WorkspaceHasNoEvents { workspace_id: WorkspaceId },
+    #[error("workspace invite {invite_id} was not found")]
+    WorkspaceInviteNotFound { invite_id: String },
+    #[error("workspace invite {invite_id} is not claimable")]
+    WorkspaceInviteNotClaimable { invite_id: String },
+    #[error("workspace invite {invite_id} has expired")]
+    WorkspaceInviteExpired { invite_id: String },
+    #[error("workspace invite {invite_id} has already been claimed")]
+    WorkspaceInviteAlreadyClaimed { invite_id: String },
+    #[error("workspace invite claim is invalid")]
+    InvalidWorkspaceInviteClaim,
+    #[error("workspace invite response is invalid")]
+    InvalidWorkspaceInviteResponse,
     #[error("message {message_id:?} was not found in workspace {workspace_id:?}")]
     MessageNotFound {
         workspace_id: WorkspaceId,

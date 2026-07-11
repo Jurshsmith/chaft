@@ -110,6 +110,23 @@ pub(crate) fn runtime_list_join_response_inbox_result(
     })
 }
 
+pub(crate) fn runtime_stage_join_response_inbox_result(
+    data_dir: *const std::ffi::c_char,
+    workspace_id: *const std::ffi::c_char,
+    response_json: *const std::ffi::c_char,
+) -> FfiResult<JoinResponseInboxEntry> {
+    result_envelope(|| {
+        let data_dir = read_c_string(data_dir, "data_dir")?;
+        let workspace_id = read_c_string(workspace_id, "workspace_id")?;
+        let response_json = read_c_string(response_json, "response_json")?;
+        write_join_response_inbox_entry(
+            &PathBuf::from(data_dir),
+            Some(&workspace_id),
+            &response_json,
+        )
+    })
+}
+
 pub(crate) fn runtime_ack_join_response_inbox_entry_result(
     data_dir: *const std::ffi::c_char,
     entry_id: *const std::ffi::c_char,
@@ -364,7 +381,10 @@ pub(crate) fn validate_join_response_payload(
                 "join response payload kind is required",
             )
         })?;
-    if kind != "chaft.workspace-invite.v1" && kind != "chaft.workspace-join-response.v1" {
+    if kind != "chaft.workspace-invite.v1"
+        && kind != "chaft.workspace-invite-response.v1"
+        && kind != "chaft.workspace-join-response.v1"
+    {
         return Err(ffi_error(
             "join_response_payload_invalid",
             "join response payload kind is unsupported",

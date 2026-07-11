@@ -257,6 +257,32 @@ pub struct WireWorkspaceInviteResolved {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceInviteCapabilityCreated {
+    #[prost(string, tag = "1")]
+    pub invite_id: String,
+    #[prost(string, tag = "2")]
+    pub display_name: String,
+    #[prost(enumeration = "WireWorkspaceRole", tag = "3")]
+    pub role: i32,
+    #[prost(string, tag = "4")]
+    pub expires_at: String,
+    #[prost(string, tag = "5")]
+    pub capability_public_key: String,
+    #[prost(string, tag = "6")]
+    pub sync_expectation: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireWorkspaceInviteClaimed {
+    #[prost(string, tag = "1")]
+    pub invite_id: String,
+    #[prost(string, tag = "2")]
+    pub invitee_device_id: String,
+    #[prost(string, tag = "3")]
+    pub request_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct WireWorkspaceJoinRequestResolved {
     #[prost(string, tag = "1")]
     pub request_id: String,
@@ -590,7 +616,7 @@ pub struct WireReadMarkerUpdated {
 pub struct WireEventBody {
     #[prost(
         oneof = "wire_event_body::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38"
     )]
     pub kind: Option<wire_event_body::Kind>,
 }
@@ -673,6 +699,10 @@ pub mod wire_event_body {
         PersonDeviceLinked(WirePersonDeviceLinked),
         #[prost(message, tag = "36")]
         PersonProfileUpdated(WirePersonProfileUpdated),
+        #[prost(message, tag = "37")]
+        WorkspaceInviteCapabilityCreated(WireWorkspaceInviteCapabilityCreated),
+        #[prost(message, tag = "38")]
+        WorkspaceInviteClaimed(WireWorkspaceInviteClaimed),
     }
 }
 
@@ -928,6 +958,30 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             expires_at: expires_at.clone(),
             approval_policy: approval_policy.clone(),
             sync_expectation: sync_expectation.clone(),
+        }),
+        EventBody::WorkspaceInviteCapabilityCreated {
+            invite_id,
+            display_name,
+            role,
+            expires_at,
+            capability_public_key,
+            sync_expectation,
+        } => Kind::WorkspaceInviteCapabilityCreated(WireWorkspaceInviteCapabilityCreated {
+            invite_id: invite_id.clone(),
+            display_name: display_name.clone(),
+            role: role_to_wire(*role),
+            expires_at: expires_at.clone(),
+            capability_public_key: capability_public_key.clone(),
+            sync_expectation: sync_expectation.clone(),
+        }),
+        EventBody::WorkspaceInviteClaimed {
+            invite_id,
+            invitee_device_id,
+            request_id,
+        } => Kind::WorkspaceInviteClaimed(WireWorkspaceInviteClaimed {
+            invite_id: invite_id.clone(),
+            invitee_device_id: invitee_device_id.0.clone(),
+            request_id: request_id.clone(),
         }),
         EventBody::WorkspaceInviteResolved {
             invite_id,
@@ -1296,6 +1350,21 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
             expires_at: body.expires_at,
             approval_policy: body.approval_policy,
             sync_expectation: body.sync_expectation,
+        }),
+        Kind::WorkspaceInviteCapabilityCreated(body) => {
+            Ok(EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id: body.invite_id,
+                display_name: body.display_name,
+                role: role_from_wire(body.role)?,
+                expires_at: body.expires_at,
+                capability_public_key: body.capability_public_key,
+                sync_expectation: body.sync_expectation,
+            })
+        }
+        Kind::WorkspaceInviteClaimed(body) => Ok(EventBody::WorkspaceInviteClaimed {
+            invite_id: body.invite_id,
+            invitee_device_id: DeviceId(body.invitee_device_id),
+            request_id: body.request_id,
         }),
         Kind::WorkspaceInviteResolved(body) => Ok(EventBody::WorkspaceInviteResolved {
             invite_id: body.invite_id,

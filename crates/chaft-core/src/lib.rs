@@ -20,11 +20,12 @@ use chaft_types::{
     TrustSnapshot, TrustSnapshotChannel, TrustSnapshotEventChannel, TrustSnapshotMessage,
     TrustSnapshotPersonDeviceLink, TrustSnapshotRole, WORKSPACE_ACCESS_POLICY_MAX_BYTES,
     WORKSPACE_ID_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
-    WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES, WORKSPACE_INVITE_ID_MAX_BYTES,
-    WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
-    WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
-    WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
-    peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
+    WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
+    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+    WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES, WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
+    WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy, WorkspaceId, WorkspaceInviteResolution,
+    WorkspaceJoinRequestResolution, WorkspaceRole, peer_endpoint_hint_is_supported,
+    peer_endpoint_hint_transport_is_consistent,
 };
 use thiserror::Error;
 
@@ -302,6 +303,7 @@ pub struct WorkspaceInviteView {
     pub expires_at: String,
     pub approval_policy: String,
     pub sync_expectation: String,
+    pub capability_public_key: String,
     pub created_event_id: EventId,
     pub created_by_device_id: DeviceId,
     pub created_physical_ms: i64,
@@ -511,15 +513,14 @@ impl WorkspaceState {
         resolved_by_device_id: DeviceId,
         resolved_physical_ms: i64,
     ) {
-        if let Some(request) = self.join_requests.get_mut(request_id) {
-            if request.requester_device_id == *invitee_device_id
-                && request.status == WorkspaceJoinRequestStatus::Waiting
-            {
-                request.status = WorkspaceJoinRequestStatus::Approved;
-                request.resolved_event_id = Some(resolved_event_id);
-                request.resolved_by_device_id = Some(resolved_by_device_id);
-                request.resolved_physical_ms = Some(resolved_physical_ms);
-            }
+        if let Some(request) = self.join_requests.get_mut(request_id)
+            && request.requester_device_id == *invitee_device_id
+            && request.status == WorkspaceJoinRequestStatus::Waiting
+        {
+            request.status = WorkspaceJoinRequestStatus::Approved;
+            request.resolved_event_id = Some(resolved_event_id);
+            request.resolved_by_device_id = Some(resolved_by_device_id);
+            request.resolved_physical_ms = Some(resolved_physical_ms);
         }
     }
 
@@ -599,6 +600,7 @@ impl WorkspaceState {
                         expires_at: expires_at.clone(),
                         approval_policy: approval_policy.clone(),
                         sync_expectation: sync_expectation.clone(),
+                        capability_public_key: String::new(),
                         created_event_id: signed.event_id.clone(),
                         created_by_device_id: signed.event.author_device_id.clone(),
                         created_physical_ms: signed.event.timestamp.physical_ms,
@@ -619,6 +621,61 @@ impl WorkspaceState {
                         signed.event.timestamp.physical_ms,
                     );
                 }
+            }
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id,
+                display_name,
+                role,
+                expires_at,
+                capability_public_key,
+                sync_expectation,
+            } => {
+                self.invites.insert(
+                    invite_id.clone(),
+                    WorkspaceInviteView {
+                        invite_id: invite_id.clone(),
+                        invitee_device_id: DeviceId(String::new()),
+                        display_name: display_name.clone(),
+                        role: *role,
+                        request_id: None,
+                        expires_at: expires_at.clone(),
+                        approval_policy: "preapproved".to_owned(),
+                        sync_expectation: sync_expectation.clone(),
+                        capability_public_key: capability_public_key.clone(),
+                        created_event_id: signed.event_id.clone(),
+                        created_by_device_id: signed.event.author_device_id.clone(),
+                        created_physical_ms: signed.event.timestamp.physical_ms,
+                        status: WorkspaceInviteStatus::Invited,
+                        accepted_event_id: None,
+                        accepted_physical_ms: None,
+                        resolved_event_id: None,
+                        resolved_by_device_id: None,
+                        resolved_physical_ms: None,
+                    },
+                );
+            }
+            EventBody::WorkspaceInviteClaimed {
+                invite_id,
+                invitee_device_id,
+                request_id,
+            } => {
+                if let Some(invite) = self.invites.get_mut(invite_id) {
+                    invite.invitee_device_id = invitee_device_id.clone();
+                    invite.request_id = Some(request_id.clone());
+                    invite.status = WorkspaceInviteStatus::Accepted;
+                    invite.accepted_event_id = Some(signed.event_id.clone());
+                    invite.accepted_physical_ms = Some(signed.event.timestamp.physical_ms);
+                    invite.resolved_event_id = Some(signed.event_id.clone());
+                    invite.resolved_by_device_id = Some(signed.event.author_device_id.clone());
+                    invite.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                }
+                self.approve_join_request_from_invite(
+                    request_id,
+                    invitee_device_id,
+                    signed.event_id.clone(),
+                    signed.event.author_device_id.clone(),
+                    signed.event.timestamp.physical_ms,
+                );
             }
             EventBody::WorkspaceInviteResolved {
                 invite_id,
@@ -1047,7 +1104,10 @@ impl WorkspaceState {
     fn mark_invites_accepted_by_event(&mut self, signed: &SignedEvent) {
         if matches!(
             signed.event.body,
-            EventBody::WorkspaceInviteRecorded { .. } | EventBody::WorkspaceInviteResolved { .. }
+            EventBody::WorkspaceInviteRecorded { .. }
+                | EventBody::WorkspaceInviteCapabilityCreated { .. }
+                | EventBody::WorkspaceInviteClaimed { .. }
+                | EventBody::WorkspaceInviteResolved { .. }
         ) {
             return;
         }
@@ -1245,12 +1305,24 @@ impl WorkspaceAccessIndex {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 require_role(author_role, Action::ManageWorkspaceSettings)
             }
-            EventBody::WorkspaceInviteRecorded { role, .. } => {
+            EventBody::WorkspaceInviteRecorded { role, .. }
+            | EventBody::WorkspaceInviteCapabilityCreated { role, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 if matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin) {
                     require_role(author_role, Action::ManagePrivilegedRoles)
                 } else {
                     require_role(author_role, Action::InviteMember)
+                }
+            }
+            EventBody::WorkspaceInviteClaimed { invite_id, .. } => {
+                let author_role = self.require_rooted_member(&event.event.author_device_id)?;
+                require_role(author_role, Action::InviteMember)?;
+                if self.invites.contains(invite_id) {
+                    Ok(())
+                } else {
+                    Err(AuthorizationError::InviteNotFound {
+                        invite_id: invite_id.clone(),
+                    })
                 }
             }
             EventBody::WorkspaceInviteResolved { invite_id, .. } => {
@@ -1573,9 +1645,11 @@ impl WorkspaceAccessIndex {
                 self.roles.insert(member_device_id.clone(), *role);
             }
             EventBody::WorkspaceAccessPolicyUpdated { .. } => {}
-            EventBody::WorkspaceInviteRecorded { invite_id, .. } => {
+            EventBody::WorkspaceInviteRecorded { invite_id, .. }
+            | EventBody::WorkspaceInviteCapabilityCreated { invite_id, .. } => {
                 self.invites.insert(invite_id.clone());
             }
+            EventBody::WorkspaceInviteClaimed { .. } => {}
             EventBody::WorkspaceInviteResolved { .. } => {}
             EventBody::WorkspaceJoinRequestRecorded { request_id, .. } => {
                 self.join_requests.insert(request_id.clone());
@@ -1947,6 +2021,8 @@ pub fn trust_snapshot_from_events(
             EventBody::DeviceKeyPackagePublished { .. } => {}
             EventBody::PeerEndpointPublished { .. } => {}
             EventBody::WorkspaceInviteRecorded { .. } => {}
+            EventBody::WorkspaceInviteCapabilityCreated { .. } => {}
+            EventBody::WorkspaceInviteClaimed { .. } => {}
             EventBody::WorkspaceInviteResolved { .. } => {}
             EventBody::WorkspaceJoinRequestRecorded { .. } => {}
             EventBody::WorkspaceJoinRequestResolved { .. } => {}
@@ -2240,10 +2316,16 @@ fn collect_trust_snapshot_dependencies(
         | EventBody::PersonProfileUpdated { .. }
         | EventBody::DeviceKeyPackagePublished { .. }
         | EventBody::PeerEndpointPublished { .. }
+        | EventBody::WorkspaceInviteCapabilityCreated { .. }
         | EventBody::WorkspaceInviteResolved { .. }
         | EventBody::WorkspaceJoinRequestResolved { .. }
         | EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. } => {}
         EventBody::WorkspaceInviteRecorded {
+            invitee_device_id, ..
+        } => {
+            needed_devices.insert(invitee_device_id.clone());
+        }
+        EventBody::WorkspaceInviteClaimed {
             invitee_device_id, ..
         } => {
             needed_devices.insert(invitee_device_id.clone());
@@ -2407,6 +2489,10 @@ fn validate_event_body_ids(body: &EventBody) -> Result<(), AuthorizationError> {
             member_device_id, ..
         } => validate_device_id_size("member device ID", member_device_id),
         EventBody::WorkspaceInviteRecorded {
+            invitee_device_id, ..
+        } => validate_device_id_size("invitee device ID", invitee_device_id),
+        EventBody::WorkspaceInviteCapabilityCreated { .. } => Ok(()),
+        EventBody::WorkspaceInviteClaimed {
             invitee_device_id, ..
         } => validate_device_id_size("invitee device ID", invitee_device_id),
         EventBody::WorkspaceInviteResolved { .. } => Ok(()),
@@ -2706,6 +2792,48 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
                 "invite sync expectation",
                 sync_expectation,
                 WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+            )
+        }
+        EventBody::WorkspaceInviteCapabilityCreated {
+            invite_id,
+            display_name,
+            expires_at,
+            capability_public_key,
+            sync_expectation,
+            ..
+        } => {
+            validate_event_text_required("invite ID", invite_id)?;
+            validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)?;
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            validate_event_text_size(
+                "invite expiry",
+                expires_at,
+                WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
+            )?;
+            validate_event_text_required("invite capability public key", capability_public_key)?;
+            validate_event_text_size(
+                "invite capability public key",
+                capability_public_key,
+                WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES,
+            )?;
+            validate_event_text_size(
+                "invite sync expectation",
+                sync_expectation,
+                WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
+            )
+        }
+        EventBody::WorkspaceInviteClaimed {
+            invite_id,
+            request_id,
+            ..
+        } => {
+            validate_event_text_required("invite ID", invite_id)?;
+            validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)?;
+            validate_event_text_required("join request ID", request_id)?;
+            validate_event_text_size(
+                "join request ID",
+                request_id,
+                WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
             )
         }
         EventBody::WorkspaceInviteResolved { invite_id, .. } => {
@@ -5543,13 +5671,14 @@ mod tests {
             "direct message author participant",
         );
         assert_item_count_too_large(
-            authorize_event_with_history(&[root.clone()], &oversized_dm).unwrap_err(),
+            authorize_event_with_history(std::slice::from_ref(&root), &oversized_dm).unwrap_err(),
             "direct message participants",
             3,
             2,
         );
         assert_payload_required(
-            authorize_event_with_history(&[root.clone()], &duplicate_participant_dm).unwrap_err(),
+            authorize_event_with_history(std::slice::from_ref(&root), &duplicate_participant_dm)
+                .unwrap_err(),
             "direct message distinct participants",
         );
 

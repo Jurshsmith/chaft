@@ -67,11 +67,12 @@ async fn direct_peer_accepts_join_request_submission_into_configured_inbox() {
         .await
         .unwrap();
 
-    let submissions = inbox.submissions.lock().unwrap();
-    assert_eq!(submissions.len(), 1);
-    assert_eq!(submissions[0].0.as_deref(), Some(workspace_id.0.as_str()));
-    assert_eq!(submissions[0].1, request);
-    drop(submissions);
+    {
+        let submissions = inbox.submissions.lock().unwrap();
+        assert_eq!(submissions.len(), 1);
+        assert_eq!(submissions[0].0.as_deref(), Some(workspace_id.0.as_str()));
+        assert_eq!(submissions[0].1, request);
+    }
     let _ = shutdown_tx.send(());
     server_task.await.unwrap();
 }
