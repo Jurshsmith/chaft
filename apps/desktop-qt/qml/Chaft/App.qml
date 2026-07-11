@@ -2518,12 +2518,20 @@ ApplicationWindow {
     }
 
     function startDirectMessage(deviceId, displayLabel) {
-        var existing = root.existingDirectMessageChannel(deviceId, displayLabel)
+        var normalizedDeviceId = String(deviceId || "").trim()
+        var localDeviceId = String(chaftController.deviceId || "").trim()
+        var normalizedDisplayLabel = normalizedDeviceId.length > 0
+                && normalizedDeviceId === localDeviceId
+            ? "You"
+            : displayLabel
+        var existing = root.existingDirectMessageChannel(
+            normalizedDeviceId, normalizedDisplayLabel)
         if (String(existing.channelId || "").length > 0) {
             return root.selectChannelId(existing.channelId, true)
         }
         return root.runtimeWorkReady
-            && chaftController.createDirectMessage(deviceId, displayLabel)
+            && chaftController.createDirectMessage(
+                normalizedDeviceId, normalizedDisplayLabel)
     }
 
     function titleCaseLabel(label) {
@@ -10521,7 +10529,6 @@ ApplicationWindow {
                                 owner: memberRowDelegate.modelData.role === "owner"
                                 localDevice: memberRowDelegate.deviceId === chaftController.deviceId
                                 canMessage: root.runtimeWorkReady
-                                    && memberRowDelegate.deviceId !== chaftController.deviceId
                                 showRoleEditor: chaftController.hasRuntimeWorkspace
                                     && root.canManageWorkspaceAccess()
                                     && memberRowDelegate.deviceId !== chaftController.deviceId

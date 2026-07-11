@@ -2600,7 +2600,7 @@ ScrollView {
                             roleOptions: app.memberRoleOptions(peopleMemberRow.modelData)
                             owner: peopleMemberRow.modelData.role === "owner"
                             localDevice: deviceId === chaftController.deviceId
-                            canMessage: app.runtimeWorkReady && !localDevice
+                            canMessage: app.runtimeWorkReady
                             showRoleEditor: app.canManageWorkspaceAccess() && !localDevice
                             canChangeRole: app.canChangeMemberRole(peopleMemberRow.modelData)
                             roleUnavailableReason: app.memberRoleUnavailableReason(peopleMemberRow.modelData)

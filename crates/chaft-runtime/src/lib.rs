@@ -3531,6 +3531,72 @@ mod tests {
     }
 
     #[test]
+    fn runtime_creates_one_encrypted_device_scoped_personal_channel() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Personal Chat", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+
+        let first = runtime
+            .create_direct_message_channel(
+                workspace_id.clone(),
+                "Ignored display label",
+                runtime.device_id().clone(),
+            )
+            .unwrap();
+        let second = runtime
+            .create_direct_message_channel(
+                workspace_id.clone(),
+                "A different ignored label",
+                runtime.device_id().clone(),
+            )
+            .unwrap();
+
+        assert_eq!(second.channel_id, first.channel_id);
+        assert_eq!(second.event_id, first.event_id);
+
+        runtime
+            .send_message(
+                workspace_id.clone(),
+                ChannelId(first.channel_id.clone()),
+                "remember this",
+            )
+            .unwrap();
+        let snapshot = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        let personal_channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == first.channel_id)
+            .unwrap();
+
+        assert_eq!(personal_channel.name, "dm-you");
+        assert!(personal_channel.is_private);
+        assert!(!personal_channel.direct_message);
+        assert_eq!(
+            personal_channel.member_device_ids,
+            vec![runtime.device_id().0.clone()]
+        );
+        assert_eq!(personal_channel.unread_count, 0);
+        assert!(
+            snapshot
+                .timeline
+                .iter()
+                .any(|item| item.body == "remember this")
+        );
+
+        let reopened = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let after_restart = reopened
+            .create_direct_message_channel(workspace_id, "You", reopened.device_id().clone())
+            .unwrap();
+        assert_eq!(after_restart.channel_id, first.channel_id);
+        assert_eq!(after_restart.event_id, first.event_id);
+    }
+
+    #[test]
     fn runtime_reopens_passphrase_encrypted_identity_file() {
         let tempdir = tempfile::tempdir().unwrap();
         let runtime = LocalRuntime::open_with_identity_passphrase(

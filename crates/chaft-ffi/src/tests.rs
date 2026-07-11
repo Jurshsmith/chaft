@@ -2597,6 +2597,62 @@ fn runtime_action_ffi_lists_bounded_workspace_channel_page() {
 }
 
 #[test]
+fn runtime_direct_message_ffi_creates_one_personal_channel_for_local_device() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let name = CString::new("Chaft FFI Personal Chat").unwrap();
+    let channel_name = CString::new("general").unwrap();
+    let created_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            name.as_ptr(),
+            channel_name.as_ptr(),
+        ))
+    };
+    let created = serde_json::from_str::<Value>(&created_json).unwrap();
+    let workspace_id = CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
+    let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+    let device_id = CString::new(runtime.device_id().0.as_str()).unwrap();
+    drop(runtime);
+    let display_name = CString::new("You").unwrap();
+
+    let create_personal_channel = || unsafe {
+        take_ffi_string(chaft_runtime_create_direct_message_channel_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+            display_name.as_ptr(),
+            device_id.as_ptr(),
+        ))
+    };
+    let first = serde_json::from_str::<Value>(&create_personal_channel()).unwrap();
+    let second = serde_json::from_str::<Value>(&create_personal_channel()).unwrap();
+
+    assert_eq!(first["ok"], true);
+    assert_eq!(second["ok"], true);
+    assert_eq!(second["value"]["channelId"], first["value"]["channelId"]);
+    assert_eq!(second["value"]["eventId"], first["value"]["eventId"]);
+
+    let snapshot_json = unsafe {
+        take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+        ))
+    };
+    let snapshot = serde_json::from_str::<Value>(&snapshot_json).unwrap();
+    let channels = snapshot["value"]["channels"].as_array().unwrap();
+    assert_eq!(
+        channels
+            .iter()
+            .filter(|channel| channel["name"] == "dm-you")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn runtime_action_ffi_write_paths_skip_corrupt_local_event_json() {
     let tempdir = tempfile::tempdir().unwrap();
     let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();

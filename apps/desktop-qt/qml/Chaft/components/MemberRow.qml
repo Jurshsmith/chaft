@@ -130,8 +130,8 @@ Rectangle {
 
         Button {
             id: actionsButton
-            visible: !root.localDevice
-                && (root.canMessage || root.showRemoveAction || root.deviceId.length > 0)
+            visible: root.canMessage || (!root.localDevice
+                && (root.showRemoveAction || root.deviceId.length > 0))
             text: "⋯"
             Layout.preferredWidth: 34
             Layout.preferredHeight: 30
@@ -145,7 +145,7 @@ Rectangle {
                 y: actionsButton.height
 
                 MenuItem {
-                    text: "Message"
+                    text: root.localDevice ? "Message yourself" : "Message"
                     visible: root.canMessage
                     onTriggered: root.messageRequested(root.deviceId, root.displayLabel)
                 }

@@ -23,6 +23,8 @@ use crate::{
     validate_workspace_id_reference,
 };
 
+const PERSONAL_CHANNEL_NAME: &str = "dm-you";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatedWorkspace {
@@ -526,8 +528,54 @@ impl LocalRuntime {
         validate_metadata_field_size("direct message name", &name, CHANNEL_NAME_MAX_BYTES)?;
         validate_device_id_reference(&participant_device_id)?;
 
-        let channel_id = ChannelId::new();
         let context = self.workspace_write_context(&workspace_id)?;
+        if participant_device_id == *self.identity.device_id() {
+            if let Some(existing) = context.events.iter().find_map(|event| {
+                if event.event.author_device_id != *self.identity.device_id() {
+                    return None;
+                }
+                match &event.event.body {
+                    EventBody::ChannelCreated {
+                        channel_id,
+                        name,
+                        is_private: true,
+                    } if name == PERSONAL_CHANNEL_NAME => Some(CreatedChannel {
+                        workspace_id: workspace_id.0.clone(),
+                        channel_id: channel_id.0.clone(),
+                        event_id: event.event_id.0.clone(),
+                    }),
+                    _ => None,
+                }
+            }) {
+                return Ok(existing);
+            }
+
+            let channel_id = ChannelId::new();
+            let mut channel = SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                self.identity.device_id().clone(),
+                EventBody::ChannelCreated {
+                    channel_id: channel_id.clone(),
+                    name: PERSONAL_CHANNEL_NAME.to_owned(),
+                    is_private: true,
+                },
+            );
+            channel.parents = context.head_event_ids.clone();
+            let channel_key = ChannelKey::generate(workspace_id.clone(), channel_id.clone());
+            let channel = self.identity.sign_event(channel);
+            authorize_event_with_history(&context.events, &channel)?;
+            self.save_channel_key(&channel_key)?;
+            self.store.append_event(&channel)?;
+
+            return Ok(CreatedChannel {
+                workspace_id: workspace_id.0,
+                channel_id: channel_id.0,
+                event_id: channel.event_id.0,
+            });
+        }
+
+        let channel_id = ChannelId::new();
         let mut participant_device_ids =
             vec![self.identity.device_id().clone(), participant_device_id];
         participant_device_ids.sort_by(|left, right| left.0.cmp(&right.0));
