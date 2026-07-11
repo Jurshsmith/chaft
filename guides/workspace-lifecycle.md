@@ -44,17 +44,23 @@ history.
 
 Do not share the recovery kit with teammates. To add another person or device:
 
-1. Ask the invitee for their Chaft device ID.
-2. Open the workspace, then open `Setup`.
-3. Use People & Access to create an invite for that device.
-4. Include a peer endpoint when the invitee needs to pull history from your
-   device or a backup peer.
-5. Save or copy the generated invite package.
-6. Send the package through a trusted channel.
+1. Open the workspace, then open `Setup`.
+2. In People & Access, enter an optional label, choose a role and expiry, and
+   create a secure invite.
+3. Save or copy the generated `.chaftinvite` file or invite link.
+4. Send it privately to one intended teammate.
 
-The invitee imports that package from `Join workspace`. If the workspace uses
-request access, send a workspace card or approval-first invite instead; the
-invitee submits a signed request and waits for an admin or owner response.
+The invite contains a one-time capability, workspace metadata, and the admin's
+signed routing details. It does not contain the workspace key and does not need
+the recipient's device ID in advance. Treat it as a bearer credential until it
+is claimed: anyone who receives it first can submit the claim.
+
+The recipient opens the invite in `Join workspace` and chooses `Claim invite`.
+Their device signs the claim and supplies a response-encryption key. The admin's
+runtime verifies the capability, expiry, revocation state, and single-use state
+before adding that device. The returned workspace key is encrypted for the
+claiming device and signed by the expected admin. Another device cannot import
+the response.
 
 ## Join a Workspace
 
@@ -66,13 +72,15 @@ invitee submits a signed request and waits for an admin or owner response.
    - workspace card or request handoff,
    - passphrase-protected recovery kit.
 4. Provide a peer endpoint when the credential does not already include one.
-5. Confirm the import.
+5. For a secure invite, claim it and wait for the encrypted approval. Confirm
+   the import when Chaft receives it.
 
 If the credential is a recovery bundle, the app asks for the recovery
 passphrase. Recovery also needs reachable workspace history; when no peer is
 reachable, Chaft stages the restore and asks for a peer endpoint. If the
-credential is an approval-first invite or workspace card, the app may prepare an
-access request instead of joining immediately.
+credential is a workspace card, the app prepares an access request instead of
+joining immediately. A secure invite prepares a cryptographic claim; it never
+imports a key directly from the invite file.
 
 ## Credential Files
 
@@ -87,8 +95,10 @@ Chaft saves user-facing handoff material with explicit extensions:
 The open/import flows also accept older JSON exports. Treat recovery kits as
 private restore material, not invitations; store the kit privately, keep its
 passphrase separate from the file, and never send the kit as an invite.
-Workspace access files are less sensitive than recovery kits, but still grant
-workspace access and should only go to the intended teammate or device.
+Legacy workspace access files still grant workspace access and should only go
+to the intended teammate or device. Current secure invite files do not contain
+the workspace key, but must still be shared privately because the claim
+capability is one-time and bearer-held.
 
 ## Request Access
 
@@ -121,11 +131,12 @@ Admins and owners can invite normal members. Owners control admin-level access.
 1. Open the workspace.
 2. Open `Setup`.
 3. Go to the people/access area.
-4. Enter the invitee device ID, display name, role, and peer endpoint.
+4. Enter an optional invite label, then choose the role and expiry.
 5. Save or copy the generated invite package.
 6. Send the invite package to the invitee through a trusted channel.
 
-The invitee imports the package from the `Join workspace` flow.
+The invitee claims the package from the `Join workspace` flow. Chaft binds the
+resulting membership and encrypted access response to that device.
 
 ## Approve or Decline Requests
 
@@ -179,8 +190,8 @@ Already-synced historical content remains a separate product/security concern.
 
 - Wrong recovery passphrase: retry with the original passphrase used when the
   recovery bundle was exported.
-- Unreachable peer: copy or save the request/invite package and send it out of
-  band.
+- Unreachable peer: copy or save the invite claim or approval and send it out
+  of band, or retry when the admin endpoint is reachable.
 - Expired or revoked invite: ask an admin for a fresh invite.
 - Unknown credential file: verify that the file is a Chaft access file, invite
   package, workspace card, join request, recovery kit, or older JSON export.

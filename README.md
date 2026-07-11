@@ -122,10 +122,13 @@ files (`.chaftaccess`), invite packages, request cards, access requests, older
 JSON exports, or passphrase-protected recovery kits.
 After creating a workspace, the app prompts for a recovery export so the
 credentials can be saved or copied before inviting other devices. Setup can
-stage a saved invite package from an exported workspace key plus an invitee
-device ID, role, and peer endpoint. Signed workspace invites, admin/member
-roles, member removal, and private-channel grants are available from Setup and
-the pinned details panel once a workspace is selected.
+create a signed, one-time invite without first collecting an invitee device ID.
+The invite contains no workspace key. The recipient claims it with their local
+device identity, and Chaft returns a signed, device-bound encrypted access
+response after the admin accepts the claim. Legacy access files remain readable
+for compatibility. Admin/member roles, member removal, and private-channel
+grants are available from Setup and the pinned details panel once a workspace
+is selected.
 
 For the user-facing workspace lifecycle, see
 [`guides/workspace-lifecycle.md`](guides/workspace-lifecycle.md). For release
