@@ -176,6 +176,7 @@ Item {
 
                             GridLayout {
                                 Layout.fillWidth: true
+                                visible: false
                                 columns: root.width > 520 ? 2 : 1
                                 columnSpacing: Tokens.space3
                                 rowSpacing: Tokens.space1
@@ -233,61 +234,120 @@ Item {
                                 }
                             }
 
-                            GridLayout {
+                            Text {
                                 Layout.fillWidth: true
-                                columns: root.width > 720 ? 6 : (root.width > 460 ? 3 : 2)
-                                columnSpacing: Tokens.space2
-                                rowSpacing: Tokens.space2
+                                text: pendingRequestCard.modelData.workspaceLabel
+                                    + " · " + pendingRequestCard.modelData.displayLabel
+                                color: Tokens.textMuted
+                                font.pixelSize: Tokens.fontSizeXs
+                                elide: Text.ElideRight
+                            }
 
-                                Button {
-                                    Layout.fillWidth: true
-                                    visible: pendingRequestCard.modelData.canSendDirect
-                                    text: pendingRequestCard.modelData.status === "sending" ? "Sending..." : (pendingRequestCard.modelData.status === "sent" ? "Resend" : (pendingRequestCard.modelData.status === "send_failed" ? "Try again" : "Send now"))
-                                    enabled: !chaftController.joinRequestSubmitInFlight && pendingRequestCard.modelData.status !== "sending"
-                                    onClicked: root.app.sendPendingAccessRequest(pendingRequestCard.modelData)
-                                }
-
-                                Button {
-                                    Layout.fillWidth: true
-                                    visible: pendingRequestCard.modelData.canShareRequest
-                                    text: "Copy link"
-                                    enabled: !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: "Copy request link"
-                                    onClicked: root.app.copyPendingAccessRequest(pendingRequestCard.modelData)
-                                }
-
-                                Button {
-                                    Layout.fillWidth: true
-                                    visible: pendingRequestCard.modelData.canShareRequest
-                                    text: "Save file"
-                                    enabled: !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: "Save request file"
-                                    onClicked: root.app.openSavePendingAccessRequestDialog(pendingRequestCard.modelData)
-                                }
-
-                                Button {
-                                    Layout.fillWidth: true
-                                    visible: pendingRequestCard.modelData.canCheckResponse
-                                    text: chaftController.accessEnvelopePullInFlight ? "Checking..." : "Check"
-                                    enabled: !chaftController.joinRequestSubmitInFlight && !chaftController.accessEnvelopePullInFlight
-                                    Accessible.name: "Check for access approval"
-                                    onClicked: root.app.checkPendingAccessRequestResponse(pendingRequestCard.modelData)
-                                }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Tokens.space2
 
                                 Button {
                                     Layout.fillWidth: true
                                     visible: pendingRequestCard.modelData.canOpenInvite
-                                    text: "Open invite"
+                                        || pendingRequestCard.modelData.canCheckResponse
+                                        || pendingRequestCard.modelData.canSendDirect
+                                        || pendingRequestCard.modelData.canShareRequest
+                                    text: pendingRequestCard.modelData.status === "approved"
+                                        && pendingRequestCard.modelData.canOpenInvite
+                                        ? "Open invite"
+                                        : (pendingRequestCard.modelData.status === "sent"
+                                            && pendingRequestCard.modelData.canCheckResponse
+                                            ? (chaftController.accessEnvelopePullInFlight
+                                                ? "Checking..."
+                                                : "Check for approval")
+                                            : (pendingRequestCard.modelData.status === "sending"
+                                                ? "Sending..."
+                                                : (pendingRequestCard.modelData.status === "send_failed"
+                                                    ? "Try again"
+                                                    : (pendingRequestCard.modelData.canSendDirect
+                                                        ? "Send now"
+                                                        : (pendingRequestCard.modelData.canShareRequest
+                                                            ? "Copy request link"
+                                                            : "Open invite")))))
                                     enabled: !chaftController.joinRequestSubmitInFlight
-                                    onClicked: root.app.openWorkspaceEntry("join")
+                                        && !chaftController.accessEnvelopePullInFlight
+                                        && pendingRequestCard.modelData.status !== "sending"
+                                    onClicked: {
+                                        if (pendingRequestCard.modelData.status === "approved"
+                                                && pendingRequestCard.modelData.canOpenInvite) {
+                                            root.app.openWorkspaceEntry("join")
+                                        } else if (pendingRequestCard.modelData.status === "sent"
+                                                && pendingRequestCard.modelData.canCheckResponse) {
+                                            root.app.checkPendingAccessRequestResponse(
+                                                pendingRequestCard.modelData)
+                                        } else if (pendingRequestCard.modelData.canSendDirect) {
+                                            root.app.sendPendingAccessRequest(
+                                                pendingRequestCard.modelData)
+                                        } else if (pendingRequestCard.modelData.canShareRequest) {
+                                            root.app.copyPendingAccessRequest(
+                                                pendingRequestCard.modelData)
+                                        } else {
+                                            root.app.openWorkspaceEntry("join")
+                                        }
+                                    }
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
                                 }
 
                                 Button {
-                                    Layout.fillWidth: true
-                                    text: "Hide"
-                                    enabled: !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: "Hide access request reminder"
-                                    onClicked: root.app.confirmDismissPendingAccessRequest(pendingRequestCard.modelData)
+                                    text: "⋯"
+                                    Accessible.name: "More request actions"
+                                    onClicked: pendingRequestActionsMenu.open()
+
+                                    Menu {
+                                        id: pendingRequestActionsMenu
+                                        y: parent.height
+
+                                        MenuItem {
+                                            visible: pendingRequestCard.modelData.status === "sent"
+                                                && pendingRequestCard.modelData.canSendDirect
+                                            text: "Resend request"
+                                            enabled: !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.app.sendPendingAccessRequest(
+                                                pendingRequestCard.modelData)
+                                        }
+
+                                        MenuItem {
+                                            visible: pendingRequestCard.modelData.canShareRequest
+                                            text: "Copy request link"
+                                            enabled: !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.app.copyPendingAccessRequest(
+                                                pendingRequestCard.modelData)
+                                        }
+
+                                        MenuItem {
+                                            visible: pendingRequestCard.modelData.canShareRequest
+                                            text: "Save request file"
+                                            enabled: !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.app.openSavePendingAccessRequestDialog(
+                                                pendingRequestCard.modelData)
+                                        }
+
+                                        MenuItem {
+                                            visible: pendingRequestCard.modelData.canCheckResponse
+                                                && pendingRequestCard.modelData.status !== "sent"
+                                            text: "Check for approval"
+                                            enabled: !chaftController.joinRequestSubmitInFlight
+                                                && !chaftController.accessEnvelopePullInFlight
+                                            onTriggered: root.app.checkPendingAccessRequestResponse(
+                                                pendingRequestCard.modelData)
+                                        }
+
+                                        MenuItem {
+                                            text: "Hide request"
+                                            enabled: !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.app.confirmDismissPendingAccessRequest(
+                                                pendingRequestCard.modelData)
+                                        }
+                                    }
                                 }
                             }
                         }

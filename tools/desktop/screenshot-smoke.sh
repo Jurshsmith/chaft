@@ -48,7 +48,7 @@ mkdir -p "$(dirname "$output_path")"
 rm -f "$output_path"
 
 default_screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
-default_ui_states="setup,setup-identity,setup-add-device,setup-access-updates,setup-security,setup-backup,setup-room-access,setup-request,setup-request-approved,setup-request-lost,setup-request-reinvite,setup-invite,setup-approval-invite,setup-invite-lost,first-sync-waiting,first-sync-recovery,drawer,member-roles,direct-message,palette,entry,entry-join,entry-restore,entry-restore-failed,entry-join-invite,entry-approval-invite,entry-workspace-card,entry-workspace-card-invite-only,entry-request-sent,post-create,add-workspace,channel-details,private-channel-details,private-channel-repair-failed,private-channel-repair-saved,private-channel-inspector,channel-archived,reaction-picker,external-link"
+default_ui_states="setup,setup-identity,setup-add-device,setup-access-updates,setup-security,setup-backup,setup-room-access,setup-people,setup-invite-dialog,setup-request-review,setup-request,setup-request-approved,setup-request-lost,setup-request-reinvite,setup-invite,setup-approval-invite,setup-invite-lost,first-sync-waiting,first-sync-recovery,drawer,drawer-advanced,member-roles,direct-message,palette,entry,entry-join,entry-restore,entry-restore-failed,entry-join-invite,entry-approval-invite,entry-workspace-card,entry-workspace-card-invite-only,entry-request-sent,post-create,post-create-recovery,add-workspace,channel-details,private-channel-details,private-channel-access,private-channel-repair-failed,private-channel-repair-saved,private-channel-inspector,channel-archived,reaction-picker,external-link"
 explicit_ui_states=0
 ui_states="${CHAFT_SMOKE_UI_STATES:-$default_ui_states}"
 if [ -n "${CHAFT_SMOKE_UI_STATES:-}" ]; then
@@ -331,6 +331,10 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "setup-room-access" ]; then
     screenshot_delay_ms=1500
+  elif [ "$ui_state" = "setup-people" ] || \
+       [ "$ui_state" = "setup-invite-dialog" ] || \
+       [ "$ui_state" = "setup-request-review" ]; then
+    screenshot_delay_ms=1500
   elif [ "$ui_state" = "setup-approval-invite" ]; then
     screenshot_delay_ms=2500
   elif [ "$ui_state" = "setup-invite-lost" ]; then
@@ -359,14 +363,16 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "entry-request-sent" ]; then
     screenshot_delay_ms=1500
-  elif [ "$ui_state" = "post-create" ]; then
+  elif [ "$ui_state" = "post-create" ] || \
+       [ "$ui_state" = "post-create-recovery" ]; then
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "add-workspace" ]; then
     screenshot_delay_ms=1500
     screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-60000}"
   elif [ "$ui_state" = "channel-details" ]; then
     screenshot_delay_ms=1500
-  elif [ "$ui_state" = "private-channel-details" ]; then
+  elif [ "$ui_state" = "private-channel-details" ] || \
+       [ "$ui_state" = "private-channel-access" ]; then
     screenshot_delay_ms=1500
   elif [ "$ui_state" = "private-channel-repair-failed" ]; then
     screenshot_delay_ms=1500
@@ -399,6 +405,7 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
   esac
   access_policy="${CHAFT_VISUAL_SMOKE_ACCESS_POLICY:-invite-only}"
   if [ "$ui_state" = "setup-request" ] || \
+     [ "$ui_state" = "setup-request-review" ] || \
      [ "$ui_state" = "setup-request-approved" ] || \
      [ "$ui_state" = "setup-request-lost" ] || \
      [ "$ui_state" = "setup-request-reinvite" ] || \

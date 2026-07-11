@@ -29,8 +29,9 @@ ColumnLayout {
 
     Rectangle {
         id: sectionHeader
+        visible: root.title.length > 0 || root.badgeText.length > 0 || root.collapsible
         Layout.fillWidth: true
-        implicitHeight: 30
+        implicitHeight: visible ? 30 : 0
         radius: Tokens.radiusSm
         color: headerMouse.containsMouse
             ? Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.08)

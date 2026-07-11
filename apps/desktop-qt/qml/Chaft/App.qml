@@ -223,9 +223,18 @@ ApplicationWindow {
     property var pendingDeletes: []
     readonly property var pendingDeleteIds: root.pendingDeleteIdsForRows()
     property bool syncDrawerOpen: false
+    property bool syncAdvancedToolsOpen: false
     property bool customReachableAddressOpen: false
+    property bool channelAccessToolsOpen: false
     property bool inspectorDetailsOpen: false
     property bool demoTourActive: false
+
+    onSyncDrawerOpenChanged: {
+        if (!root.syncDrawerOpen) {
+            root.syncAdvancedToolsOpen = false
+            root.customReachableAddressOpen = false
+        }
+    }
 
     readonly property int channelCryptoExceptionCount: {
         var rows = root.selectedTimeline || []
@@ -541,14 +550,11 @@ ApplicationWindow {
                 restart()
                 return
             }
-            chaftController.prepareWorkspaceInvitePackage(
-                "dev_visual_smoke_joiner",
+            chaftController.prepareClaimableWorkspaceInvite(
+                "Sam Rivera",
                 "member",
                 root.preferredInvitePeerEndpoint(),
-                "Sam Rivera",
-                root.inviteExpiresAtIso(7),
-                "preapproved",
-                "")
+                root.inviteExpiresAtIso(7))
         }
     }
 
@@ -587,6 +593,18 @@ ApplicationWindow {
                 root.inviteExpiresAtIso(7),
                 "preapproved",
                 "req_visual_smoke_joiner")
+        }
+    }
+
+    Timer {
+        id: smokeRequestReviewTimer
+        interval: 450
+        repeat: false
+        onTriggered: {
+            if (!root.runtimeWorkReady
+                    || !setupPanel.openFirstWaitingJoinRequestReview()) {
+                restart()
+            }
         }
     }
 
@@ -988,7 +1006,7 @@ ApplicationWindow {
     }
 
     function accessRequestBadgeLabel(count) {
-        return String(Number(count || 0))
+        return String(Number(count || 0)) + " req"
     }
 
     function normalizedSettingsCategory(categoryId) {
@@ -1089,7 +1107,13 @@ ApplicationWindow {
     }
 
     function openAccessRequestsPanel() {
-        root.openPeopleAccess(false)
+        if (!root.openPeopleAccess(false)) {
+            return false
+        }
+        Qt.callLater(function() {
+            setupPanel.openAccessRequestsSection()
+        })
+        return true
     }
 
     function backupPeerTimeLabel(timestamp) {
@@ -2923,6 +2947,13 @@ ApplicationWindow {
         } else if (state === "setup-room-access") {
             root.pendingSmokeSetupRoomAccessSelection = true
             root.applyPendingSmokeSetupRoomAccessSelection()
+        } else if (state === "setup-people") {
+            root.openPeopleAccess(false)
+        } else if (state === "setup-invite-dialog") {
+            root.openPeopleAccess(true)
+        } else if (state === "setup-request-review") {
+            root.openAccessRequestsPanel()
+            smokeRequestReviewTimer.restart()
         } else if (state === "setup-invite") {
             root.openPeopleAccess(false)
             smokeInvitePackageTimer.restart()
@@ -2934,17 +2965,21 @@ ApplicationWindow {
             smokeApprovalInvitePackageTimer.restart()
         } else if (state === "setup-invite-lost") {
             root.openPeopleAccess(false)
+            Qt.callLater(function() { setupPanel.openInvitationsSection() })
         } else if (state === "setup-request") {
-            root.openPeopleAccess(false)
+            root.openAccessRequestsPanel()
         } else if (state === "setup-request-approved") {
-            root.openPeopleAccess(false)
+            root.openAccessRequestsPanel()
             smokeApprovedRequestInviteTimer.restart()
         } else if (state === "setup-request-lost") {
-            root.openPeopleAccess(false)
+            root.openAccessRequestsPanel()
         } else if (state === "setup-request-reinvite") {
-            root.openPeopleAccess(false)
+            root.openAccessRequestsPanel()
         } else if (state === "drawer") {
             root.syncDrawerOpen = true
+        } else if (state === "drawer-advanced") {
+            root.syncDrawerOpen = true
+            root.syncAdvancedToolsOpen = true
         } else if (state === "first-sync-waiting") {
             smokeFirstSyncWaitingTimer.restart()
         } else if (state === "first-sync-recovery") {
@@ -2998,20 +3033,23 @@ ApplicationWindow {
         } else if (state === "entry-join-invite") {
             root.openWorkspaceEntry("join")
             root.loadWorkspaceCredentialText(JSON.stringify({
-                kind: "chaft.workspace-invite.v1",
-                schemaVersion: 1,
+                kind: "chaft.workspace-invite.v2",
+                schemaVersion: 2,
                 workspaceId: "wrk_visual_smoke",
                 workspaceName: "Visual Smoke",
-                inviteeDeviceId: "dev_visual_smoke_joiner",
-                inviteeDisplayName: "Sam Rivera",
+                inviteId: "inv_visual_smoke_secure",
+                displayName: "Sam Rivera",
                 inviterDeviceId: "dev_visual_smoke_admin",
                 inviterDisplayName: "Mira Chen",
+                inviterPublicKey: "visual-smoke-public-key",
+                inviterSignature: "visual-smoke-signature",
+                capabilityPublicKey: "visual-smoke-capability-public-key",
+                capabilitySecret: "visual-smoke-one-time-capability",
                 role: "member",
                 peerEndpoint: "direct+tcp://127.0.0.1:44944",
-                workspaceKey: {
-                    workspaceId: "wrk_visual_smoke",
-                    aes256GcmSivKey: "smoke-key-material"
-                }
+                syncExpectation: "history_after_claim",
+                createdAt: "2026-07-10T12:00:00Z",
+                expiresAt: "2026-07-14T12:00:00Z"
             }, null, 2))
         } else if (state === "entry-approval-invite") {
             root.openWorkspaceEntry("join")
@@ -3079,6 +3117,9 @@ ApplicationWindow {
             })
         } else if (state === "post-create") {
             postCreateExportDialog.open()
+        } else if (state === "post-create-recovery") {
+            postCreateExportDialog.open()
+            postCreateExportDialog.recoverySetupOpen = true
         } else if (state === "add-workspace") {
             smokeAddWorkspaceTimer.restart()
         } else if (state === "channel-details") {
@@ -3086,10 +3127,16 @@ ApplicationWindow {
         } else if (state === "private-channel-details") {
             root.pendingSmokePrivateChannelDetailsSelection = true
             root.applyPendingSmokePrivateChannelDetailsSelection()
+        } else if (state === "private-channel-access") {
+            root.channelAccessToolsOpen = true
+            root.pendingSmokePrivateChannelDetailsSelection = true
+            root.applyPendingSmokePrivateChannelDetailsSelection()
         } else if (state === "private-channel-repair-failed") {
+            root.channelAccessToolsOpen = true
             root.pendingSmokePrivateChannelRepairFailedSelection = true
             root.applyPendingSmokePrivateChannelDetailsSelection()
         } else if (state === "private-channel-repair-saved") {
+            root.channelAccessToolsOpen = true
             root.pendingSmokePrivateChannelRepairFailedSelection = true
             root.pendingSmokePrivateChannelRepairFailedSavedAddress = true
             root.applyPendingSmokePrivateChannelDetailsSelection()
@@ -4780,6 +4827,67 @@ ApplicationWindow {
             })
         }
 
+        if (kind === "chaft.workspace-invite.v2") {
+            var claimInviteExpired = root.inviteExpired(parsed.expiresAt)
+            row = root.credentialSummaryRow("Workspace", parsed.workspaceName
+                || root.shortAccessIdentifier(parsed.workspaceId))
+            if (row !== null) {
+                rows.push(row)
+            }
+            row = root.credentialSummaryRow("Invited by", parsed.inviterDisplayName
+                || root.shortDeviceId(parsed.inviterDeviceId))
+            if (row !== null) {
+                rows.push(row)
+            }
+            row = root.credentialSummaryRow("Access", root.roleLabel(parsed.role || "member"))
+            if (row !== null) {
+                rows.push(row)
+            }
+            row = root.credentialSummaryRow("Expires", root.inviteExpiryLabel(parsed.expiresAt))
+            if (row !== null) {
+                rows.push(row)
+            }
+            return ({
+                title: claimInviteExpired ? "Invite expired" : "Secure invite ready",
+                message: claimInviteExpired
+                    ? "Ask a workspace admin for a new invite."
+                    : "Claim this invite from this device. The workspace key stays encrypted until the invite is accepted.",
+                rows: rows,
+                canImport: false,
+                warning: claimInviteExpired
+            })
+        }
+
+        if (kind === "chaft.workspace-invite-response.v1") {
+            var responseTargetsThisDevice = String(parsed.inviteeDeviceId || "").trim()
+                === String(chaftController.deviceId || "").trim()
+            row = root.credentialSummaryRow("Workspace", parsed.workspaceName
+                || root.shortAccessIdentifier(parsed.workspaceId))
+            if (row !== null) {
+                rows.push(row)
+            }
+            row = root.credentialSummaryRow("Access", root.roleLabel(parsed.role || "member"))
+            if (row !== null) {
+                rows.push(row)
+            }
+            row = root.credentialSummaryRow("Approved by",
+                root.shortDeviceId(parsed.responderDeviceId))
+            if (row !== null) {
+                rows.push(row)
+            }
+            return ({
+                title: responseTargetsThisDevice
+                    ? "Secure access approved"
+                    : "Approval belongs to another device",
+                message: responseTargetsThisDevice
+                    ? "This encrypted approval can be opened only on the device that claimed the invite."
+                    : "Open this approval on the device that originally claimed the invite.",
+                rows: rows,
+                canImport: responseTargetsThisDevice,
+                warning: !responseTargetsThisDevice
+            })
+        }
+
         var recoveryBundle = root.credentialRecoveryBundleObject(parsed)
         if (recoveryBundle !== null) {
             row = root.credentialSummaryRow("Workspace",
@@ -4881,6 +4989,7 @@ ApplicationWindow {
     function workspaceImportInProgressStatus(status) {
         var normalized = String(status || "").trim().toLowerCase()
         return normalized === "importing workspace access..."
+            || normalized === "importing secure workspace access..."
             || normalized === "importing recovery kit..."
     }
 
@@ -5002,10 +5111,15 @@ ApplicationWindow {
             && root.credentialRecoveryBundleObject(parsedCredential) !== null
             && passphrase.length > 0
         var credentialJson = root.credentialJsonForImport(credentials, passphrase)
-        var accepted = passphrase.length > 0
-                && !root.credentialUsesWorkspaceKey(credentials)
-            ? chaftController.importRecoveryBundle(credentialJson, passphrase)
-            : chaftController.importWorkspaceKey(credentialJson)
+        var credentialKind = parsedCredential === null
+            ? ""
+            : String(parsedCredential.kind || "")
+        var accepted = credentialKind === "chaft.workspace-invite-response.v1"
+            ? chaftController.importWorkspaceInviteResponse(JSON.stringify(parsedCredential))
+            : (passphrase.length > 0
+                    && !root.credentialUsesWorkspaceKey(credentials)
+                ? chaftController.importRecoveryBundle(credentialJson, passphrase)
+                : chaftController.importWorkspaceKey(credentialJson))
         if (accepted) {
             root.pendingEntryDisplayName = workspaceEntryDialog.displayNameText.trim()
             root.pendingWorkspaceImportActive = true
@@ -5249,13 +5363,21 @@ ApplicationWindow {
     function keyTransferIsInvitePackage() {
         var parsed = root.keyTransferObject()
         return parsed !== null
-            && String(parsed.kind || "") === "chaft.workspace-invite.v1"
+            && (String(parsed.kind || "") === "chaft.workspace-invite.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite.v2")
+    }
+
+    function keyTransferIsInviteResponse() {
+        var parsed = root.keyTransferObject()
+        return parsed !== null
+            && String(parsed.kind || "") === "chaft.workspace-invite-response.v1"
     }
 
     function keyTransferIsJoinRequest() {
         var parsed = root.keyTransferObject()
         return parsed !== null
-            && String(parsed.kind || "") === "chaft.workspace-join-request.v1"
+            && (String(parsed.kind || "") === "chaft.workspace-join-request.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite-claim.v1")
             && parsed.deviceId !== undefined
     }
 
@@ -5304,6 +5426,9 @@ ApplicationWindow {
     function keyTransferLabel() {
         if (root.keyTransferIsInvitePackage()) {
             return "invite"
+        }
+        if (root.keyTransferIsInviteResponse()) {
+            return "secure access"
         }
         if (root.keyTransferIsJoinRequest()) {
             return "access request"
@@ -5393,7 +5518,8 @@ ApplicationWindow {
                 || kind === "chaft.workspace-card-file.v1") {
             return parsed
         }
-        if (kind === "chaft.workspace-invite.v1") {
+        if (kind === "chaft.workspace-invite.v1"
+                || kind === "chaft.workspace-invite.v2") {
             return root.inviteArtifactObject(parsed)
         }
         if (kind === "chaft.workspace-join-request.v1") {
@@ -5417,7 +5543,8 @@ ApplicationWindow {
         if (parsed === null) {
             return chaftController.keyTransferJson
         }
-        if (String(parsed.kind || "") === "chaft.workspace-invite.v1") {
+        if (String(parsed.kind || "") === "chaft.workspace-invite.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite.v2") {
             return root.artifactLink("chaft-invite:", root.inviteArtifactObject(parsed))
         }
         if (String(parsed.kind || "") === "chaft.workspace-join-request.v1") {
@@ -5653,6 +5780,11 @@ ApplicationWindow {
                 ? "Request link from " + sourceName
                 : "Request link"
         }
+        if (sourceType === "invite_claim") {
+            return sourceName.length > 0
+                ? "Secure invite from " + sourceName
+                : "Secure invite"
+        }
         return ""
     }
 
@@ -5862,7 +5994,8 @@ ApplicationWindow {
         }
         var parsed = root.parsedCredentialObject(artifactText)
         return parsed !== null
-            && String(parsed.kind || "") === "chaft.workspace-join-request.v1"
+            && (String(parsed.kind || "") === "chaft.workspace-join-request.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite-claim.v1")
             && String(parsed.deviceId || "").trim().length > 0
             ? parsed
             : null
@@ -6703,7 +6836,8 @@ ApplicationWindow {
                 root.openSaveKeyTransferDialog("recovery kit")
             }
             if (chaftController.keyTransferFromJoinResponseInbox
-                    && root.keyTransferIsInvitePackage()) {
+                    && (root.keyTransferIsInvitePackage()
+                        || root.keyTransferIsInviteResponse())) {
                 root.openReceivedApprovalInvite(false)
             }
         }
@@ -6785,6 +6919,7 @@ ApplicationWindow {
         id: postCreateExportDialog
         property bool advancedOpen: false
         property bool openRecoverySaveWhenReady: false
+        property bool recoverySetupOpen: false
 
         modal: true
         width: Math.min(root.width - 48, 560)
@@ -6800,7 +6935,7 @@ ApplicationWindow {
             Text {
                 Layout.fillWidth: true
                 text: (root.workspaceSnapshot.name || "Your workspace")
-                    + " is ready. Start chatting now. Save a private recovery kit so you can restore access later."
+                    + " is ready. Invite people now or start chatting."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeSm
                 wrapMode: Text.WordWrap
@@ -6808,6 +6943,7 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
+                visible: false
                 implicitHeight: postCreateChecklist.implicitHeight + Tokens.space3 * 2
                 radius: Tokens.radiusSm
                 color: Tokens.surfaceRaised
@@ -6883,8 +7019,9 @@ ApplicationWindow {
             LabeledField {
                 id: postCreateRecoveryPassphraseField
                 Layout.fillWidth: true
-                visible: !(chaftController.keyTransferJson.length > 0
-                    && root.keyTransferIsRecoveryBundle())
+                visible: postCreateExportDialog.recoverySetupOpen
+                    && !(chaftController.keyTransferJson.length > 0
+                        && root.keyTransferIsRecoveryBundle())
                 label: "Recovery passphrase"
                 placeholderText: "Choose a passphrase for your recovery kit"
                 echoMode: TextInput.Password
@@ -6905,16 +7042,26 @@ ApplicationWindow {
                     text: chaftController.keyTransferJson.length > 0
                         && root.keyTransferIsRecoveryBundle()
                         ? "Save recovery kit"
-                        : "Create recovery kit"
+                        : (postCreateExportDialog.recoverySetupOpen
+                            ? "Create recovery kit"
+                            : "Recovery kit")
                     enabled: root.runtimeWorkReady
                         && !chaftController.keyTransferInFlight
                         && ((chaftController.keyTransferJson.length > 0
                                 && root.keyTransferIsRecoveryBundle())
+                            || !postCreateExportDialog.recoverySetupOpen
                             || postCreateRecoveryPassphraseField.text.trim().length > 0)
                     onClicked: {
                         if (chaftController.keyTransferJson.length > 0
                                 && root.keyTransferIsRecoveryBundle()) {
                             root.openSaveKeyTransferDialog("recovery kit")
+                            return
+                        }
+                        if (!postCreateExportDialog.recoverySetupOpen) {
+                            postCreateExportDialog.recoverySetupOpen = true
+                            Qt.callLater(function() {
+                                postCreateRecoveryPassphraseField.forceFieldFocus()
+                            })
                             return
                         }
                         postCreateExportDialog.openRecoverySaveWhenReady =
@@ -6925,13 +7072,24 @@ ApplicationWindow {
 
                 Button {
                     Layout.fillWidth: true
-                    text: "Invite teammates"
+                    text: "Invite people"
                     enabled: root.runtimeWorkReady
                     onClicked: {
                         postCreateExportDialog.close()
                         root.openPeopleAccess(true)
                     }
                 }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: postCreateExportDialog.recoverySetupOpen
+                    || (chaftController.keyTransferJson.length > 0
+                        && root.keyTransferIsRecoveryBundle())
+                text: "Store recovery kits privately and keep the passphrase separate."
+                color: Tokens.textMuted
+                font.pixelSize: Tokens.fontSizeXs
+                wrapMode: Text.WordWrap
             }
 
             Button {
@@ -6986,6 +7144,7 @@ ApplicationWindow {
             postCreateRecoveryPassphraseField.text = ""
             postCreateExportDialog.advancedOpen = false
             postCreateExportDialog.openRecoverySaveWhenReady = false
+            postCreateExportDialog.recoverySetupOpen = false
         }
     }
 
@@ -7273,8 +7432,8 @@ ApplicationWindow {
                 parent: addWorkspaceButton
                 x: addWorkspaceButton.width + Tokens.space2
                 y: Math.min(0, addWorkspaceButton.height - implicitHeight)
-                width: 286
-                padding: Tokens.space3
+                width: 252
+                padding: Tokens.space2
                 modal: true
                 focus: true
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -7300,6 +7459,7 @@ ApplicationWindow {
 
                     Text {
                         Layout.fillWidth: true
+                        visible: false
                         text: chaftController.hasRuntimeWorkspace
                             ? "Join with an invite, request link, or access file; create another workspace; or restore from a recovery kit."
                             : "Open an invite, request link, or access file; create a workspace; restore from a recovery kit; or explore a demo."
@@ -7350,6 +7510,7 @@ ApplicationWindow {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    visible: false
                                     text: "Open an invite or access file"
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
@@ -7402,6 +7563,7 @@ ApplicationWindow {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    visible: false
                                     text: "Start a private space, then invite teammates any time"
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
@@ -7454,6 +7616,7 @@ ApplicationWindow {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    visible: false
                                     text: "Restore access with a saved recovery kit"
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
@@ -7468,6 +7631,7 @@ ApplicationWindow {
                         id: addWorkspaceDemoButton
                         Layout.fillWidth: true
                         text: "Explore demo workspace"
+                        visible: !chaftController.hasRuntimeWorkspace
                         enabled: !chaftController.hasRuntimeWorkspace
                         Accessible.name: text
                         Accessible.description: "Preview Chaft without saving or sharing anything"
@@ -8041,6 +8205,7 @@ ApplicationWindow {
                             onClosed: {
                                 channelDetailsNameField.text = ""
                                 channelDetailsTopicField.text = ""
+                                root.channelAccessToolsOpen = false
                             }
 
                             function saveFromForm() {
@@ -8151,15 +8316,30 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: Tokens.space2
 
-                                    Text {
+                                    RowLayout {
                                         Layout.fillWidth: true
-                                        text: "Private access"
-                                        color: Tokens.textStrong
-                                        font.pixelSize: Tokens.fontSizeSm
-                                        font.weight: Font.DemiBold
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "People with access"
+                                            color: Tokens.textStrong
+                                            font.pixelSize: Tokens.fontSizeSm
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Button {
+                                            text: root.channelAccessToolsOpen
+                                                ? "Hide history"
+                                                : "History & security"
+                                            checkable: true
+                                            checked: root.channelAccessToolsOpen
+                                            onToggled: root.channelAccessToolsOpen = checked
+                                            Accessible.name: text
+                                        }
                                     }
 
                                     Rectangle {
+                                        visible: root.channelAccessToolsOpen
                                         Layout.fillWidth: true
                                         implicitHeight: privateRoomReadabilityLayout.implicitHeight
                                             + Tokens.space3 * 2
@@ -8269,6 +8449,7 @@ ApplicationWindow {
                                     }
 
                                     ColumnLayout {
+                                        visible: root.channelAccessToolsOpen
                                         Layout.fillWidth: true
                                         spacing: 4
 
@@ -8341,7 +8522,8 @@ ApplicationWindow {
                                     }
 
                                     RowLayout {
-                                        visible: !root.privateRoomHistoryRepairFailedVisible()
+                                        visible: root.channelAccessToolsOpen
+                                            && !root.privateRoomHistoryRepairFailedVisible()
                                         Layout.fillWidth: true
                                         spacing: Tokens.space2
 
@@ -8381,6 +8563,7 @@ ApplicationWindow {
                                     }
 
                                     RowLayout {
+                                        visible: root.channelAccessToolsOpen
                                         Layout.fillWidth: true
                                         spacing: Tokens.space2
 
@@ -8541,36 +8724,41 @@ ApplicationWindow {
                                 }
 
                                 Button {
+                                    id: roomActionsButton
                                     visible: !root.selectedChannelDirectMessage
-                                    Layout.fillWidth: true
-                                    text: root.selectedChannelArchived
-                                        ? "Restore room"
-                                        : "Archive room"
-                                    Accessible.name: root.selectedChannelArchived
-                                        ? "Restore room"
-                                        : "Archive room"
-                                    onClicked: {
-                                        if (root.toggleSelectedChannelArchived()) {
-                                            channelDetailsPopup.close()
+                                    Layout.alignment: Qt.AlignLeft
+                                    text: "Room actions"
+                                    Accessible.name: "Room actions"
+                                    onClicked: roomActionsMenu.open()
+
+                                    Menu {
+                                        id: roomActionsMenu
+                                        y: roomActionsButton.height
+
+                                        MenuItem {
+                                            text: root.selectedChannelArchived
+                                                ? "Restore room"
+                                                : "Archive room"
+                                            onTriggered: {
+                                                if (root.toggleSelectedChannelArchived()) {
+                                                    channelDetailsPopup.close()
+                                                }
+                                            }
+                                        }
+
+                                        MenuSeparator {
+                                            visible: root.selectedChannelCanLeave
+                                        }
+
+                                        MenuItem {
+                                            visible: root.selectedChannelCanLeave
+                                            text: "Leave room"
+                                            onTriggered: {
+                                                channelDetailsPopup.close()
+                                                root.confirmLeaveSelectedPrivateRoom()
+                                            }
                                         }
                                     }
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: root.selectedChannelArchived
-                                        ? "Move this room back to Rooms"
-                                        : "Move this room out of the active Rooms list"
-                                }
-
-                                Button {
-                                    visible: root.selectedChannelCanLeave
-                                    Layout.fillWidth: true
-                                    text: "Leave room"
-                                    Accessible.name: "Leave private room"
-                                    onClicked: {
-                                        channelDetailsPopup.close()
-                                        root.confirmLeaveSelectedPrivateRoom()
-                                    }
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "Remove your access to this private room"
                                 }
 
                                 RowLayout {
@@ -8612,6 +8800,7 @@ ApplicationWindow {
                                 spacing: 8
 
                                 Button {
+                                    visible: root.syncAdvancedToolsOpen
                                     enabled: !chaftController.peerHostingInFlight
                                         && (chaftController.peerHosting || root.runtimeWorkReady)
                                     text: chaftController.peerHosting ? "Stop" : "Make reachable"
@@ -8633,7 +8822,8 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    visible: !chaftController.peerHosting
+                                    visible: root.syncAdvancedToolsOpen
+                                        && !chaftController.peerHosting
                                     text: "Use relay"
                                     enabled: root.runtimeWorkReady
                                         && !chaftController.peerHostingInFlight
@@ -8643,7 +8833,8 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    visible: !chaftController.peerHosting
+                                    visible: root.syncAdvancedToolsOpen
+                                        && !chaftController.peerHosting
                                     text: root.customReachableAddressOpen
                                         ? "Hide advanced"
                                         : "Advanced address"
@@ -8656,7 +8847,9 @@ ApplicationWindow {
 
                                 TextField {
                                     id: localPeerListenField
-                                    visible: root.customReachableAddressOpen && !chaftController.peerHosting
+                                    visible: root.syncAdvancedToolsOpen
+                                        && root.customReachableAddressOpen
+                                        && !chaftController.peerHosting
                                     width: 132
                                     enabled: !chaftController.peerHostingInFlight
                                     placeholderText: "Optional address"
@@ -8704,6 +8897,7 @@ ApplicationWindow {
 
                                 StatusChip {
                                     visible: root.storageHealthKnown
+                                        && (root.storageHealthHasIssue || root.syncAdvancedToolsOpen)
                                     text: root.storageHealthStatusText()
                                     description: root.storageHealthDetailText()
                                     warning: root.storageHealthHasIssue
@@ -8742,6 +8936,8 @@ ApplicationWindow {
                                 }
 
                                 PeerRouteChip {
+                                    visible: root.syncAdvancedToolsOpen
+                                        || root.activePeerRouteIsWarning()
                                     label: root.activePeerRouteLabel()
                                     detail: root.activePeerRouteDetail()
                                     warning: root.activePeerRouteIsWarning()
@@ -8764,49 +8960,73 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
-                                        && root.preferredSyncPeerEndpoint().length > 0
-                                    text: "Share"
-                                    onClicked: root.publishWorkspaceToPreferredPeer()
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "Share history with this teammate"
+                                    id: syncMaintenanceButton
+                                    visible: root.syncAdvancedToolsOpen
+                                    text: "Maintenance"
+                                    Accessible.name: "Sync maintenance actions"
+                                    onClicked: syncMaintenanceMenu.open()
+
+                                    Menu {
+                                        id: syncMaintenanceMenu
+                                        y: syncMaintenanceButton.height
+
+                                        MenuItem {
+                                            text: "Share history"
+                                            enabled: root.runtimeWorkReady
+                                                && !chaftController.syncInFlight
+                                                && root.preferredSyncPeerEndpoint().length > 0
+                                            onTriggered: root.publishWorkspaceToPreferredPeer()
+                                        }
+
+                                        MenuItem {
+                                            text: "Back up now"
+                                            enabled: root.runtimeWorkReady
+                                                && !chaftController.syncInFlight
+                                                && root.preferredManualBackupPeerEndpoint().length > 0
+                                            onTriggered: root.backupWorkspaceToPreferredPeer()
+                                        }
+
+                                        MenuItem {
+                                            text: "Retry files"
+                                            enabled: root.runtimeWorkReady
+                                                && !chaftController.syncInFlight
+                                                && (root.preferredRetryPeerEndpoint().length > 0
+                                                    || (chaftController.backupPeerEndpoints || []).length > 0)
+                                            onTriggered: root.retryBlobTransfersWithPreferredPeers()
+                                        }
+
+                                        MenuItem {
+                                            text: "Fetch history"
+                                            enabled: root.runtimeWorkReady
+                                                && !chaftController.syncInFlight
+                                                && root.preferredSyncPeerEndpoint().length > 0
+                                            onTriggered: root.pullWorkspaceFromPreferredPeer()
+                                        }
+
+                                        MenuSeparator {}
+
+                                        MenuItem {
+                                            text: "Clean up local files"
+                                            enabled: root.runtimeWorkReady
+                                                && !chaftController.syncInFlight
+                                            onTriggered: chaftController.pruneBlobs()
+                                        }
+                                    }
                                 }
 
                                 Button {
-                                    enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
-                                        && root.preferredManualBackupPeerEndpoint().length > 0
-                                    text: "Back up"
-                                    onClicked: root.backupWorkspaceToPreferredPeer()
-                                }
-
-                                Button {
-                                    enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
-                                        && (root.preferredRetryPeerEndpoint().length > 0
-                                            || (chaftController.backupPeerEndpoints || []).length > 0)
-                                    text: "Retry files"
-                                    onClicked: root.retryBlobTransfersWithPreferredPeers()
-                                }
-
-                                Button {
-                                    enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
-                                        && root.preferredSyncPeerEndpoint().length > 0
-                                    text: "Fetch"
-                                    onClicked: root.pullWorkspaceFromPreferredPeer()
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "Fetch history from this teammate"
-                                }
-
-                                Button {
-                                    enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
-                                    text: "Clean up"
-                                    onClicked: chaftController.pruneBlobs()
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "Remove local file data Chaft no longer needs"
+                                    text: root.syncAdvancedToolsOpen
+                                        ? "Hide options"
+                                        : "More sync options"
+                                    checkable: true
+                                    checked: root.syncAdvancedToolsOpen
+                                    onToggled: {
+                                        root.syncAdvancedToolsOpen = checked
+                                        if (!checked) {
+                                            root.customReachableAddressOpen = false
+                                        }
+                                    }
+                                    Accessible.name: text
                                 }
                             }
                         }
@@ -10272,9 +10492,16 @@ ApplicationWindow {
                             }
                         }
 
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Manage people"
+                            onClicked: root.openPeopleAccess(false)
+                        }
+
                         ListView {
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.min(320, contentHeight)
+                            visible: false
                             clip: true
                             interactive: contentHeight > height
                             spacing: 6
@@ -10325,7 +10552,7 @@ ApplicationWindow {
 
                         Button {
                             Layout.fillWidth: true
-                            visible: root.memberCount > root.members.length
+                            visible: false
                             text: "Load more"
                             enabled: root.runtimeWorkReady
                             onClicked: chaftController.loadMoreMembers()

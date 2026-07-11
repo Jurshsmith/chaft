@@ -40,7 +40,7 @@ Rectangle {
     }
 
     width: parent ? parent.width : 320
-    height: canMessage || showRemoveAction ? 112 : (showRoleEditor ? 84 : 64)
+    height: 58
     radius: Tokens.radiusSm
     color: localDevice ? Tokens.secureSurface : Tokens.surfaceBase
     border.color: Tokens.borderSubtle
@@ -89,111 +89,81 @@ Rectangle {
                 }
 
                 Text {
-                    visible: !root.showRoleEditor
-                    text: root.roleLabel
+                    visible: root.localDevice
+                    text: "You"
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
-                    font.weight: Font.DemiBold
-                }
-
-                ComboBox {
-                    visible: root.showRoleEditor
-                    enabled: root.canChangeRole
-                    Layout.preferredWidth: 94
-                    Layout.preferredHeight: 28
-                    model: root.roleOptions
-                    textRole: "label"
-                    valueRole: "role"
-                    currentIndex: root.roleOptionIndex(root.roleValue)
-                    Accessible.name: "Member role"
-                    Accessible.description: enabled ? root.displayLabel : root.roleUnavailableReason
-                    onActivated: function (index) {
-                        var row = root.roleOptions[index] || ({})
-                        var nextRole = String(row.role || "").trim().toLowerCase()
-                        if (nextRole.length > 0 && nextRole !== String(root.roleValue || "").trim().toLowerCase()) {
-                            root.roleChangeRequested(root.deviceId, nextRole)
-                        }
-                    }
-                    ToolTip.visible: hovered && !enabled
-                    ToolTip.text: root.roleUnavailableReason
                 }
             }
 
-            RowLayout {
+            Text {
                 Layout.fillWidth: true
-                spacing: 4
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 96
-                    Layout.preferredWidth: 132
-                    Layout.preferredHeight: 22
-                    radius: Tokens.radiusXs
-                    color: Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.06)
-                    border.width: 1
-                    border.color: Tokens.borderSubtle
-
-                    Text {
-                        id: deviceChipLabel
-                        anchors.fill: parent
-                        anchors.leftMargin: 6
-                        anchors.rightMargin: 6
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Code " + root.shortDeviceLabel
-                        color: Tokens.textMuted
-                        font.family: Tokens.fontMono
-                        font.pixelSize: Tokens.fontSizeXs
-                        elide: Text.ElideMiddle
-                    }
-                }
-
-                Button {
-                    text: "Copy"
-                    Layout.preferredWidth: 64
-                    Layout.preferredHeight: 24
-                    Accessible.name: "Copy support code"
-                    Accessible.description: root.shortDeviceLabel
-                    onClicked: root.copyDeviceRequested(root.deviceId)
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Copy support code"
-                }
-
+                visible: !root.showRoleEditor
+                text: root.roleLabel
+                color: Tokens.textMuted
+                font.pixelSize: Tokens.fontSizeXs
+                elide: Text.ElideRight
             }
+        }
 
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.canMessage || root.showRemoveAction
-                spacing: 6
-
-                Item {
-                    Layout.fillWidth: true
+        ComboBox {
+            visible: root.showRoleEditor
+            enabled: root.canChangeRole
+            Layout.preferredWidth: 104
+            Layout.preferredHeight: 30
+            model: root.roleOptions
+            textRole: "label"
+            valueRole: "role"
+            currentIndex: root.roleOptionIndex(root.roleValue)
+            Accessible.name: "Role for " + root.displayLabel
+            Accessible.description: enabled ? root.displayLabel : root.roleUnavailableReason
+            onActivated: function (index) {
+                var row = root.roleOptions[index] || ({})
+                var nextRole = String(row.role || "").trim().toLowerCase()
+                if (nextRole.length > 0 && nextRole !== String(root.roleValue || "").trim().toLowerCase()) {
+                    root.roleChangeRequested(root.deviceId, nextRole)
                 }
+            }
+            ToolTip.visible: hovered && !enabled
+            ToolTip.text: root.roleUnavailableReason
+        }
 
-                Button {
+        Button {
+            id: actionsButton
+            visible: !root.localDevice
+                && (root.canMessage || root.showRemoveAction || root.deviceId.length > 0)
+            text: "⋯"
+            Layout.preferredWidth: 34
+            Layout.preferredHeight: 30
+            Accessible.name: "Actions for " + root.displayLabel
+            onClicked: memberActions.open()
+            ToolTip.visible: hovered
+            ToolTip.text: Accessible.name
+
+            Menu {
+                id: memberActions
+                y: actionsButton.height
+
+                MenuItem {
                     text: "Message"
                     visible: root.canMessage
-                    Layout.preferredWidth: 82
-                    Layout.preferredHeight: 24
-                    Accessible.name: "Message " + root.displayLabel
-                    Accessible.description: "Start direct message with " + root.displayLabel
-                    onClicked: root.messageRequested(root.deviceId, root.displayLabel)
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Start direct message"
+                    onTriggered: root.messageRequested(root.deviceId, root.displayLabel)
                 }
 
-                Button {
-                    text: "Remove"
+                MenuItem {
+                    text: "Copy support code"
+                    onTriggered: root.copyDeviceRequested(root.deviceId)
+                }
+
+                MenuSeparator {
+                    visible: root.showRemoveAction
+                }
+
+                MenuItem {
+                    text: "Remove from workspace"
                     visible: root.showRemoveAction
                     enabled: root.canRemove
-                    Layout.preferredWidth: 82
-                    Layout.preferredHeight: 24
-                    Accessible.name: "Remove member"
-                    Accessible.description: enabled ? root.displayLabel : root.removeUnavailableReason
-                    onClicked: root.removeRequested(root.deviceId, root.displayLabel)
-                    ToolTip.visible: hovered
-                    ToolTip.text: enabled
-                        ? "Remove " + root.displayLabel + " from this workspace"
-                        : root.removeUnavailableReason
+                    onTriggered: root.removeRequested(root.deviceId, root.displayLabel)
                 }
             }
         }

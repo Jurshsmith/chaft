@@ -10,6 +10,7 @@ RowLayout {
     readonly property string supportDetailText: endpoint.trim().length > 0
         ? "Support detail: " + endpoint
         : "No backup address"
+    signal copyRequested(string endpoint)
     signal removeRequested(string endpoint)
 
     Layout.fillWidth: true
@@ -25,7 +26,7 @@ RowLayout {
 
         Text {
             Layout.fillWidth: true
-            text: "Backup address"
+            text: "Backup destination"
             color: Tokens.textStrong
             font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
@@ -34,6 +35,7 @@ RowLayout {
 
         Text {
             Layout.fillWidth: true
+            visible: false
             text: root.supportDetailText
             color: Tokens.textMuted
             font.family: Tokens.fontMono
@@ -43,7 +45,9 @@ RowLayout {
 
         Text {
             Layout.fillWidth: true
-            text: root.statusText
+            text: root.statusText.length > 0
+                ? root.statusText.charAt(0).toUpperCase() + root.statusText.slice(1)
+                : ""
             color: Tokens.textMuted
             opacity: 0.72
             font.pixelSize: Tokens.fontSizeXs
@@ -52,10 +56,24 @@ RowLayout {
     }
 
     Button {
-        text: "Remove"
-        implicitWidth: 74
-        Accessible.name: "Remove backup address"
-        Accessible.description: "Remove this saved backup address"
-        onClicked: root.removeRequested(root.endpoint)
+        text: "⋯"
+        implicitWidth: 42
+        Accessible.name: "More backup destination actions"
+        onClicked: backupActionsMenu.open()
+
+        Menu {
+            id: backupActionsMenu
+            y: parent.height
+
+            MenuItem {
+                text: "Copy support address"
+                onTriggered: root.copyRequested(root.endpoint)
+            }
+
+            MenuItem {
+                text: "Remove destination"
+                onTriggered: root.removeRequested(root.endpoint)
+            }
+        }
     }
 }

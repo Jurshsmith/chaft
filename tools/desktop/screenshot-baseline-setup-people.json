@@ -1,0 +1,10 @@
+{
+  "description": "People and Access with the member list and primary workspace access actions visible.",
+  "minBytes": 32768,
+  "minDistinctSampledPixels": 8,
+  "minHeight": 500,
+  "minLuminanceStddev": 4.0,
+  "minQuadrantLuminanceSpread": 1.0,
+  "minWidth": 800,
+  "version": 1
+}

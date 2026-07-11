@@ -53,23 +53,40 @@ Dialog {
     readonly property var workspaceInvite: root.credentialKind === "chaft.workspace-invite.v1"
         ? root.credentialObject
         : null
+    readonly property var claimableInvite: root.credentialKind === "chaft.workspace-invite.v2"
+        ? root.credentialObject
+        : null
+    readonly property var workspaceInviteResponse:
+        root.credentialKind === "chaft.workspace-invite-response.v1"
+            ? root.credentialObject
+            : null
+    readonly property bool secureInviteClaim: root.claimableInvite !== null
+    readonly property bool secureInviteExpired: root.secureInviteClaim
+        && root.app
+        && root.app.inviteExpired(root.claimableInvite.expiresAt)
     readonly property string credentialEmbeddedPeerEndpoint: root.workspaceInvite !== null
         ? String(root.workspaceInvite.peerEndpoint || "").trim()
-        : ""
+        : (root.claimableInvite !== null
+            ? String(root.claimableInvite.peerEndpoint || "").trim()
+            : "")
     readonly property bool approvalInviteNeedsRequest: root.workspaceInvite !== null
         && root.app !== null
         && root.app.inviteApprovalBlocksJoin(root.workspaceInvite.approvalPolicy)
     readonly property bool credentialTextSummaryVisible: root.credentialSummaryVisible
         && (root.restoreCredentialSelected
             || root.workspaceCard !== null
-            || root.workspaceInvite !== null)
+            || root.workspaceInvite !== null
+            || root.claimableInvite !== null
+            || root.workspaceInviteResponse !== null)
     readonly property var workspaceCard: root.app
         ? root.app.workspaceCardObjectFromCredentials(credentialsArea.text)
         : null
-    readonly property bool workspaceCardAllowsRequests: root.workspaceCard === null
-        || (root.app && root.app.workspaceAccessPolicyAllowsRequests(root.workspaceCard.accessPolicy))
+    readonly property bool workspaceCardAllowsRequests: !root.secureInviteExpired
+        && (root.workspaceCard === null
+            || (root.app && root.app.workspaceAccessPolicyAllowsRequests(root.workspaceCard.accessPolicy)))
     readonly property bool joinRequestHasContext: root.workspaceCard !== null
         || root.approvalInviteNeedsRequest
+        || root.secureInviteClaim
     readonly property bool requestAccessContext: !root.restoreMode
         && !root.joinRequestPrepared
         && root.joinRequestHasContext
@@ -196,6 +213,12 @@ Dialog {
         if (root.approvalInviteNeedsRequest) {
             return "Approval invite selected"
         }
+        if (root.secureInviteClaim) {
+            return "Secure invite selected"
+        }
+        if (root.workspaceInviteResponse !== null) {
+            return "Secure approval received"
+        }
         if (root.workspaceInvite !== null
                 && root.app.workspaceEntryIntent === "received-approval") {
             return "Approval received"
@@ -209,6 +232,12 @@ Dialog {
         }
         if (root.workspaceCard !== null) {
             return "Open another request link or drop one here to replace it."
+        }
+        if (root.secureInviteClaim) {
+            return "Review this invite, then claim it from this device."
+        }
+        if (root.workspaceInviteResponse !== null) {
+            return "Review this encrypted approval, then join the workspace."
         }
         if (root.workspaceInvite !== null
                 && root.app.workspaceEntryIntent === "received-approval") {
@@ -284,8 +313,11 @@ Dialog {
         if (root.workspaceCard !== null) {
             return String(root.workspaceCard.workspaceId || "")
         }
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.workspaceId || "")
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.workspaceId || "")
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.workspaceId || "")
             : ""
     }
 
@@ -293,8 +325,11 @@ Dialog {
         if (root.workspaceCard !== null) {
             return String(root.workspaceCard.workspaceName || "")
         }
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.workspaceName || "")
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.workspaceName || "")
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.workspaceName || "")
             : ""
     }
 
@@ -312,6 +347,12 @@ Dialog {
                 return root.app.shortAccessIdentifier(workspaceId)
             }
         }
+        if (root.secureInviteClaim && root.app) {
+            var claimWorkspaceName = String(root.claimableInvite.workspaceName || "").trim()
+            return claimWorkspaceName.length > 0
+                ? claimWorkspaceName
+                : root.app.shortAccessIdentifier(root.claimableInvite.workspaceId)
+        }
         return "Workspace admin"
     }
 
@@ -319,8 +360,11 @@ Dialog {
         if (root.workspaceCard !== null) {
             return String(root.workspaceCard.adminDeviceId || "").trim()
         }
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.inviterDeviceId || "").trim()
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.inviterDeviceId || "").trim()
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.inviterDeviceId || "").trim()
             : ""
     }
 
@@ -328,8 +372,11 @@ Dialog {
         if (root.workspaceCard !== null) {
             return String(root.workspaceCard.adminDisplayName || "").trim()
         }
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.inviterDisplayName || "").trim()
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.inviterDisplayName || "").trim()
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.inviterDisplayName || "").trim()
             : ""
     }
 
@@ -337,12 +384,18 @@ Dialog {
         if (root.workspaceCard !== null) {
             return String(root.workspaceCard.peerEndpoint || "").trim()
         }
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.peerEndpoint || "").trim()
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.peerEndpoint || "").trim()
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.peerEndpoint || "").trim()
             : ""
     }
 
     function joinRequestSourceType() {
+        if (root.secureInviteClaim) {
+            return "invite_claim"
+        }
         if (root.approvalInviteNeedsRequest) {
             return "approval_invite"
         }
@@ -353,12 +406,18 @@ Dialog {
     }
 
     function joinRequestSourceInviteId() {
-        return root.approvalInviteNeedsRequest
-            ? String(root.workspaceInvite.inviteId || "").trim()
+        if (root.approvalInviteNeedsRequest) {
+            return String(root.workspaceInvite.inviteId || "").trim()
+        }
+        return root.secureInviteClaim
+            ? String(root.claimableInvite.inviteId || "").trim()
             : ""
     }
 
     function joinRequestSourceDisplayName() {
+        if (root.secureInviteClaim) {
+            return String(root.claimableInvite.inviterDisplayName || "").trim()
+        }
         if (root.approvalInviteNeedsRequest) {
             return String(root.workspaceInvite.inviterDisplayName || "").trim()
         }
@@ -369,6 +428,9 @@ Dialog {
     }
 
     function joinRequestSourceApprovalPolicy() {
+        if (root.secureInviteClaim) {
+            return "preapproved"
+        }
         return root.approvalInviteNeedsRequest
             ? String(root.workspaceInvite.approvalPolicy || "").trim()
             : ""
@@ -388,10 +450,13 @@ Dialog {
 
     function joinRequestNextStepLabel() {
         if (root.joinRequestPreparedAction === "sending") {
-            return "Sending to " + root.joinRequestDeliveryLabel()
+            return (root.secureInviteClaim ? "Claiming with " : "Sending to ")
+                + root.joinRequestDeliveryLabel()
         }
         if (root.joinRequestPreparedAction === "sent") {
-            return "Wait for an invite from " + root.joinRequestDeliveryLabel()
+            return root.secureInviteClaim
+                ? "Wait for encrypted access from " + root.joinRequestDeliveryLabel()
+                : "Wait for an invite from " + root.joinRequestDeliveryLabel()
         }
         if (root.joinRequestPreparedAction === "send-failed") {
             return "Try again or copy the request"
@@ -417,10 +482,13 @@ Dialog {
     function joinRequestPreparedMessage() {
         var target = root.joinRequestDeliveryLabel()
         if (root.joinRequestPreparedAction === "sending") {
-            return "Sending your request to " + target + ". Keep this window open until delivery finishes."
+            return (root.secureInviteClaim ? "Claiming your invite with " : "Sending your request to ")
+                + target + ". Keep this window open until delivery finishes."
         }
         if (root.joinRequestPreparedAction === "sent") {
-            return "Request sent to " + target + ". Wait for their invite, then open it here."
+            return root.secureInviteClaim
+                ? "Invite claimed with " + target + ". Chaft will check for encrypted access."
+                : "Request sent to " + target + ". Wait for their invite, then open it here."
         }
         if (root.joinRequestPreparedAction === "send-failed") {
             return "Could not reach " + target + ". Copy the request link or save the file, then send it to them."
@@ -455,10 +523,10 @@ Dialog {
 
     function joinRequestPreparedTitle() {
         if (root.joinRequestPreparedAction === "sending") {
-            return "Sending request"
+            return root.secureInviteClaim ? "Claiming invite" : "Sending request"
         }
         if (root.joinRequestPreparedAction === "sent") {
-            return "Waiting for approval"
+            return root.secureInviteClaim ? "Waiting for secure access" : "Waiting for approval"
         }
         if (root.joinRequestPreparedAction === "send-failed") {
             return "Request not sent"
@@ -480,7 +548,12 @@ Dialog {
         if (!root.workspaceCardAllowsRequests) {
             return false
         }
-        if (!chaftController.stageWorkspaceJoinRequest(
+        var prepared = root.secureInviteClaim
+            ? chaftController.prepareWorkspaceInviteClaim(
+                JSON.stringify(root.claimableInvite),
+                displayNameField.text,
+                joinRequestNoteArea.text)
+            : chaftController.stageWorkspaceJoinRequest(
                     displayNameField.text,
                     joinRequestNoteArea.text,
                     root.joinRequestWorkspaceId(),
@@ -491,7 +564,8 @@ Dialog {
                     root.joinRequestSourceType(),
                     root.joinRequestSourceInviteId(),
                     root.joinRequestSourceDisplayName(),
-                    root.joinRequestSourceApprovalPolicy())) {
+                    root.joinRequestSourceApprovalPolicy())
+        if (!prepared) {
             return false
         }
         root.joinRequestPrepared = true
@@ -637,7 +711,7 @@ Dialog {
                             ? "Start a private workspace for your team here."
                             : (root.restoreMode
                                 ? "Restore access with a saved recovery kit."
-                                : "Open an invite, request link, recovery kit, or access file.")
+                                : "Open an invite, request link, or access file.")
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeSm
                     wrapMode: Text.WordWrap
@@ -702,9 +776,9 @@ Dialog {
                         Layout.fillWidth: true
                         text: root.restoreMode
                             ? "Recovery kit"
-                            : (root.workspaceCard !== null
+                                : (root.workspaceCard !== null
                                 ? "Request link"
-                                : "Invite, request link, recovery kit, or access file")
+                                : "Invite or request link")
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeXs
                         font.weight: Font.DemiBold
@@ -717,7 +791,7 @@ Dialog {
                         Accessible.name: text
                         Accessible.description: root.restoreMode
                             ? "Choose a recovery kit file"
-                            : "Choose an invite, request link, recovery kit, or access file"
+                            : "Choose an invite, request link, or access file"
                         onClicked: root.app.openWorkspaceCredentialFile()
                     }
                 }
@@ -725,6 +799,8 @@ Dialog {
                 Item {
                     id: credentialsFrame
                     Layout.fillWidth: true
+                    visible: !root.credentialTextSummaryVisible
+                        || root.credentialSummary.warning
                     Layout.preferredHeight: root.credentialSummaryVisible ? 104 : 132
 
                     TextArea {
@@ -733,8 +809,10 @@ Dialog {
                         visible: !root.credentialTextSummaryVisible
                         placeholderText: root.restoreMode
                             ? "Paste a recovery kit"
-                            : "Paste an invite, request link, recovery kit, or access file"
-                        Accessible.name: "Workspace invite, request link, recovery kit, or access file"
+                            : "Paste an invite or request link"
+                        Accessible.name: root.restoreMode
+                            ? "Recovery kit"
+                            : "Workspace invite or request link"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
                         font.family: Tokens.fontMono
@@ -814,7 +892,7 @@ Dialog {
                             width: parent.width - Tokens.space4 * 2
                             text: root.restoreMode
                                 ? "Drop recovery kit"
-                                : "Drop invite, request link, recovery kit, or access file"
+                                : "Drop invite, request link, or access file"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
                             font.weight: Font.DemiBold
@@ -828,6 +906,7 @@ Dialog {
                     id: credentialSummaryCard
                     Layout.fillWidth: true
                     visible: root.credentialSummaryVisible
+                        && !root.joinRequestPrepared
                     implicitHeight: credentialSummaryColumn.implicitHeight + Tokens.space2 * 2
                     radius: Tokens.radiusSm
                     color: root.credentialSummary.warning
@@ -907,7 +986,7 @@ Dialog {
                     id: peerEndpointField
                     Layout.fillWidth: true
                     visible: root.peerEndpointInputVisible
-                    label: "Teammate address — optional, you can fetch history later"
+                    label: "Teammate address (optional)"
                     placeholderText: "Paste an address from your teammate"
                     onAccepted: root.app.submitWorkspaceJoin()
                 }
@@ -925,8 +1004,7 @@ Dialog {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    visible: root.restoreMode
-                        && root.credentialImportFailureTitle.length === 0
+                    visible: false
                     implicitHeight: restoreOutcomeColumn.implicitHeight + Tokens.space3 * 2
                     radius: Tokens.radiusSm
                     color: Tokens.surfaceRaised
@@ -1060,7 +1138,8 @@ Dialog {
                     visible: !root.restoreMode
                         && (!root.credentialSummaryVisible
                             || root.workspaceCard !== null
-                            || root.approvalInviteNeedsRequest)
+                            || root.approvalInviteNeedsRequest
+                            || root.secureInviteClaim)
                     implicitHeight: joinRequestColumn.implicitHeight + Tokens.space3 * 2
                     radius: Tokens.radiusSm
                     color: Tokens.surfaceRaised
@@ -1084,7 +1163,7 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "No invite yet?"
+                                text: "Need an invite?"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
@@ -1093,7 +1172,7 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Ask an owner or admin for a Chaft invite. If they shared a request link, open it here to request access."
+                                text: "Ask an owner or admin, or open a request link to ask for access."
                                 color: Tokens.textMuted
                                 font.pixelSize: Tokens.fontSizeXs
                                 wrapMode: Text.WordWrap
@@ -1109,7 +1188,9 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Need access?"
+                                text: root.secureInviteClaim
+                                    ? "Join securely"
+                                    : "Need access?"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
@@ -1118,10 +1199,12 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: root.workspaceCard !== null || root.approvalInviteNeedsRequest
+                                text: root.secureInviteClaim
+                                    ? "Claim this one-time invite from this device. The admin sends back encrypted access that only this device can open."
+                                    : (root.workspaceCard !== null || root.approvalInviteNeedsRequest
                                     ? "Send an access request for " + root.joinRequestTargetLabel()
                                         + ". An owner or admin will send back an invite you can open here."
-                                    : "Send an access request to a workspace admin. They'll send back an invite you can open here."
+                                    : "Send an access request to a workspace admin. They'll send back an invite you can open here.")
                                 color: Tokens.textMuted
                                 font.pixelSize: Tokens.fontSizeXs
                                 wrapMode: Text.WordWrap
@@ -1165,7 +1248,7 @@ Dialog {
                                     visible: root.joinRequestCanSendDirect()
                                     text: chaftController.joinRequestSubmitInFlight
                                         ? "Sending..."
-                                        : "Send request"
+                                        : (root.secureInviteClaim ? "Claim invite" : "Send request")
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
                                         && !chaftController.joinRequestSubmitInFlight
@@ -1174,7 +1257,7 @@ Dialog {
 
                                 Button {
                                     Layout.fillWidth: true
-                                    text: "Copy link"
+                                    text: root.secureInviteClaim ? "Copy claim" : "Copy link"
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
                                         && !chaftController.joinRequestSubmitInFlight
@@ -1184,7 +1267,7 @@ Dialog {
 
                                 Button {
                                     Layout.fillWidth: true
-                                    text: "Save file"
+                                    text: root.secureInviteClaim ? "Save claim" : "Save file"
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
                                         && !chaftController.joinRequestSubmitInFlight
@@ -1203,7 +1286,9 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Invite required"
+                                text: root.secureInviteExpired
+                                    ? "Invite expired"
+                                    : "Invite required"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
@@ -1212,7 +1297,9 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "This workspace is invite only. Ask an owner or admin for a Chaft invite, then paste or open it here."
+                                text: root.secureInviteExpired
+                                    ? "Ask an owner or admin for a fresh secure invite."
+                                    : "This workspace is invite only. Ask an owner or admin for a Chaft invite, then paste or open it here."
                                 color: Tokens.textMuted
                                 font.pixelSize: Tokens.fontSizeXs
                                 wrapMode: Text.WordWrap
@@ -1270,6 +1357,7 @@ Dialog {
 
                             Rectangle {
                                 Layout.fillWidth: true
+                                visible: false
                                 implicitHeight: requestReadyRows.implicitHeight + Tokens.space2 * 2
                                 radius: Tokens.radiusSm
                                 color: Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.04)
@@ -1406,42 +1494,63 @@ Dialog {
                                 Button {
                                     Layout.fillWidth: true
                                     visible: root.joinRequestCanSendDirect()
+                                        && root.joinRequestPreparedAction !== "sent"
                                     text: root.joinRequestPreparedAction === "sending"
                                         ? "Sending..."
-                                        : (root.joinRequestPreparedAction === "sent"
-                                            ? "Resend"
-                                            : (root.joinRequestPreparedAction === "send-failed"
+                                        : (root.joinRequestPreparedAction === "send-failed"
                                                 ? "Try again"
-                                                : "Send request"))
+                                                : "Send request")
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
                                         && !chaftController.joinRequestSubmitInFlight
                                     onClicked: root.sendPreparedJoinRequest()
                                 }
 
-                                Button {
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "Copy link"
-                                    enabled: root.app.runtimeAccessReady
-                                        && !chaftController.keyTransferInFlight
-                                        && !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: "Copy request link"
-                                    onClicked: root.copyPreparedJoinRequest()
                                 }
 
                                 Button {
-                                    Layout.fillWidth: true
-                                    text: "Save file"
-                                    enabled: root.app.runtimeAccessReady
-                                        && !chaftController.keyTransferInFlight
-                                        && !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: "Save request file"
-                                    onClicked: root.savePreparedJoinRequest()
+                                    text: "⋯"
+                                    Accessible.name: "More request actions"
+                                    onClicked: preparedRequestActionsMenu.open()
+
+                                    Menu {
+                                        id: preparedRequestActionsMenu
+                                        y: parent.height
+
+                                        MenuItem {
+                                            visible: root.joinRequestPreparedAction === "sent"
+                                                && root.joinRequestCanSendDirect()
+                                            text: "Resend request"
+                                            enabled: root.app.runtimeAccessReady
+                                                && !chaftController.keyTransferInFlight
+                                                && !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.sendPreparedJoinRequest()
+                                        }
+
+                                        MenuItem {
+                                            text: "Copy request link"
+                                            enabled: root.app.runtimeAccessReady
+                                                && !chaftController.keyTransferInFlight
+                                                && !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.copyPreparedJoinRequest()
+                                        }
+
+                                        MenuItem {
+                                            text: "Save request file"
+                                            enabled: root.app.runtimeAccessReady
+                                                && !chaftController.keyTransferInFlight
+                                                && !chaftController.joinRequestSubmitInFlight
+                                            onTriggered: root.savePreparedJoinRequest()
+                                        }
+                                    }
                                 }
                             }
 
                             Text {
                                 Layout.fillWidth: true
+                                visible: false
                                 text: root.joinRequestPreparedAction === "sent"
                                     ? "Done keeps this request on the start screen while you wait for the invite."
                                     : "Done keeps this request on the start screen so you can send it later."

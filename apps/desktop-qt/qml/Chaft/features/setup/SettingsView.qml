@@ -47,6 +47,18 @@ Item {
         setupPanel.openPeopleAccessSection()
     }
 
+    function openAccessRequestsSection() {
+        setupPanel.openAccessRequestsSection()
+    }
+
+    function openFirstWaitingJoinRequestReview() {
+        return setupPanel.openFirstWaitingJoinRequestReview()
+    }
+
+    function openInvitationsSection() {
+        setupPanel.openInvitationsSection()
+    }
+
     function focusInviteForm() {
         setupPanel.focusInviteForm()
     }

@@ -32,9 +32,17 @@ ScrollView {
     property string pendingReplacementInviteDisplayName: ""
     property string pendingReplacementInviteRequestId: ""
     property string pendingReplacementInviteApprovalPolicy: "preapproved"
+    property bool pendingReplacementInviteClaimable: false
     property bool pendingReplacementInviteWaitingForClose: false
     property bool updatingInviteDeviceField: false
     property bool approvalInviteModeEnabled: false
+    property string peopleAccessTab: "members"
+    property bool inviteComposerVisible: false
+    property bool inviteReadyDismissed: false
+    property var reviewAccessRequest: ({})
+    property bool showRequestHistory: false
+    property bool showInviteHistory: false
+    property bool advancedAccessToolsOpen: false
     property bool addAnotherDeviceGuideVisible: false
     property bool addAnotherDeviceOpenSaveWhenReady: false
     readonly property string standardAccessUpdateProtocol: "openmls/key-package"
@@ -233,29 +241,23 @@ ScrollView {
             return "Discovery is not live yet. Use access requests or direct invites."
         case "invite_only":
         default:
-            return "Invite only is on. Create an approved invite for each person you want to add."
+            return "Invite only is on. Create a one-time secure invite for each person you want to add."
         }
     }
 
     function inviteDeviceFieldLabel() {
-        return setupScroll.workspacePolicyEncouragesRequests()
-            ? "Access request"
-            : "Teammate to invite"
+        return "Invite label or access request"
     }
 
     function inviteDeviceFieldPlaceholder() {
-        return setupScroll.workspacePolicyEncouragesRequests()
-            ? "Paste or open their access request"
-            : "Open their access request or paste support code"
+        return "Optional name, or paste an access request"
     }
 
     function createInviteActionLabel() {
         if (setupScroll.loadedJoinRequestObject() !== null) {
             return "Approve request"
         }
-        return setupScroll.approvalInviteMode()
-            ? "Create approval invite"
-            : "Create invite"
+        return "Create secure invite"
     }
 
     function inviteRoleOptions() {
@@ -298,13 +300,20 @@ ScrollView {
     function keyTransferIsInvitePackage() {
         var parsed = setupScroll.keyTransferObject()
         return parsed !== null
-            && String(parsed.kind || "") === "chaft.workspace-invite.v1"
+            && (String(parsed.kind || "") === "chaft.workspace-invite.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite.v2")
     }
 
     function invitePackageObject() {
         return setupScroll.keyTransferIsInvitePackage()
             ? setupScroll.keyTransferObject()
             : null
+    }
+
+    function invitePackageIsClaimable() {
+        var invite = setupScroll.invitePackageObject()
+        return invite !== null
+            && String(invite.kind || "") === "chaft.workspace-invite.v2"
     }
 
     function invitePackageId() {
@@ -323,6 +332,9 @@ ScrollView {
             return "your teammate"
         }
         var displayName = String(invite.inviteeDisplayName || "").trim()
+        if (displayName.length === 0) {
+            displayName = String(invite.displayName || "").trim()
+        }
         if (displayName.length > 0) {
             return displayName
         }
@@ -359,6 +371,9 @@ ScrollView {
 
     function invitePackageApprovalLabel() {
         var invite = setupScroll.invitePackageObject()
+        if (setupScroll.invitePackageIsClaimable()) {
+            return "Access granted after claim"
+        }
         return setupScroll.app.inviteApprovalLabel(invite ? invite.approvalPolicy : "preapproved")
     }
 
@@ -368,6 +383,14 @@ ScrollView {
     }
 
     function invitePackageReadySummaryText() {
+        var invite = setupScroll.invitePackageObject()
+        if (invite !== null
+                && String(invite.kind || "") === "chaft.workspace-invite.v2") {
+            return "Send this one-time invite to "
+                + setupScroll.invitePackageRecipientLabel()
+                + ". They'll claim " + setupScroll.invitePackageRoleLabel()
+                + " access from their device."
+        }
         if (setupScroll.invitePackageRequiresApproval()) {
             return "Send this approval invite to "
                 + setupScroll.invitePackageRecipientLabel()
@@ -671,10 +694,7 @@ ScrollView {
             return "Revoked by " + setupScroll.joinRequestResolvedByLabel(request)
                 + ". This request is closed."
         }
-        if (setupScroll.app.canManageWorkspaceAccess()) {
-            return "Waiting for approval. Choose a role and expiry before approving."
-        }
-        return "Waiting for an owner or admin to resolve."
+        return "Waiting for review."
     }
 
     function joinRequestNextActionText(request) {
@@ -1012,9 +1032,11 @@ ScrollView {
 
     function canCreateReplacementWorkspaceInvite(invite) {
         var status = setupScroll.workspaceInviteStatus(invite)
+        var hasRecipient = Boolean(invite && invite.claimable)
+            || String((invite && invite.inviteeDeviceId) || "").trim().length > 0
         return setupScroll.app.runtimeWorkReady
             && setupScroll.app.canManageWorkspaceAccess()
-            && String((invite && invite.inviteeDeviceId) || "").trim().length > 0
+            && hasRecipient
             && (status === "expired" || status === "revoked")
             && !chaftController.keyTransferInFlight
     }
@@ -1027,7 +1049,8 @@ ScrollView {
         if (!setupScroll.app.canManageWorkspaceAccess()) {
             return setupScroll.app.workspaceAccessUnavailableReason()
         }
-        if (String((invite && invite.inviteeDeviceId) || "").trim().length === 0) {
+        if (!Boolean(invite && invite.claimable)
+                && String((invite && invite.inviteeDeviceId) || "").trim().length === 0) {
             return "This invite is missing support details."
         }
         if (status !== "expired" && status !== "revoked") {
@@ -1063,6 +1086,13 @@ ScrollView {
         if (!setupScroll.canCreateReplacementWorkspaceInvite(invite)) {
             return false
         }
+        if (Boolean(invite && invite.claimable)) {
+            return chaftController.prepareClaimableWorkspaceInvite(
+                setupScroll.workspaceInviteLabel(invite),
+                String(invite.role || "member").trim(),
+                setupScroll.app.preferredInvitePeerEndpoint(),
+                setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()))
+        }
         return setupScroll.createWorkspaceInviteWithPolicy(
             String(invite.inviteeDeviceId || "").trim(),
             String(invite.role || "member").trim(),
@@ -1073,12 +1103,14 @@ ScrollView {
     }
 
     function canReplaceLostWorkspaceInvite(invite) {
+        var hasRecipient = Boolean(invite && invite.claimable)
+            || String((invite && invite.inviteeDeviceId) || "").trim().length > 0
         return setupScroll.workspaceInviteStatus(invite) === "invited"
             && !setupScroll.canShareCurrentWorkspaceInvite(invite)
             && setupScroll.app.runtimeWorkReady
             && setupScroll.app.canManageWorkspaceAccess()
             && String((invite && invite.inviteId) || "").trim().length > 0
-            && String((invite && invite.inviteeDeviceId) || "").trim().length > 0
+            && hasRecipient
             && !chaftController.keyTransferInFlight
             && !setupScroll.pendingReplacementInviteWaitingForClose
     }
@@ -1099,7 +1131,8 @@ ScrollView {
         if (String((invite && invite.inviteId) || "").trim().length === 0) {
             return "This invite is missing support details."
         }
-        if (String((invite && invite.inviteeDeviceId) || "").trim().length === 0) {
+        if (!Boolean(invite && invite.claimable)
+                && String((invite && invite.inviteeDeviceId) || "").trim().length === 0) {
             return "This invite is missing support details."
         }
         if (setupScroll.pendingReplacementInviteWaitingForClose) {
@@ -1118,6 +1151,7 @@ ScrollView {
         setupScroll.pendingReplacementInviteDisplayName = ""
         setupScroll.pendingReplacementInviteRequestId = ""
         setupScroll.pendingReplacementInviteApprovalPolicy = "preapproved"
+        setupScroll.pendingReplacementInviteClaimable = false
         setupScroll.pendingReplacementInviteWaitingForClose = false
     }
 
@@ -1129,6 +1163,7 @@ ScrollView {
         setupScroll.pendingReplacementInviteRequestId = String((invite && invite.requestId) || "").trim()
         setupScroll.pendingReplacementInviteApprovalPolicy =
             String((invite && invite.approvalPolicy) || "preapproved").trim()
+        setupScroll.pendingReplacementInviteClaimable = Boolean(invite && invite.claimable)
     }
 
     function confirmReplaceLostWorkspaceInvite(invite) {
@@ -1185,13 +1220,19 @@ ScrollView {
                 || chaftController.keyTransferInFlight) {
             return
         }
-        var ok = setupScroll.createWorkspaceInviteWithPolicy(
-            setupScroll.pendingReplacementInviteDeviceId,
-            setupScroll.pendingReplacementInviteRole,
-            setupScroll.pendingReplacementInviteDisplayName,
-            setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
-            setupScroll.pendingReplacementInviteApprovalPolicy,
-            setupScroll.pendingReplacementInviteRequestId)
+        var ok = setupScroll.pendingReplacementInviteClaimable
+            ? chaftController.prepareClaimableWorkspaceInvite(
+                setupScroll.pendingReplacementInviteDisplayName,
+                setupScroll.pendingReplacementInviteRole,
+                setupScroll.app.preferredInvitePeerEndpoint(),
+                setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()))
+            : setupScroll.createWorkspaceInviteWithPolicy(
+                setupScroll.pendingReplacementInviteDeviceId,
+                setupScroll.pendingReplacementInviteRole,
+                setupScroll.pendingReplacementInviteDisplayName,
+                setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
+                setupScroll.pendingReplacementInviteApprovalPolicy,
+                setupScroll.pendingReplacementInviteRequestId)
         if (ok) {
             setupScroll.clearPendingWorkspaceInviteReplacement()
         }
@@ -1375,18 +1416,20 @@ ScrollView {
 
     function focusInviteForm() {
         setupScroll.requestCategory("people")
+        setupScroll.peopleAccessTab = "invites"
         peopleAccessSection.expanded = true
         Qt.callLater(function() {
             if (setupScroll.contentItem !== null) {
                 setupScroll.contentItem.contentY = Math.max(
                     0, peopleAccessSection.y - Tokens.space2)
             }
-            inviteDeviceField.forceActiveFocus()
+            invitePeopleDialog.open()
         })
     }
 
     function openPeopleAccessSection() {
         setupScroll.requestCategory("people")
+        setupScroll.peopleAccessTab = "members"
         peopleAccessSection.expanded = true
         Qt.callLater(function() {
             if (setupScroll.contentItem !== null) {
@@ -1394,6 +1437,24 @@ ScrollView {
                     0, peopleAccessSection.y - Tokens.space2)
             }
         })
+    }
+
+    function openAccessRequestsSection() {
+        setupScroll.requestCategory("people")
+        setupScroll.peopleAccessTab = "requests"
+        peopleAccessSection.expanded = true
+        Qt.callLater(function() {
+            if (setupScroll.contentItem !== null) {
+                setupScroll.contentItem.contentY = Math.max(
+                    0, peopleAccessSection.y - Tokens.space2)
+            }
+        })
+    }
+
+    function openInvitationsSection() {
+        setupScroll.requestCategory("people")
+        setupScroll.peopleAccessTab = "invites"
+        peopleAccessSection.expanded = true
     }
 
     function loadJoinRequestForInvite(request) {
@@ -1441,27 +1502,67 @@ ScrollView {
         return ""
     }
 
-    function approveJoinRequest(request) {
+    function openJoinRequestReview(request) {
         if (!setupScroll.canApproveJoinRequest(request)) {
             return false
         }
-        if (!setupScroll.loadJoinRequestForInvite(request)) {
+        setupScroll.reviewAccessRequest = request || ({})
+        reviewAccessRequestDialog.open()
+        return true
+    }
+
+    function openFirstWaitingJoinRequestReview() {
+        var requests = setupScroll.waitingJoinRequests()
+        if (requests.length === 0) {
+            return false
+        }
+        setupScroll.peopleAccessTab = "requests"
+        return setupScroll.openJoinRequestReview(requests[0])
+    }
+
+    function approveJoinRequestWithOptions(request, role, expiryDays) {
+        if (!setupScroll.canApproveJoinRequest(request)) {
             return false
         }
         if (chaftController.prepareWorkspaceInvitePackage(
                     setupScroll.joinRequestDeviceId(request),
-                    setupScroll.inviteRoleValue(),
+                    String(role || "member"),
                     setupScroll.app.preferredInvitePeerEndpoint(),
                     setupScroll.joinRequestDisplayName(request),
-                    setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
+                    setupScroll.app.inviteExpiresAtIso(expiryDays),
                     "preapproved",
                     setupScroll.joinRequestId(request),
                     String(request.responsePeerEndpoint || "").trim())) {
             setupScroll.loadedJoinRequestText = ""
             inviteDeviceField.text = ""
+            reviewAccessRequestDialog.close()
             return true
         }
         return false
+    }
+
+    function waitingJoinRequests() {
+        return (setupScroll.app ? setupScroll.app.joinRequests : []).filter(function(request) {
+            return String((request && request.status) || "") === "waiting"
+        })
+    }
+
+    function resolvedJoinRequests() {
+        return (setupScroll.app ? setupScroll.app.joinRequests : []).filter(function(request) {
+            return String((request && request.status) || "") !== "waiting"
+        })
+    }
+
+    function activeWorkspaceInvites() {
+        return (setupScroll.app ? setupScroll.app.invites : []).filter(function(invite) {
+            return setupScroll.workspaceInviteStatus(invite) === "invited"
+        })
+    }
+
+    function resolvedWorkspaceInvites() {
+        return (setupScroll.app ? setupScroll.app.invites : []).filter(function(invite) {
+            return setupScroll.workspaceInviteStatus(invite) !== "invited"
+        })
     }
 
     function canResolveJoinRequest(request) {
@@ -1585,8 +1686,7 @@ ScrollView {
     }
 
     function approvalInviteModeAvailable() {
-        return setupScroll.workspacePolicyEncouragesRequests()
-            && setupScroll.loadedJoinRequestObject() === null
+        return false
     }
 
     function approvalInviteMode() {
@@ -1601,7 +1701,6 @@ ScrollView {
             && setupScroll.app.canManageWorkspaceAccess()
             && (role !== "admin" && role !== "owner"
                 || setupScroll.app.canManageWorkspaceOwners())
-            && setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text).length > 0
             && (request === null || setupScroll.joinRequestTargetsCurrentWorkspace(request))
             && !chaftController.keyTransferInFlight
     }
@@ -1618,11 +1717,6 @@ ScrollView {
                 && !setupScroll.app.canManageWorkspaceOwners()) {
             return "Only an owner can invite admins or owners."
         }
-        if (setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text).length === 0) {
-            return setupScroll.workspacePolicyEncouragesRequests()
-                ? "Open or paste an access request first."
-                : "Open their access request first, or paste support code if needed."
-        }
         var request = setupScroll.loadedJoinRequestObject()
         if (request !== null && !setupScroll.joinRequestTargetsCurrentWorkspace(request)) {
             return "This request is for " + setupScroll.joinRequestWorkspaceLabel(request) + "."
@@ -1637,18 +1731,15 @@ ScrollView {
         if (!setupScroll.app.canManageWorkspaceAccess()) {
             return setupScroll.app.workspaceAccessUnavailableReason()
         }
-        var displayName = setupScroll.inviteDisplayNameFromText(inviteDeviceField.text)
+        var request = setupScroll.loadedJoinRequestObject()
+        var displayName = request !== null
+            ? setupScroll.inviteDisplayNameFromText(inviteDeviceField.text)
+            : inviteDeviceField.text.trim()
         if (displayName.length > 0) {
             return setupScroll.createInviteActionLabel() + " for " + displayName
                 + ". The invite " + setupScroll.inviteExpiryChoiceLabel() + "."
         }
-        if (setupScroll.approvalInviteMode()) {
-            return "Paste their access request, choose access, then create an invite that asks for approval first."
-        }
-        if (setupScroll.workspacePolicyEncouragesRequests()) {
-            return "Open a waiting access request here, then approve it. Direct invites still work for people you know."
-        }
-        return "Open their access request, choose access, then create one invite. Advanced: paste support code if needed."
+        return "Create a one-time invite, then send the link or file privately. No workspace key is included."
     }
 
     function loadedJoinRequestStatusText() {
@@ -1716,6 +1807,7 @@ ScrollView {
             }
             if (state === "setup-access-updates") {
                 advancedAccessSection.expanded = true
+                setupScroll.advancedAccessToolsOpen = true
             } else if (state === "setup-security") {
                 securityToolsSection.expanded = true
             } else if (state === "setup-backup") {
@@ -1738,7 +1830,7 @@ ScrollView {
             }
             Qt.callLater(function() {
                 var targetY = state === "setup-security"
-                    ? securityToolsSection.y + Tokens.space4 * 16
+                    ? securityToolsSection.y - Tokens.space2
                     : peopleAccessSection.y - Tokens.space2
                 if (state === "setup-access-updates") {
                     targetY = advancedAccessSection.y - Tokens.space2
@@ -1805,6 +1897,8 @@ ScrollView {
                 setupScroll.app.openSaveKeyTransferDialog("recovery kit")
             }
             if (setupScroll.keyTransferIsInvitePackage()) {
+                setupScroll.peopleAccessTab = "invites"
+                setupScroll.inviteReadyDismissed = false
                 smokeSetupInviteScrollTimer.restart()
             }
         }
@@ -1839,6 +1933,27 @@ ScrollView {
         onAccepted: {
             var filePath = app.localPathFromUrl(selectedFile)
             chaftController.publishDeviceKeyPackage(pendingProtocol, filePath)
+        }
+    }
+
+    InvitePeopleDialog {
+        id: invitePeopleDialog
+        app: setupScroll.app
+        roleOptions: setupScroll.inviteRoleOptions()
+    }
+
+    ReviewAccessRequestDialog {
+        id: reviewAccessRequestDialog
+        app: setupScroll.app
+        request: setupScroll.reviewAccessRequest
+        roleOptions: setupScroll.inviteRoleOptions()
+        onApproveRequested: function(role, days) {
+            setupScroll.approveJoinRequestWithOptions(
+                setupScroll.reviewAccessRequest, role, days)
+        }
+        onDeclineRequested: {
+            reviewAccessRequestDialog.close()
+            setupScroll.confirmDeclineJoinRequest(setupScroll.reviewAccessRequest)
         }
     }
 
@@ -2363,16 +2478,164 @@ ScrollView {
                 Layout.fillWidth: true
                 visible: setupScroll.category === "people"
                     && chaftController.hasRuntimeWorkspace
-                title: "People & Access"
+                title: ""
                 collapsible: false
-                badgeText: setupScroll.app && setupScroll.app.waitingAccessRequestCount > 0
-                    ? String(setupScroll.app.waitingAccessRequestCount) + " waiting"
-                    : (setupScroll.app ? String(setupScroll.app.memberCount) : "")
                 defaultExpanded: setupScroll.app
                     && setupScroll.app.waitingAccessRequestCount > 0
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.space2
+
+                    Button {
+                        id: accessPolicyButton
+                        text: "Access: " + (app
+                            ? app.workspaceAccessPolicyLabel(app.accessPolicy)
+                            : "Invite only")
+                        enabled: app && app.runtimeWorkReady
+                            && app.canManageWorkspaceAccess()
+                        Accessible.name: "Workspace access policy"
+                        Accessible.description: "Change who can ask to join"
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: app ? app.workspaceAccessUnavailableReason() : ""
+                        onClicked: accessPolicyMenu.open()
+
+                        Menu {
+                            id: accessPolicyMenu
+                            y: accessPolicyButton.height
+
+                            MenuItem {
+                                text: "Invite only"
+                                checkable: true
+                                checked: setupScroll.workspaceAccessPolicy() === "invite_only"
+                                onTriggered: setupScroll.updateWorkspaceAccessPolicy("invite_only")
+                            }
+
+                            MenuItem {
+                                text: "People can request access"
+                                checkable: true
+                                checked: setupScroll.workspaceAccessPolicy() === "request_access"
+                                onTriggered: setupScroll.updateWorkspaceAccessPolicy("request_access")
+                            }
+                        }
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
+
+                    Button {
+                        text: "Invite people"
+                        enabled: app.runtimeWorkReady && app.canManageWorkspaceAccess()
+                            && !chaftController.keyTransferInFlight
+                        Accessible.name: "Invite people"
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: setupScroll.inviteCreateUnavailableReason()
+                        onClicked: setupScroll.focusInviteForm()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Tokens.space1
+
+                    Button {
+                        Layout.fillWidth: true
+                        checkable: true
+                        checked: setupScroll.peopleAccessTab === "members"
+                        text: "Members  " + String(app ? app.memberCount : 0)
+                        Accessible.name: "Members"
+                        Accessible.description: checked ? "Selected" : "Show workspace members"
+                        onClicked: setupScroll.peopleAccessTab = "members"
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        checkable: true
+                        checked: setupScroll.peopleAccessTab === "requests"
+                        text: "Requests  " + String(app ? app.waitingAccessRequestCount : 0)
+                        Accessible.name: "Access requests"
+                        Accessible.description: checked ? "Selected" : "Show access requests"
+                        onClicked: setupScroll.peopleAccessTab = "requests"
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        checkable: true
+                        checked: setupScroll.peopleAccessTab === "invites"
+                        text: "Invites  " + String(
+                            setupScroll.activeWorkspaceInvites().length)
+                        Accessible.name: "Invitations"
+                        Accessible.description: checked ? "Selected" : "Show invitations"
+                        onClicked: setupScroll.peopleAccessTab = "invites"
+                    }
+                }
+
                 ColumnLayout {
                     Layout.fillWidth: true
+                    visible: setupScroll.peopleAccessTab === "members"
+                    spacing: Tokens.space2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Members"
+                        color: Tokens.textStrong
+                        font.pixelSize: Tokens.fontSizeSm
+                        font.weight: Font.DemiBold
+                    }
+
+                    Repeater {
+                        model: app ? app.members : []
+
+                        delegate: MemberRow {
+                            id: peopleMemberRow
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            deviceId: String(peopleMemberRow.modelData.deviceId || "")
+                            displayLabel: app.memberLabel(peopleMemberRow.modelData)
+                            initial: app.memberInitial(peopleMemberRow.modelData)
+                            roleLabel: app.roleLabel(peopleMemberRow.modelData.role)
+                            roleValue: app.normalizedRole(peopleMemberRow.modelData.role)
+                            roleOptions: app.memberRoleOptions(peopleMemberRow.modelData)
+                            owner: peopleMemberRow.modelData.role === "owner"
+                            localDevice: deviceId === chaftController.deviceId
+                            canMessage: app.runtimeWorkReady && !localDevice
+                            showRoleEditor: app.canManageWorkspaceAccess() && !localDevice
+                            canChangeRole: app.canChangeMemberRole(peopleMemberRow.modelData)
+                            roleUnavailableReason: app.memberRoleUnavailableReason(peopleMemberRow.modelData)
+                            showRemoveAction: !localDevice
+                            canRemove: app.canRemoveMember(peopleMemberRow.modelData)
+                            removeUnavailableReason: app.memberRemovalUnavailableReason(
+                                peopleMemberRow.modelData)
+                            onCopyDeviceRequested: function(deviceId) {
+                                app.copyTextToClipboard(deviceId, "support code")
+                            }
+                            onMessageRequested: function(deviceId, displayLabel) {
+                                app.startDirectMessage(deviceId, displayLabel)
+                            }
+                            onRoleChangeRequested: function(deviceId, role) {
+                                app.confirmMemberRoleChange(
+                                    deviceId, peopleMemberRow.displayLabel, role)
+                            }
+                            onRemoveRequested: function(deviceId, displayLabel) {
+                                app.confirmMemberRemoval(deviceId, displayLabel)
+                            }
+                        }
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        visible: app && app.memberCount > app.members.length
+                        text: "Load more members"
+                        enabled: app.runtimeWorkReady
+                        onClicked: chaftController.loadMoreMembers()
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: false
                     spacing: Tokens.space2
 
                     Text {
@@ -2466,14 +2729,7 @@ ScrollView {
                                     setupScroll.trackLoadedJoinRequest()
                                 }
                                 var created = false
-                                if (setupScroll.approvalInviteMode()) {
-                                    created = chaftController.prepareApprovalInvitePackage(
-                                                setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text),
-                                                setupScroll.inviteRoleValue(),
-                                                app.preferredInvitePeerEndpoint(),
-                                                setupScroll.inviteDisplayNameFromText(inviteDeviceField.text),
-                                                app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()))
-                                } else {
+                                if (loadedRequest !== null) {
                                     created = chaftController.prepareWorkspaceInvitePackage(
                                                 setupScroll.inviteDeviceCodeFromText(inviteDeviceField.text),
                                                 setupScroll.inviteRoleValue(),
@@ -2482,6 +2738,12 @@ ScrollView {
                                                 app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
                                                 "preapproved",
                                                 loadedRequestId)
+                                } else {
+                                    created = chaftController.prepareClaimableWorkspaceInvite(
+                                                inviteDeviceField.text.trim(),
+                                                setupScroll.inviteRoleValue(),
+                                                app.preferredInvitePeerEndpoint(),
+                                                app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()))
                                 }
                                 if (created) {
                                     inviteDeviceField.text = ""
@@ -2530,9 +2792,9 @@ ScrollView {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: setupScroll.approvalInviteMode()
-                                        ? "Approval invite"
-                                        : "Approved invite"
+                                text: setupScroll.loadedJoinRequestObject() !== null
+                                    ? "Request approval"
+                                    : "One-time secure invite"
                                     color: Tokens.textStrong
                                     font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
@@ -2540,14 +2802,10 @@ ScrollView {
                                 }
 
                                 StatusChip {
-                                    text: setupScroll.approvalInviteMode()
-                                        ? "Approval first"
-                                        : "Grants access"
-                                    description: setupScroll.approvalInviteMode()
-                                        ? "This invite shares no message access"
-                                        : "This invite grants access when imported"
-                                    warning: setupScroll.approvalInviteMode()
-                                    secure: !setupScroll.approvalInviteMode()
+                                    text: "No key inside"
+                                    description: "Access is encrypted after the recipient claims the invite"
+                                    warning: false
+                                    secure: true
                                     minWidth: 108
                                     maxWidth: 130
                                 }
@@ -2652,6 +2910,7 @@ ScrollView {
 
                 Text {
                     Layout.fillWidth: true
+                    visible: false
                     text: setupScroll.inviteFormHelperText()
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
@@ -2661,6 +2920,7 @@ ScrollView {
                 Rectangle {
                     Layout.fillWidth: true
                     visible: setupScroll.loadedJoinRequestObject() !== null
+                        && setupScroll.peopleAccessTab === "requests"
                         && !setupScroll.keyTransferIsInvitePackage()
                         && !setupScroll.joinRequestAlreadyTracked(setupScroll.loadedJoinRequestObject())
                     implicitHeight: requestStatusColumn.implicitHeight + Tokens.space3 * 2
@@ -2758,24 +3018,18 @@ ScrollView {
                     }
                 }
 
-                Rectangle {
+                Item {
                     id: accessRequestsPanel
 
                     Layout.fillWidth: true
-                    visible: app && (app.joinRequests.length > 0
-                        || app.canManageWorkspaceAccess())
-                    implicitHeight: accessRequestsColumn.implicitHeight + Tokens.space3 * 2
-                    radius: Tokens.radiusSm
-                    color: Tokens.surfaceBase
-                    border.width: 1
-                    border.color: Tokens.borderSubtle
+                    visible: setupScroll.peopleAccessTab === "requests" && app
+                    implicitHeight: accessRequestsColumn.implicitHeight
 
                     ColumnLayout {
                         id: accessRequestsColumn
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: Tokens.space3
                         spacing: Tokens.space2
 
                         ColumnLayout {
@@ -2796,9 +3050,20 @@ ScrollView {
                                 }
 
                                 Button {
+                                    text: setupScroll.showRequestHistory ? "Active" : "History"
+                                    enabled: app && app.joinRequestCount > 0
+                                    Accessible.name: setupScroll.showRequestHistory
+                                        ? "Show active requests"
+                                        : "Show request history"
+                                    onClicked: setupScroll.showRequestHistory =
+                                        !setupScroll.showRequestHistory
+                                }
+
+                                Button {
+                                    visible: app && app.canManageWorkspaceAccess()
                                     text: chaftController.joinRequestInboxInFlight
                                         ? "Checking..."
-                                        : "Check"
+                                        : "↻"
                                     Accessible.name: chaftController.joinRequestInboxInFlight
                                         ? "Checking for delivered access requests"
                                         : "Check for delivered access requests"
@@ -2817,6 +3082,7 @@ ScrollView {
 
                             RowLayout {
                                 Layout.fillWidth: true
+                                visible: false
                                 spacing: Tokens.space1
 
                                 StatusChip {
@@ -2843,9 +3109,13 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: app && app.joinRequests.length > 0
-                                ? "Approve creates a ready invite using the role and expiry above."
-                                : "No access requests yet. Keep Chaft open, then check for requests."
+                            text: setupScroll.showRequestHistory
+                                ? (setupScroll.resolvedJoinRequests().length > 0
+                                    ? "Previous access decisions"
+                                    : "No request history")
+                                : (setupScroll.waitingJoinRequests().length > 0
+                                    ? "Review who is waiting to join"
+                                    : "No requests need attention")
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -2854,7 +3124,9 @@ ScrollView {
                         Repeater {
                             id: accessRequestsRepeater
 
-                            model: app ? app.joinRequests : []
+                            model: setupScroll.showRequestHistory
+                                ? setupScroll.resolvedJoinRequests()
+                                : setupScroll.waitingJoinRequests()
 
                             delegate: Rectangle {
                                 id: accessRequestRow
@@ -2914,6 +3186,7 @@ ScrollView {
 
                                     Text {
                                         Layout.fillWidth: true
+                                        visible: accessRequestRow.requestStatus !== "waiting"
                                         text: setupScroll.joinRequestStatusDetail(modelData)
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
@@ -2922,7 +3195,8 @@ ScrollView {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        visible: setupScroll.joinRequestNextActionText(modelData).length > 0
+                                        visible: accessRequestRow.requestStatus !== "waiting"
+                                            && setupScroll.joinRequestNextActionText(modelData).length > 0
                                         text: setupScroll.joinRequestNextActionText(modelData)
                                         color: Tokens.textStrong
                                         font.pixelSize: Tokens.fontSizeXs
@@ -2950,7 +3224,7 @@ ScrollView {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        visible: setupScroll.joinRequestSourceLabel(modelData).length > 0
+                                        visible: false
                                         text: "Started from " + setupScroll.joinRequestSourceLabel(modelData)
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
@@ -2973,7 +3247,7 @@ ScrollView {
 
                                         Text {
                                             Layout.fillWidth: true
-                                            visible: setupScroll.canShareCurrentInviteForJoinRequest(modelData)
+                                            visible: false
                                             text: "Invite to send"
                                             color: Tokens.textMuted
                                             font.pixelSize: Tokens.fontSizeXs
@@ -3046,23 +3320,58 @@ ScrollView {
                                             onClicked: setupScroll.createReplacementInviteForJoinRequest(modelData)
                                         }
 
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            visible: accessRequestRow.requestStatus === "waiting"
-                                            spacing: Tokens.space1
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        visible: accessRequestRow.requestStatus === "waiting"
+                                        spacing: Tokens.space1
 
                                             Button {
                                                 Layout.fillWidth: true
                                                 text: "Approve"
                                                 enabled: setupScroll.canApproveJoinRequest(modelData)
                                                 Accessible.name: "Approve access request"
-                                                ToolTip.visible: hovered && !enabled
-                                                ToolTip.text: setupScroll.approveJoinRequestUnavailableReason(modelData)
-                                                onClicked: setupScroll.approveJoinRequest(modelData)
-                                            }
+                                            ToolTip.visible: hovered && !enabled
+                                            ToolTip.text: setupScroll.approveJoinRequestUnavailableReason(modelData)
+                                            onClicked: setupScroll.openJoinRequestReview(modelData)
+                                        }
 
-                                            RowLayout {
-                                                Layout.fillWidth: true
+                                        Button {
+                                            id: requestActionsButton
+                                            text: "⋯"
+                                            Layout.preferredWidth: 38
+                                            Accessible.name: "More actions for "
+                                                + setupScroll.joinRequestLabel(modelData)
+                                            onClicked: requestActionsMenu.open()
+
+                                            Menu {
+                                                id: requestActionsMenu
+                                                y: requestActionsButton.height
+
+                                                MenuItem {
+                                                    text: "Decline"
+                                                    enabled: setupScroll.canResolveJoinRequest(modelData)
+                                                    onTriggered: setupScroll.confirmDeclineJoinRequest(modelData)
+                                                }
+
+                                                MenuItem {
+                                                    text: "Close as duplicate"
+                                                    enabled: setupScroll.canResolveJoinRequest(modelData)
+                                                    onTriggered: setupScroll.confirmRevokeJoinRequest(modelData)
+                                                }
+
+                                                MenuSeparator {}
+
+                                                MenuItem {
+                                                    text: "Copy technical request"
+                                                    enabled: setupScroll.canShareJoinRequest(modelData)
+                                                    onTriggered: setupScroll.copyJoinRequest(modelData)
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: false
                                                 spacing: Tokens.space1
 
                                                 Button {
@@ -3087,9 +3396,10 @@ ScrollView {
                                             }
                                         }
 
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: Tokens.space1
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        visible: false
+                                        spacing: Tokens.space1
 
                                             Text {
                                                 Layout.fillWidth: true
@@ -3147,23 +3457,21 @@ ScrollView {
                     }
                 }
 
-                Rectangle {
+                Item {
                     id: inviteHistoryPanel
 
                     Layout.fillWidth: true
-                    visible: app && app.invites.length > 0
-                    implicitHeight: inviteHistoryColumn.implicitHeight + Tokens.space3 * 2
-                    radius: Tokens.radiusSm
-                    color: Tokens.surfaceBase
-                    border.width: 1
-                    border.color: Tokens.borderSubtle
+                    visible: setupScroll.peopleAccessTab === "invites"
+                        && app && app.invites.length > 0
+                        && (!setupScroll.keyTransferIsInvitePackage()
+                            || setupScroll.inviteReadyDismissed)
+                    implicitHeight: inviteHistoryColumn.implicitHeight
 
                     ColumnLayout {
                         id: inviteHistoryColumn
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: Tokens.space3
                         spacing: Tokens.space2
 
                         RowLayout {
@@ -3172,16 +3480,28 @@ ScrollView {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Sent invites"
+                                text: "Invitations"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
 
+                            Button {
+                                text: setupScroll.showInviteHistory ? "Active" : "History"
+                                enabled: app && app.inviteCount > 0
+                                Accessible.name: setupScroll.showInviteHistory
+                                    ? "Show active invitations"
+                                    : "Show invitation history"
+                                onClicked: setupScroll.showInviteHistory =
+                                    !setupScroll.showInviteHistory
+                            }
+
                             StatusChip {
-                                text: String(app ? app.inviteCount : 0)
-                                description: "Sent invites"
+                                text: String(setupScroll.showInviteHistory
+                                    ? setupScroll.resolvedWorkspaceInvites().length
+                                    : setupScroll.activeWorkspaceInvites().length)
+                                description: "Invitations"
                                 minWidth: 42
                                 maxWidth: 64
                             }
@@ -3189,14 +3509,20 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "See who has been invited and whether they have joined yet."
+                            text: setupScroll.showInviteHistory
+                                ? "Expired, revoked, and claimed invitations"
+                                : (setupScroll.activeWorkspaceInvites().length > 0
+                                    ? "Invitations waiting to be claimed"
+                                    : "No active invitations")
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
                         }
 
                         Repeater {
-                            model: app ? app.invites : []
+                            model: setupScroll.showInviteHistory
+                                ? setupScroll.resolvedWorkspaceInvites()
+                                : setupScroll.activeWorkspaceInvites()
 
                             delegate: Rectangle {
                                 id: inviteHistoryRow
@@ -3265,6 +3591,7 @@ ScrollView {
 
                                     Text {
                                         Layout.fillWidth: true
+                                        visible: false
                                         text: setupScroll.workspaceInviteStatusDetail(modelData)
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
@@ -3283,7 +3610,7 @@ ScrollView {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        visible: setupScroll.canShareCurrentWorkspaceInvite(modelData)
+                                        visible: false
                                         text: "Invite to send"
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
@@ -3298,7 +3625,7 @@ ScrollView {
 
                                         Button {
                                             Layout.fillWidth: true
-                                            text: "Copy link"
+                                            text: "Copy invite"
                                             Accessible.name: "Copy invite link for "
                                                 + setupScroll.workspaceInviteLabel(modelData)
                                             ToolTip.visible: hovered
@@ -3307,13 +3634,28 @@ ScrollView {
                                         }
 
                                         Button {
-                                            Layout.fillWidth: true
-                                            text: "Save file"
-                                            Accessible.name: "Save invite for "
+                                            id: inviteActionsButton
+                                            text: "⋯"
+                                            Layout.preferredWidth: 38
+                                            Accessible.name: "More actions for "
                                                 + setupScroll.workspaceInviteLabel(modelData)
-                                            ToolTip.visible: hovered
-                                            ToolTip.text: "Save the current invite file"
-                                            onClicked: setupScroll.saveCurrentWorkspaceInvite(modelData)
+                                            onClicked: inviteActionsMenu.open()
+
+                                            Menu {
+                                                id: inviteActionsMenu
+                                                y: inviteActionsButton.height
+
+                                                MenuItem {
+                                                    text: "Save invite file"
+                                                    onTriggered: setupScroll.saveCurrentWorkspaceInvite(modelData)
+                                                }
+
+                                                MenuItem {
+                                                    text: "Revoke invite"
+                                                    enabled: setupScroll.canRevokeWorkspaceInvite(modelData)
+                                                    onTriggered: setupScroll.confirmRevokeWorkspaceInvite(modelData)
+                                                }
+                                            }
                                         }
                                     }
 
@@ -3358,8 +3700,7 @@ ScrollView {
 
                                     Button {
                                         Layout.fillWidth: true
-                                        visible: inviteHistoryRow.inviteStatus === "invited"
-                                            || inviteHistoryRow.inviteStatus === "expired"
+                                        visible: false
                                         text: inviteHistoryRow.inviteStatus === "invited"
                                             && !setupScroll.canShareCurrentWorkspaceInvite(modelData)
                                             ? "Close invite"
@@ -3377,11 +3718,26 @@ ScrollView {
                     }
                 }
 
+                Text {
+                    Layout.fillWidth: true
+                    visible: setupScroll.peopleAccessTab === "invites"
+                        && app && app.invites.length === 0
+                        && setupScroll.activeWorkspaceInvites().length === 0
+                        && !setupScroll.showInviteHistory
+                        && !setupScroll.keyTransferIsInvitePackage()
+                    text: "No active invitations"
+                    color: Tokens.textMuted
+                    font.pixelSize: Tokens.fontSizeSm
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
                 Rectangle {
                     id: inviteReadyPanel
 
                     Layout.fillWidth: true
-                    visible: setupScroll.keyTransferIsInvitePackage()
+                    visible: setupScroll.peopleAccessTab === "invites"
+                        && setupScroll.keyTransferIsInvitePackage()
+                        && !setupScroll.inviteReadyDismissed
                     implicitHeight: inviteReadyColumn.implicitHeight + Tokens.space3 * 2
                     radius: Tokens.radiusSm
                     color: Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.1)
@@ -3434,7 +3790,7 @@ ScrollView {
                         Text {
                             Layout.fillWidth: true
                             text: setupScroll.invitePackageExpiryLabel()
-                                + ". " + setupScroll.invitePackageApprovalLabel() + "."
+                                + " · " + setupScroll.invitePackageApprovalLabel()
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -3442,6 +3798,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
+                            visible: false
                             text: setupScroll.invitePackageSyncExpectationLabel()
                                 + ". " + setupScroll.invitePackageSyncExpectationMessage()
                             color: Tokens.textMuted
@@ -3464,6 +3821,11 @@ ScrollView {
                                 text: "Save invite"
                                 onClicked: app.openSaveKeyTransferDialog("invite")
                             }
+
+                            Button {
+                                text: "Done"
+                                onClicked: setupScroll.inviteReadyDismissed = true
+                            }
                         }
 
                         RowLayout {
@@ -3474,6 +3836,7 @@ ScrollView {
                                 Layout.fillWidth: true
                                 visible: !setupScroll.invitePackageHasSyncSource()
                                     && !chaftController.peerHosting
+                                    && !setupScroll.invitePackageIsClaimable()
                                 text: "Make history available"
                                 enabled: app.runtimeWorkReady
                                     && !chaftController.peerHostingInFlight
@@ -3484,6 +3847,7 @@ ScrollView {
                                 Layout.fillWidth: true
                                 visible: !setupScroll.invitePackageHasSyncSource()
                                     && chaftController.peerHosting
+                                    && !setupScroll.invitePackageIsClaimable()
                                 text: "Add history to invite"
                                 enabled: chaftController.hostedPeerEndpoint.length > 0
                                 onClicked: chaftController.updateWorkspaceInvitePeerEndpoint(
@@ -3509,7 +3873,7 @@ ScrollView {
                 visible: setupScroll.category === "devices"
                 title: setupScroll.addAnotherDeviceGuideVisible
                     ? "Access & Recovery"
-                    : "Advanced Access & Recovery"
+                    : ""
                 collapsible: false
 
                 Rectangle {
@@ -3553,7 +3917,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "This kit restores workspace access on any device with the passphrase. Store the file privately, keep its passphrase separate, and do not send it as an invite."
+                            text: "Store the kit privately and keep its passphrase separate."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -3561,6 +3925,7 @@ ScrollView {
 
                         Rectangle {
                             Layout.fillWidth: true
+                            visible: false
                             implicitHeight: addAnotherDeviceSteps.implicitHeight + Tokens.space2 * 2
                             radius: Tokens.radiusSm
                             color: Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.04)
@@ -3625,7 +3990,7 @@ ScrollView {
 
                             Button {
                                 Layout.fillWidth: true
-                                text: "Save kit"
+                                text: "Save recovery kit"
                                 enabled: app && app.runtimeWorkReady
                                     && !chaftController.keyTransferInFlight
                                     && ((chaftController.keyTransferJson.length > 0
@@ -3651,6 +4016,7 @@ ScrollView {
 
                     ColumnLayout {
                         Layout.fillWidth: true
+                        visible: setupScroll.advancedAccessToolsOpen
                         spacing: Tokens.space1
 
                         Text {
@@ -3695,6 +4061,16 @@ ScrollView {
 
                     Button {
                         Layout.fillWidth: true
+                        text: setupScroll.advancedAccessToolsOpen
+                            ? "Hide advanced access tools"
+                            : "Advanced access tools"
+                        onClicked: setupScroll.advancedAccessToolsOpen =
+                            !setupScroll.advancedAccessToolsOpen
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        visible: setupScroll.advancedAccessToolsOpen
                         text: "Share access file"
                         enabled: app.runtimeWorkReady
                         onClicked: {
@@ -3711,6 +4087,7 @@ ScrollView {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
                         && chaftController.hasRuntimeWorkspace
+                        && setupScroll.advancedAccessToolsOpen
                     columns: 1
                     columnSpacing: Tokens.space2
                     rowSpacing: Tokens.space2
@@ -3817,6 +4194,7 @@ ScrollView {
                 Text {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                     text: "Paste support item"
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
@@ -3828,6 +4206,7 @@ ScrollView {
                     id: workspaceKeyField
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                     Layout.preferredHeight: 72
                     placeholderText: "Invite, recovery kit, or access file"
                     Accessible.name: "Paste support item"
@@ -3843,6 +4222,7 @@ ScrollView {
                 RowLayout {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                         && chaftController.keyTransferJson.length > 0
                     spacing: Tokens.space2
 
@@ -3883,6 +4263,7 @@ ScrollView {
                     id: recoveryPassphraseField
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                     label: "Recovery passphrase"
                     echoMode: TextInput.Password
                 }
@@ -3890,6 +4271,7 @@ ScrollView {
                 RowLayout {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                     spacing: Tokens.space2
 
                     Button {
@@ -3915,6 +4297,7 @@ ScrollView {
                 RowLayout {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                     spacing: Tokens.space2
 
                     Button {
@@ -3945,6 +4328,7 @@ ScrollView {
                 Button {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                         && chaftController.hasRuntimeWorkspace
                     text: "Export access record"
                     enabled: app.runtimeWorkReady
@@ -3957,6 +4341,7 @@ ScrollView {
                 RowLayout {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
                         && chaftController.hasRuntimeWorkspace
                         && app.selectedChannelPrivate
                     spacing: Tokens.space2
@@ -3991,7 +4376,7 @@ ScrollView {
                 Layout.fillWidth: true
                 visible: setupScroll.category === "backup"
                     && chaftController.hasRuntimeWorkspace
-                title: "Sharing & Backup"
+                title: "Backup destinations"
                 collapsible: false
                 badgeText: (chaftController.backupPeerEndpoints || []).length > 0
                     ? String((chaftController.backupPeerEndpoints || []).length)
@@ -4004,7 +4389,7 @@ ScrollView {
                     LabeledField {
                         id: backupPeerField
                         Layout.fillWidth: true
-                        label: "Backup address"
+                        label: "Teammate address"
                         placeholderText: "Paste teammate address"
                         onAccepted: {
                             if (chaftController.addBackupPeerEndpoint(text)) {
@@ -4015,7 +4400,7 @@ ScrollView {
 
                     Button {
                         Layout.alignment: Qt.AlignBottom
-                        text: "Save"
+                        text: "Add"
                         Accessible.name: "Save backup address"
                         enabled: backupPeerField.text.trim().length > 0
                         onClicked: {
@@ -4027,7 +4412,7 @@ ScrollView {
 
                     CheckBox {
                         Layout.alignment: Qt.AlignBottom
-                        text: "Auto"
+                        text: "Automatic"
                         checked: app.autoBackupEnabled
                         enabled: app.hasAutoBackupTargets
                         onToggled: app.autoBackupEnabled = checked
@@ -4049,6 +4434,9 @@ ScrollView {
 
                             endpoint: savedBackupPeerDelegate.modelData
                             statusText: app.backupPeerStatusText(savedBackupPeerDelegate.modelData)
+                            onCopyRequested: function (endpoint) {
+                                app.copyTextToClipboard(endpoint, "backup address")
+                            }
                             onRemoveRequested: function (endpoint) {
                                 chaftController.removeBackupPeerEndpoint(endpoint)
                             }
@@ -4058,6 +4446,7 @@ ScrollView {
 
                 Button {
                     Layout.fillWidth: true
+                    visible: false
                     text: "Refresh search"
                     enabled: app.runtimeWorkReady
                         && !chaftController.keyTransferInFlight
