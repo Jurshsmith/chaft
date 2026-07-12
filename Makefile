@@ -2,6 +2,10 @@ SHELL := /bin/sh
 
 PROFILE ?= debug
 PACKAGE_PROFILE ?= release
+N ?= 2
+PREFIX ?= user
+FRESH ?= 0
+DRY_RUN ?= 0
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 PLATFORM ?= macOS
@@ -52,6 +56,8 @@ help:
 		'  make desktop-launch            Build and launch normal desktop runtime' \
 		'  make desktop-launch-fresh      Recreate normal desktop runtime before launch' \
 		'  make desktop-launch-detached   Launch normal desktop runtime in background' \
+		'  make dev-users N=3             Launch user1..user3 as independent devices' \
+		'  make dev-users N=3 FRESH=1     Reset and launch three independent devices' \
 		'  make desktop-launch-smoke      Build and launch seeded visual smoke workspace' \
 		'  make desktop-launch-smoke-fresh Recreate seeded visual smoke workspace before launch' \
 		'  make desktop-package           Build package with PACKAGE_PROFILE' \
@@ -117,7 +123,7 @@ desktop-checks:
 	$(MAKE) style-lint
 	$(MAKE) theme-contrast
 
-.PHONY: desktop-build desktop-smoke desktop-empty-smoke desktop-launch desktop-launch-fresh desktop-launch-detached desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
+.PHONY: desktop-build desktop-smoke desktop-empty-smoke desktop-launch desktop-launch-fresh desktop-launch-detached dev-users desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
 desktop-build:
 	tools/desktop/build.sh $(PROFILE)
 
@@ -135,6 +141,11 @@ desktop-launch-fresh:
 
 desktop-launch-detached:
 	tools/desktop/launch.sh $(PROFILE) --detached $(LAUNCH_ARGS)
+
+dev-users:
+	CHAFT_DEV_USERS_FRESH="$(FRESH)" \
+	CHAFT_DEV_USERS_DRY_RUN="$(DRY_RUN)" \
+	tools/desktop/launch-users.sh "$(PROFILE)" "$(N)" "$(PREFIX)"
 
 desktop-launch-smoke:
 	tools/desktop/launch.sh $(PROFILE) --smoke-workspace $(LAUNCH_ARGS)

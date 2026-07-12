@@ -4,6 +4,7 @@ set -eu
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
 launch="$script_dir/launch.sh"
+launch_users="$script_dir/launch-users.sh"
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-instance-smoke.XXXXXX")"
 trap 'rm -rf "$smoke_dir"' EXIT INT TERM
 
@@ -54,5 +55,27 @@ case "$first_runtime" in
     exit 1
     ;;
 esac
+
+multi_user_output="$(
+  cd "$first_spawn"
+  CHAFT_DEV_USERS_DRY_RUN=1 "$launch_users" debug 3 smoke
+)"
+for expected_label in smoke1 smoke2 smoke3; do
+  case "$multi_user_output" in
+    *"instance label: $expected_label"*) ;;
+    *)
+      printf 'numbered launcher omitted instance %s\n' "$expected_label" >&2
+      exit 1
+      ;;
+  esac
+done
+if CHAFT_DEV_USERS_DRY_RUN=1 "$launch_users" debug 0 smoke >/dev/null 2>&1; then
+  printf 'numbered launcher accepted a zero instance count\n' >&2
+  exit 1
+fi
+if CHAFT_DEV_USERS_DRY_RUN=1 "$launch_users" debug 21 smoke >/dev/null 2>&1; then
+  printf 'numbered launcher accepted more than 20 instances\n' >&2
+  exit 1
+fi
 
 printf 'desktop instance smoke passed\n'

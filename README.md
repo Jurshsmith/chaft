@@ -119,6 +119,18 @@ tools/desktop/launch.sh debug --instance alice --detached
 tools/desktop/launch.sh debug --instance bob --detached
 ```
 
+Launch any bounded number of numbered development users with one command:
+
+```sh
+make dev-users N=3
+make dev-users N=3 FRESH=1
+```
+
+The first instance builds the selected `PROFILE`; later instances reuse that
+build. Names default to `user1`, `user2`, and so on. Override the prefix with
+`PREFIX=peer`, or inspect the resolved profiles without opening windows with
+`DRY_RUN=1`. `N` is capped at 20 to avoid accidental launch storms.
+
 Each name gets its own identity, event/search databases, keys, blobs, desktop
 settings, log, and window title. Launches from different directories also get
 different profiles automatically. `--data-dir DIR` remains an explicit override,
