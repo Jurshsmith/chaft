@@ -5570,6 +5570,30 @@ fn runtime_iroh_peer_ffi_hosts_runtime_store_and_blobs() {
     let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
     assert_eq!(stopped["ok"], true);
     assert_eq!(stopped["value"]["endpoint"], endpoint);
+
+    let restarted_json = unsafe {
+        take_ffi_string(chaft_runtime_start_iroh_peer_result_json(
+            alice_dir_c.as_ptr(),
+            std::ptr::null(),
+        ))
+    };
+    let restarted = serde_json::from_str::<Value>(&restarted_json).unwrap();
+    assert_eq!(restarted["ok"], true);
+    let restarted_peer_id = restarted["value"]["peerId"].as_str().unwrap();
+    let restarted_endpoint = restarted["value"]["endpoint"].as_str().unwrap();
+    assert_eq!(
+        restarted_endpoint.split('?').next(),
+        endpoint.split('?').next()
+    );
+
+    let restarted_peer_id_c = CString::new(restarted_peer_id).unwrap();
+    let stopped_again_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            restarted_peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped_again = serde_json::from_str::<Value>(&stopped_again_json).unwrap();
+    assert_eq!(stopped_again["ok"], true);
 }
 
 #[test]

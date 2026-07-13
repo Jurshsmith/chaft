@@ -176,8 +176,12 @@ impl DeviceIdentity {
             Self::load_from_file_with_passphrase(path, passphrase)
         } else {
             let identity = Self::generate();
-            identity.save_to_file_with_passphrase(path, passphrase)?;
-            Ok(identity)
+            let bytes = identity.persisted_bytes(passphrase)?;
+            if write_new_identity_file(path, &bytes)? {
+                Ok(identity)
+            } else {
+                Self::load_from_file_with_passphrase(path, passphrase)
+            }
         }
     }
 
@@ -231,19 +235,23 @@ impl DeviceIdentity {
             fs::create_dir_all(parent)?;
         }
 
+        let bytes = self.persisted_bytes(passphrase)?;
+        write_identity_file(path, &bytes)
+    }
+
+    fn persisted_bytes(&self, passphrase: Option<&str>) -> Result<Vec<u8>, IdentityError> {
         let persisted = PersistedDeviceIdentity {
             schema_version: 1,
             device_id: self.device_id.clone(),
             ed25519_signing_key_hex: encode_hex(&self.signing_key_bytes()),
         };
-        let bytes = match passphrase {
+        Ok(match passphrase {
             Some(passphrase) if !passphrase.trim().is_empty() => {
                 serde_json::to_vec_pretty(&encrypt_persisted_identity(&persisted, passphrase)?)?
             }
             Some(_) => return Err(IdentityError::EncryptedIdentityPassphraseRequired),
             None => serde_json::to_vec_pretty(&persisted)?,
-        };
-        write_identity_file(path, &bytes)
+        })
     }
 
     fn from_encrypted_persisted(
@@ -362,6 +370,50 @@ fn write_identity_file(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(())
+}
+
+fn write_new_identity_file(path: &Path, bytes: &[u8]) -> Result<bool, IdentityError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let (temp_path, mut file) = create_unique_identity_temp_file(path)?;
+    let result = (|| -> Result<bool, IdentityError> {
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+
+        #[cfg(unix)]
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
+
+        let created = match fs::hard_link(&temp_path, path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => return Err(error.into()),
+        };
+        fs::remove_file(&temp_path)?;
+        if created
+            && let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            sync_identity_parent_directory(parent)?;
+        }
+        Ok(created)
+    })();
+
+    if result.is_err() {
+        match fs::remove_file(&temp_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+    result
 }
 
 fn create_unique_identity_temp_file(path: &Path) -> Result<(PathBuf, fs::File), IdentityError> {
@@ -860,6 +912,40 @@ mod tests {
             let mode = fs::metadata(&identity_path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn concurrent_load_or_generate_calls_converge_on_one_identity() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let identity_path = tempdir.path().join("device.json");
+        let worker_count = 8;
+        let barrier = Arc::new(Barrier::new(worker_count));
+        let handles = (0..worker_count)
+            .map(|_| {
+                let identity_path = identity_path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    DeviceIdentity::load_or_generate(identity_path)
+                        .unwrap()
+                        .device_id()
+                        .clone()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let device_ids = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        let persisted = DeviceIdentity::load_from_file(&identity_path).unwrap();
+
+        assert!(
+            device_ids
+                .iter()
+                .all(|device_id| device_id == persisted.device_id())
+        );
+        assert!(identity_temp_artifacts_under(tempdir.path()).is_empty());
     }
 
     #[test]

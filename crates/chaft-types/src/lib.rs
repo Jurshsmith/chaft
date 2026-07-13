@@ -193,14 +193,18 @@ pub fn is_canonical_event_id_str(value: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportedPeerEndpointHintRoute {
     DirectTcp,
-    NativeIroh,
+    NativeIrohDirect,
+    NativeIrohRelay,
+    NativeIrohDiscovery,
 }
 
 impl SupportedPeerEndpointHintRoute {
     pub fn primary_transport_label(self) -> &'static str {
         match self {
             Self::DirectTcp => "direct-tcp",
-            Self::NativeIroh => "iroh",
+            Self::NativeIrohDirect => "iroh-direct",
+            Self::NativeIrohRelay => "iroh-relay",
+            Self::NativeIrohDiscovery => "iroh-discovery",
         }
     }
 
@@ -208,7 +212,9 @@ impl SupportedPeerEndpointHintRoute {
         let transport = transport.trim();
         match self {
             Self::DirectTcp => transport == "direct-tcp",
-            Self::NativeIroh => matches!(transport, "iroh" | "iroh-direct"),
+            Self::NativeIrohDirect => matches!(transport, "iroh" | "iroh-direct"),
+            Self::NativeIrohRelay => matches!(transport, "iroh" | "iroh-relay"),
+            Self::NativeIrohDiscovery => matches!(transport, "iroh" | "iroh-discovery"),
         }
     }
 }
@@ -307,34 +313,57 @@ fn valid_tcp_port(port: &str, allow_zero_port: bool) -> bool {
 
 fn supported_native_iroh_hint_route(endpoint: &str) -> Option<SupportedPeerEndpointHintRoute> {
     let endpoint = endpoint.strip_prefix("iroh://")?;
-    let (endpoint_id, query_and_fragment) = endpoint.split_once('?')?;
+    let (endpoint_id, query_and_fragment) = endpoint
+        .split_once('?')
+        .map(|(endpoint_id, query)| (endpoint_id, Some(query)))
+        .unwrap_or((endpoint, None));
     if !native_iroh_endpoint_id_syntax_is_valid(endpoint_id) {
         return None;
     }
+
+    let Some(query_and_fragment) = query_and_fragment else {
+        return Some(SupportedPeerEndpointHintRoute::NativeIrohDiscovery);
+    };
 
     let query = query_and_fragment
         .split_once('#')
         .map(|(query, _fragment)| query)
         .unwrap_or(query_and_fragment);
     let mut has_direct_addr = false;
+    let mut has_relay = false;
     for parameter in query.split('&') {
         let (key, value) = parameter
             .split_once('=')
             .map(|(key, value)| (key.trim(), value.trim()))
             .unwrap_or((parameter.trim(), ""));
-        if key == "relay" {
-            return None;
-        }
         match key {
             "addr" if native_iroh_direct_addr_is_valid(value) => {
                 has_direct_addr = true;
             }
             "addr" => return None,
+            "relay" if native_iroh_relay_url_is_valid(value) => {
+                has_relay = true;
+            }
+            "relay" => return None,
             _ => return None,
         }
     }
 
-    has_direct_addr.then_some(SupportedPeerEndpointHintRoute::NativeIroh)
+    if has_relay {
+        Some(SupportedPeerEndpointHintRoute::NativeIrohRelay)
+    } else {
+        has_direct_addr.then_some(SupportedPeerEndpointHintRoute::NativeIrohDirect)
+    }
+}
+
+fn native_iroh_relay_url_is_valid(value: &str) -> bool {
+    let Some(authority_and_path) = value.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = authority_and_path.split('/').next().unwrap_or_default();
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !value.bytes().any(|byte| byte.is_ascii_whitespace())
 }
 
 fn native_iroh_direct_addr_is_valid(address: &str) -> bool {
@@ -1067,13 +1096,23 @@ mod tests {
             supported_peer_endpoint_hint_route(&format!(
                 "iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"
             )),
-            Some(SupportedPeerEndpointHintRoute::NativeIroh)
+            Some(SupportedPeerEndpointHintRoute::NativeIrohDirect)
         );
         assert_eq!(
             supported_peer_endpoint_hint_route(&format!(
                 "iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777&addr=127.0.0.1:8888"
             )),
-            Some(SupportedPeerEndpointHintRoute::NativeIroh)
+            Some(SupportedPeerEndpointHintRoute::NativeIrohDirect)
+        );
+        assert_eq!(
+            supported_peer_endpoint_hint_route(&format!(
+                "iroh://{VALID_IROH_ENDPOINT_ID}?relay=https://relay.example.invalid&addr=127.0.0.1:7777"
+            )),
+            Some(SupportedPeerEndpointHintRoute::NativeIrohRelay)
+        );
+        assert_eq!(
+            supported_peer_endpoint_hint_route(&format!("iroh://{VALID_IROH_ENDPOINT_ID}")),
+            Some(SupportedPeerEndpointHintRoute::NativeIrohDiscovery)
         );
 
         let rejected_endpoints = vec![
@@ -1102,9 +1141,8 @@ mod tests {
             format!("iroh:// {VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"),
             format!("iroh://{VALID_IROH_ENDPOINT_ID} ?addr=127.0.0.1:7777"),
             "iroh://node?relay=https://relay.example.invalid&addr=127.0.0.1:7777".to_owned(),
-            format!(
-                "iroh://{VALID_IROH_ENDPOINT_ID}?relay=https://relay.example.invalid&addr=127.0.0.1:7777"
-            ),
+            format!("iroh://{VALID_IROH_ENDPOINT_ID}?relay=http://relay.example.invalid"),
+            format!("iroh://{VALID_IROH_ENDPOINT_ID}?relay=https://"),
             format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=localhost:7777"),
             format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1"),
             format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:0"),
@@ -1166,6 +1204,14 @@ mod tests {
             &format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"),
             "iroh-direct"
         ));
+        assert!(peer_endpoint_hint_transport_is_consistent(
+            &format!("iroh://{VALID_IROH_ENDPOINT_ID}?relay=https://relay.example.invalid"),
+            "iroh-relay"
+        ));
+        assert!(peer_endpoint_hint_transport_is_consistent(
+            &format!("iroh://{VALID_IROH_ENDPOINT_ID}"),
+            "iroh-discovery"
+        ));
 
         let mismatched_transports = vec![
             ("direct+tcp://127.0.0.1:7777".to_owned(), "iroh"),
@@ -1173,10 +1219,6 @@ mod tests {
             (
                 format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"),
                 "direct-tcp",
-            ),
-            (
-                format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"),
-                "iroh-relay",
             ),
             (
                 format!("iroh://{VALID_IROH_ENDPOINT_ID}?addr=127.0.0.1:7777"),

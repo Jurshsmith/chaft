@@ -428,6 +428,8 @@ pub struct LocalRuntime {
     store: EventStore,
 }
 
+const IROH_ENDPOINT_SECRET_DERIVATION_CONTEXT: &str = "dev.chaft.iroh-endpoint-secret.v1";
+
 struct WorkspaceWriteContext {
     events: Vec<SignedEvent>,
     state: WorkspaceState,
@@ -584,6 +586,12 @@ impl LocalRuntime {
 
     pub fn device_id(&self) -> &DeviceId {
         self.identity.device_id()
+    }
+
+    pub fn iroh_endpoint_secret_key_bytes(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key(IROH_ENDPOINT_SECRET_DERIVATION_CONTEXT);
+        hasher.update(&self.identity.signing_key_bytes());
+        *hasher.finalize().as_bytes()
     }
 
     pub fn list_workspace_member_page(
@@ -4775,6 +4783,23 @@ mod tests {
             EventBody::DeviceProfileUpdated { display_name } if display_name == "Mira"
         ));
         assert_eq!(events[2].event.parents, vec![events[1].event_id.clone()]);
+    }
+
+    #[test]
+    fn iroh_endpoint_secret_is_stable_per_device_and_domain_separated() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let first = LocalRuntime::open(first_dir.path(), None).unwrap();
+        let endpoint_secret = first.iroh_endpoint_secret_key_bytes();
+        let device_signing_secret = first.identity.signing_key_bytes();
+        drop(first);
+
+        let reopened = LocalRuntime::open(first_dir.path(), None).unwrap();
+        let second = LocalRuntime::open(second_dir.path(), None).unwrap();
+
+        assert_eq!(reopened.iroh_endpoint_secret_key_bytes(), endpoint_secret);
+        assert_ne!(endpoint_secret, device_signing_secret);
+        assert_ne!(second.iroh_endpoint_secret_key_bytes(), endpoint_secret);
     }
 
     #[test]

@@ -131,6 +131,7 @@ pub(crate) fn runtime_start_iroh_peer_result(
 ) -> FfiResult<HostedPeer> {
     result_envelope(|| {
         let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let iroh_secret_key = runtime.iroh_endpoint_secret_key_bytes();
         let paths = runtime.paths().clone();
         let peer_id = next_hosted_peer_id("iroh-peer");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -165,16 +166,19 @@ pub(crate) fn runtime_start_iroh_peer_result(
                     Arc::new(FileJoinRequestInbox::new(paths.data_dir.clone())),
                     Arc::new(FileJoinResponseInbox::new(paths.data_dir.clone())),
                 );
-                let server =
-                    match IrohSyncPeer::bind(sync_store, IrohTransportConfig::from_environment())
-                        .await
-                    {
-                        Ok(server) => server,
-                        Err(error) => {
-                            let _ = ready_tx.send(Err(error.to_string()));
-                            return;
-                        }
-                    };
+                let server = match IrohSyncPeer::bind_with_secret_key_bytes(
+                    sync_store,
+                    IrohTransportConfig::from_environment(),
+                    iroh_secret_key,
+                )
+                .await
+                {
+                    Ok(server) => server,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error.to_string()));
+                        return;
+                    }
+                };
                 let endpoint = server.endpoint_url();
                 let _ = ready_tx.send(Ok(endpoint));
                 let _ = shutdown_rx.await;

@@ -53,6 +53,7 @@ pub const MAX_ACTIVE_IROH_CONNECTIONS: usize = MAX_ACTIVE_DIRECT_CONNECTIONS;
 pub const MAX_ACTIVE_IROH_STREAMS_PER_CONNECTION: usize = 128;
 pub const MAX_CACHED_IROH_PEER_CONNECTIONS: usize = 64;
 pub const NATIVE_IROH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const NATIVE_IROH_RELAY_READY_TIMEOUT: Duration = Duration::from_secs(12);
 pub const CHAFT_IROH_ALLOW_PUBLIC_RELAYS_ENV: &str = "CHAFT_IROH_ALLOW_PUBLIC_RELAYS";
 pub const CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY_ENV: &str = "CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY";
 pub const CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE_ENV: &str = "CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE";
@@ -809,6 +810,7 @@ enum ResolvedPeer {
 
 pub struct IrohSyncPeer {
     endpoint: Endpoint,
+    advertise_by_discovery: bool,
     task: JoinHandle<Result<(), NetError>>,
 }
 
@@ -817,15 +819,49 @@ impl IrohSyncPeer {
         sync_store: SyncPeerStore,
         config: IrohTransportConfig,
     ) -> Result<Self, NetError> {
-        let endpoint = bind_native_endpoint(&config).await?;
+        Self::bind_inner(sync_store, config, None).await
+    }
+
+    pub async fn bind_with_secret_key_bytes(
+        sync_store: SyncPeerStore,
+        config: IrohTransportConfig,
+        secret_key_bytes: [u8; 32],
+    ) -> Result<Self, NetError> {
+        Self::bind_inner(sync_store, config, Some(secret_key_bytes)).await
+    }
+
+    async fn bind_inner(
+        sync_store: SyncPeerStore,
+        config: IrohTransportConfig,
+        secret_key_bytes: Option<[u8; 32]>,
+    ) -> Result<Self, NetError> {
+        let endpoint = bind_native_endpoint_with_secret(&config, secret_key_bytes).await?;
+        if config.allow_public_relays
+            && timeout(NATIVE_IROH_RELAY_READY_TIMEOUT, endpoint.online())
+                .await
+                .is_err()
+        {
+            endpoint.close().await;
+            return Err(NetError::Unavailable(
+                "Iroh relay did not become reachable before timeout",
+            ));
+        }
         let accept_endpoint = endpoint.clone();
         let task =
             tokio::spawn(async move { serve_native_endpoint(accept_endpoint, sync_store).await });
-        Ok(Self { endpoint, task })
+        Ok(Self {
+            endpoint,
+            advertise_by_discovery: config.allow_public_discovery,
+            task,
+        })
     }
 
     pub fn endpoint_url(&self) -> String {
-        native_endpoint_url(&self.endpoint)
+        if self.advertise_by_discovery {
+            format!("iroh://{}", self.endpoint.id())
+        } else {
+            native_endpoint_url(&self.endpoint)
+        }
     }
 
     pub async fn close(self) -> Result<(), NetError> {
@@ -1214,8 +1250,24 @@ fn native_endpoint_url(endpoint: &Endpoint) -> String {
 }
 
 async fn bind_native_endpoint(config: &IrohTransportConfig) -> Result<Endpoint, NetError> {
-    Endpoint::builder(presets::N0)
-        .secret_key(SecretKey::generate())
+    bind_native_endpoint_with_secret(config, None).await
+}
+
+async fn bind_native_endpoint_with_secret(
+    config: &IrohTransportConfig,
+    secret_key_bytes: Option<[u8; 32]>,
+) -> Result<Endpoint, NetError> {
+    let builder = if config.allow_public_discovery {
+        Endpoint::builder(presets::N0)
+    } else {
+        Endpoint::builder(presets::Minimal)
+    };
+    builder
+        .secret_key(
+            secret_key_bytes
+                .map(|bytes| SecretKey::from_bytes(&bytes))
+                .unwrap_or_else(SecretKey::generate),
+        )
         .alpns(vec![CHAFT_SYNC_ALPN.to_vec()])
         .relay_mode(if config.allow_public_relays {
             RelayMode::Default
@@ -2016,6 +2068,35 @@ mod tests {
             transport.native_connections.lock().await.connections.len(),
             1
         );
+        server.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the public Iroh relay and discovery services"]
+    async fn public_discovery_endpoint_routes_between_independent_peers() {
+        let config = IrohTransportConfig {
+            allow_public_relays: true,
+            allow_public_discovery: true,
+            allow_direct_tcp_bridge: true,
+        };
+        let server = IrohSyncPeer::bind_with_secret_key_bytes(
+            SyncPeerStore::new(EventStore::open_in_memory().unwrap()),
+            config.clone(),
+            [42; 32],
+        )
+        .await
+        .unwrap();
+        let endpoint = server.endpoint_url();
+        assert!(endpoint.starts_with("iroh://"));
+        assert!(!endpoint.contains('?'));
+
+        let transport = IrohTransport::new(config);
+        let peer = PeerAddress {
+            peer_id: PeerId("public-discovery-peer".to_owned()),
+            endpoint,
+        };
+        transport.fetch_inventory(&peer).await.unwrap();
+
         server.close().await.unwrap();
     }
 
