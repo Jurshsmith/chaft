@@ -1207,7 +1207,15 @@ bool validateOpenMlsValueForWrite(const QString &value, bool allowEmptyValue,
                                       QStringLiteral("128 bytes"), error);
 }
 
-enum class PeerEndpointRoute { Unsupported, DirectTcp, NativeIrohDirect };
+bool parseEnabledFlag(const QString &value);
+
+enum class PeerEndpointRoute {
+  Unsupported,
+  DirectTcp,
+  NativeIrohDirect,
+  NativeIrohRelay,
+  NativeIrohDiscovery
+};
 
 bool containsAsciiWhitespace(const QString &value) {
   for (const auto ch : value) {
@@ -1336,6 +1344,15 @@ bool nativeIrohEndpointIdSyntaxIsValid(const QString &endpointId) {
   });
 }
 
+bool nativeIrohRelayUrlIsValid(const QString &value) {
+  if (value.isEmpty() || containsAsciiWhitespace(value)) {
+    return false;
+  }
+  const QUrl url(value);
+  return url.isValid() && url.scheme() == QStringLiteral("https") &&
+         !url.host().isEmpty();
+}
+
 PeerEndpointRoute supportedPeerEndpointRoute(const QString &endpoint) {
   const auto normalized = endpoint.trimmed();
   if (normalized.isEmpty()) {
@@ -1356,12 +1373,16 @@ PeerEndpointRoute supportedPeerEndpointRoute(const QString &endpoint) {
   if (normalized.startsWith(QStringLiteral("iroh://"))) {
     const auto rest = normalized.mid(7);
     const auto querySeparator = rest.indexOf(QLatin1Char('?'));
-    if (querySeparator <= 0) {
+    if (querySeparator == 0) {
       return PeerEndpointRoute::Unsupported;
     }
-    const auto endpointId = rest.left(querySeparator);
+    const auto endpointId =
+        querySeparator < 0 ? rest : rest.left(querySeparator);
     if (!nativeIrohEndpointIdSyntaxIsValid(endpointId)) {
       return PeerEndpointRoute::Unsupported;
+    }
+    if (querySeparator < 0) {
+      return PeerEndpointRoute::NativeIrohDiscovery;
     }
     auto query = rest.mid(querySeparator + 1);
     const auto fragmentSeparator = query.indexOf(QLatin1Char('#'));
@@ -1370,6 +1391,7 @@ PeerEndpointRoute supportedPeerEndpointRoute(const QString &endpoint) {
     }
 
     auto hasDirectAddr = false;
+    auto hasRelay = false;
     for (const auto &parameter :
          query.split(QLatin1Char('&'), Qt::KeepEmptyParts)) {
       const auto equals = parameter.indexOf(QLatin1Char('='));
@@ -1378,12 +1400,19 @@ PeerEndpointRoute supportedPeerEndpointRoute(const QString &endpoint) {
       const auto value =
           equals >= 0 ? parameter.mid(equals + 1).trimmed() : QString();
       if (key == QStringLiteral("relay")) {
-        return PeerEndpointRoute::Unsupported;
+        if (!nativeIrohRelayUrlIsValid(value)) {
+          return PeerEndpointRoute::Unsupported;
+        }
+        hasRelay = true;
+        continue;
       }
       if (key != QStringLiteral("addr") || !nativeIrohDirectAddrIsValid(value)) {
         return PeerEndpointRoute::Unsupported;
       }
       hasDirectAddr = true;
+    }
+    if (hasRelay) {
+      return PeerEndpointRoute::NativeIrohRelay;
     }
     return hasDirectAddr ? PeerEndpointRoute::NativeIrohDirect
                          : PeerEndpointRoute::Unsupported;
@@ -1406,6 +1435,12 @@ bool peerEndpointRouteAllowsTransport(PeerEndpointRoute route,
   case PeerEndpointRoute::NativeIrohDirect:
     return normalized == QStringLiteral("iroh") ||
            normalized == QStringLiteral("iroh-direct");
+  case PeerEndpointRoute::NativeIrohRelay:
+    return normalized == QStringLiteral("iroh") ||
+           normalized == QStringLiteral("iroh-relay");
+  case PeerEndpointRoute::NativeIrohDiscovery:
+    return normalized == QStringLiteral("iroh") ||
+           normalized == QStringLiteral("iroh-discovery");
   case PeerEndpointRoute::Unsupported:
     return false;
   }
@@ -1413,7 +1448,16 @@ bool peerEndpointRouteAllowsTransport(PeerEndpointRoute route,
 }
 
 bool peerEndpointIsSupportedForUse(const QString &endpoint) {
-  return supportedPeerEndpointRoute(endpoint) != PeerEndpointRoute::Unsupported;
+  const auto route = supportedPeerEndpointRoute(endpoint);
+  if (route == PeerEndpointRoute::NativeIrohRelay) {
+    return parseEnabledFlag(
+        qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_RELAYS"));
+  }
+  if (route == PeerEndpointRoute::NativeIrohDiscovery) {
+    return parseEnabledFlag(
+        qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY"));
+  }
+  return route != PeerEndpointRoute::Unsupported;
 }
 
 bool validatePeerEndpointForPublish(const QString &endpointId,
@@ -1435,6 +1479,10 @@ bool validatePeerEndpointForPublish(const QString &endpointId,
   if (route == PeerEndpointRoute::Unsupported) {
     *error = QStringLiteral(
         "address is not supported; paste an address from a teammate");
+    return false;
+  }
+  if (!peerEndpointIsSupportedForUse(endpoint)) {
+    *error = QStringLiteral("address method is disabled by network policy");
     return false;
   }
   if (!peerEndpointRouteAllowsTransport(route, transport)) {
@@ -2009,6 +2057,29 @@ bool parseEnabledFlag(const QString &value) {
          normalized == QStringLiteral("true") ||
          normalized == QStringLiteral("yes") ||
          normalized == QStringLiteral("on");
+}
+
+bool backgroundReachabilityEnabled() {
+  const auto configured =
+      qEnvironmentVariable("CHAFT_DESKTOP_BACKGROUND_REACHABILITY").trimmed();
+  if (configured.isEmpty() || configured.toUtf8().size() > 16) {
+    return true;
+  }
+  return parseEnabledFlag(configured);
+}
+
+bool developmentLoopbackFallbackEnabled() {
+  return parseEnabledFlag(
+      qEnvironmentVariable("CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK"));
+}
+
+void applyDesktopReachabilityDefaults() {
+  if (qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_RELAYS")) {
+    qputenv("CHAFT_IROH_ALLOW_PUBLIC_RELAYS", "1");
+  }
+  if (qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY")) {
+    qputenv("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY", "1");
+  }
 }
 
 bool loadAutoBackupEnabled(const QString &runtimeDir) {
@@ -2856,19 +2927,6 @@ public:
         setSyncStatus(QStringLiteral("opening workspace..."));
         QMetaObject::invokeMethod(
             this, [this]() { queueRuntimeHydration(); }, Qt::QueuedConnection);
-      }
-      if (!m_rawEventStoreMode) {
-        QMetaObject::invokeMethod(
-            this,
-            [this]() {
-              queueJoinRequestOutboxDrain();
-              queueJoinResponseInboxRefresh(false);
-              queueJoinResponseOutboxDrain();
-              scheduleJoinRequestOutboxPoll();
-              scheduleJoinResponseInboxPoll();
-              scheduleJoinResponseOutboxPoll();
-            },
-            Qt::QueuedConnection);
       }
     }
     if (m_syncStatus.isEmpty()) {
@@ -6079,6 +6137,57 @@ public:
     return true;
   }
 
+  void startBackgroundReachability() {
+    if (!m_ffiReady || m_rawEventStoreMode || m_peerHostingInFlight ||
+        peerHosting() || m_backgroundReachabilityStoppedByUser ||
+        !backgroundReachabilityEnabled()) {
+      return;
+    }
+    m_backgroundReachabilityRetryScheduled = false;
+    if (m_startIrohPeerJson != nullptr) {
+      m_backgroundReachabilityFallbackPending = true;
+      setSyncStatus(QStringLiteral("connecting to peers..."));
+      runIrohPeerStart();
+      return;
+    }
+    if (developmentLoopbackFallbackEnabled() &&
+        m_startDirectPeerJson != nullptr) {
+      m_backgroundReachabilityFallbackPending = true;
+      setSyncStatus(QStringLiteral("starting local peer access..."));
+      runDirectPeerStart(QStringLiteral("127.0.0.1:0"));
+      return;
+    }
+    m_backgroundReachabilityFallbackPending = false;
+    setSyncStatus(QStringLiteral("secure peer transport unavailable"));
+  }
+
+  void scheduleBackgroundReachabilityRetry(const QString &error) {
+    m_backgroundReachabilityFallbackPending = false;
+    if (!backgroundReachabilityEnabled() ||
+        m_backgroundReachabilityStoppedByUser ||
+        m_backgroundReachabilityRetryScheduled || peerHosting()) {
+      if (!error.trimmed().isEmpty()) {
+        setSyncStatus(error);
+      }
+      return;
+    }
+
+    const auto exponent = std::min(m_backgroundReachabilityRetryAttempt, 6);
+    const auto delayMs = std::min(60'000, 1'000 * (1 << exponent));
+    ++m_backgroundReachabilityRetryAttempt;
+    m_backgroundReachabilityRetryScheduled = true;
+    setSyncStatus(QStringLiteral("peer connection unavailable; retrying in %1s")
+                      .arg((delayMs + 999) / 1000));
+    const QPointer<ChaftController> guard(this);
+    QTimer::singleShot(delayMs, this, [guard]() {
+      if (guard.isNull()) {
+        return;
+      }
+      guard->m_backgroundReachabilityRetryScheduled = false;
+      guard->startBackgroundReachability();
+    });
+  }
+
   Q_INVOKABLE bool startLocalPeer(const QString &listenEndpoint) {
     if (!ensureFfiReady()) {
       return false;
@@ -6106,6 +6215,8 @@ public:
       setSyncStatus(metadataError);
       return false;
     }
+    m_backgroundReachabilityStoppedByUser = false;
+    m_backgroundReachabilityFallbackPending = false;
     setSyncStatus(QStringLiteral("creating sharing address..."));
     runDirectPeerStart(listen);
     return true;
@@ -6130,12 +6241,17 @@ public:
       return false;
     }
 
+    m_backgroundReachabilityStoppedByUser = false;
+    m_backgroundReachabilityFallbackPending = false;
     setSyncStatus(QStringLiteral("creating relay address..."));
     runIrohPeerStart();
     return true;
   }
 
   Q_INVOKABLE bool stopLocalPeer() {
+    m_backgroundReachabilityStoppedByUser = true;
+    m_backgroundReachabilityFallbackPending = false;
+    m_backgroundReachabilityRetryScheduled = false;
     if (m_hostedPeerId.isEmpty()) {
       return true;
     }
@@ -7844,6 +7960,23 @@ private:
     runWorkspaceStorageHealthRefresh(generation, workspaceId);
   }
 
+  void startRuntimeBackgroundServices() {
+    if (m_runtimeBackgroundServicesStarted || m_rawEventStoreMode ||
+        m_deviceId.trimmed().isEmpty()) {
+      return;
+    }
+    m_runtimeBackgroundServicesStarted = true;
+    queueJoinRequestOutboxDrain();
+    queueJoinResponseInboxRefresh(false);
+    queueJoinResponseOutboxDrain();
+    scheduleJoinRequestOutboxPoll();
+    scheduleJoinResponseInboxPoll();
+    scheduleJoinResponseOutboxPoll();
+    if (backgroundReachabilityEnabled()) {
+      startBackgroundReachability();
+    }
+  }
+
   void queueRuntimeHydration() {
     if (!m_ffiReady || m_freeString == nullptr) {
       return;
@@ -9156,6 +9289,7 @@ private:
                 emit guard->deviceIdChanged();
               }
             }
+            guard->startRuntimeBackgroundServices();
 
             if (guard->m_workspaceSummariesGeneration == summariesGeneration) {
               if (!summariesError.isEmpty()) {
@@ -9833,6 +9967,9 @@ private:
             }
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setSyncStatus(QStringLiteral("workspace created"));
+            if (guard->peerHosting()) {
+              guard->refreshHostedPeerEndpointHint();
+            }
           },
           Qt::QueuedConnection);
     });
@@ -10039,15 +10176,29 @@ private:
             }
             guard->setPeerHostingInFlight(false);
             if (value.isEmpty()) {
+              if (guard->m_backgroundReachabilityFallbackPending) {
+                guard->scheduleBackgroundReachabilityRetry(error);
+                return;
+              }
               guard->setSyncStatus(error);
               return;
             }
             if (peerId.isEmpty() || endpoint.isEmpty()) {
+              if (guard->m_backgroundReachabilityFallbackPending) {
+                guard->scheduleBackgroundReachabilityRetry(
+                    QStringLiteral(
+                        "hosting did not return a sharing address"));
+                return;
+              }
               guard->setSyncStatus(
                   QStringLiteral("hosting did not return a sharing address"));
               return;
             }
 
+            if (guard->m_backgroundReachabilityFallbackPending) {
+              guard->m_backgroundReachabilityFallbackPending = false;
+              guard->m_backgroundReachabilityRetryAttempt = 0;
+            }
             guard->m_hostedPeerId = peerId;
             guard->m_hostedPeerEndpoint = endpoint;
             guard->m_hostedPeerEndpointId = QStringLiteral("hosted-direct");
@@ -10104,15 +10255,44 @@ private:
             }
             guard->setPeerHostingInFlight(false);
             if (value.isEmpty()) {
+              if (guard->m_backgroundReachabilityFallbackPending &&
+                  developmentLoopbackFallbackEnabled() &&
+                  guard->m_startDirectPeerJson != nullptr) {
+                guard->setSyncStatus(
+                    QStringLiteral("using local peer access..."));
+                guard->runDirectPeerStart(QStringLiteral("127.0.0.1:0"));
+                return;
+              }
+              if (guard->m_backgroundReachabilityFallbackPending) {
+                guard->scheduleBackgroundReachabilityRetry(error);
+                return;
+              }
+              guard->m_backgroundReachabilityFallbackPending = false;
               guard->setSyncStatus(error);
               return;
             }
             if (peerId.isEmpty() || endpoint.isEmpty()) {
+              if (guard->m_backgroundReachabilityFallbackPending &&
+                  developmentLoopbackFallbackEnabled() &&
+                  guard->m_startDirectPeerJson != nullptr) {
+                guard->setSyncStatus(
+                    QStringLiteral("using local peer access..."));
+                guard->runDirectPeerStart(QStringLiteral("127.0.0.1:0"));
+                return;
+              }
+              if (guard->m_backgroundReachabilityFallbackPending) {
+                guard->scheduleBackgroundReachabilityRetry(QStringLiteral(
+                    "relay did not return a sharing address"));
+                return;
+              }
+              guard->m_backgroundReachabilityFallbackPending = false;
               guard->setSyncStatus(
                   QStringLiteral("relay did not return a sharing address"));
               return;
             }
 
+            guard->m_backgroundReachabilityFallbackPending = false;
+            guard->m_backgroundReachabilityRetryAttempt = 0;
             guard->m_hostedPeerId = peerId;
             guard->m_hostedPeerEndpoint = endpoint;
             guard->m_hostedPeerEndpointId = QStringLiteral("hosted-iroh");
@@ -15046,6 +15226,11 @@ private:
   bool m_channelPageInFlight = false;
   bool m_memberPageInFlight = false;
   bool m_peerHostingInFlight = false;
+  bool m_backgroundReachabilityFallbackPending = false;
+  bool m_backgroundReachabilityRetryScheduled = false;
+  bool m_backgroundReachabilityStoppedByUser = false;
+  bool m_runtimeBackgroundServicesStarted = false;
+  int m_backgroundReachabilityRetryAttempt = 0;
   bool m_joinRequestInboxInFlight = false;
   bool m_joinRequestOutboxInFlight = false;
   bool m_joinRequestSubmitInFlight = false;
@@ -15129,6 +15314,53 @@ bool desktopSmokeExpectNoWorkspace() {
                          .toLower();
   return value == QStringLiteral("1") || value == QStringLiteral("true") ||
          value == QStringLiteral("yes") || value == QStringLiteral("on");
+}
+
+bool desktopSmokeExpectReachable() {
+  return parseEnabledFlag(
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE"));
+}
+
+QString desktopSmokeExpectedReachabilityRoute() {
+  const auto route =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_ROUTE").trimmed().toLower();
+  if (route == QStringLiteral("iroh") ||
+      route == QStringLiteral("iroh-direct") ||
+      route == QStringLiteral("iroh-relay") ||
+      route == QStringLiteral("iroh-discovery") ||
+      route == QStringLiteral("direct")) {
+    return route;
+  }
+  return {};
+}
+
+bool desktopSmokeReachabilityMatches(ChaftController *controller,
+                                     const QString &expectedRoute) {
+  if (controller == nullptr || !controller->peerHosting()) {
+    return false;
+  }
+  if (expectedRoute.isEmpty()) {
+    return true;
+  }
+  const auto endpoint = controller->hostedPeerEndpoint().trimmed().toLower();
+  const auto isIroh = endpoint.startsWith(QStringLiteral("iroh://"));
+  if (expectedRoute == QStringLiteral("direct")) {
+    return !isIroh;
+  }
+  if (!isIroh) {
+    return false;
+  }
+  if (expectedRoute == QStringLiteral("iroh-direct")) {
+    return endpoint.contains(QStringLiteral("?addr=")) &&
+           !endpoint.contains(QStringLiteral("relay="));
+  }
+  if (expectedRoute == QStringLiteral("iroh-relay")) {
+    return endpoint.contains(QStringLiteral("relay="));
+  }
+  if (expectedRoute == QStringLiteral("iroh-discovery")) {
+    return !endpoint.contains(QLatin1Char('?'));
+  }
+  return true;
 }
 
 bool desktopSmokeQuickItemCaptureEnabled() {
@@ -15393,6 +15625,9 @@ void configureDesktopSmoke(QCoreApplication *app,
   const auto expectedText =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_TEXT").trimmed();
   const auto expectNoWorkspace = desktopSmokeExpectNoWorkspace();
+  const auto expectReachable = desktopSmokeExpectReachable();
+  const auto expectedReachabilityRoute =
+      desktopSmokeExpectedReachabilityRoute();
   const auto screenshotPath =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_SCREENSHOT").trimmed();
   const auto screenshotDelayMs = desktopSmokeScreenshotDelayMs();
@@ -15401,7 +15636,8 @@ void configureDesktopSmoke(QCoreApplication *app,
 
   const auto checkSnapshot = [app, controller, engine, expectedText,
                               screenshotPath, expectNoWorkspace, completed,
-                              screenshotDelayMs]() {
+                              screenshotDelayMs, expectReachable,
+                              expectedReachabilityRoute]() {
     if (*completed) {
       return;
     }
@@ -15411,6 +15647,10 @@ void configureDesktopSmoke(QCoreApplication *app,
         return;
       }
     } else if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+      return;
+    }
+    if (expectReachable && !desktopSmokeReachabilityMatches(
+                               controller, expectedReachabilityRoute)) {
       return;
     }
 
@@ -15459,6 +15699,8 @@ void configureDesktopSmoke(QCoreApplication *app,
                    checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller, &ChaftController::syncStatusChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::hostedPeerChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
   QTimer::singleShot(0, app, checkSnapshot);
   QTimer::singleShot(timeoutMs, app, [controller, expectedText, completed]() {
     if (*completed) {
@@ -15505,8 +15747,12 @@ void applyDesktopLaunchEnvironment(int argc, char *argv[]) {
   for (int index = 1; index < argc; ++index) {
     const auto argument = QString::fromLocal8Bit(argv[index]);
     QString value;
-    if (launchOptionValue(argument, QStringLiteral("--ffi-library"), &index,
-                          argc, argv, &value)) {
+    if (argument == QStringLiteral("--local-development-networking")) {
+      qputenv("CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK", "1");
+      qputenv("CHAFT_IROH_ALLOW_PUBLIC_RELAYS", "0");
+      qputenv("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY", "0");
+    } else if (launchOptionValue(argument, QStringLiteral("--ffi-library"),
+                                 &index, argc, argv, &value)) {
       setLaunchEnvironmentValue("CHAFT_FFI_LIBRARY", value);
     } else if (launchOptionValue(argument, QStringLiteral("--qml-import-root"),
                                  &index, argc, argv, &value)) {
@@ -15558,6 +15804,7 @@ void loadBundledDesktopFonts() {
 
 int main(int argc, char *argv[]) {
   applyDesktopLaunchEnvironment(argc, argv);
+  applyDesktopReachabilityDefaults();
 
   if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
     qputenv("QT_QUICK_CONTROLS_STYLE", "ChaftStyle");

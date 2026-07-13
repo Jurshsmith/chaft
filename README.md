@@ -129,7 +129,12 @@ make dev-users N=3 FRESH=1
 The first instance builds the selected `PROFILE`; later instances reuse that
 build. Names default to `user1`, `user2`, and so on. Override the prefix with
 `PREFIX=peer`, or inspect the resolved profiles without opening windows with
-`DRY_RUN=1`. `N` is capped at 20 to avoid accidental launch storms.
+`DRY_RUN=1`. `N` is capped at 20 to avoid accidental launch storms. These
+instances use the normal product lifecycle: each desktop starts background
+reachability, invitation delivery, access-response polling, and live
+reconciliation automatically. The development launcher disables public
+relay/discovery traffic and explicitly permits a loopback fallback, keeping
+multi-user same-machine testing local without changing invitation authorization.
 
 Each name gets its own identity, event/search databases, keys, blobs, desktop
 settings, log, and window title. Launches from different directories also get
@@ -614,47 +619,64 @@ Blob-cache prune results follow the same count-first pattern, returning bounded
 workspace/hash/temp-path samples while preserving full reference/removal totals;
 prune also clears stale blob-store temp files from older process IDs without
 touching current-process staging files.
-The desktop Host control starts a local direct TCP peer over the same runtime
-`events.db` and encrypted `blobs/` cache; the adjacent Iroh host action serves
-the same local store as a native Iroh QUIC peer. Other profiles or replica nodes
-can use the displayed endpoint as their peer endpoint for pull, push, or sync.
-After a host starts, the desktop publishes that endpoint as a signed workspace
-hint with a short expiry, refreshes it while hosting, and publishes an immediate
-expiry update on toolbar Stop or best-effort normal desktop shutdown. Saving a
-backup peer in the desktop also publishes an `isBackupPeer` hint. The runtime,
-CLI, and desktop FFI expose the same signed peer-endpoint path, including
+The desktop starts background native Iroh reachability automatically over the
+same runtime `events.db` and encrypted `blobs/` cache. Production desktop
+launches enable Iroh's encrypted public relay and endpoint-ID discovery path by
+default, wait until a relay connection is actually ready, and retry transient
+startup failures with bounded exponential backoff. The Iroh endpoint secret is
+domain-separated from the device signing key but deterministically derived from
+it, so the public endpoint ID survives restart without adding another plaintext
+secret file. Relay and discovery services route encrypted peer traffic and
+publish reachability metadata; they do not receive workspace keys or become
+workspace authorities.
+
+Loopback direct-TCP fallback is never enabled by the production desktop. The
+development launcher passes `--local-development-networking`, which disables
+public relay/discovery traffic and enables
+`CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK=1` for same-machine instances. The
+advanced Host controls remain diagnostics and explicit overrides rather than an
+onboarding requirement. Set `CHAFT_DESKTOP_BACKGROUND_REACHABILITY=0` to disable
+automatic hosting; set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=0` and
+`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=0` to enforce a local-network-only policy.
+Other profiles or replica nodes can use the active endpoint for pull, push, or
+sync. After reachability starts, the desktop publishes that endpoint as a signed
+workspace hint with a short expiry, refreshes it while hosting, and publishes an
+immediate expiry update on toolbar Stop or best-effort normal desktop shutdown.
+Saving a backup peer in the desktop also publishes an `isBackupPeer` hint. The
+runtime, CLI, and desktop FFI expose the same signed peer-endpoint path, including
 optional `replicaStorageClass` and `replicaRetentionHint` fields, so newly synced
 profiles can discover operator-approved endpoints and their advertised storage
 intent from the replicated log instead of relying only on out-of-band notes.
 Direct TCP and Iroh host start/stop bind and close peer threads on background Qt
 workers, so local store opens, port binding, QUIC endpoint setup, and shutdown
 joins do not freeze the shell.
-Peer fields accept bare `host:port`, `direct+tcp://host:port`, and native
-`iroh://<endpoint-id>?addr=<host:port>` forms through the policy-aware Iroh
-adapter. CLI, desktop FFI, and headless node transport paths keep public
-relay/discovery off by default; set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=1` or
-`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=1` only for an explicitly approved relay or
-discovery deployment. `CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE=1` disables the
-direct TCP bridge for policy tests. Those Iroh policy flags ignore raw values
-above 16 bytes before matching `1`, `true`, `yes`, or `on`. Signed peer endpoint
+Peer fields accept bare `host:port`, `direct+tcp://host:port`, native
+`iroh://<endpoint-id>?addr=<host:port>`, relay-bearing native Iroh endpoints,
+and discovery-backed `iroh://<endpoint-id>` forms through the policy-aware Iroh
+adapter. The production desktop enables public relay/discovery policy unless an
+operator explicitly sets the corresponding allow flag to `0`; CLI, raw FFI,
+and headless node processes keep both off unless their flags are set to `1`.
+`CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE=1` disables the direct TCP bridge for
+policy tests. Those Iroh policy flags ignore raw values above 16 bytes before
+matching `1`, `true`, `yes`, or `on`. Signed peer endpoint
 hints use the same 2 KiB endpoint cap, a 2304-byte endpoint-ID cap, and a
 64-byte transport-label cap before append. Replica retention hints are capped at
 128 bytes, and the CLI/FFI publish endpoints reject unsupported routes or
 endpoint/transport mismatches before opening the runtime, so replicated
 discovery metadata stays bounded.
-The `Live` toggle periodically syncs the selected peer endpoint and suppresses
-overlapping sync workers so the desktop can keep a workspace fresh without
-manual button presses. If the endpoint field is empty, Live sync falls back to
+Live reconciliation is enabled by default and periodically syncs the selected
+peer endpoint while suppressing overlapping workers. The advanced `Live
+updates` toggle can pause it for diagnostics. If the endpoint field is empty,
+live sync falls back to
 the newest non-expired signed peer endpoint hint in the workspace snapshot,
 preferring member-hosted peers before backup peers. Snapshot JSON caps replicated
 endpoint hints to the newest 32 member-hosted rows plus newest 32 backup rows so
 large logs do not make QML peer selection or the P2P panel unbounded. QML
-rechecks those hints before automatic selection and only accepts direct TCP hints
-labelled `direct-tcp` or explicit-address native Iroh hints labelled
-`iroh-direct`, so older fallback JSON cannot silently route autosync or
-auto-backup through relay, discovery, central-server, custom, or mislabelled
-endpoints, and malformed direct TCP or native Iroh direct hints are ignored
-before automatic selection. The Backup
+rechecks those hints before automatic selection and accepts direct TCP,
+explicit-address Iroh, relay-bearing Iroh, and endpoint-ID discovery hints only
+when their route syntax and transport label agree. Central-server, custom,
+malformed, and mislabelled endpoints remain excluded before automatic
+selection. The Backup
 peer list can also run periodic proof-backed backup slices while sharing the
 same worker guard. Auto backup uses saved backup peers first, then falls back to
 non-expired signed backup-peer hints when no saved peer is available. Auto

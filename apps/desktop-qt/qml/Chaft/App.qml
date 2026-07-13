@@ -152,7 +152,7 @@ ApplicationWindow {
     readonly property bool conversationDestination: mainDestination === "conversation"
     readonly property bool settingsDestination: mainDestination === "settings"
     readonly property bool peopleAccessDestination: mainDestination === "peopleAccess"
-    property bool autoSyncEnabled: false
+    property bool autoSyncEnabled: true
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
     property string workspaceEntryMode: "join"
@@ -1357,6 +1357,12 @@ ApplicationWindow {
         if (route === "iroh-direct") {
             return transport === "iroh" || transport === "iroh-direct"
         }
+        if (route === "iroh-relay") {
+            return transport === "iroh" || transport === "iroh-relay"
+        }
+        if (route === "iroh-discovery") {
+            return transport === "iroh" || transport === "iroh-discovery"
+        }
         return false
     }
 
@@ -1453,6 +1459,13 @@ ApplicationWindow {
         return /^[0-9a-f]{64}$/.test(value) || /^[A-Za-z2-7]{52}$/.test(value)
     }
 
+    function nativeIrohRelayUrlIsValid(relayUrl) {
+        var value = String(relayUrl || "").trim()
+        return value.length > 0
+            && !root.containsAsciiWhitespace(value)
+            && /^https:\/\/[^/]+/.test(value)
+    }
+
     function supportedPeerEndpointRouteKind(endpoint) {
         var normalized = String(endpoint || "").trim()
         if (normalized.length === 0) {
@@ -1471,12 +1484,15 @@ ApplicationWindow {
         if (normalized.indexOf("iroh://") === 0) {
             var rest = normalized.slice(7)
             var querySeparator = rest.indexOf("?")
-            if (querySeparator <= 0) {
+            if (querySeparator === 0) {
                 return "unsupported"
             }
-            var endpointId = rest.slice(0, querySeparator)
+            var endpointId = querySeparator < 0 ? rest : rest.slice(0, querySeparator)
             if (!root.nativeIrohEndpointIdSyntaxIsValid(endpointId)) {
                 return "unsupported"
+            }
+            if (querySeparator < 0) {
+                return "iroh-discovery"
             }
             var query = rest.slice(querySeparator + 1)
             var fragmentSeparator = query.indexOf("#")
@@ -1485,18 +1501,26 @@ ApplicationWindow {
             }
             var parameters = query.split("&")
             var hasDirectAddr = false
+            var hasRelay = false
             for (var i = 0; i < parameters.length; i++) {
                 var parameter = parameters[i]
                 var equals = parameter.indexOf("=")
                 var key = equals >= 0 ? parameter.slice(0, equals).trim() : parameter.trim()
                 var value = equals >= 0 ? parameter.slice(equals + 1).trim() : ""
                 if (key === "relay") {
-                    return "unsupported"
+                    if (!root.nativeIrohRelayUrlIsValid(value)) {
+                        return "unsupported"
+                    }
+                    hasRelay = true
+                    continue
                 }
                 if (key !== "addr" || !root.nativeIrohDirectAddrIsValid(value)) {
                     return "unsupported"
                 }
                 hasDirectAddr = true
+            }
+            if (hasRelay) {
+                return "iroh-relay"
             }
             return hasDirectAddr ? "iroh-direct" : "unsupported"
         }
@@ -1686,7 +1710,6 @@ ApplicationWindow {
             || chaftController.runtimeUnlockRequired
             || (root.preferredSyncPeerEndpoint().length === 0
                 && (root.queuedPublishableEventCount > 0 || root.queuedBackupEventCount > 0))
-            || root.endpointRouteKind(root.preferredSyncPeerEndpoint()) === "iroh-discovery"
     }
 
     function shortDeviceId(deviceId) {
@@ -6490,6 +6513,9 @@ ApplicationWindow {
         root.pendingJoinPullCompletion = false
         if (status.toLowerCase().indexOf("fetched ") === 0) {
             root.clearJoinWaitingForPeer()
+            if (chaftController.peerHosting) {
+                chaftController.refreshHostedPeerEndpointHint()
+            }
             toastHost.show("success", "History fetched from invite", "", "", 4000)
         } else {
             toastHost.show("warning", "History could not fetch yet. Try again when a teammate is reachable.", "", "", 5000)

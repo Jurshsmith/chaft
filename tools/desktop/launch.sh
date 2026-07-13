@@ -10,7 +10,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: tools/desktop/launch.sh [debug|release] [options]
 
-Builds Chaft Desktop, prepares a persistent local runtime, and launches the app.
+Builds Chaft Desktop, prepares a persistent local runtime, and launches the app
+with local-development networking enabled.
 
 Options:
   --fresh            Recreate launch data before launching.
@@ -294,6 +295,7 @@ if [ "$detached" -eq 1 ]; then
     Darwin)
       app_bundle="$(CDPATH= cd "$(dirname "$desktop_binary")/../.." && pwd)"
       open -n "$app_bundle" --args \
+        --local-development-networking \
         --ffi-library "$ffi_library" \
         --qml-import-root "$source_qml_root" \
         --runtime-dir "$runtime_dir" \
@@ -309,7 +311,7 @@ if [ "$detached" -eq 1 ]; then
         CHAFT_RUNTIME_DIR="$runtime_dir" \
         CHAFT_DESKTOP_INSTANCE_LABEL="$instance_label" \
         CHAFT_WORKSPACE_ID="$workspace_id" \
-        "$desktop_binary" > "$log_file" 2>&1 &
+        "$desktop_binary" --local-development-networking > "$log_file" 2>&1 &
       printf 'desktop pid: %s\n' "$!"
       ;;
   esac
@@ -320,5 +322,5 @@ else
   CHAFT_RUNTIME_DIR="$runtime_dir" \
   CHAFT_DESKTOP_INSTANCE_LABEL="$instance_label" \
   CHAFT_WORKSPACE_ID="$workspace_id" \
-    "$desktop_binary"
+    "$desktop_binary" --local-development-networking
 fi

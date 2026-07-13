@@ -117,7 +117,7 @@ Dialog {
 
                 StatusChip {
                     text: root.app && root.app.preferredInvitePeerEndpoint().length > 0
-                        ? "Direct delivery ready"
+                        ? "Secure delivery ready"
                         : "Manual exchange"
                     secure: root.app && root.app.preferredInvitePeerEndpoint().length > 0
                     warning: !secure
@@ -128,8 +128,8 @@ Dialog {
                 Text {
                     Layout.fillWidth: true
                     text: root.app && root.app.preferredInvitePeerEndpoint().length > 0
-                        ? "Chaft can complete the claim while this route is reachable."
-                        : "Send the invite privately. Chaft packages any follow-up as a secure file when no direct route is available."
+                        ? "Chaft can complete the claim while this peer route is reachable."
+                        : "Send the invite privately. Chaft packages any follow-up as a secure file when no peer route is available."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap
