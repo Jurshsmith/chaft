@@ -53,6 +53,7 @@ pub const MAX_JOIN_RESPONSE_SUBMISSIONS_PER_REQUEST: usize = 1;
 pub const MAX_JOIN_RESPONSE_SUBMISSION_BYTES: usize = 256 * 1024;
 pub const MAX_FETCH_JOIN_REQUESTS_PER_REQUEST: usize = 20;
 pub const MAX_FETCH_JOIN_RESPONSES_PER_REQUEST: usize = 20;
+pub const MAX_JOIN_RESPONSE_REQUEST_ID_BYTES: usize = 128;
 pub const MAX_INVENTORY_EVENT_IDS_PER_RESPONSE: usize = 1024;
 pub const MAX_INVENTORY_EVENT_IDS_PER_PULL: usize = MAX_INVENTORY_EVENT_IDS_PER_RESPONSE * 1024;
 pub const MAX_ACTIVE_DIRECT_CONNECTIONS: usize = 256;
@@ -142,6 +143,20 @@ pub trait JoinResponseInbox: Send + Sync {
         Err(NetError::Protocol(
             "join response listing unavailable".to_owned(),
         ))
+    }
+
+    fn list_join_responses_for_requests(
+        &self,
+        workspace_id: &str,
+        request_ids: &[String],
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        if request_ids.is_empty() || max_entries == 0 {
+            return Ok(Vec::new());
+        }
+        let requested = validated_join_response_request_ids(request_ids)?;
+        let responses = self.list_join_responses(workspace_id, usize::MAX)?;
+        filter_join_responses_for_requests(responses, &requested, max_entries)
     }
 }
 
@@ -599,6 +614,57 @@ impl DirectTransport {
             limit,
             validate_join_response_submission_bytes,
         )?;
+        Ok(response.events)
+    }
+
+    pub async fn fetch_join_responses_for_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        request_ids: Vec<String>,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        validate_wire_workspace_id("fetch-join-responses", &workspace_id.0)?;
+        let limit = access_envelope_fetch_limit(
+            "fetch-join-responses limit",
+            max_entries,
+            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+        )?;
+        let request_ids = deduplicate_join_response_request_ids(request_ids)?;
+        if request_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        validate_request_item_count(
+            "fetch-join-responses request id",
+            request_ids.len(),
+            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+        )?;
+        let requested = request_ids.iter().cloned().collect::<BTreeSet<_>>();
+        let request = WireSyncRequest {
+            kind: WireSyncRequestKind::FetchJoinResponses as i32,
+            event_ids: request_ids,
+            events: Vec::new(),
+            authorization_events: Vec::new(),
+            authorization_snapshots: Vec::new(),
+            blob_hashes: Vec::new(),
+            blobs: Vec::new(),
+            blob_descriptors: Vec::new(),
+            workspace_id: Some(workspace_id.0.clone()),
+            event_envelopes: Vec::new(),
+            authorization_event_envelopes: Vec::new(),
+            authorization_snapshot_envelopes: Vec::new(),
+            inventory_start_index: None,
+            inventory_limit: Some(limit as u64),
+        };
+        let mut response = request_peer(peer, request).await?;
+        response_error(response.error.take())?;
+        validate_join_envelope_fetch_response(
+            "fetch-join-responses",
+            &response,
+            limit,
+            validate_join_response_submission_bytes,
+        )?;
+        validate_scoped_join_response_envelopes(&response.events, &requested)?;
         Ok(response.events)
     }
 
@@ -2257,43 +2323,16 @@ fn handle_request_with_join_request_inbox(
                     ..AllowedRequestFields::empty()
                 },
             )?;
-            let workspace_id = required_request_workspace_id(
-                "fetch-join-requests",
-                request.workspace_id.as_deref(),
-            )?;
-            let limit = request_access_envelope_fetch_limit(
-                "fetch-join-requests",
-                request.inventory_limit,
-                MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
-            )?;
-            let Some(inbox) = join_request_inbox else {
-                return Err(NetError::Protocol(
-                    "join request inbox unavailable".to_owned(),
-                ));
-            };
-            let envelopes = inbox.list_join_requests(workspace_id, limit)?;
-            validate_request_item_count("fetch-join-requests payload", envelopes.len(), limit)?;
-            for envelope in &envelopes {
-                validate_join_request_submission_bytes(envelope)?;
-            }
-            let response = WireSyncResponse {
-                event_ids: Vec::new(),
-                events: envelopes,
-                error: None,
-                blobs: Vec::new(),
-                blob_descriptors: Vec::new(),
-                blob_availability: Vec::new(),
-                event_envelopes: Vec::new(),
-                inventory_total_count: None,
-            };
-            validate_sync_response_frame_len("fetch-join-requests", &response)?;
-            Ok(response)
+            Err(NetError::Protocol(
+                "remote join request listing is disabled".to_owned(),
+            ))
         }
         WireSyncRequestKind::FetchJoinResponses => {
             validate_request_shape(
                 &request,
                 "fetch-join-responses",
                 AllowedRequestFields {
+                    event_ids: true,
                     workspace_id: true,
                     inventory_limit: true,
                     ..AllowedRequestFields::empty()
@@ -2308,12 +2347,21 @@ fn handle_request_with_join_request_inbox(
                 request.inventory_limit,
                 MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
             )?;
+            validate_request_item_count(
+                "fetch-join-responses request id",
+                request.event_ids.len(),
+                MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+            )?;
+            validate_request_items_unique("fetch-join-responses request id", &request.event_ids)?;
+            let requested = validated_join_response_request_ids(&request.event_ids)?;
             let Some(inbox) = join_response_inbox else {
                 return Err(NetError::Protocol(
                     "join response inbox unavailable".to_owned(),
                 ));
             };
-            let envelopes = inbox.list_join_responses(workspace_id, limit)?;
+            let responses =
+                inbox.list_join_responses_for_requests(workspace_id, &request.event_ids, limit)?;
+            let envelopes = filter_join_responses_for_requests(responses, &requested, limit)?;
             validate_request_item_count("fetch-join-responses payload", envelopes.len(), limit)?;
             for envelope in &envelopes {
                 validate_join_response_submission_bytes(envelope)?;
@@ -2527,6 +2575,130 @@ fn validate_request_items_unique(context: &str, values: &[String]) -> Result<(),
     for value in values {
         if !seen.insert(value.as_str()) {
             return Err(NetError::Protocol(format!("{context} duplicate value")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_join_response_request_id(request_id: &str) -> Result<(), NetError> {
+    let bytes = request_id.as_bytes();
+    if bytes.is_empty() {
+        return Err(NetError::Protocol(
+            "fetch-join-responses request id is empty".to_owned(),
+        ));
+    }
+    if bytes.len() > MAX_JOIN_RESPONSE_REQUEST_ID_BYTES {
+        return Err(NetError::Protocol(format!(
+            "fetch-join-responses request id length {} exceeds max {}",
+            bytes.len(),
+            MAX_JOIN_RESPONSE_REQUEST_ID_BYTES
+        )));
+    }
+    if !bytes.iter().all(|byte| {
+        matches!(
+            byte,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'
+        )
+    }) {
+        return Err(NetError::Protocol(
+            "fetch-join-responses request id contains unsupported characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validated_join_response_request_ids(
+    request_ids: &[String],
+) -> Result<BTreeSet<String>, NetError> {
+    if request_ids.is_empty() {
+        return Err(NetError::Protocol(
+            "fetch-join-responses requires at least one request id".to_owned(),
+        ));
+    }
+    validate_request_item_count(
+        "fetch-join-responses request id",
+        request_ids.len(),
+        MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+    )?;
+    validate_request_items_unique("fetch-join-responses request id", request_ids)?;
+    for request_id in request_ids {
+        validate_join_response_request_id(request_id)?;
+    }
+    Ok(request_ids.iter().cloned().collect())
+}
+
+fn deduplicate_join_response_request_ids(
+    request_ids: Vec<String>,
+) -> Result<Vec<String>, NetError> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::with_capacity(request_ids.len());
+    for request_id in request_ids {
+        validate_join_response_request_id(&request_id)?;
+        if seen.insert(request_id.clone()) {
+            unique.push(request_id);
+        }
+    }
+    validate_request_item_count(
+        "fetch-join-responses request id",
+        unique.len(),
+        MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+    )?;
+    Ok(unique)
+}
+
+fn join_response_request_id(response: &[u8]) -> Result<String, NetError> {
+    let value: serde_json::Value = serde_json::from_slice(response).map_err(|_| {
+        NetError::Protocol("join response payload must be a JSON object".to_owned())
+    })?;
+    let request_id = value
+        .as_object()
+        .and_then(|object| object.get("requestId"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| NetError::Protocol("join response request id is required".to_owned()))?;
+    validate_join_response_request_id(request_id)?;
+    Ok(request_id.to_owned())
+}
+
+fn filter_join_responses_for_requests(
+    responses: Vec<Vec<u8>>,
+    requested: &BTreeSet<String>,
+    max_entries: usize,
+) -> Result<Vec<Vec<u8>>, NetError> {
+    if requested.is_empty() || max_entries == 0 {
+        return Ok(Vec::new());
+    }
+    let mut filtered = Vec::with_capacity(max_entries.min(requested.len()));
+    let mut seen = BTreeSet::new();
+    for response in responses {
+        validate_join_response_submission_bytes(&response)?;
+        let request_id = join_response_request_id(&response)?;
+        if !requested.contains(&request_id) || !seen.insert(request_id) {
+            continue;
+        }
+        filtered.push(response);
+        if filtered.len() == max_entries {
+            break;
+        }
+    }
+    Ok(filtered)
+}
+
+fn validate_scoped_join_response_envelopes(
+    responses: &[Vec<u8>],
+    requested: &BTreeSet<String>,
+) -> Result<(), NetError> {
+    let mut seen = BTreeSet::new();
+    for response in responses {
+        let request_id = join_response_request_id(response)?;
+        if !requested.contains(&request_id) {
+            return Err(NetError::Protocol(
+                "peer returned an unrequested join response".to_owned(),
+            ));
+        }
+        if !seen.insert(request_id) {
+            return Err(NetError::Protocol(
+                "peer returned a duplicate join response".to_owned(),
+            ));
         }
     }
     Ok(())
@@ -4261,6 +4433,85 @@ mod tests {
         assert!(!error.contains("Connection refused"));
     }
 
+    #[tokio::test]
+    async fn fetch_join_responses_for_requests_sends_unique_opaque_ids() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = PeerAddress {
+            peer_id: PeerId("scoped-join-response-fetch".to_owned()),
+            endpoint: listener.local_addr().unwrap().to_string(),
+        };
+        let allowed_response = br#"{"kind":"chaft.workspace-invite-response.v1","requestId":"req_allowed","workspaceId":"wrk_shared"}"#.to_vec();
+        let server_response = allowed_response.clone();
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request_len = stream.read_u32().await.unwrap() as usize;
+            let mut request_bytes = vec![0; request_len];
+            stream.read_exact(&mut request_bytes).await.unwrap();
+            let request = decode_sync_request(&request_bytes).unwrap();
+            assert_eq!(request.kind, WireSyncRequestKind::FetchJoinResponses as i32);
+            assert_eq!(request.workspace_id.as_deref(), Some("wrk_shared"));
+            assert_eq!(request.event_ids, vec!["req_allowed", "req_second"]);
+            assert_eq!(request.inventory_limit, Some(2));
+
+            let response = WireSyncResponse {
+                event_ids: Vec::new(),
+                events: vec![server_response],
+                error: None,
+                blobs: Vec::new(),
+                blob_descriptors: Vec::new(),
+                blob_availability: Vec::new(),
+                event_envelopes: Vec::new(),
+                inventory_total_count: None,
+            };
+            let response = encode_sync_response(&response);
+            stream.write_u32(response.len() as u32).await.unwrap();
+            stream.write_all(&response).await.unwrap();
+        });
+
+        let responses = DirectTransport
+            .fetch_join_responses_for_requests(
+                &peer,
+                &WorkspaceId("wrk_shared".to_owned()),
+                vec![
+                    "req_allowed".to_owned(),
+                    "req_allowed".to_owned(),
+                    "req_second".to_owned(),
+                ],
+                2,
+            )
+            .await
+            .unwrap();
+
+        server_task.await.unwrap();
+        assert_eq!(responses, vec![allowed_response]);
+    }
+
+    #[tokio::test]
+    async fn fetch_join_responses_for_requests_rejects_invalid_id_before_network() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        let peer = PeerAddress {
+            peer_id: PeerId("invalid-scoped-join-response-fetch".to_owned()),
+            endpoint,
+        };
+
+        let error = DirectTransport
+            .fetch_join_responses_for_requests(
+                &peer,
+                &WorkspaceId("wrk_shared".to_owned()),
+                vec!["request id with spaces".to_owned()],
+                1,
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("request id contains unsupported characters"));
+        assert!(!error.contains("request id with spaces"));
+        assert!(!error.contains("Connection refused"));
+    }
+
     #[test]
     fn fetch_events_response_rejects_duplicate_returned_events() {
         let workspace_id = WorkspaceId::new();
@@ -5184,10 +5435,16 @@ mod tests {
     }
 
     #[test]
-    fn fetch_join_requests_requires_workspace_id_before_event_store_lock() {
+    fn fetch_join_requests_remote_listing_is_disabled() {
         let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinRequests);
+        request.workspace_id = Some("wrk_allowed".to_owned());
         request.inventory_limit = Some(1);
-        let inbox = Arc::new(MemoryAccessInbox::default());
+        let private_request =
+            br#"{"kind":"chaft.workspace-join-request.v1","requestId":"req_private","inviteeDeviceId":"device_private"}"#.to_vec();
+        let inbox = Arc::new(MemoryAccessInbox::with_join_requests(vec![(
+            "wrk_allowed".to_owned(),
+            private_request,
+        )]));
 
         let error = handle_request_with_join_request_inbox(
             request,
@@ -5199,62 +5456,19 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("fetch-join-requests workspace ID is required"));
-        assert!(!error.contains("event store lock poisoned"));
-    }
-
-    #[test]
-    fn fetch_join_requests_requires_configured_inbox_before_event_store_lock() {
-        let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinRequests);
-        request.workspace_id = Some("wrk_allowed".to_owned());
-        request.inventory_limit = Some(1);
-
-        let error = handle_request_with_join_request_inbox(
-            request,
-            poisoned_event_store(),
-            None,
-            None,
-            None,
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("join request inbox unavailable"));
-        assert!(!error.contains("event store lock poisoned"));
-    }
-
-    #[test]
-    fn fetch_join_requests_returns_workspace_scoped_payloads() {
-        let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinRequests);
-        request.workspace_id = Some("wrk_allowed".to_owned());
-        request.inventory_limit = Some(1);
-        let allowed_request =
-            br#"{"kind":"chaft.workspace-join-request.v1","requestId":"req_allowed"}"#.to_vec();
-        let other_request =
-            br#"{"kind":"chaft.workspace-join-request.v1","requestId":"req_other"}"#.to_vec();
-        let inbox = Arc::new(MemoryAccessInbox::with_join_requests(vec![
-            ("wrk_allowed".to_owned(), allowed_request.clone()),
-            ("wrk_other".to_owned(), other_request),
-        ]));
-
-        let response = handle_request_with_join_request_inbox(
-            request,
-            poisoned_event_store(),
-            None,
-            Some(inbox),
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(response.events, vec![allowed_request]);
-        assert!(response.error.is_none());
-        assert!(response.inventory_total_count.is_none());
+        assert_eq!(
+            error,
+            "protocol error: remote join request listing is disabled"
+        );
+        assert!(!error.contains("req_private"));
+        assert!(!error.contains("device_private"));
     }
 
     #[test]
     fn fetch_join_responses_requires_configured_inbox_before_event_store_lock() {
         let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinResponses);
         request.workspace_id = Some("wrk_allowed".to_owned());
+        request.event_ids = vec!["req_allowed".to_owned()];
         request.inventory_limit = Some(1);
 
         let error = handle_request_with_join_request_inbox(
@@ -5272,17 +5486,45 @@ mod tests {
     }
 
     #[test]
-    fn fetch_join_responses_returns_workspace_scoped_payloads() {
+    fn fetch_join_responses_rejects_unscoped_listing() {
         let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinResponses);
         request.workspace_id = Some("wrk_allowed".to_owned());
         request.inventory_limit = Some(1);
-        let allowed_response =
-            br#"{"kind":"chaft.workspace-join-response.v1","requestId":"req_allowed","workspaceId":"wrk_allowed","resolution":"approved"}"#.to_vec();
-        let other_response =
-            br#"{"kind":"chaft.workspace-join-response.v1","requestId":"req_other","workspaceId":"wrk_other","resolution":"declined"}"#.to_vec();
+        let private_response = br#"{"kind":"chaft.workspace-join-response.v1","requestId":"req_private","workspaceId":"wrk_allowed","workspaceName":"Private Workspace Metadata","inviteeDeviceId":"device_private"}"#.to_vec();
+        let inbox = Arc::new(MemoryAccessInbox::with_join_responses(vec![(
+            "wrk_allowed".to_owned(),
+            private_response,
+        )]));
+
+        let error = handle_request_with_join_request_inbox(
+            request,
+            poisoned_event_store(),
+            None,
+            None,
+            Some(inbox),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            error,
+            "protocol error: fetch-join-responses requires at least one request id"
+        );
+        assert!(!error.contains("Private Workspace Metadata"));
+        assert!(!error.contains("device_private"));
+    }
+
+    #[test]
+    fn fetch_join_responses_returns_only_requested_payloads() {
+        let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinResponses);
+        request.workspace_id = Some("wrk_shared".to_owned());
+        request.event_ids = vec!["req_allowed".to_owned()];
+        request.inventory_limit = Some(20);
+        let allowed_response = br#"{"kind":"chaft.workspace-invite-response.v1","requestId":"req_allowed","workspaceId":"wrk_shared","workspaceName":"Expected Workspace","inviteeDeviceId":"device_allowed"}"#.to_vec();
+        let unrequested_response = br#"{"kind":"chaft.workspace-invite-response.v1","requestId":"req_other","workspaceId":"wrk_shared","workspaceName":"Private Other Workspace Metadata","inviteeDeviceId":"device_other"}"#.to_vec();
         let inbox = Arc::new(MemoryAccessInbox::with_join_responses(vec![
-            ("wrk_allowed".to_owned(), allowed_response.clone()),
-            ("wrk_other".to_owned(), other_response),
+            ("wrk_shared".to_owned(), unrequested_response),
+            ("wrk_shared".to_owned(), allowed_response.clone()),
         ]));
 
         let response = handle_request_with_join_request_inbox(
@@ -5295,8 +5537,77 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.events, vec![allowed_response]);
-        assert!(response.error.is_none());
-        assert!(response.inventory_total_count.is_none());
+        let encoded = encode_sync_response(&response);
+        assert!(
+            !encoded
+                .windows(b"Private Other Workspace Metadata".len())
+                .any(|window| window == b"Private Other Workspace Metadata")
+        );
+        assert!(
+            !encoded
+                .windows(b"device_other".len())
+                .any(|window| window == b"device_other")
+        );
+    }
+
+    #[test]
+    fn fetch_join_responses_rejects_duplicate_request_ids() {
+        let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinResponses);
+        request.workspace_id = Some("wrk_allowed".to_owned());
+        request.event_ids = vec!["req_duplicate".to_owned(), "req_duplicate".to_owned()];
+        request.inventory_limit = Some(2);
+        let inbox = Arc::new(MemoryAccessInbox::default());
+
+        let error = handle_request_with_join_request_inbox(
+            request,
+            poisoned_event_store(),
+            None,
+            None,
+            Some(inbox),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("fetch-join-responses request id duplicate value"));
+        assert!(!error.contains("event store lock poisoned"));
+    }
+
+    #[test]
+    fn fetch_join_responses_rejects_non_opaque_request_id() {
+        let mut request = empty_sync_request(WireSyncRequestKind::FetchJoinResponses);
+        request.workspace_id = Some("wrk_allowed".to_owned());
+        request.event_ids = vec!["request id with spaces".to_owned()];
+        request.inventory_limit = Some(1);
+        let inbox = Arc::new(MemoryAccessInbox::default());
+
+        let error = handle_request_with_join_request_inbox(
+            request,
+            poisoned_event_store(),
+            None,
+            None,
+            Some(inbox),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("request id contains unsupported characters"));
+        assert!(!error.contains("request id with spaces"));
+        assert!(!error.contains("event store lock poisoned"));
+    }
+
+    #[test]
+    fn fetch_join_response_request_id_enforces_length_bounds() {
+        assert!(validate_join_response_request_id(&"r".repeat(128)).is_ok());
+
+        let empty_error = validate_join_response_request_id("")
+            .unwrap_err()
+            .to_string();
+        assert!(empty_error.contains("request id is empty"));
+
+        let oversized_error = validate_join_response_request_id(&"r".repeat(129))
+            .unwrap_err()
+            .to_string();
+        assert!(oversized_error.contains("request id length 129 exceeds max 128"));
     }
 
     #[test]

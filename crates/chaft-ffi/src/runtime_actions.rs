@@ -919,6 +919,31 @@ pub(crate) fn runtime_create_workspace_invite_result(
     peer_endpoint: *const c_char,
     sync_expectation: *const c_char,
 ) -> FfiResult<CreatedWorkspaceInvite> {
+    runtime_create_workspace_invite_with_max_claims_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+        role,
+        1,
+        expires_at,
+        peer_endpoint,
+        sync_expectation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn runtime_create_workspace_invite_with_max_claims_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    max_claims: u32,
+    expires_at: *const c_char,
+    peer_endpoint: *const c_char,
+    sync_expectation: *const c_char,
+) -> FfiResult<CreatedWorkspaceInvite> {
     result_envelope(|| {
         let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
         let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
@@ -928,10 +953,11 @@ pub(crate) fn runtime_create_workspace_invite_result(
         let peer_endpoint = read_c_string(peer_endpoint, "peer_endpoint")?;
         let sync_expectation = read_c_string(sync_expectation, "sync_expectation")?;
         runtime
-            .create_workspace_invite(
+            .create_workspace_invite_with_max_claims(
                 WorkspaceId(workspace_id),
                 display_name,
                 role,
+                max_claims,
                 expires_at,
                 peer_endpoint,
                 sync_expectation,

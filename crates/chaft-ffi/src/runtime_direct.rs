@@ -1,4 +1,4 @@
-use std::{ffi::c_char, path::PathBuf};
+use std::{collections::HashSet, ffi::c_char, path::PathBuf};
 
 use chaft_net_direct::{
     DirectTransport, JoinRequestInbox, JoinResponseInbox, MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
@@ -13,14 +13,17 @@ use serde::Serialize;
 
 use crate::{
     direct_network::run_direct_runtime_command,
-    envelope::{FfiResult, ffi_error, result_envelope},
+    envelope::{FfiError, FfiResult, ffi_error, result_envelope},
     id_args::{direct_event_id_arg, direct_workspace_id_arg},
     input::{
         PEER_ENDPOINT_LIST_TEXT_MAX_BYTES, optional_c_string, read_c_string,
         read_c_string_with_max_bytes,
     },
     join_request_inbox::FileJoinRequestInbox,
-    join_response_inbox::FileJoinResponseInbox,
+    join_response_inbox::{
+        FileJoinResponseInbox, JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES,
+        validate_join_response_entry_id,
+    },
     peer_endpoint::{direct_peer_address, direct_peer_addresses},
     result_sampling::{
         sample_blob_transfer_retry_report, sample_published_workspace_report,
@@ -28,6 +31,9 @@ use crate::{
     },
     worker::{run_on_worker_thread, run_runtime_future},
 };
+
+const JOIN_RESPONSE_REQUEST_IDS_JSON_MAX_BYTES: usize =
+    MAX_FETCH_JOIN_RESPONSES_PER_REQUEST * (JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES + 3) + 2;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -410,4 +416,102 @@ pub(crate) fn runtime_pull_join_responses_direct_result(
             })
         })
     })
+}
+
+pub(crate) fn runtime_pull_join_responses_for_requests_direct_result(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    request_ids_json: *const c_char,
+    max_entries: usize,
+) -> FfiResult<PulledJoinResponsesDirect> {
+    result_envelope(|| {
+        let data_dir = read_c_string(data_dir, "data_dir")?;
+        let peer_endpoint = read_c_string_with_max_bytes(
+            peer_endpoint,
+            "peer_endpoint",
+            PEER_ENDPOINT_MAX_BYTES,
+            "peer_endpoint_too_large",
+            "peer endpoint",
+        )?;
+        let peer = direct_peer_address(peer_endpoint.clone())?;
+        let workspace_id = WorkspaceId(direct_workspace_id_arg(read_c_string(
+            workspace_id,
+            "workspace_id",
+        )?)?);
+        let request_ids_json = read_c_string_with_max_bytes(
+            request_ids_json,
+            "request_ids_json",
+            JOIN_RESPONSE_REQUEST_IDS_JSON_MAX_BYTES,
+            "join_response_request_ids_json_too_large",
+            "join response request ID list",
+        )?;
+        let request_ids = parse_join_response_request_ids_json(&request_ids_json)?;
+        let max_entries = if max_entries == 0 {
+            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST
+        } else {
+            max_entries.min(MAX_FETCH_JOIN_RESPONSES_PER_REQUEST)
+        };
+        let result_peer_endpoint = peer_endpoint.trim().to_owned();
+        let result_workspace_id = workspace_id.0.clone();
+        let data_dir = PathBuf::from(data_dir);
+
+        run_on_worker_thread(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            let responses = runtime
+                .block_on(DirectTransport.fetch_join_responses_for_requests(
+                    &peer,
+                    &workspace_id,
+                    request_ids,
+                    max_entries,
+                ))
+                .map_err(|error| {
+                    ffi_error("runtime_pull_join_responses_failed", error.to_string())
+                })?;
+            let response_count = responses.len();
+            let inbox = FileJoinResponseInbox::new(data_dir);
+            for response in responses {
+                inbox
+                    .submit_join_response(Some(&workspace_id.0), response)
+                    .map_err(|error| {
+                        ffi_error("runtime_pull_join_responses_failed", error.to_string())
+                    })?;
+            }
+            Ok(PulledJoinResponsesDirect {
+                peer_endpoint: result_peer_endpoint,
+                workspace_id: result_workspace_id,
+                response_count,
+            })
+        })
+    })
+}
+
+fn parse_join_response_request_ids_json(value: &str) -> Result<Vec<String>, FfiError> {
+    let request_ids = serde_json::from_str::<Vec<String>>(value).map_err(|error| {
+        ffi_error(
+            "join_response_request_ids_invalid",
+            format!("join response request IDs must be a JSON string array: {error}"),
+        )
+    })?;
+    let mut seen = HashSet::new();
+    let mut unique_request_ids = Vec::with_capacity(request_ids.len());
+    for request_id in request_ids {
+        let request_id = request_id.trim().to_owned();
+        validate_join_response_entry_id(&request_id)?;
+        if seen.insert(request_id.clone()) {
+            unique_request_ids.push(request_id);
+        }
+    }
+    if unique_request_ids.len() > MAX_FETCH_JOIN_RESPONSES_PER_REQUEST {
+        return Err(ffi_error(
+            "join_response_request_ids_too_many",
+            format!(
+                "join response request IDs exceed the maximum of {MAX_FETCH_JOIN_RESPONSES_PER_REQUEST}"
+            ),
+        ));
+    }
+    Ok(unique_request_ids)
 }

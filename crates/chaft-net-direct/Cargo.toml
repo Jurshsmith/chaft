@@ -16,6 +16,7 @@ chaft-store = { path = "../chaft-store" }
 chaft-types = { path = "../chaft-types" }
 chaft-wire = { path = "../chaft-wire" }
 prost.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
@@ -23,5 +24,4 @@ chaft-crypto = { path = "../chaft-crypto" }
 chaft-identity = { path = "../chaft-identity" }
 chaft-sync = { path = "../chaft-sync" }
 rusqlite.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true

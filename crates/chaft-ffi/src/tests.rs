@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     ffi::CStr,
     io::{Read, Write},
     net::TcpListener,
@@ -6,7 +7,9 @@ use std::{
     time::Duration,
 };
 
-use chaft_net_direct::DirectPeerServer;
+use chaft_net_direct::{
+    DirectPeerServer, JoinRequestInbox, JoinResponseInbox, MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+};
 use chaft_runtime::{
     BlobTransferAttempt, BlobTransferMode, BlobTransferPeerError, BlobTransferStatus,
     PulledOpenMlsChannelCatchup, PulledWorkspaceGap, RotatedWorkspaceForSuspectedCompromise,
@@ -761,13 +764,20 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
     let inbox_dir = tempdir.path().join("join-request-inbox");
     std::fs::create_dir_all(&inbox_dir).unwrap();
     std::fs::write(
-        inbox_dir.join("jr_contract_1.json"),
+        inbox_dir.join("req_contract_file.json"),
         serde_json::to_vec_pretty(&json!({
             "schemaVersion": 1,
-            "entryId": "jr_contract_1",
+            "entryId": "req_contract_file",
             "workspaceId": runtime_workspace_id.to_str().unwrap(),
             "receivedAtUnixMs": 1_700_000_000_000_u64,
-            "requestText": "{\"deviceId\":\"dev_contract_joiner\",\"displayName\":\"Contract Joiner\"}"
+            "requestText": serde_json::to_string(&json!({
+                "kind": "chaft.workspace-join-request.v1",
+                "schemaVersion": 1,
+                "requestId": "req_contract_file",
+                "workspaceId": runtime_workspace_id.to_str().unwrap(),
+                "deviceId": "dev_contract_joiner",
+                "displayName": "Contract Joiner"
+            })).unwrap()
         }))
         .unwrap(),
     )
@@ -779,7 +789,7 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
             chaft_runtime_list_join_request_inbox_result_json(data_dir.as_ptr(), 10)
         }),
     );
-    let inbox_entry_id = CString::new("jr_contract_1").unwrap();
+    let inbox_entry_id = CString::new("req_contract_file").unwrap();
     insert_contract_shape(
         &mut contract,
         "chaft_runtime_ack_join_request_inbox_entry_result_json",
@@ -1007,6 +1017,132 @@ fn runtime_identity_passphrase_ffi_cache_unlocks_without_environment() {
             .as_str()
             .unwrap()
             .contains("encrypted identity passphrase is required")
+    );
+}
+
+#[test]
+fn runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defaults() {
+    let admin_dir = tempfile::tempdir().unwrap();
+    let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Bounded FFI Workspace").unwrap();
+    let channel_name = CString::new("general").unwrap();
+    let created_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        ))
+    };
+    let created = serde_json::from_str::<Value>(&created_json).unwrap();
+    assert_eq!(created["ok"], true);
+    let workspace_id = created["value"]["workspaceId"].as_str().unwrap();
+    let workspace_id_c = CString::new(workspace_id).unwrap();
+    let invite_label = CString::new("Launch team").unwrap();
+    let role = CString::new("member").unwrap();
+    let empty = CString::new("").unwrap();
+
+    let bounded_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_create_workspace_invite_with_max_claims_result_json(
+                admin_dir_c.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                invite_label.as_ptr(),
+                role.as_ptr(),
+                2,
+                empty.as_ptr(),
+                empty.as_ptr(),
+                empty.as_ptr(),
+            ),
+        )
+    };
+    let bounded = serde_json::from_str::<Value>(&bounded_json).unwrap();
+    assert_eq!(bounded["ok"], true);
+    assert_eq!(bounded["value"]["artifact"]["maxClaims"], 2);
+    let bounded_invite_id = bounded["value"]["inviteId"].as_str().unwrap();
+
+    let snapshot_json = unsafe {
+        take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+        ))
+    };
+    let snapshot = serde_json::from_str::<Value>(&snapshot_json).unwrap();
+    assert_eq!(snapshot["ok"], true);
+    let bounded_snapshot = snapshot["value"]["invites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|invite| invite["inviteId"].as_str() == Some(bounded_invite_id))
+        .unwrap();
+    assert_eq!(bounded_snapshot["maxClaims"], 2);
+    assert_eq!(bounded_snapshot["claimCount"], 0);
+    assert_eq!(bounded_snapshot["remainingClaims"], 2);
+    assert_eq!(bounded_snapshot["claimable"], true);
+
+    let one_use_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_invite_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            invite_label.as_ptr(),
+            role.as_ptr(),
+            empty.as_ptr(),
+            empty.as_ptr(),
+            empty.as_ptr(),
+        ))
+    };
+    let one_use = serde_json::from_str::<Value>(&one_use_json).unwrap();
+    assert_eq!(one_use["ok"], true);
+    assert_eq!(one_use["value"]["artifact"]["maxClaims"], 1);
+
+    let normalized_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_create_workspace_invite_with_max_claims_result_json(
+                admin_dir_c.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                invite_label.as_ptr(),
+                role.as_ptr(),
+                0,
+                empty.as_ptr(),
+                empty.as_ptr(),
+                empty.as_ptr(),
+            ),
+        )
+    };
+    let normalized = serde_json::from_str::<Value>(&normalized_json).unwrap();
+    assert_eq!(normalized["ok"], true);
+    assert_eq!(normalized["value"]["artifact"]["maxClaims"], 1);
+
+    let excessive_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_create_workspace_invite_with_max_claims_result_json(
+                admin_dir_c.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                invite_label.as_ptr(),
+                role.as_ptr(),
+                chaft_types::WORKSPACE_INVITE_MAX_CLAIMS + 1,
+                empty.as_ptr(),
+                empty.as_ptr(),
+                empty.as_ptr(),
+            ),
+        )
+    };
+    let excessive = serde_json::from_str::<Value>(&excessive_json).unwrap();
+    assert_eq!(excessive["ok"], false);
+    assert_eq!(
+        excessive["error"]["code"],
+        "runtime_create_workspace_invite_failed"
+    );
+    assert!(
+        excessive["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("workspace invite claims")
     );
 }
 
@@ -4797,7 +4933,810 @@ fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
 }
 
 #[test]
-fn runtime_pull_join_requests_direct_ffi_imports_known_peer_inbox() {
+fn runtime_access_inboxes_filter_workspace_before_limit_and_keep_newest_first() {
+    fn request_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "deviceId": "dev_bounded_inbox"
+        }))
+        .unwrap()
+    }
+
+    fn response_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "resolution": "declined"
+        }))
+        .unwrap()
+    }
+
+    fn request_ids(payloads: Vec<Vec<u8>>) -> Vec<String> {
+        payloads
+            .into_iter()
+            .map(|payload| {
+                serde_json::from_slice::<Value>(&payload).unwrap()["requestId"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    let request_dir = tempfile::tempdir().unwrap();
+    let request_inbox = FileJoinRequestInbox::new(request_dir.path());
+    request_inbox
+        .submit_join_request(
+            Some("wrk_bounded_target"),
+            request_payload("req_aaa_target_old", "wrk_bounded_target"),
+        )
+        .unwrap();
+    for index in 0..101 {
+        request_inbox
+            .submit_join_request(
+                Some("wrk_bounded_noise"),
+                request_payload(&format!("req_zzz_noise_{index:03}"), "wrk_bounded_noise"),
+            )
+            .unwrap();
+    }
+    request_inbox
+        .submit_join_request(
+            Some("wrk_bounded_target"),
+            request_payload("req_aab_target_new", "wrk_bounded_target"),
+        )
+        .unwrap();
+    assert_eq!(
+        request_ids(
+            request_inbox
+                .list_join_requests("wrk_bounded_target", 2)
+                .unwrap()
+        ),
+        ["req_aab_target_new", "req_aaa_target_old"]
+    );
+
+    let response_dir = tempfile::tempdir().unwrap();
+    let response_inbox = FileJoinResponseInbox::new(response_dir.path());
+    response_inbox
+        .submit_join_response(
+            Some("wrk_bounded_target"),
+            response_payload("req_aaa_response_old", "wrk_bounded_target"),
+        )
+        .unwrap();
+    for index in 0..101 {
+        response_inbox
+            .submit_join_response(
+                Some("wrk_bounded_noise"),
+                response_payload(
+                    &format!("req_zzz_response_noise_{index:03}"),
+                    "wrk_bounded_noise",
+                ),
+            )
+            .unwrap();
+    }
+    response_inbox
+        .submit_join_response(
+            Some("wrk_bounded_target"),
+            response_payload("req_aab_response_new", "wrk_bounded_target"),
+        )
+        .unwrap();
+    assert_eq!(
+        request_ids(
+            response_inbox
+                .list_join_responses("wrk_bounded_target", 2)
+                .unwrap()
+        ),
+        ["req_aab_response_new", "req_aaa_response_old"]
+    );
+}
+
+#[test]
+fn runtime_scoped_access_inbox_ffi_filters_before_limit_and_enforces_response_scope() {
+    fn request_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "deviceId": "dev_scoped_requester"
+        }))
+        .unwrap()
+    }
+
+    fn join_response_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "resolution": "declined"
+        }))
+        .unwrap()
+    }
+
+    fn invite_response_payload(
+        request_id: &str,
+        workspace_id: &str,
+        invitee_device_id: &str,
+    ) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-invite.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "inviteId": format!("inv_{request_id}"),
+            "inviteeDeviceId": invitee_device_id,
+            "role": "member"
+        }))
+        .unwrap()
+    }
+
+    fn secure_invite_response_payload(
+        request_id: &str,
+        workspace_id: &str,
+        invitee_device_id: &str,
+    ) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-invite-response.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "workspaceName": "Scoped workspace",
+            "inviteId": format!("inv_{request_id}"),
+            "inviteeDeviceId": invitee_device_id,
+            "role": "member",
+            "expiresAt": "",
+            "responderDeviceId": "dev_scoped_responder",
+            "responderPublicKey": "responder-public-key",
+            "senderEphemeralPublicKey": "ephemeral-public-key",
+            "sealedWorkspaceKey": {
+                "mode": "aes256_gcm_siv",
+                "key_id": "workspace-key",
+                "nonce": [0, 1, 2],
+                "aad": [],
+                "bytes": [3, 4, 5]
+            },
+            "peerEndpoint": "",
+            "createdAt": "",
+            "responderSignature": "responder-signature"
+        }))
+        .unwrap()
+    }
+
+    let request_dir = tempfile::tempdir().unwrap();
+    let request_inbox = FileJoinRequestInbox::new(request_dir.path());
+    request_inbox
+        .submit_join_request(
+            Some("wrk_scoped_target"),
+            request_payload("req_scoped_target", "wrk_scoped_target"),
+        )
+        .unwrap();
+    for index in 0..101 {
+        request_inbox
+            .submit_join_request(
+                Some("wrk_scoped_foreign"),
+                request_payload(
+                    &format!("req_scoped_foreign_{index:03}"),
+                    "wrk_scoped_foreign",
+                ),
+            )
+            .unwrap();
+    }
+    let request_dir_c = CString::new(request_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let target_workspace_c = CString::new("wrk_scoped_target").unwrap();
+    let scoped_requests_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_list_join_request_inbox_for_workspace_result_json(
+                request_dir_c.as_ptr(),
+                target_workspace_c.as_ptr(),
+                1,
+            ),
+        )
+    };
+    let scoped_requests = serde_json::from_str::<Value>(&scoped_requests_json).unwrap();
+    assert_eq!(scoped_requests["ok"], true);
+    assert_eq!(
+        scoped_requests["value"]["entries"][0]["entryId"],
+        "req_scoped_target"
+    );
+
+    let response_dir = tempfile::tempdir().unwrap();
+    let response_inbox = FileJoinResponseInbox::new(response_dir.path());
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            join_response_payload("req_scoped_pending", "wrk_scoped_response"),
+        )
+        .unwrap();
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            secure_invite_response_payload(
+                "req_scoped_secure_local_pending",
+                "wrk_scoped_response",
+                "dev_scoped_local",
+            ),
+        )
+        .unwrap();
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            secure_invite_response_payload(
+                "req_scoped_secure_foreign_pending",
+                "wrk_scoped_response",
+                "dev_scoped_foreign",
+            ),
+        )
+        .unwrap();
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            invite_response_payload(
+                "req_scoped_local_pending",
+                "wrk_scoped_response",
+                "dev_scoped_local",
+            ),
+        )
+        .unwrap();
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            invite_response_payload(
+                "req_scoped_local_unrelated",
+                "wrk_scoped_response",
+                "dev_scoped_local",
+            ),
+        )
+        .unwrap();
+    response_inbox
+        .submit_join_response(
+            Some("wrk_scoped_response"),
+            invite_response_payload(
+                "req_scoped_foreign_pending",
+                "wrk_scoped_response",
+                "dev_scoped_foreign",
+            ),
+        )
+        .unwrap();
+    for index in 0..101 {
+        response_inbox
+            .submit_join_response(
+                Some("wrk_scoped_response"),
+                invite_response_payload(
+                    &format!("req_scoped_foreign_response_{index:03}"),
+                    "wrk_scoped_response",
+                    "dev_scoped_foreign",
+                ),
+            )
+            .unwrap();
+    }
+    let response_dir_c = CString::new(response_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let local_device_c = CString::new("dev_scoped_local").unwrap();
+    let pending_ids_c = CString::new(
+        r#"["req_scoped_pending","req_scoped_local_pending","req_scoped_foreign_pending","req_scoped_secure_local_pending","req_scoped_secure_foreign_pending"]"#,
+    )
+    .unwrap();
+    let scoped_responses_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_scoped_result_json(
+            response_dir_c.as_ptr(),
+            local_device_c.as_ptr(),
+            pending_ids_c.as_ptr(),
+            3,
+        ))
+    };
+    let scoped_responses = serde_json::from_str::<Value>(&scoped_responses_json).unwrap();
+    assert_eq!(scoped_responses["ok"], true);
+    let entries = scoped_responses["value"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    let entry_ids = entries
+        .iter()
+        .map(|entry| entry["entryId"].as_str().unwrap())
+        .collect::<HashSet<_>>();
+    assert!(entry_ids.contains("req_scoped_pending"));
+    assert!(entry_ids.contains("req_scoped_local_pending"));
+    assert!(entry_ids.contains("req_scoped_secure_local_pending"));
+    assert!(!entry_ids.contains("req_scoped_local_unrelated"));
+    assert!(!entry_ids.contains("req_scoped_foreign_pending"));
+    assert!(!entry_ids.contains("req_scoped_secure_foreign_pending"));
+}
+
+#[test]
+fn runtime_join_request_inbox_capacity_prunes_oldest_valid_entry() {
+    let request_dir = tempfile::tempdir().unwrap();
+    let inbox_dir = request_dir.path().join("join-request-inbox");
+    std::fs::create_dir_all(&inbox_dir).unwrap();
+    for index in 0..JOIN_REQUEST_INBOX_MAX_ENTRIES {
+        let request_id = format!("req_capacity_{index:04}");
+        let request_text = serde_json::to_string(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": "wrk_capacity",
+            "deviceId": "dev_capacity"
+        }))
+        .unwrap();
+        let entry = json!({
+            "schemaVersion": 1,
+            "entryId": request_id,
+            "workspaceId": "wrk_capacity",
+            "receivedAtUnixMs": index,
+            "requestText": request_text
+        });
+        std::fs::write(
+            inbox_dir.join(format!("req_capacity_{index:04}.json")),
+            serde_json::to_vec(&entry).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let oldest_path = inbox_dir.join("req_capacity_0000.json");
+    let oldest_entry =
+        serde_json::from_slice::<Value>(&std::fs::read(&oldest_path).unwrap()).unwrap();
+    FileJoinRequestInbox::new(request_dir.path())
+        .submit_join_request(
+            Some("wrk_capacity"),
+            oldest_entry["requestText"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+    assert!(oldest_path.exists());
+
+    let newest_id = "req_capacity_newest";
+    let newest_payload = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": newest_id,
+        "workspaceId": "wrk_capacity",
+        "deviceId": "dev_capacity"
+    }))
+    .unwrap();
+    FileJoinRequestInbox::new(request_dir.path())
+        .submit_join_request(Some("wrk_capacity"), newest_payload)
+        .unwrap();
+
+    assert!(!oldest_path.exists());
+    assert!(inbox_dir.join(format!("{newest_id}.json")).exists());
+    assert_eq!(
+        std::fs::read_dir(&inbox_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .count(),
+        JOIN_REQUEST_INBOX_MAX_ENTRIES
+    );
+}
+
+#[test]
+fn runtime_join_response_inbox_capacity_prunes_oldest_valid_entry() {
+    let response_dir = tempfile::tempdir().unwrap();
+    let inbox_dir = response_dir.path().join("join-response-inbox");
+    std::fs::create_dir_all(&inbox_dir).unwrap();
+    for index in 0..JOIN_RESPONSE_INBOX_MAX_ENTRIES {
+        let request_id = format!("req_response_capacity_{index:04}");
+        let response_text = serde_json::to_string(&json!({
+            "kind": "chaft.workspace-invite.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": "wrk_response_capacity",
+            "inviteId": format!("inv_response_capacity_{index:04}"),
+            "inviteeDeviceId": "dev_response_capacity",
+            "role": "member"
+        }))
+        .unwrap();
+        let entry = json!({
+            "schemaVersion": 1,
+            "entryId": request_id,
+            "requestId": request_id,
+            "workspaceId": "wrk_response_capacity",
+            "receivedAtUnixMs": index,
+            "responseText": response_text
+        });
+        std::fs::write(
+            inbox_dir.join(format!("req_response_capacity_{index:04}.json")),
+            serde_json::to_vec(&entry).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let oldest_path = inbox_dir.join("req_response_capacity_0000.json");
+    let oldest_entry =
+        serde_json::from_slice::<Value>(&std::fs::read(&oldest_path).unwrap()).unwrap();
+    FileJoinResponseInbox::new(response_dir.path())
+        .submit_join_response(
+            Some("wrk_response_capacity"),
+            oldest_entry["responseText"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+    assert!(oldest_path.exists());
+
+    let newest_id = "req_response_capacity_newest";
+    let newest_payload = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-invite.v1",
+        "schemaVersion": 1,
+        "requestId": newest_id,
+        "workspaceId": "wrk_response_capacity",
+        "inviteId": "inv_response_capacity_newest",
+        "inviteeDeviceId": "dev_response_capacity",
+        "role": "member"
+    }))
+    .unwrap();
+    FileJoinResponseInbox::new(response_dir.path())
+        .submit_join_response(Some("wrk_response_capacity"), newest_payload)
+        .unwrap();
+
+    assert!(!oldest_path.exists());
+    assert!(inbox_dir.join(format!("{newest_id}.json")).exists());
+    assert_eq!(
+        std::fs::read_dir(&inbox_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .count(),
+        JOIN_RESPONSE_INBOX_MAX_ENTRIES
+    );
+}
+
+#[test]
+fn runtime_access_inboxes_reject_conflicting_duplicate_request_ids() {
+    let request_dir = tempfile::tempdir().unwrap();
+    let request_inbox = FileJoinRequestInbox::new(request_dir.path());
+    let request = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_duplicate_request",
+        "deviceId": "dev_duplicate_request",
+        "note": "original"
+    }))
+    .unwrap();
+    request_inbox
+        .submit_join_request(Some("wrk_duplicate_one"), request.clone())
+        .unwrap();
+    request_inbox
+        .submit_join_request(Some("wrk_duplicate_one"), request.clone())
+        .unwrap();
+    let conflicting_request = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_duplicate_request",
+        "deviceId": "dev_duplicate_request",
+        "note": "changed"
+    }))
+    .unwrap();
+    assert!(
+        request_inbox
+            .submit_join_request(Some("wrk_duplicate_one"), conflicting_request)
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts with an existing request")
+    );
+    assert!(
+        request_inbox
+            .submit_join_request(Some("wrk_duplicate_two"), request.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts with an existing request")
+    );
+    assert_eq!(
+        request_inbox
+            .list_join_requests("wrk_duplicate_one", 10)
+            .unwrap(),
+        [request]
+    );
+
+    let response_dir = tempfile::tempdir().unwrap();
+    let response_inbox = FileJoinResponseInbox::new(response_dir.path());
+    let response = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_duplicate_response",
+        "workspaceId": "wrk_duplicate_one",
+        "resolution": "declined",
+        "message": "original"
+    }))
+    .unwrap();
+    response_inbox
+        .submit_join_response(Some("wrk_duplicate_one"), response.clone())
+        .unwrap();
+    response_inbox
+        .submit_join_response(Some("wrk_duplicate_one"), response.clone())
+        .unwrap();
+    let conflicting_response = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_duplicate_response",
+        "workspaceId": "wrk_duplicate_one",
+        "resolution": "declined",
+        "message": "changed"
+    }))
+    .unwrap();
+    assert!(
+        response_inbox
+            .submit_join_response(Some("wrk_duplicate_one"), conflicting_response)
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts with an existing response")
+    );
+    let response_for_other_workspace = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_duplicate_response",
+        "workspaceId": "wrk_duplicate_two",
+        "resolution": "declined",
+        "message": "original"
+    }))
+    .unwrap();
+    assert!(
+        response_inbox
+            .submit_join_response(Some("wrk_duplicate_two"), response_for_other_workspace)
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts with an existing response")
+    );
+    assert_eq!(
+        response_inbox
+            .list_join_responses("wrk_duplicate_one", 10)
+            .unwrap(),
+        [response]
+    );
+}
+
+#[test]
+fn runtime_access_inboxes_atomically_reject_concurrent_conflicting_duplicates() {
+    fn race<T, F>(inbox: T, first: Vec<u8>, second: Vec<u8>, submit: F) -> Vec<Result<(), String>>
+    where
+        T: Clone + Send + 'static,
+        F: Fn(T, Vec<u8>) -> Result<(), String> + Copy + Send + 'static,
+    {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        [first, second]
+            .into_iter()
+            .map(|payload| {
+                let barrier = barrier.clone();
+                let inbox = inbox.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    submit(inbox, payload)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect()
+    }
+
+    let request_dir = tempfile::tempdir().unwrap();
+    let request_inbox = FileJoinRequestInbox::new(request_dir.path());
+    let request_results = race(
+        request_inbox.clone(),
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": "req_concurrent_conflict",
+            "workspaceId": "wrk_concurrent_conflict",
+            "deviceId": "dev_concurrent_one"
+        }))
+        .unwrap(),
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": "req_concurrent_conflict",
+            "workspaceId": "wrk_concurrent_conflict",
+            "deviceId": "dev_concurrent_two"
+        }))
+        .unwrap(),
+        |inbox, payload| {
+            inbox
+                .submit_join_request(Some("wrk_concurrent_conflict"), payload)
+                .map_err(|error| error.to_string())
+        },
+    );
+    assert_eq!(
+        request_results
+            .iter()
+            .filter(|result| result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        request_results
+            .iter()
+            .filter(|result| result
+                .as_ref()
+                .is_err_and(|error| error.contains("conflicts with an existing request")))
+            .count(),
+        1
+    );
+    assert_eq!(
+        request_inbox
+            .list_join_requests("wrk_concurrent_conflict", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let response_dir = tempfile::tempdir().unwrap();
+    let response_inbox = FileJoinResponseInbox::new(response_dir.path());
+    let response_results = race(
+        response_inbox.clone(),
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "schemaVersion": 1,
+            "requestId": "req_concurrent_response",
+            "workspaceId": "wrk_concurrent_conflict",
+            "resolution": "declined",
+            "message": "first"
+        }))
+        .unwrap(),
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "schemaVersion": 1,
+            "requestId": "req_concurrent_response",
+            "workspaceId": "wrk_concurrent_conflict",
+            "resolution": "declined",
+            "message": "second"
+        }))
+        .unwrap(),
+        |inbox, payload| {
+            inbox
+                .submit_join_response(Some("wrk_concurrent_conflict"), payload)
+                .map_err(|error| error.to_string())
+        },
+    );
+    assert_eq!(
+        response_results
+            .iter()
+            .filter(|result| result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        response_results
+            .iter()
+            .filter(|result| result
+                .as_ref()
+                .is_err_and(|error| error.contains("conflicts with an existing response")))
+            .count(),
+        1
+    );
+    assert_eq!(
+        response_inbox
+            .list_join_responses("wrk_concurrent_conflict", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn runtime_access_inboxes_reject_incomplete_or_unsupported_secure_envelopes() {
+    let request_dir = tempfile::tempdir().unwrap();
+    let request_inbox = FileJoinRequestInbox::new(request_dir.path());
+    let incomplete_claim = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-invite-claim.v1",
+        "schemaVersion": 1,
+        "requestId": "req_incomplete_claim",
+        "workspaceId": "wrk_secure_ingress",
+        "inviteId": "inv_incomplete_claim",
+        "deviceId": "dev_incomplete_claim"
+    }))
+    .unwrap();
+    assert!(
+        request_inbox
+            .submit_join_request(Some("wrk_secure_ingress"), incomplete_claim.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("invite claim payload is incomplete")
+    );
+
+    let unsupported_request = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-request.v2",
+        "schemaVersion": 1,
+        "requestId": "req_unsupported",
+        "deviceId": "dev_unsupported"
+    }))
+    .unwrap();
+    assert!(
+        request_inbox
+            .submit_join_request(Some("wrk_secure_ingress"), unsupported_request)
+            .unwrap_err()
+            .to_string()
+            .contains("kind is unsupported")
+    );
+
+    let missing_device = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-join-request.v1",
+        "schemaVersion": 1,
+        "requestId": "req_missing_device"
+    }))
+    .unwrap();
+    assert!(
+        request_inbox
+            .submit_join_request(Some("wrk_secure_ingress"), missing_device)
+            .unwrap_err()
+            .to_string()
+            .contains("must include deviceId")
+    );
+
+    let outbox_dir_c = CString::new(request_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:7777").unwrap();
+    let workspace_id = CString::new("wrk_secure_ingress").unwrap();
+    let incomplete_claim_c = CString::new(incomplete_claim).unwrap();
+    let queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            endpoint.as_ptr(),
+            workspace_id.as_ptr(),
+            incomplete_claim_c.as_ptr(),
+        ))
+    };
+    let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
+    assert_eq!(queued["ok"], false);
+    assert_eq!(queued["error"]["code"], "join_request_payload_invalid");
+
+    let response_dir = tempfile::tempdir().unwrap();
+    let response_inbox = FileJoinResponseInbox::new(response_dir.path());
+    let missing_schema = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-invite.v1",
+        "requestId": "req_missing_schema",
+        "workspaceId": "wrk_secure_ingress",
+        "inviteId": "inv_missing_schema",
+        "inviteeDeviceId": "dev_missing_schema",
+        "role": "member"
+    }))
+    .unwrap();
+    assert!(
+        response_inbox
+            .submit_join_response(Some("wrk_secure_ingress"), missing_schema)
+            .unwrap_err()
+            .to_string()
+            .contains("schema version must be 1")
+    );
+    let missing_legacy_role = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-invite.v1",
+        "schemaVersion": 1,
+        "requestId": "req_missing_role",
+        "workspaceId": "wrk_secure_ingress",
+        "inviteId": "inv_missing_role",
+        "inviteeDeviceId": "dev_missing_role"
+    }))
+    .unwrap();
+    assert!(
+        response_inbox
+            .submit_join_response(Some("wrk_secure_ingress"), missing_legacy_role)
+            .unwrap_err()
+            .to_string()
+            .contains("must include role")
+    );
+    let incomplete_response = serde_json::to_vec(&json!({
+        "kind": "chaft.workspace-invite-response.v1",
+        "schemaVersion": 1,
+        "requestId": "req_incomplete_response",
+        "workspaceId": "wrk_secure_ingress",
+        "inviteeDeviceId": "dev_incomplete_response"
+    }))
+    .unwrap();
+    assert!(
+        response_inbox
+            .submit_join_response(Some("wrk_secure_ingress"), incomplete_response)
+            .unwrap_err()
+            .to_string()
+            .contains("secure invite response payload is incomplete")
+    );
+}
+
+#[test]
+fn runtime_pull_join_requests_direct_ffi_fails_closed_when_remote_listing_is_disabled() {
     let relay_dir = tempfile::tempdir().unwrap();
     let local_dir = tempfile::tempdir().unwrap();
     let relay = LocalRuntime::open(relay_dir.path(), None).unwrap();
@@ -4853,9 +5792,14 @@ fn runtime_pull_join_requests_direct_ffi_imports_known_peer_inbox() {
         ))
     };
     let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
-    assert_eq!(pulled["ok"], true);
-    assert_eq!(pulled["value"]["requestCount"], 1);
-    assert_eq!(pulled["value"]["workspaceId"], workspace_id.0);
+    assert_eq!(pulled["ok"], false, "{pulled_json}");
+    assert_eq!(pulled["error"]["code"], "runtime_pull_join_requests_failed");
+    assert!(
+        pulled["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("remote join request listing is disabled")
+    );
 
     let listed_json = unsafe {
         take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
@@ -4866,9 +5810,7 @@ fn runtime_pull_join_requests_direct_ffi_imports_known_peer_inbox() {
     let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
     assert_eq!(listed["ok"], true);
     let entries = listed["value"]["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["workspaceId"], workspace_id.0);
-    assert_eq!(entries[0]["entryId"], "req_pull_joiner_123");
+    assert!(entries.is_empty());
 
     let peer_id_c = CString::new(peer_id).unwrap();
     let stopped_json = unsafe {
@@ -4989,60 +5931,137 @@ fn runtime_join_request_outbox_ffi_queues_marks_and_acks_entries() {
 }
 
 #[test]
-fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
-    let alice_dir = tempfile::tempdir().unwrap();
-    let bob_dir = tempfile::tempdir().unwrap();
-    let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
-    let created = alice
-        .create_workspace("Chaft FFI Outbox Host", "general")
-        .unwrap();
-    let workspace_id = WorkspaceId(created.workspace_id.clone());
-    drop(alice);
+fn runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport() {
+    let admin_dir = tempfile::tempdir().unwrap();
+    let invitee_dir = tempfile::tempdir().unwrap();
+    let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let invitee_dir_c = CString::new(invitee_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Chaft FFI Secure Invite").unwrap();
+    let channel_name = CString::new("general").unwrap();
 
-    let alice_dir_c = CString::new(alice_dir.path().to_string_lossy().as_bytes()).unwrap();
-    let bob_dir_c = CString::new(bob_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let created_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        ))
+    };
+    let created = serde_json::from_str::<Value>(&created_json).unwrap();
+    assert_eq!(created["ok"], true);
+    let workspace_id = created["value"]["workspaceId"].as_str().unwrap().to_owned();
+    let workspace_id_c = CString::new(workspace_id.clone()).unwrap();
+
     let listen = CString::new("127.0.0.1:0").unwrap();
-    let started_json = unsafe {
+    let admin_peer_json = unsafe {
         take_ffi_string(chaft_runtime_start_direct_peer_result_json(
-            alice_dir_c.as_ptr(),
+            admin_dir_c.as_ptr(),
             std::ptr::null(),
             listen.as_ptr(),
         ))
     };
-    let started = serde_json::from_str::<Value>(&started_json).unwrap();
-    assert_eq!(started["ok"], true);
-    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
-    let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
+    let admin_peer = serde_json::from_str::<Value>(&admin_peer_json).unwrap();
+    assert_eq!(admin_peer["ok"], true);
+    let admin_peer_id = admin_peer["value"]["peerId"].as_str().unwrap().to_owned();
+    let admin_endpoint = admin_peer["value"]["endpoint"].as_str().unwrap().to_owned();
+    let admin_endpoint_c = CString::new(admin_endpoint.clone()).unwrap();
 
-    let request_payload = serde_json::to_string(&json!({
-        "kind": "chaft.workspace-invite-claim.v1",
-        "schemaVersion": 1,
-        "requestId": "req_outbox_direct_123",
-        "workspaceId": workspace_id.0,
-        "inviteId": "inv_outbox_direct_123",
-        "deviceId": "dev_joiner_outbox_123",
-        "displayName": "Queued Joiner",
-        "message": "Please add me from the outbox"
-    }))
-    .unwrap();
-    let endpoint_c = CString::new(endpoint.clone()).unwrap();
-    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
-    let request_payload_c = CString::new(request_payload).unwrap();
+    let invitee_peer_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let invitee_peer = serde_json::from_str::<Value>(&invitee_peer_json).unwrap();
+    assert_eq!(invitee_peer["ok"], true);
+    let invitee_peer_id = invitee_peer["value"]["peerId"].as_str().unwrap().to_owned();
+    let invitee_endpoint = invitee_peer["value"]["endpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let invitee_endpoint_c = CString::new(invitee_endpoint.clone()).unwrap();
+
+    let invite_label = CString::new("Bob").unwrap();
+    let role = CString::new("member").unwrap();
+    let empty = CString::new("").unwrap();
+    let sync_expectation = CString::new("history_after_claim").unwrap();
+    let invite_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_invite_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            invite_label.as_ptr(),
+            role.as_ptr(),
+            empty.as_ptr(),
+            admin_endpoint_c.as_ptr(),
+            sync_expectation.as_ptr(),
+        ))
+    };
+    let invite = serde_json::from_str::<Value>(&invite_json).unwrap();
+    assert_eq!(invite["ok"], true);
+    let artifact = invite["value"]["artifact"].clone();
+    assert_eq!(artifact["kind"], "chaft.workspace-invite.v2");
+    assert_eq!(artifact["workspaceId"], workspace_id);
+    assert_eq!(artifact["peerEndpoint"], admin_endpoint);
+    let artifact_text = serde_json::to_string(&artifact).unwrap();
+    assert!(!artifact_text.contains("workspaceKey"));
+    assert!(!artifact_text.contains("aes256GcmSivKey"));
+
+    let artifact_c = CString::new(artifact_text).unwrap();
+    let invitee_name = CString::new("Bob Rivera").unwrap();
+    let note = CString::new("Joining from a second device").unwrap();
+    let claim_json = unsafe {
+        take_ffi_string(chaft_runtime_prepare_workspace_invite_claim_result_json(
+            invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            artifact_c.as_ptr(),
+            invitee_name.as_ptr(),
+            note.as_ptr(),
+            invitee_endpoint_c.as_ptr(),
+        ))
+    };
+    let claim = serde_json::from_str::<Value>(&claim_json).unwrap();
+    assert_eq!(claim["ok"], true);
+    let claim_value = claim["value"].clone();
+    assert_eq!(claim_value["kind"], "chaft.workspace-invite-claim.v1");
+    let delivery_endpoint = claim_value["deliveryPeerEndpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(delivery_endpoint, admin_endpoint);
+    assert_eq!(claim_value["responsePeerEndpoint"], invitee_endpoint);
+    assert!(!claim_value["deviceSignature"].as_str().unwrap().is_empty());
+    assert!(
+        !claim_value["capabilitySignature"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    let request_id = claim_value["requestId"].as_str().unwrap().to_owned();
+    let invite_id = claim_value["inviteId"].as_str().unwrap().to_owned();
+    let invitee_device_id = claim_value["deviceId"].as_str().unwrap().to_owned();
+    let request_id_c = CString::new(request_id.clone()).unwrap();
+    let claim_text = serde_json::to_string(&claim_value).unwrap();
+    let claim_text_c = CString::new(claim_text).unwrap();
+    let delivery_endpoint_c = CString::new(delivery_endpoint.clone()).unwrap();
+
     let queued_json = unsafe {
         take_ffi_string(chaft_runtime_queue_join_request_outbox_result_json(
-            bob_dir_c.as_ptr(),
-            endpoint_c.as_ptr(),
+            invitee_dir_c.as_ptr(),
+            delivery_endpoint_c.as_ptr(),
             workspace_id_c.as_ptr(),
-            request_payload_c.as_ptr(),
+            claim_text_c.as_ptr(),
         ))
     };
     let queued = serde_json::from_str::<Value>(&queued_json).unwrap();
     assert_eq!(queued["ok"], true);
+    assert_eq!(queued["value"]["entry"]["entryId"], request_id);
     assert_eq!(queued["value"]["entry"]["status"], "pending");
 
     let due_json = unsafe {
         take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
-            bob_dir_c.as_ptr(),
+            invitee_dir_c.as_ptr(),
             10,
         ))
     };
@@ -5050,12 +6069,11 @@ fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
     assert_eq!(due["ok"], true);
     assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 1);
 
-    let entry_id = CString::new("req_outbox_direct_123").unwrap();
     let submitted_json = unsafe {
         take_ffi_string(
             chaft_runtime_submit_join_request_outbox_entry_direct_result_json(
-                bob_dir_c.as_ptr(),
-                entry_id.as_ptr(),
+                invitee_dir_c.as_ptr(),
+                request_id_c.as_ptr(),
             ),
         )
     };
@@ -5068,11 +6086,11 @@ fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
             .get("nextAttemptAfterUnixMs")
             .is_none()
     );
-    assert_eq!(submitted["value"]["entry"]["peerEndpoint"], endpoint);
+    assert_eq!(submitted["value"]["entry"]["peerEndpoint"], admin_endpoint);
 
     let inbox_json = unsafe {
         take_ffi_string(chaft_runtime_list_join_request_inbox_result_json(
-            alice_dir_c.as_ptr(),
+            admin_dir_c.as_ptr(),
             10,
         ))
     };
@@ -5080,42 +6098,198 @@ fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
     assert_eq!(inbox["ok"], true);
     let inbox_entries = inbox["value"]["entries"].as_array().unwrap();
     assert_eq!(inbox_entries.len(), 1);
+    assert_eq!(inbox_entries[0]["entryId"], request_id);
     let request_text = inbox_entries[0]["requestText"].as_str().unwrap();
     let request_value = serde_json::from_str::<Value>(request_text).unwrap();
-    assert_eq!(request_value["kind"], "chaft.workspace-invite-claim.v1");
-    assert_eq!(request_value["requestId"], "req_outbox_direct_123");
-    assert_eq!(request_value["deviceId"], "dev_joiner_outbox_123");
+    assert_eq!(request_value, claim_value);
+    let response_endpoint = request_value["responsePeerEndpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(response_endpoint, invitee_endpoint);
+    let response_endpoint_c = CString::new(response_endpoint.clone()).unwrap();
 
-    let listed_json = unsafe {
-        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
-            bob_dir_c.as_ptr(),
+    let received_claim_c = CString::new(request_text).unwrap();
+    let claimed_json = unsafe {
+        take_ffi_string(chaft_runtime_claim_workspace_invite_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            received_claim_c.as_ptr(),
+        ))
+    };
+    let claimed = serde_json::from_str::<Value>(&claimed_json).unwrap();
+    assert_eq!(claimed["ok"], true);
+    assert_eq!(claimed["value"]["workspaceId"], workspace_id);
+    assert_eq!(claimed["value"]["inviteId"], invite_id);
+    assert_eq!(claimed["value"]["requestId"], request_id);
+    assert_eq!(claimed["value"]["inviteeDeviceId"], invitee_device_id);
+    assert_eq!(claimed["value"]["role"], "member");
+
+    let members_json = unsafe {
+        take_ffi_string(chaft_runtime_list_workspace_member_page_result_json(
+            admin_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            0,
             10,
         ))
     };
-    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
-    assert_eq!(listed["ok"], true);
-    assert_eq!(
-        listed["value"]["entries"][0]["status"],
-        Value::String("delivered".to_owned())
+    let members = serde_json::from_str::<Value>(&members_json).unwrap();
+    assert_eq!(members["ok"], true);
+    assert!(
+        members["value"]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|member| {
+                member["deviceId"].as_str() == Some(invitee_device_id.as_str())
+                    && member["role"].as_str() == Some("member")
+            })
     );
-    let due_json = unsafe {
-        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
-            bob_dir_c.as_ptr(),
+
+    let response_value = claimed["value"]["response"].clone();
+    assert_eq!(response_value["kind"], "chaft.workspace-invite-response.v1");
+    assert_eq!(response_value["requestId"], request_id);
+    assert_eq!(response_value["inviteeDeviceId"], invitee_device_id);
+    let response_text = serde_json::to_string(&response_value).unwrap();
+    assert!(!response_text.contains("aes256GcmSivKey"));
+    let response_text_c = CString::new(response_text).unwrap();
+
+    let response_queued_json = unsafe {
+        take_ffi_string(chaft_runtime_queue_join_response_outbox_result_json(
+            admin_dir_c.as_ptr(),
+            response_endpoint_c.as_ptr(),
+            workspace_id_c.as_ptr(),
+            response_text_c.as_ptr(),
+        ))
+    };
+    let response_queued = serde_json::from_str::<Value>(&response_queued_json).unwrap();
+    assert_eq!(response_queued["ok"], true);
+    assert_eq!(response_queued["value"]["entry"]["entryId"], request_id);
+
+    let response_submitted_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_submit_join_response_outbox_entry_direct_result_json(
+                admin_dir_c.as_ptr(),
+                request_id_c.as_ptr(),
+            ),
+        )
+    };
+    let response_submitted = serde_json::from_str::<Value>(&response_submitted_json).unwrap();
+    assert_eq!(response_submitted["ok"], true);
+    assert_eq!(response_submitted["value"]["entry"]["status"], "delivered");
+    assert_eq!(
+        response_submitted["value"]["entry"]["peerEndpoint"],
+        response_endpoint
+    );
+
+    let response_inbox_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_result_json(
+            invitee_dir_c.as_ptr(),
             10,
         ))
     };
-    let due = serde_json::from_str::<Value>(&due_json).unwrap();
-    assert_eq!(due["ok"], true);
-    assert_eq!(due["value"]["entries"].as_array().unwrap().len(), 0);
+    let response_inbox = serde_json::from_str::<Value>(&response_inbox_json).unwrap();
+    assert_eq!(response_inbox["ok"], true);
+    let response_entries = response_inbox["value"]["entries"].as_array().unwrap();
+    assert_eq!(response_entries.len(), 1);
+    assert_eq!(response_entries[0]["entryId"], request_id);
+    let delivered_response_text = response_entries[0]["responseText"].as_str().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(delivered_response_text).unwrap(),
+        response_value
+    );
 
-    let peer_id_c = CString::new(peer_id).unwrap();
-    let stopped_json = unsafe {
-        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
-            peer_id_c.as_ptr(),
+    let delivered_response_c = CString::new(delivered_response_text).unwrap();
+    let imported_json = unsafe {
+        take_ffi_string(chaft_runtime_import_workspace_invite_response_result_json(
+            invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            delivered_response_c.as_ptr(),
         ))
     };
-    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
-    assert_eq!(stopped["ok"], true);
+    let imported = serde_json::from_str::<Value>(&imported_json).unwrap();
+    assert_eq!(imported["ok"], true);
+    assert_eq!(imported["value"]["workspaceId"], workspace_id);
+    assert_eq!(imported["value"]["inviteId"], invite_id);
+    assert_eq!(imported["value"]["requestId"], request_id);
+    assert_eq!(imported["value"]["importerDeviceId"], invitee_device_id);
+
+    fn assert_acknowledged(
+        data_dir: *const c_char,
+        entry_id: *const c_char,
+        ack: unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char,
+        expected_entry_id: &str,
+    ) {
+        let acked_json = unsafe { take_ffi_string(ack(data_dir, entry_id)) };
+        let acked = serde_json::from_str::<Value>(&acked_json).unwrap();
+        assert_eq!(acked["ok"], true);
+        assert_eq!(acked["value"]["entryId"], expected_entry_id);
+    }
+    assert_acknowledged(
+        admin_dir_c.as_ptr(),
+        request_id_c.as_ptr(),
+        chaft_runtime_ack_join_request_inbox_entry_result_json,
+        &request_id,
+    );
+    assert_acknowledged(
+        invitee_dir_c.as_ptr(),
+        request_id_c.as_ptr(),
+        chaft_runtime_ack_join_request_outbox_entry_result_json,
+        &request_id,
+    );
+    assert_acknowledged(
+        invitee_dir_c.as_ptr(),
+        request_id_c.as_ptr(),
+        chaft_runtime_ack_join_response_inbox_entry_result_json,
+        &request_id,
+    );
+    assert_acknowledged(
+        admin_dir_c.as_ptr(),
+        request_id_c.as_ptr(),
+        chaft_runtime_ack_join_response_outbox_entry_result_json,
+        &request_id,
+    );
+
+    let request_outbox_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
+            invitee_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let request_outbox = serde_json::from_str::<Value>(&request_outbox_json).unwrap();
+    assert_eq!(request_outbox["ok"], true);
+    assert!(
+        request_outbox["value"]["entries"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let response_inbox_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_result_json(
+            invitee_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let response_inbox = serde_json::from_str::<Value>(&response_inbox_json).unwrap();
+    assert_eq!(response_inbox["ok"], true);
+    assert!(
+        response_inbox["value"]["entries"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    for peer_id in [invitee_peer_id, admin_peer_id] {
+        let peer_id_c = CString::new(peer_id).unwrap();
+        let stopped_json = unsafe {
+            take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+                peer_id_c.as_ptr(),
+            ))
+        };
+        let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+        assert_eq!(stopped["ok"], true);
+    }
 }
 
 #[test]
@@ -5388,7 +6562,7 @@ fn runtime_join_response_outbox_ffi_submits_queued_entry_directly() {
 }
 
 #[test]
-fn runtime_pull_join_responses_direct_ffi_imports_known_peer_inbox() {
+fn runtime_pull_join_responses_direct_ffi_fails_closed_without_request_ids() {
     let relay_dir = tempfile::tempdir().unwrap();
     let local_dir = tempfile::tempdir().unwrap();
     let admin_dir = tempfile::tempdir().unwrap();
@@ -5459,7 +6633,111 @@ fn runtime_pull_join_responses_direct_ffi_imports_known_peer_inbox() {
         ))
     };
     let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
-    assert_eq!(pulled["ok"], true);
+    assert_eq!(pulled["ok"], false, "{pulled_json}");
+    assert_eq!(
+        pulled["error"]["code"],
+        "runtime_pull_join_responses_failed"
+    );
+    assert!(
+        pulled["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("requires at least one request id")
+    );
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_response_inbox_result_json(
+            local_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    let entries = listed["value"]["entries"].as_array().unwrap();
+    assert!(entries.is_empty());
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_pull_join_responses_for_requests_direct_ffi_filters_before_remote_limit() {
+    fn response_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "kind": "chaft.workspace-join-response.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": workspace_id,
+            "resolution": "declined"
+        }))
+        .unwrap()
+    }
+
+    let relay_dir = tempfile::tempdir().unwrap();
+    let local_dir = tempfile::tempdir().unwrap();
+    let relay = LocalRuntime::open(relay_dir.path(), None).unwrap();
+    let created = relay
+        .create_workspace("Chaft FFI Scoped Response Relay", "general")
+        .unwrap();
+    let workspace_id = WorkspaceId(created.workspace_id.clone());
+    drop(relay);
+
+    let relay_inbox = FileJoinResponseInbox::new(relay_dir.path());
+    let target_request_id = "req_scoped_pull_target";
+    relay_inbox
+        .submit_join_response(
+            Some(&workspace_id.0),
+            response_payload(target_request_id, &workspace_id.0),
+        )
+        .unwrap();
+    for index in 0..(MAX_FETCH_JOIN_RESPONSES_PER_REQUEST + 5) {
+        relay_inbox
+            .submit_join_response(
+                Some(&workspace_id.0),
+                response_payload(
+                    &format!("req_zzz_scoped_pull_foreign_{index:03}"),
+                    &workspace_id.0,
+                ),
+            )
+            .unwrap();
+    }
+
+    let relay_dir_c = CString::new(relay_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let local_dir_c = CString::new(local_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let started_json = unsafe {
+        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+            relay_dir_c.as_ptr(),
+            std::ptr::null(),
+            listen.as_ptr(),
+        ))
+    };
+    let started = serde_json::from_str::<Value>(&started_json).unwrap();
+    assert_eq!(started["ok"], true);
+    let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
+    let endpoint_c = CString::new(started["value"]["endpoint"].as_str().unwrap()).unwrap();
+    let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
+    let request_ids_c = CString::new(format!(r#"["{target_request_id}"]"#)).unwrap();
+
+    let pulled_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_pull_join_responses_for_requests_direct_result_json(
+                local_dir_c.as_ptr(),
+                endpoint_c.as_ptr(),
+                workspace_id_c.as_ptr(),
+                request_ids_c.as_ptr(),
+                1,
+            ),
+        )
+    };
+    let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
+    assert_eq!(pulled["ok"], true, "{pulled_json}");
     assert_eq!(pulled["value"]["responseCount"], 1);
     assert_eq!(pulled["value"]["workspaceId"], workspace_id.0);
 
@@ -5473,8 +6751,7 @@ fn runtime_pull_join_responses_direct_ffi_imports_known_peer_inbox() {
     assert_eq!(listed["ok"], true);
     let entries = listed["value"]["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["workspaceId"], workspace_id.0);
-    assert_eq!(entries[0]["entryId"], "req_pull_response_123");
+    assert_eq!(entries[0]["entryId"], target_request_id);
 
     let peer_id_c = CString::new(peer_id).unwrap();
     let stopped_json = unsafe {
@@ -5484,6 +6761,36 @@ fn runtime_pull_join_responses_direct_ffi_imports_known_peer_inbox() {
     };
     let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
     assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn runtime_pull_join_responses_for_requests_direct_ffi_bounds_request_ids_before_connecting() {
+    let local_dir = tempfile::tempdir().unwrap();
+    let local_dir_c = CString::new(local_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint_c = CString::new("127.0.0.1:1").unwrap();
+    let workspace_id_c = CString::new("wrk_scoped_response_bound").unwrap();
+    let request_ids = (0..=MAX_FETCH_JOIN_RESPONSES_PER_REQUEST)
+        .map(|index| format!("req_scoped_response_bound_{index:03}"))
+        .collect::<Vec<_>>();
+    let request_ids_c = CString::new(serde_json::to_string(&request_ids).unwrap()).unwrap();
+
+    let pulled_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_pull_join_responses_for_requests_direct_result_json(
+                local_dir_c.as_ptr(),
+                endpoint_c.as_ptr(),
+                workspace_id_c.as_ptr(),
+                request_ids_c.as_ptr(),
+                MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+            ),
+        )
+    };
+    let pulled = serde_json::from_str::<Value>(&pulled_json).unwrap();
+    assert_eq!(pulled["ok"], false, "{pulled_json}");
+    assert_eq!(
+        pulled["error"]["code"],
+        "join_response_request_ids_too_many"
+    );
 }
 
 #[test]

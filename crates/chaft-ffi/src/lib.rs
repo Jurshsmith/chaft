@@ -1439,6 +1439,41 @@ pub unsafe extern "C" fn chaft_runtime_create_workspace_invite_result_json(
     into_c_string(&result)
 }
 
+/// Creates a claimable workspace invite with a bounded claim capacity.
+///
+/// `max_claims` is capped by the runtime. A value of zero uses the safe
+/// one-claim default.
+///
+/// # Safety
+///
+/// All non-null pointer arguments must be valid pointers to NUL-terminated
+/// UTF-8 strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_create_workspace_invite_with_max_claims_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    role: *const c_char,
+    max_claims: u32,
+    expires_at: *const c_char,
+    peer_endpoint: *const c_char,
+    sync_expectation: *const c_char,
+) -> *mut c_char {
+    let result = runtime_create_workspace_invite_with_max_claims_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+        role,
+        max_claims,
+        expires_at,
+        peer_endpoint,
+        sync_expectation,
+    );
+    into_c_string(&result)
+}
+
 /// Prepares a device-bound claim for a claimable workspace invite.
 ///
 /// # Safety
@@ -2368,6 +2403,36 @@ pub unsafe extern "C" fn chaft_runtime_pull_join_responses_direct_result_json(
     into_c_string(&result)
 }
 
+/// Pulls only the requested workspace join-response envelopes from a known
+/// direct peer into the local runtime inbox.
+///
+/// `request_ids_json` must encode an array of request-ID strings. The array,
+/// each ID, and `max_entries` are bounded by the direct transport protocol.
+/// The remote peer applies request-ID filtering before the result limit, and
+/// the caller rejects a response whose request ID was not requested.
+///
+/// # Safety
+///
+/// All pointers must be valid pointers to NUL-terminated UTF-8 strings for the
+/// duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_pull_join_responses_for_requests_direct_result_json(
+    data_dir: *const c_char,
+    peer_endpoint: *const c_char,
+    workspace_id: *const c_char,
+    request_ids_json: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_pull_join_responses_for_requests_direct_result(
+        data_dir,
+        peer_endpoint,
+        workspace_id,
+        request_ids_json,
+        max_entries,
+    );
+    into_c_string(&result)
+}
+
 /// Starts a background direct TCP peer serving a local runtime event/blob store.
 ///
 /// `listen` may be null or empty to use `127.0.0.1:0`. The returned peer ID can
@@ -2419,6 +2484,27 @@ pub unsafe extern "C" fn chaft_runtime_list_join_request_inbox_result_json(
     max_entries: usize,
 ) -> *mut c_char {
     let result = runtime_list_join_request_inbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Lists incoming join requests for one workspace.
+///
+/// Workspace filtering is applied before `max_entries`, so traffic for other
+/// workspaces cannot consume this result window. Passing `max_entries` as `0`
+/// uses the runtime default limit.
+///
+/// # Safety
+///
+/// `data_dir` and `workspace_id` must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_request_inbox_for_workspace_result_json(
+    data_dir: *const c_char,
+    workspace_id: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result =
+        runtime_list_join_request_inbox_for_workspace_result(data_dir, workspace_id, max_entries);
     into_c_string(&result)
 }
 
@@ -2563,6 +2649,33 @@ pub unsafe extern "C" fn chaft_runtime_list_join_response_inbox_result_json(
     max_entries: usize,
 ) -> *mut c_char {
     let result = runtime_list_join_response_inbox_result(data_dir, max_entries);
+    into_c_string(&result)
+}
+
+/// Lists incoming join responses relevant to the local desktop session.
+///
+/// Every response must match a request ID in `pending_request_ids_json`.
+/// Legacy and secure invite responses must additionally target
+/// `local_device_id`. Filtering is applied before `max_entries`.
+///
+/// # Safety
+///
+/// `data_dir`, `local_device_id`, and `pending_request_ids_json` must be valid
+/// pointers to NUL-terminated UTF-8 strings for the duration of this call.
+/// `pending_request_ids_json` must encode an array of request-ID strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_list_join_response_inbox_scoped_result_json(
+    data_dir: *const c_char,
+    local_device_id: *const c_char,
+    pending_request_ids_json: *const c_char,
+    max_entries: usize,
+) -> *mut c_char {
+    let result = runtime_list_join_response_inbox_scoped_result(
+        data_dir,
+        local_device_id,
+        pending_request_ids_json,
+        max_entries,
+    );
     into_c_string(&result)
 }
 

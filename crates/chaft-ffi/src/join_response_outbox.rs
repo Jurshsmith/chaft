@@ -163,12 +163,20 @@ pub(crate) fn runtime_list_due_join_response_outbox_result(
             max_entries.min(JOIN_RESPONSE_OUTBOX_LIST_MAX_ENTRIES)
         };
         let now = current_unix_ms();
-        let entries =
-            list_join_response_outbox_entries(&data_dir, JOIN_RESPONSE_OUTBOX_LIST_MAX_ENTRIES)?
-                .into_iter()
-                .filter(|entry| is_join_response_outbox_entry_due(entry, now))
-                .take(max_entries)
-                .collect();
+        // Terminal entries must not consume the scan window and starve newer
+        // pending work. The public result is still bounded below.
+        let mut entries = Vec::new();
+        for entry in list_join_response_outbox_entries(&data_dir, usize::MAX)? {
+            if is_join_response_outbox_entry_terminal(&entry) {
+                // Survive a crash between a successful submit and the desktop
+                // ACK, and clean up entries created by older clients.
+                let _ = fs::remove_file(outbox_entry_path(&data_dir, &entry.entry_id));
+                continue;
+            }
+            if entries.len() < max_entries && is_join_response_outbox_entry_due(&entry, now) {
+                entries.push(entry);
+            }
+        }
         Ok(JoinResponseOutboxEntries { entries })
     })
 }
@@ -504,6 +512,13 @@ fn is_join_response_outbox_entry_due(entry: &JoinResponseOutboxEntry, now_unix_m
         .next_attempt_after_unix_ms
         .map(|next_attempt_after| next_attempt_after <= now_unix_ms)
         .unwrap_or(true)
+}
+
+fn is_join_response_outbox_entry_terminal(entry: &JoinResponseOutboxEntry) -> bool {
+    matches!(
+        entry.status,
+        JoinResponseOutboxStatus::Delivered | JoinResponseOutboxStatus::Acknowledged
+    )
 }
 
 fn outbox_status_arg(status: &str) -> Result<JoinResponseOutboxStatus, FfiError> {

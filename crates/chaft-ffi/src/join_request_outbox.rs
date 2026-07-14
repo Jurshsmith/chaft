@@ -8,6 +8,7 @@ use std::{
 };
 
 use chaft_net_direct::{DirectTransport, MAX_JOIN_REQUEST_SUBMISSION_BYTES};
+use chaft_runtime::WorkspaceInviteClaim;
 use chaft_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
@@ -164,12 +165,20 @@ pub(crate) fn runtime_list_due_join_request_outbox_result(
             max_entries.min(JOIN_REQUEST_OUTBOX_LIST_MAX_ENTRIES)
         };
         let now = current_unix_ms();
-        let entries =
-            list_join_request_outbox_entries(&data_dir, JOIN_REQUEST_OUTBOX_LIST_MAX_ENTRIES)?
-                .into_iter()
-                .filter(|entry| is_join_request_outbox_entry_due(entry, now))
-                .take(max_entries)
-                .collect();
+        // Terminal entries must not consume the scan window and starve newer
+        // pending work. The public result is still bounded below.
+        let mut entries = Vec::new();
+        for entry in list_join_request_outbox_entries(&data_dir, usize::MAX)? {
+            if is_join_request_outbox_entry_terminal(&entry) {
+                // Survive a crash between a successful submit and the desktop
+                // ACK, and clean up entries created by older clients.
+                let _ = fs::remove_file(outbox_entry_path(&data_dir, &entry.entry_id));
+                continue;
+            }
+            if entries.len() < max_entries && is_join_request_outbox_entry_due(&entry, now) {
+                entries.push(entry);
+            }
+        }
         Ok(JoinRequestOutboxEntries { entries })
     })
 }
@@ -520,6 +529,13 @@ fn is_join_request_outbox_entry_due(entry: &JoinRequestOutboxEntry, now_unix_ms:
         .unwrap_or(true)
 }
 
+fn is_join_request_outbox_entry_terminal(entry: &JoinRequestOutboxEntry) -> bool {
+    matches!(
+        entry.status,
+        JoinRequestOutboxStatus::Delivered | JoinRequestOutboxStatus::Acknowledged
+    )
+}
+
 struct JoinRequestMetadata {
     request_id: String,
     workspace_id: Option<String>,
@@ -565,6 +581,38 @@ fn validated_join_request_metadata(request_text: &str) -> Result<JoinRequestMeta
             "join_request_payload_invalid",
             "join request payload kind is unsupported",
         ));
+    }
+    if kind == Some("chaft.workspace-invite-claim.v1") {
+        let claim =
+            serde_json::from_value::<WorkspaceInviteClaim>(value.clone()).map_err(|error| {
+                ffi_error(
+                    "join_request_payload_invalid",
+                    format!("invite claim payload is incomplete: {error}"),
+                )
+            })?;
+        if claim.payload.schema_version != 1
+            || claim.payload.request_id.trim().is_empty()
+            || claim.payload.workspace_id.trim().is_empty()
+            || claim.payload.invite_id.trim().is_empty()
+            || claim.payload.device_id.trim().is_empty()
+            || claim.payload.device_public_key.trim().is_empty()
+            || claim.payload.delivery_device_id.trim().is_empty()
+            || claim
+                .payload
+                .response_encryption_public_key
+                .trim()
+                .is_empty()
+            || claim.payload.source_type != "invite_claim"
+            || claim.payload.source_invite_id != claim.payload.invite_id
+            || claim.payload.source_approval_policy != "preapproved"
+            || claim.device_signature.trim().is_empty()
+            || claim.capability_signature.trim().is_empty()
+        {
+            return Err(ffi_error(
+                "join_request_payload_invalid",
+                "invite claim payload is incomplete",
+            ));
+        }
     }
     let request_id = object
         .get("requestId")

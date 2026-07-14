@@ -1,28 +1,38 @@
 use std::{
+    collections::HashSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use chaft_net::NetError;
 use chaft_net_direct::{JoinResponseInbox, MAX_JOIN_RESPONSE_SUBMISSION_BYTES};
+use chaft_runtime::WorkspaceInviteResponse;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     envelope::{FfiError, FfiResult, ffi_error, result_envelope},
-    id_args::direct_workspace_id_arg,
-    input::{KEY_TRANSFER_JSON_MAX_BYTES, read_c_string},
+    id_args::{direct_workspace_id_arg, ffi_device_id_arg},
+    input::{KEY_TRANSFER_JSON_MAX_BYTES, read_c_string, read_c_string_with_max_bytes},
 };
 
 const JOIN_RESPONSE_INBOX_DIR: &str = "join-response-inbox";
 const JOIN_RESPONSE_INBOX_SCHEMA_VERSION: u32 = 1;
 pub(crate) const JOIN_RESPONSE_INBOX_ENTRY_MAX_BYTES: usize = KEY_TRANSFER_JSON_MAX_BYTES + 4096;
-const JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES: usize = 128;
+pub(crate) const JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES: usize = 128;
 const JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES: usize = 100;
+pub(crate) const JOIN_RESPONSE_INBOX_MAX_ENTRIES: usize = 1024;
+const JOIN_RESPONSE_INBOX_SCOPE_MAX_REQUEST_IDS: usize = JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES;
+const JOIN_RESPONSE_INBOX_SCOPE_JSON_MAX_BYTES: usize =
+    JOIN_RESPONSE_INBOX_SCOPE_MAX_REQUEST_IDS * (JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES + 3) + 2;
 
 static JOIN_RESPONSE_INBOX_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static JOIN_RESPONSE_INBOX_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileJoinResponseInbox {
@@ -58,13 +68,49 @@ impl JoinResponseInbox for FileJoinResponseInbox {
         workspace_id: &str,
         max_entries: usize,
     ) -> Result<Vec<Vec<u8>>, NetError> {
-        let entries =
-            list_join_response_inbox_entries(&self.data_dir, JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES)
-                .map_err(|error| NetError::Protocol(error.message))?;
+        let entries = list_join_response_inbox_entries(
+            &self.data_dir,
+            Some(workspace_id),
+            max_entries.min(JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES),
+        )
+        .map_err(|error| NetError::Protocol(error.message))?;
         Ok(entries
             .into_iter()
-            .filter(|entry| entry.workspace_id.as_deref() == Some(workspace_id))
-            .take(max_entries)
+            .map(|entry| entry.response_text.into_bytes())
+            .collect())
+    }
+
+    fn list_join_responses_for_requests(
+        &self,
+        workspace_id: &str,
+        request_ids: &[String],
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        if request_ids.is_empty() || max_entries == 0 {
+            return Ok(Vec::new());
+        }
+        let workspace_id = direct_workspace_id_arg(workspace_id.to_owned())
+            .map_err(|error| NetError::Protocol(error.message))?;
+        let request_ids = request_ids
+            .iter()
+            .map(|request_id| {
+                let request_id = request_id.trim().to_owned();
+                validate_join_response_entry_id(&request_id)
+                    .map_err(|error| NetError::Protocol(error.message))?;
+                Ok(request_id)
+            })
+            .collect::<Result<HashSet<_>, NetError>>()?;
+        let entries = list_join_response_inbox_entries_matching(
+            &self.data_dir,
+            max_entries.min(JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES),
+            |entry| {
+                Ok(entry.workspace_id.as_deref() == Some(workspace_id.as_str())
+                    && request_ids.contains(&entry.request_id))
+            },
+        )
+        .map_err(|error| NetError::Protocol(error.message))?;
+        Ok(entries
+            .into_iter()
             .map(|entry| entry.response_text.into_bytes())
             .collect())
     }
@@ -105,7 +151,49 @@ pub(crate) fn runtime_list_join_response_inbox_result(
         } else {
             max_entries.min(JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES)
         };
-        let entries = list_join_response_inbox_entries(&PathBuf::from(data_dir), max_entries)?;
+        let entries =
+            list_join_response_inbox_entries(&PathBuf::from(data_dir), None, max_entries)?;
+        Ok(JoinResponseInboxEntries { entries })
+    })
+}
+
+pub(crate) fn runtime_list_join_response_inbox_scoped_result(
+    data_dir: *const std::ffi::c_char,
+    local_device_id: *const std::ffi::c_char,
+    pending_request_ids_json: *const std::ffi::c_char,
+    max_entries: usize,
+) -> FfiResult<JoinResponseInboxEntries> {
+    result_envelope(|| {
+        let data_dir = read_c_string(data_dir, "data_dir")?;
+        let local_device_id = ffi_device_id_arg(read_c_string(local_device_id, "device_id")?)?;
+        let pending_request_ids_json = read_c_string_with_max_bytes(
+            pending_request_ids_json,
+            "pending_request_ids_json",
+            JOIN_RESPONSE_INBOX_SCOPE_JSON_MAX_BYTES,
+            "join_response_inbox_scope_too_large",
+            "pending join response request IDs",
+        )?;
+        let pending_request_ids =
+            parse_pending_join_response_request_ids(&pending_request_ids_json)?;
+        let max_entries = if max_entries == 0 {
+            JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES
+        } else {
+            max_entries.min(JOIN_RESPONSE_INBOX_LIST_MAX_ENTRIES)
+        };
+        let entries = list_join_response_inbox_entries_matching(
+            &PathBuf::from(data_dir),
+            max_entries,
+            |entry| {
+                if !pending_request_ids.contains(&entry.request_id) {
+                    return Ok(false);
+                }
+                let metadata = validate_join_response_payload(&entry.response_text)?;
+                Ok(metadata
+                    .invitee_device_id
+                    .as_deref()
+                    .is_none_or(|invitee_device_id| invitee_device_id == local_device_id))
+            },
+        )?;
         Ok(JoinResponseInboxEntries { entries })
     })
 }
@@ -156,6 +244,13 @@ fn write_join_response_inbox_entry(
     response_text: &str,
 ) -> Result<JoinResponseInboxEntry, FfiError> {
     let metadata = validate_join_response_payload(response_text)?;
+    let workspace_id = resolve_join_response_workspace_id(workspace_id, metadata.workspace_id)?;
+    let _write_guard = JOIN_RESPONSE_INBOX_WRITE_LOCK.lock().map_err(|_| {
+        ffi_error(
+            "join_response_inbox_write_failed",
+            "join response inbox write lock is unavailable",
+        )
+    })?;
     let inbox_dir = inbox_dir(data_dir);
     fs::create_dir_all(&inbox_dir).map_err(|error| {
         ffi_error(
@@ -163,45 +258,109 @@ fn write_join_response_inbox_entry(
             format!("could not create join response inbox: {error}"),
         )
     })?;
-    let received_at_unix_ms = current_unix_ms();
-    let entry_id = if metadata.request_id.is_empty() {
-        format!(
-            "jrsp_{}_{}",
-            received_at_unix_ms,
-            JOIN_RESPONSE_INBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        )
-    } else {
-        metadata.request_id.clone()
-    };
-    if let Ok(existing) = read_join_response_inbox_entry(data_dir, &entry_id) {
-        return Ok(existing);
-    }
-    let workspace_id = workspace_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or(metadata.workspace_id);
-    if let Some(workspace_id) = &workspace_id {
-        direct_workspace_id_arg(workspace_id.clone())?;
+    let entry_id = metadata.request_id;
+    let existing_path = inbox_entry_path(data_dir, &entry_id);
+    if existing_path.exists() {
+        let existing = read_join_response_inbox_entry(data_dir, &entry_id)?;
+        if existing.workspace_id == workspace_id && existing.response_text == response_text {
+            return Ok(existing);
+        }
+        return Err(ffi_error(
+            "join_response_inbox_entry_conflict",
+            format!("join response inbox entry {entry_id} conflicts with an existing response"),
+        ));
     }
     let entry = JoinResponseInboxEntry {
         schema_version: JOIN_RESPONSE_INBOX_SCHEMA_VERSION,
         entry_id: entry_id.clone(),
-        request_id: metadata.request_id,
+        request_id: entry_id,
         workspace_id,
-        received_at_unix_ms,
+        received_at_unix_ms: current_unix_ms(),
         response_text: response_text.to_owned(),
     };
-    write_join_response_inbox_entry_file(data_dir, &entry)?;
-    Ok(entry)
+    let bytes = encode_join_response_inbox_entry(&entry)?;
+    let sequence = JOIN_RESPONSE_INBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temp_path = inbox_dir.join(format!(
+        ".{}.{}.{}.tmp",
+        entry.entry_id,
+        std::process::id(),
+        sequence
+    ));
+    let final_path = inbox_entry_path(data_dir, &entry.entry_id);
+    if let Err(error) = write_private_file(&temp_path, &bytes) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    let capacity_result = (|| {
+        let entry_count = inbox_json_entry_count(&inbox_dir)?;
+        let prune_count = entry_count
+            .saturating_sub(JOIN_RESPONSE_INBOX_MAX_ENTRIES)
+            .saturating_add(1);
+        if entry_count >= JOIN_RESPONSE_INBOX_MAX_ENTRIES {
+            for _ in 0..prune_count {
+                prune_oldest_valid_join_response_inbox_entry(data_dir)?;
+            }
+        }
+        Ok::<(), FfiError>(())
+    })();
+    if let Err(error) = capacity_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    match fs::hard_link(&temp_path, &final_path) {
+        Ok(()) => {
+            let _ = fs::remove_file(&temp_path);
+            Ok(entry)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&temp_path);
+            let existing = read_join_response_inbox_entry(data_dir, &entry.entry_id)?;
+            if existing.workspace_id == entry.workspace_id
+                && existing.response_text == entry.response_text
+            {
+                Ok(existing)
+            } else {
+                Err(ffi_error(
+                    "join_response_inbox_entry_conflict",
+                    format!(
+                        "join response inbox entry {} conflicts with an existing response",
+                        entry.entry_id
+                    ),
+                ))
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(ffi_error(
+                "join_response_inbox_write_failed",
+                format!("could not commit join response inbox entry: {error}"),
+            ))
+        }
+    }
 }
 
 fn list_join_response_inbox_entries(
     data_dir: &Path,
+    workspace_id: Option<&str>,
     max_entries: usize,
 ) -> Result<Vec<JoinResponseInboxEntry>, FfiError> {
+    let workspace_id = workspace_id.map(str::trim);
+    list_join_response_inbox_entries_matching(data_dir, max_entries, |entry| {
+        Ok(workspace_id
+            .is_none_or(|workspace_id| entry.workspace_id.as_deref() == Some(workspace_id)))
+    })
+}
+
+fn list_join_response_inbox_entries_matching(
+    data_dir: &Path,
+    max_entries: usize,
+    mut matches: impl FnMut(&JoinResponseInboxEntry) -> Result<bool, FfiError>,
+) -> Result<Vec<JoinResponseInboxEntry>, FfiError> {
+    if max_entries == 0 {
+        return Ok(Vec::new());
+    }
     let inbox_dir = inbox_dir(data_dir);
-    let mut paths = match fs::read_dir(&inbox_dir) {
+    let paths = match fs::read_dir(&inbox_dir) {
         Ok(entries) => entries
             .filter_map(Result::ok)
             .map(|entry| entry.path())
@@ -218,12 +377,19 @@ fn list_join_response_inbox_entries(
             ));
         }
     };
-    paths.sort();
-
-    let mut entries = Vec::new();
-    for path in paths.into_iter().take(max_entries) {
-        entries.push(read_join_response_inbox_entry_path(&path)?);
+    let mut entries = Vec::with_capacity(max_entries.min(JOIN_RESPONSE_INBOX_MAX_ENTRIES));
+    for path in paths {
+        let entry = read_join_response_inbox_entry_path(&path)?;
+        if !matches(&entry)? {
+            continue;
+        }
+        entries.push(entry);
+        if entries.len() > max_entries {
+            sort_join_response_inbox_entries_newest_first(&mut entries);
+            entries.truncate(max_entries);
+        }
     }
+    sort_join_response_inbox_entries_newest_first(&mut entries);
     Ok(entries)
 }
 
@@ -264,18 +430,8 @@ fn read_join_response_inbox_entry_path(path: &Path) -> Result<JoinResponseInboxE
     Ok(entry)
 }
 
-fn write_join_response_inbox_entry_file(
-    data_dir: &Path,
-    entry: &JoinResponseInboxEntry,
-) -> Result<(), FfiError> {
+fn encode_join_response_inbox_entry(entry: &JoinResponseInboxEntry) -> Result<Vec<u8>, FfiError> {
     validate_join_response_inbox_entry(entry)?;
-    let inbox_dir = inbox_dir(data_dir);
-    fs::create_dir_all(&inbox_dir).map_err(|error| {
-        ffi_error(
-            "join_response_inbox_write_failed",
-            format!("could not create join response inbox: {error}"),
-        )
-    })?;
     let bytes = serde_json::to_vec_pretty(entry).map_err(|error| {
         ffi_error(
             "join_response_inbox_write_failed",
@@ -291,18 +447,7 @@ fn write_join_response_inbox_entry_file(
             ),
         ));
     }
-
-    let sequence = JOIN_RESPONSE_INBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temp_path = inbox_dir.join(format!(".{}.{}.tmp", entry.entry_id, sequence));
-    let final_path = inbox_entry_path(data_dir, &entry.entry_id);
-    write_private_file(&temp_path, &bytes)?;
-    fs::rename(&temp_path, &final_path).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        ffi_error(
-            "join_response_inbox_write_failed",
-            format!("could not commit join response inbox entry: {error}"),
-        )
-    })
+    Ok(bytes)
 }
 
 fn validate_join_response_inbox_entry(entry: &JoinResponseInboxEntry) -> Result<(), FfiError> {
@@ -333,12 +478,19 @@ fn validate_join_response_inbox_entry(entry: &JoinResponseInboxEntry) -> Result<
             "join response payload request ID must match the inbox entry",
         ));
     }
+    if metadata.workspace_id != entry.workspace_id {
+        return Err(ffi_error(
+            "join_response_inbox_payload_workspace_mismatch",
+            "join response payload workspace must match the inbox entry",
+        ));
+    }
     Ok(())
 }
 
 pub(crate) struct JoinResponseMetadata {
     pub(crate) request_id: String,
     pub(crate) workspace_id: Option<String>,
+    invitee_device_id: Option<String>,
 }
 
 pub(crate) fn validate_join_response_payload(
@@ -390,6 +542,68 @@ pub(crate) fn validate_join_response_payload(
             "join response payload kind is unsupported",
         ));
     }
+    if object.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return Err(ffi_error(
+            "join_response_payload_invalid",
+            "join response payload schema version must be 1",
+        ));
+    }
+    let workspace_id = object
+        .get("workspaceId")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ffi_error(
+                "join_response_workspace_id_required",
+                "join response payload must include workspaceId",
+            )
+        })?
+        .to_owned();
+    direct_workspace_id_arg(workspace_id.clone())?;
+    let mut invitee_device_id = None;
+    if kind == "chaft.workspace-invite.v1" {
+        for field in ["inviteId", "inviteeDeviceId", "role"] {
+            if object
+                .get(field)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+            {
+                return Err(ffi_error(
+                    "join_response_payload_invalid",
+                    format!("legacy invite response payload must include {field}"),
+                ));
+            }
+        }
+        invitee_device_id = Some(ffi_device_id_arg(
+            object["inviteeDeviceId"]
+                .as_str()
+                .unwrap()
+                .trim()
+                .to_owned(),
+        )?);
+    }
+    if kind == "chaft.workspace-invite-response.v1" {
+        let response =
+            serde_json::from_value::<WorkspaceInviteResponse>(value.clone()).map_err(|error| {
+                ffi_error(
+                    "join_response_payload_invalid",
+                    format!("secure invite response payload is incomplete: {error}"),
+                )
+            })?;
+        if response.request_id().trim().is_empty()
+            || response.workspace_id().trim().is_empty()
+            || response.invitee_device_id().trim().is_empty()
+            || response.responder_signature.trim().is_empty()
+        {
+            return Err(ffi_error(
+                "join_response_payload_invalid",
+                "secure invite response payload is incomplete",
+            ));
+        }
+        invitee_device_id = Some(ffi_device_id_arg(response.invitee_device_id().to_owned())?);
+    }
     if kind == "chaft.workspace-join-response.v1" {
         let resolution = object
             .get("resolution")
@@ -422,19 +636,110 @@ pub(crate) fn validate_join_response_payload(
         })?
         .to_owned();
     validate_join_response_entry_id(&request_id)?;
-    let workspace_id = object
-        .get("workspaceId")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    if let Some(workspace_id) = &workspace_id {
-        direct_workspace_id_arg(workspace_id.clone())?;
-    }
     Ok(JoinResponseMetadata {
         request_id,
-        workspace_id,
+        workspace_id: Some(workspace_id),
+        invitee_device_id,
     })
+}
+
+fn parse_pending_join_response_request_ids(value: &str) -> Result<HashSet<String>, FfiError> {
+    let request_ids = serde_json::from_str::<Vec<String>>(value).map_err(|error| {
+        ffi_error(
+            "join_response_inbox_scope_invalid",
+            format!("pending join response request IDs must be a JSON string array: {error}"),
+        )
+    })?;
+    if request_ids.len() > JOIN_RESPONSE_INBOX_SCOPE_MAX_REQUEST_IDS {
+        return Err(ffi_error(
+            "join_response_inbox_scope_too_many_request_ids",
+            format!(
+                "pending join response request IDs exceed the maximum of {JOIN_RESPONSE_INBOX_SCOPE_MAX_REQUEST_IDS}"
+            ),
+        ));
+    }
+    request_ids
+        .into_iter()
+        .map(|request_id| {
+            let request_id = request_id.trim().to_owned();
+            validate_join_response_entry_id(&request_id)?;
+            Ok(request_id)
+        })
+        .collect()
+}
+
+fn resolve_join_response_workspace_id(
+    transport_workspace_id: Option<&str>,
+    payload_workspace_id: Option<String>,
+) -> Result<Option<String>, FfiError> {
+    let transport_workspace_id = transport_workspace_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .map(direct_workspace_id_arg)
+        .transpose()?;
+    if let (Some(transport_workspace_id), Some(payload_workspace_id)) =
+        (&transport_workspace_id, &payload_workspace_id)
+        && transport_workspace_id != payload_workspace_id
+    {
+        return Err(ffi_error(
+            "join_response_workspace_id_mismatch",
+            "join response transport workspace does not match its payload",
+        ));
+    }
+    Ok(transport_workspace_id.or(payload_workspace_id))
+}
+
+fn sort_join_response_inbox_entries_newest_first(entries: &mut [JoinResponseInboxEntry]) {
+    entries.sort_by(|left, right| {
+        right
+            .received_at_unix_ms
+            .cmp(&left.received_at_unix_ms)
+            .then_with(|| right.entry_id.cmp(&left.entry_id))
+    });
+}
+
+fn prune_oldest_valid_join_response_inbox_entry(data_dir: &Path) -> Result<(), FfiError> {
+    let inbox_dir = inbox_dir(data_dir);
+    let paths = fs::read_dir(&inbox_dir).map_err(|error| {
+        ffi_error(
+            "join_response_inbox_read_failed",
+            format!("could not read join response inbox: {error}"),
+        )
+    })?;
+    let mut oldest: Option<(u64, String, PathBuf)> = None;
+    for path in paths
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+    {
+        let Ok(entry) = read_join_response_inbox_entry_path(&path) else {
+            continue;
+        };
+        let replace = oldest.as_ref().is_none_or(|(received_at, entry_id, _)| {
+            (entry.received_at_unix_ms, entry.entry_id.as_str()) < (*received_at, entry_id.as_str())
+        });
+        if replace {
+            oldest = Some((entry.received_at_unix_ms, entry.entry_id, path));
+        }
+    }
+    let (_, _, path) = oldest.ok_or_else(|| {
+        ffi_error(
+            "join_response_inbox_full",
+            "join response inbox is full and has no valid entry to prune",
+        )
+    })?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ffi_error(
+            "join_response_inbox_prune_failed",
+            format!("could not prune the oldest join response inbox entry: {error}"),
+        )),
+    }
 }
 
 pub(crate) fn validate_join_response_entry_id(entry_id: &str) -> Result<(), FfiError> {
@@ -463,6 +768,31 @@ fn inbox_dir(data_dir: &Path) -> PathBuf {
 
 fn inbox_entry_path(data_dir: &Path, entry_id: &str) -> PathBuf {
     inbox_dir(data_dir).join(format!("{entry_id}.json"))
+}
+
+fn inbox_json_entry_count(inbox_dir: &Path) -> Result<usize, FfiError> {
+    let mut count = 0;
+    for entry in fs::read_dir(inbox_dir).map_err(|error| {
+        ffi_error(
+            "join_response_inbox_read_failed",
+            format!("could not read join response inbox: {error}"),
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            ffi_error(
+                "join_response_inbox_read_failed",
+                format!("could not inspect join response inbox: {error}"),
+            )
+        })?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 fn current_unix_ms() -> u64 {
