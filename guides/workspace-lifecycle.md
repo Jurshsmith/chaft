@@ -45,22 +45,24 @@ history.
 Do not share the recovery kit with teammates. To add another person or device:
 
 1. Open the workspace, then open `Setup`.
-2. In People & Access, enter an optional label, choose a role and expiry, and
-   create a secure invite.
+2. In People & Access, enter an optional label, choose a role, expiry, and claim
+   limit, then create a secure invite. The default limit is one; choose two when
+   the same invite should admit two devices.
 3. Save or copy the generated `.chaftinvite` file or invite link.
-4. Send it privately to one intended teammate.
+4. Send it privately only to the intended teammate or group.
 
-The invite contains a one-time capability, workspace metadata, and the admin's
+The invite contains a bounded capability, workspace metadata, and the admin's
 signed routing details. It does not contain the workspace key and does not need
-the recipient's device ID in advance. Treat it as a bearer credential until it
-is claimed: anyone who receives it first can submit the claim.
+recipient device IDs in advance. Treat it as a bearer credential until it
+expires, is revoked, or reaches its claim limit: anyone who receives it can use
+one of the remaining claims.
 
 The recipient opens the invite in `Join workspace` and chooses `Claim invite`.
 Their device signs the claim and supplies a response-encryption key. The admin's
-runtime verifies the capability, expiry, revocation state, and single-use state
-before adding that device. The returned workspace key is encrypted for the
-claiming device and signed by the expected admin. Another device cannot import
-the response.
+runtime verifies the capability, expiry, revocation state, remaining capacity,
+and device/request uniqueness before adding that device. The returned workspace
+key is encrypted for the claiming device and signed by the expected admin.
+Another device cannot import the response.
 
 ## Join a Workspace
 
@@ -97,8 +99,9 @@ private restore material, not invitations; store the kit privately, keep its
 passphrase separate from the file, and never send the kit as an invite.
 Legacy workspace access files still grant workspace access and should only go
 to the intended teammate or device. Current secure invite files do not contain
-the workspace key, but must still be shared privately because the claim
-capability is one-time and bearer-held.
+the workspace key, but must still be shared privately because their remaining
+claims are bearer-held. Older invites and invites created with the default
+limit allow one claim.
 
 ## Request Access
 

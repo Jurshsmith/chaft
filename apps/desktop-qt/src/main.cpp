@@ -48,6 +48,7 @@
 #include <QtGlobal>
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -185,6 +186,10 @@ using RuntimeInviteMemberResultJsonFn = char *(*)(const char *, const char *,
 using RuntimeCreateWorkspaceInviteResultJsonFn =
     char *(*)(const char *, const char *, const char *, const char *,
               const char *, const char *, const char *, const char *);
+using RuntimeCreateWorkspaceInviteWithMaxClaimsResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *,
+              const char *, std::uint32_t, const char *, const char *,
+              const char *);
 using RuntimePrepareWorkspaceInviteClaimResultJsonFn =
     char *(*)(const char *, const char *, const char *, const char *,
               const char *, const char *);
@@ -282,6 +287,9 @@ using RuntimeSubmitJoinRequestDirectResultJsonFn =
     char *(*)(const char *, const char *, const char *);
 using RuntimePullJoinAccessDirectResultJsonFn =
     char *(*)(const char *, const char *, const char *, std::size_t);
+using RuntimePullJoinResponsesForRequestsDirectResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *,
+              std::size_t);
 using RuntimeDirectEventPublishResultJsonFn = char *(*)(const char *,
                                                         const char *,
                                                         const char *,
@@ -300,6 +308,8 @@ using RuntimeStartDirectPeerResultJsonFn = char *(*)(const char *, const char *,
 using RuntimeStartIrohPeerResultJsonFn = char *(*)(const char *, const char *);
 using RuntimeListJoinRequestInboxResultJsonFn = char *(*)(const char *,
                                                           std::size_t);
+using RuntimeListJoinRequestInboxForWorkspaceResultJsonFn =
+    char *(*)(const char *, const char *, std::size_t);
 using RuntimeAckJoinRequestInboxEntryResultJsonFn = char *(*)(const char *,
                                                               const char *);
 using RuntimeQueueJoinRequestOutboxResultJsonFn =
@@ -308,8 +318,12 @@ using RuntimeListJoinRequestOutboxResultJsonFn = char *(*)(const char *,
                                                            std::size_t);
 using RuntimeSubmitJoinRequestOutboxEntryDirectResultJsonFn =
     char *(*)(const char *, const char *);
+using RuntimeAckJoinRequestOutboxEntryResultJsonFn = char *(*)(const char *,
+                                                               const char *);
 using RuntimeListJoinResponseInboxResultJsonFn = char *(*)(const char *,
                                                            std::size_t);
+using RuntimeListJoinResponseInboxScopedResultJsonFn =
+    char *(*)(const char *, const char *, const char *, std::size_t);
 using RuntimeAckJoinResponseInboxEntryResultJsonFn = char *(*)(const char *,
                                                                const char *);
 using RuntimeStageJoinResponseInboxResultJsonFn =
@@ -320,6 +334,8 @@ using RuntimeListJoinResponseOutboxResultJsonFn = char *(*)(const char *,
                                                             std::size_t);
 using RuntimeSubmitJoinResponseOutboxEntryDirectResultJsonFn =
     char *(*)(const char *, const char *);
+using RuntimeAckJoinResponseOutboxEntryResultJsonFn = char *(*)(const char *,
+                                                                const char *);
 using RuntimeStopDirectPeerResultJsonFn = char *(*)(const char *);
 using RuntimeSetIdentityPassphraseFn = bool (*)(const char *, const char *);
 using RuntimeClearIdentityPassphraseFn = bool (*)(const char *);
@@ -940,6 +956,16 @@ QString desktopConfigPath(const QString &runtimeDir) {
   return desktopPathWithinLimit(configPath) ? configPath : QString();
 }
 
+QString workspaceInviteArtifactStorePath(const QString &runtimeDir) {
+  if (!desktopPathWithinLimit(runtimeDir)) {
+    return {};
+  }
+  const auto storePath =
+      QDir(runtimeDir)
+          .filePath(QStringLiteral("workspace-invite-artifacts.json"));
+  return desktopPathWithinLimit(storePath) ? storePath : QString();
+}
+
 constexpr qint64 kMaxDesktopConfigBytes = 256LL * 1024;
 constexpr qsizetype kMaxWorkspaceIdBytes = 128;
 constexpr qsizetype kMaxThemeIdBytes = 64;
@@ -949,16 +975,19 @@ constexpr qsizetype kMaxComposerDraftBytes = 4096;
 constexpr qsizetype kMaxPendingJoinRequests = 5;
 constexpr qsizetype kMaxPendingJoinRequestKeyBytes = 160;
 constexpr qsizetype kMaxPendingJoinRequestArtifactBytes = 8192;
-constexpr qsizetype kMaxWorkspaceInviteArtifacts = 12;
 constexpr qsizetype kMaxWorkspaceInviteArtifactKeyBytes = 128;
 constexpr qsizetype kMaxWorkspaceInviteArtifactBytes = 8192;
-constexpr std::size_t kMaxJoinRequestInboxEntries = 20;
+constexpr int kMaxWorkspaceInviteClaims = 20;
+constexpr qint64 kMaxWorkspaceInviteArtifactStoreBytes = 512LL * 1024;
+constexpr int kWorkspaceInviteArtifactStoreSchemaVersion = 1;
+constexpr std::size_t kMaxJoinRequestInboxEntries = 100;
 constexpr std::size_t kMaxJoinRequestOutboxEntries = 20;
 constexpr qsizetype kMaxJoinRequestOutboxDrainBatch = 3;
-constexpr std::size_t kMaxJoinResponseInboxEntries = 20;
+constexpr std::size_t kMaxJoinResponseInboxEntries = 100;
 constexpr std::size_t kMaxJoinResponseOutboxEntries = 20;
 constexpr qsizetype kMaxJoinResponseOutboxDrainBatch = 3;
-constexpr std::size_t kMaxAccessEnvelopePullEntries = 20;
+constexpr std::size_t kMaxAccessEnvelopePullEntries = 100;
+constexpr int kMaxAccessResponseRequestIdsPerPull = 20;
 constexpr int kJoinRequestInboxPollMs = 5000;
 constexpr int kJoinRequestOutboxPollMs = 15000;
 constexpr int kJoinResponseInboxPollMs = 5000;
@@ -2283,9 +2312,13 @@ QVariantMap sanitizedPendingJoinRequests(const QVariantMap &requests) {
     if (!sourceApprovalPolicy.isEmpty()) {
       row.insert(QStringLiteral("sourceApprovalPolicy"), sourceApprovalPolicy);
     }
-    row.insert(QStringLiteral("status"),
-               status.isEmpty() ? QStringLiteral("waiting_for_admin")
-                                : status);
+    const auto normalizedStatus =
+        status == QStringLiteral("approved") ||
+                status == QStringLiteral("declined") ||
+                status == QStringLiteral("closed")
+            ? QStringLiteral("unverified_response")
+            : (status.isEmpty() ? QStringLiteral("waiting_for_admin") : status);
+    row.insert(QStringLiteral("status"), normalizedStatus);
     if (!createdAt.isEmpty()) {
       row.insert(QStringLiteral("createdAt"), createdAt);
     }
@@ -2300,6 +2333,11 @@ QVariantMap sanitizedPendingJoinRequests(const QVariantMap &requests) {
     }
     if (!error.isEmpty()) {
       row.insert(QStringLiteral("error"), error);
+    } else if (normalizedStatus == QStringLiteral("unverified_response")) {
+      row.insert(QStringLiteral("error"),
+                 QStringLiteral("An unsigned response was received. Confirm "
+                                "it with a workspace admin before hiding or "
+                                "resending this request."));
     }
     row.insert(QStringLiteral("artifact"), artifact.trimmed());
     sanitized.insert(key, row);
@@ -2317,10 +2355,8 @@ QVariantMap loadPendingJoinRequests(const QString &runtimeDir) {
 
 QVariantMap sanitizedWorkspaceInviteArtifacts(const QVariantMap &artifacts) {
   QVariantMap sanitized;
+  const auto now = QDateTime::currentDateTimeUtc();
   for (auto it = artifacts.constBegin(); it != artifacts.constEnd(); ++it) {
-    if (sanitized.size() >= kMaxWorkspaceInviteArtifacts) {
-      break;
-    }
     const auto inviteId = it.key().trimmed();
     const auto artifactText = it.value().toString().trimmed();
     if (inviteId.isEmpty() ||
@@ -2332,13 +2368,19 @@ QVariantMap sanitizedWorkspaceInviteArtifacts(const QVariantMap &artifacts) {
     QJsonParseError parseError;
     const auto document =
         QJsonDocument::fromJson(artifactText.toUtf8(), &parseError);
-    if (parseError.error != QJsonParseError::NoError ||
-        !document.isObject()) {
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
       continue;
     }
     const auto artifact = document.object();
+    const auto expiresAtText =
+        artifact.value(QStringLiteral("expiresAt")).toString().trimmed();
+    const auto expiresAt =
+        expiresAtText.isEmpty()
+            ? QDateTime()
+            : QDateTime::fromString(expiresAtText, Qt::ISODate);
     if (artifact.value(QStringLiteral("kind")).toString() !=
             QStringLiteral("chaft.workspace-invite.v2") ||
+        artifact.value(QStringLiteral("schemaVersion")).toInt() != 2 ||
         artifact.value(QStringLiteral("inviteId")).toString().trimmed() !=
             inviteId ||
         artifact.value(QStringLiteral("workspaceId"))
@@ -2348,7 +2390,9 @@ QVariantMap sanitizedWorkspaceInviteArtifacts(const QVariantMap &artifacts) {
         artifact.value(QStringLiteral("capabilitySecret"))
             .toString()
             .trimmed()
-            .isEmpty()) {
+            .isEmpty() ||
+        (!expiresAtText.isEmpty() &&
+         (!expiresAt.isValid() || expiresAt.toUTC() <= now))) {
       continue;
     }
     sanitized.insert(inviteId, artifactText);
@@ -2356,12 +2400,166 @@ QVariantMap sanitizedWorkspaceInviteArtifacts(const QVariantMap &artifacts) {
   return sanitized;
 }
 
-QVariantMap loadWorkspaceInviteArtifacts(const QString &runtimeDir) {
-  return sanitizedWorkspaceInviteArtifacts(
-      loadDesktopConfig(runtimeDir)
-          .value(QStringLiteral("workspaceInviteArtifacts"))
+struct DedicatedWorkspaceInviteArtifactStoreLoad {
+  QVariantMap artifacts;
+  bool storePresent = false;
+  bool storeCanBeRewritten = true;
+};
+
+DedicatedWorkspaceInviteArtifactStoreLoad
+loadDedicatedWorkspaceInviteArtifactStore(const QString &runtimeDir) {
+  DedicatedWorkspaceInviteArtifactStoreLoad result;
+  const auto storePath = workspaceInviteArtifactStorePath(runtimeDir);
+  if (storePath.isEmpty()) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+
+  const QFileInfo storeInfo(storePath);
+  if (!storeInfo.exists()) {
+    return result;
+  }
+  result.storePresent = true;
+  if (!storeInfo.isFile() || storeInfo.isSymLink()) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+
+  const auto ownerOnlyPermissions = QFileDevice::Permissions(
+      QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  if (!QFile::setPermissions(storePath, ownerOnlyPermissions)) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+
+  QFile file(storePath);
+  if (!file.open(QIODevice::ReadOnly) ||
+      file.size() > kMaxWorkspaceInviteArtifactStoreBytes) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+  const auto bytes = file.read(kMaxWorkspaceInviteArtifactStoreBytes + 1);
+  if (bytes.size() > kMaxWorkspaceInviteArtifactStoreBytes) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+
+  QJsonParseError parseError;
+  const auto document = QJsonDocument::fromJson(bytes, &parseError);
+  if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+  const auto root = document.object();
+  if (root.value(QStringLiteral("schemaVersion")).toInt() !=
+          kWorkspaceInviteArtifactStoreSchemaVersion ||
+      !root.value(QStringLiteral("artifacts")).isObject()) {
+    result.storeCanBeRewritten = false;
+    return result;
+  }
+
+  QVariantMap candidates;
+  const auto storedArtifacts =
+      root.value(QStringLiteral("artifacts")).toObject();
+  for (auto it = storedArtifacts.constBegin(); it != storedArtifacts.constEnd();
+       ++it) {
+    if (it.value().isObject()) {
+      candidates.insert(it.key(),
+                        QString::fromUtf8(QJsonDocument(it.value().toObject())
+                                              .toJson(QJsonDocument::Compact)));
+    } else if (it.value().isString()) {
+      candidates.insert(it.key(), it.value().toString());
+    }
+  }
+  result.artifacts = sanitizedWorkspaceInviteArtifacts(candidates);
+  return result;
+}
+
+QByteArray workspaceInviteArtifactStoreBytes(const QVariantMap &artifacts) {
+  QJsonObject storedArtifacts;
+  for (auto it = artifacts.constBegin(); it != artifacts.constEnd(); ++it) {
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(it.value().toString().toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      return {};
+    }
+    storedArtifacts.insert(it.key(), document.object());
+  }
+
+  QJsonObject root;
+  root.insert(QStringLiteral("schemaVersion"),
+              kWorkspaceInviteArtifactStoreSchemaVersion);
+  root.insert(QStringLiteral("artifacts"), storedArtifacts);
+  return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+bool saveWorkspaceInviteArtifacts(const QString &runtimeDir,
+                                  const QVariantMap &artifacts) {
+  const auto storePath = workspaceInviteArtifactStorePath(runtimeDir);
+  if (storePath.isEmpty() || !QDir().mkpath(runtimeDir)) {
+    return false;
+  }
+  const QFileInfo existingStore(storePath);
+  if (existingStore.exists() &&
+      (!existingStore.isFile() || existingStore.isSymLink())) {
+    return false;
+  }
+
+  const auto sanitized = sanitizedWorkspaceInviteArtifacts(artifacts);
+  if (sanitized != artifacts) {
+    return false;
+  }
+  const auto bytes = workspaceInviteArtifactStoreBytes(sanitized);
+  if (bytes.isEmpty() || bytes.size() > kMaxWorkspaceInviteArtifactStoreBytes) {
+    return false;
+  }
+
+  const auto ownerOnlyPermissions = QFileDevice::Permissions(
+      QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  QSaveFile file(storePath);
+  if (!file.open(QIODevice::WriteOnly) ||
+      !file.setPermissions(ownerOnlyPermissions)) {
+    file.cancelWriting();
+    return false;
+  }
+  if (file.write(bytes) != static_cast<qint64>(bytes.size())) {
+    file.cancelWriting();
+    return false;
+  }
+  if (!file.commit()) {
+    return false;
+  }
+  return QFile::setPermissions(storePath, ownerOnlyPermissions);
+}
+
+struct WorkspaceInviteArtifactLoadResult {
+  QVariantMap artifacts;
+  bool legacyArtifactsPresent = false;
+  bool dedicatedStorePresent = false;
+  bool dedicatedStoreCanBeRewritten = true;
+};
+
+WorkspaceInviteArtifactLoadResult
+loadWorkspaceInviteArtifacts(const QString &runtimeDir) {
+  WorkspaceInviteArtifactLoadResult result;
+  const auto desktopConfig = loadDesktopConfig(runtimeDir);
+  result.legacyArtifactsPresent =
+      desktopConfig.contains(QStringLiteral("workspaceInviteArtifacts"));
+  auto merged = sanitizedWorkspaceInviteArtifacts(
+      desktopConfig.value(QStringLiteral("workspaceInviteArtifacts"))
           .toObject()
           .toVariantMap());
+
+  const auto dedicated = loadDedicatedWorkspaceInviteArtifactStore(runtimeDir);
+  result.dedicatedStorePresent = dedicated.storePresent;
+  result.dedicatedStoreCanBeRewritten = dedicated.storeCanBeRewritten;
+  for (auto it = dedicated.artifacts.constBegin();
+       it != dedicated.artifacts.constEnd(); ++it) {
+    merged.insert(it.key(), it.value());
+  }
+  result.artifacts = sanitizedWorkspaceInviteArtifacts(merged);
+  return result;
 }
 
 QVariantMap sanitizedWindowGeometry(const QVariantMap &geometry) {
@@ -2655,11 +2853,23 @@ QString keyTransferStatusLabel(const QByteArray &bytes) {
   return QStringLiteral("credentials");
 }
 
+bool isWorkspaceInviteResponseText(const QString &text) {
+  QJsonParseError parseError;
+  const auto document = QJsonDocument::fromJson(text.trimmed().toUtf8(),
+                                                &parseError);
+  return parseError.error == QJsonParseError::NoError && document.isObject() &&
+         document.object().value(QStringLiteral("kind")).toString() ==
+             QStringLiteral("chaft.workspace-invite-response.v1");
+}
+
 bool accessApprovalMatchesCurrentHandoff(const QString &currentText,
                                          const QString &approvalText) {
   const auto currentTrimmed = currentText.trimmed();
   const auto approvalTrimmed = approvalText.trimmed();
-  if (currentTrimmed.isEmpty() || currentTrimmed == approvalTrimmed) {
+  if (currentTrimmed.isEmpty() || approvalTrimmed.isEmpty()) {
+    return false;
+  }
+  if (currentTrimmed == approvalTrimmed) {
     return true;
   }
 
@@ -2675,8 +2885,18 @@ bool accessApprovalMatchesCurrentHandoff(const QString &currentText,
     return false;
   }
 
-  const auto current = currentDocument.object();
-  const auto approval = approvalDocument.object();
+  auto current = currentDocument.object();
+  auto approval = approvalDocument.object();
+  if (current.value(QStringLiteral("kind")).toString() ==
+          QStringLiteral("chaft.join-request-file.v1") &&
+      current.value(QStringLiteral("request")).isObject()) {
+    current = current.value(QStringLiteral("request")).toObject();
+  }
+  if (approval.value(QStringLiteral("kind")).toString() ==
+          QStringLiteral("chaft.invite-file.v1") &&
+      approval.value(QStringLiteral("invite")).isObject()) {
+    approval = approval.value(QStringLiteral("invite")).toObject();
+  }
   const auto currentKind =
       current.value(QStringLiteral("kind")).toString().trimmed();
   const auto approvalKind =
@@ -2685,8 +2905,12 @@ bool accessApprovalMatchesCurrentHandoff(const QString &currentText,
       currentKind != QStringLiteral("chaft.workspace-invite-claim.v1")) {
     return false;
   }
-  if (approvalKind != QStringLiteral("chaft.workspace-invite.v1") &&
-      approvalKind != QStringLiteral("chaft.workspace-invite-response.v1")) {
+  const auto secureClaim =
+      currentKind == QStringLiteral("chaft.workspace-invite-claim.v1");
+  const auto expectedApprovalKind =
+      secureClaim ? QStringLiteral("chaft.workspace-invite-response.v1")
+                  : QStringLiteral("chaft.workspace-invite.v1");
+  if (approvalKind != expectedApprovalKind) {
     return false;
   }
 
@@ -2694,7 +2918,46 @@ bool accessApprovalMatchesCurrentHandoff(const QString &currentText,
       current.value(QStringLiteral("requestId")).toString().trimmed();
   const auto approvalRequestId =
       approval.value(QStringLiteral("requestId")).toString().trimmed();
-  return !currentRequestId.isEmpty() && currentRequestId == approvalRequestId;
+  if (currentRequestId.isEmpty() || currentRequestId != approvalRequestId) {
+    return false;
+  }
+
+  const auto currentWorkspaceId =
+      current.value(QStringLiteral("workspaceId")).toString().trimmed();
+  const auto approvalWorkspaceId =
+      approval.value(QStringLiteral("workspaceId")).toString().trimmed();
+  if (currentWorkspaceId.isEmpty() || approvalWorkspaceId.isEmpty() ||
+      currentWorkspaceId != approvalWorkspaceId) {
+    return false;
+  }
+
+  const auto currentDeviceId =
+      current.value(QStringLiteral("deviceId")).toString().trimmed();
+  const auto approvalDeviceId =
+      approval.value(QStringLiteral("inviteeDeviceId")).toString().trimmed();
+  if (currentDeviceId.isEmpty() || approvalDeviceId.isEmpty() ||
+      currentDeviceId != approvalDeviceId) {
+    return false;
+  }
+
+  if (secureClaim) {
+    const auto currentInviteId =
+        current.value(QStringLiteral("inviteId")).toString().trimmed();
+    const auto approvalInviteId =
+        approval.value(QStringLiteral("inviteId")).toString().trimmed();
+    return !currentInviteId.isEmpty() && currentInviteId == approvalInviteId;
+  }
+  return true;
+}
+
+bool workspaceInviteClaimErrorIsTerminal(const QString &message) {
+  const auto normalized = message.trimmed().toLower();
+  return normalized.contains(QStringLiteral("workspace invite claim is invalid")) ||
+         (normalized.contains(QStringLiteral("workspace invite")) &&
+          (normalized.contains(QStringLiteral("was not found")) ||
+           normalized.contains(QStringLiteral("is not claimable")) ||
+           normalized.contains(QStringLiteral("has expired")) ||
+           normalized.contains(QStringLiteral("has already been claimed"))));
 }
 
 QIcon desktopNotificationIcon() {
@@ -2708,7 +2971,7 @@ QIcon desktopNotificationIcon() {
   return QIcon(pixmap);
 }
 
-void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
+bool saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
                        const QString &defaultPeerEndpoint,
                        const QStringList &backupPeerEndpoints,
                        const QVariantMap &backupPeerStatuses,
@@ -2723,14 +2986,13 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
                        const QVariantMap &mutedChannels,
                        const QVariantMap &composerDrafts,
                        const QVariantMap &pendingJoinRequests,
-                       const QVariantMap &workspaceInviteArtifacts,
                        const QVariantMap &windowGeometry) {
   const auto configPath = desktopConfigPath(runtimeDir);
   if (configPath.isEmpty()) {
-    return;
+    return false;
   }
   if (!QDir().mkpath(runtimeDir)) {
-    return;
+    return false;
   }
 
   QJsonObject config;
@@ -2810,12 +3072,6 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
     config.insert(QStringLiteral("pendingJoinRequests"),
                   QJsonObject::fromVariantMap(sanitizedRequests));
   }
-  const auto sanitizedInviteArtifacts =
-      sanitizedWorkspaceInviteArtifacts(workspaceInviteArtifacts);
-  if (!sanitizedInviteArtifacts.isEmpty()) {
-    config.insert(QStringLiteral("workspaceInviteArtifacts"),
-                  QJsonObject::fromVariantMap(sanitizedInviteArtifacts));
-  }
   const auto sanitizedGeometry = sanitizedWindowGeometry(windowGeometry);
   if (!sanitizedGeometry.isEmpty()) {
     config.insert(QStringLiteral("windowGeometry"),
@@ -2824,22 +3080,27 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
 
   const auto bytes = QJsonDocument(config).toJson(QJsonDocument::Indented);
   if (bytes.size() > kMaxDesktopConfigBytes) {
-    return;
+    return false;
   }
 
   QSaveFile file(configPath);
   if (!file.open(QIODevice::WriteOnly)) {
-    return;
+    return false;
   }
-  file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+    file.cancelWriting();
+    return false;
+  }
   if (file.write(bytes) != static_cast<qint64>(bytes.size())) {
     file.cancelWriting();
-    return;
+    return false;
   }
-  if (file.commit()) {
-    QFile::setPermissions(configPath,
-                          QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  if (!file.commit()) {
+    return false;
   }
+  return QFile::setPermissions(configPath,
+                               QFileDevice::ReadOwner |
+                                   QFileDevice::WriteOwner);
 }
 
 QVariantMap initialWorkspaceSnapshot() {
@@ -3000,7 +3261,11 @@ public:
     m_mutedChannels = loadMutedChannels(m_runtimeDir);
     m_composerDrafts = loadComposerDrafts(m_runtimeDir);
     m_pendingJoinRequests = loadPendingJoinRequests(m_runtimeDir);
-    m_workspaceInviteArtifacts = loadWorkspaceInviteArtifacts(m_runtimeDir);
+    const auto loadedWorkspaceInviteArtifacts =
+        loadWorkspaceInviteArtifacts(m_runtimeDir);
+    m_workspaceInviteArtifacts = loadedWorkspaceInviteArtifacts.artifacts;
+    m_workspaceInviteArtifactStoreCanBeRewritten =
+        loadedWorkspaceInviteArtifacts.dedicatedStoreCanBeRewritten;
     m_windowGeometry = loadWindowGeometry(m_runtimeDir);
     const auto configuredAutoBackup = qEnvironmentVariable("CHAFT_AUTO_BACKUP");
     if (!configuredAutoBackup.isEmpty()) {
@@ -3018,6 +3283,23 @@ public:
         m_themeId = normalizedConfiguredTheme;
         m_themeMode = QStringLiteral("manual");
       }
+    }
+    const auto inviteArtifactStoreShouldBeWritten =
+        loadedWorkspaceInviteArtifacts.dedicatedStorePresent ||
+        loadedWorkspaceInviteArtifacts.legacyArtifactsPresent ||
+        !m_workspaceInviteArtifacts.isEmpty();
+    const auto inviteArtifactStoreSaved =
+        inviteArtifactStoreShouldBeWritten &&
+        m_workspaceInviteArtifactStoreCanBeRewritten &&
+        saveWorkspaceInviteArtifacts(m_runtimeDir, m_workspaceInviteArtifacts);
+    m_workspaceInviteArtifactStoreDirty =
+        inviteArtifactStoreShouldBeWritten && !inviteArtifactStoreSaved;
+    if (loadedWorkspaceInviteArtifacts.legacyArtifactsPresent &&
+        inviteArtifactStoreSaved) {
+      // Desktop config is reconstructed from the loaded settings, so this
+      // removes the legacy secret-bearing key only after the dedicated store
+      // is safely committed.
+      persistDesktopConfig();
     }
     loadFfi();
     if (m_ffiReady) {
@@ -3388,27 +3670,94 @@ public:
            m_workspaceInviteArtifacts.contains(normalizedInviteId);
   }
 
-  Q_INVOKABLE bool stageWorkspaceInviteArtifact(const QString &inviteId) {
+  Q_INVOKABLE QVariantMap
+  workspaceInviteArtifactSummary(const QString &inviteId) const {
     const auto normalizedInviteId = inviteId.trimmed();
     const auto artifactText =
         m_workspaceInviteArtifacts.value(normalizedInviteId).toString().trimmed();
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(artifactText.toUtf8(), &parseError);
+    if (normalizedInviteId.isEmpty() ||
+        parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      return {};
+    }
+    const auto artifact = document.object();
+    if (artifact.value(QStringLiteral("kind")).toString() !=
+            QStringLiteral("chaft.workspace-invite.v2") ||
+        artifact.value(QStringLiteral("inviteId")).toString().trimmed() !=
+            normalizedInviteId) {
+      return {};
+    }
+    QVariantMap summary;
+    summary.insert(QStringLiteral("inviteId"), normalizedInviteId);
+    summary.insert(QStringLiteral("workspaceId"),
+                   artifact.value(QStringLiteral("workspaceId")).toString());
+    summary.insert(QStringLiteral("displayName"),
+                   artifact.value(QStringLiteral("displayName")).toString());
+    summary.insert(QStringLiteral("role"),
+                   artifact.value(QStringLiteral("role")).toString());
+    const auto maxClaims = artifact.value(QStringLiteral("maxClaims")).toInt(1);
+    summary.insert(QStringLiteral("maxClaims"),
+                   std::clamp(maxClaims, 1, kMaxWorkspaceInviteClaims));
+    summary.insert(QStringLiteral("expiresAt"),
+                   artifact.value(QStringLiteral("expiresAt")).toString());
+    summary.insert(QStringLiteral("claimable"), true);
+    return summary;
+  }
+
+  Q_INVOKABLE bool stageWorkspaceInviteArtifact(const QString &inviteId) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
+    pruneWorkspaceInviteArtifacts(m_workspaceSnapshot);
+    const auto normalizedInviteId = inviteId.trimmed();
+    const auto artifactText =
+        m_workspaceInviteArtifacts.value(normalizedInviteId)
+            .toString()
+            .trimmed();
     if (normalizedInviteId.isEmpty() || artifactText.isEmpty()) {
-      setSyncStatus(QStringLiteral("invite is no longer available on this device"));
+      setSyncStatus(
+          QStringLiteral("invite is no longer available on this device"));
       return false;
     }
     QJsonParseError parseError;
     const auto document =
         QJsonDocument::fromJson(artifactText.toUtf8(), &parseError);
-    if (parseError.error != QJsonParseError::NoError ||
-        !document.isObject() ||
-        document.object().value(QStringLiteral("workspaceId"))
-                .toString()
-                .trimmed() != m_workspaceId.trimmed()) {
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      setSyncStatus(
+          QStringLiteral("invite is no longer available on this device"));
+      return false;
+    }
+    const auto artifact = document.object();
+    if (artifact.value(QStringLiteral("workspaceId")).toString().trimmed() !=
+        m_workspaceId.trimmed()) {
       setSyncStatus(QStringLiteral("switch to the invite workspace first"));
       return false;
     }
+    const auto expiresAtText =
+        artifact.value(QStringLiteral("expiresAt")).toString().trimmed();
+    if (!expiresAtText.isEmpty()) {
+      const auto expiresAt = QDateTime::fromString(expiresAtText, Qt::ISODate);
+      if (!expiresAt.isValid() ||
+          expiresAt.toUTC() <= QDateTime::currentDateTimeUtc()) {
+        setSyncStatus(QStringLiteral("invite expired; create a new invite"));
+        return false;
+      }
+    }
+    const auto artifactPeerEndpoint =
+        artifact.value(QStringLiteral("peerEndpoint")).toString().trimmed();
+    const auto routeChanged =
+        !artifactPeerEndpoint.isEmpty() &&
+        artifactPeerEndpoint != m_hostedPeerEndpoint.trimmed();
     setKeyTransferJson(artifactText);
-    setSyncStatus(QStringLiteral("invite ready to share"));
+    setSyncStatus(
+        routeChanged
+            ? QStringLiteral("invite ready; its signed delivery address may be "
+                             "stale, so keep the manual claim and response path")
+            : QStringLiteral("invite ready to share"));
     return true;
   }
 
@@ -3431,6 +3780,11 @@ public:
                                              const QString &sourceInviteId,
                                              const QString &sourceDisplayName,
                                              const QString &sourceApprovalPolicy) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (m_keyTransferInFlight) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
@@ -3643,12 +3997,23 @@ public:
   }
 
   Q_INVOKABLE bool pullAccessResponsesFromPeer(const QString &peerEndpoint,
-                                               const QString &workspaceId) {
+                                               const QString &workspaceId,
+                                               const QString &requestId) {
+    const auto normalizedRequestId = requestId.trimmed();
+    if (normalizedRequestId.isEmpty()) {
+      setSyncStatus(QStringLiteral("access request ID required"));
+      return false;
+    }
     return queueAccessEnvelopePullFromPeer(peerEndpoint, workspaceId, false, true,
-                                           true);
+                                           true, {normalizedRequestId});
   }
 
   Q_INVOKABLE bool stageWorkspaceAccessCard() {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -3664,9 +4029,10 @@ public:
     if (accessPolicy.trimmed().isEmpty()) {
       accessPolicy = QStringLiteral("invite_only");
     }
-    const auto peerEndpoint = !m_hostedPeerEndpoint.trimmed().isEmpty()
-                                  ? m_hostedPeerEndpoint.trimmed()
-                                  : m_defaultPeerEndpoint.trimmed();
+    // A request card names this device as the admin contact, so only advertise
+    // an endpoint hosted by this device. A generic sync peer may be stale or
+    // belong to a teammate who is not authorized to receive access requests.
+    const auto peerEndpoint = m_hostedPeerEndpoint.trimmed();
     const auto adminDeviceId = m_deviceId.trimmed();
     const auto adminDisplayName =
         profileDisplayNameForDevice(m_workspaceSnapshot, adminDeviceId);
@@ -3700,7 +4066,10 @@ public:
     }
 
     setKeyTransferJson(QString::fromUtf8(bytes));
-    setSyncStatus(QStringLiteral("request card ready"));
+    setSyncStatus(peerEndpoint.isEmpty()
+                      ? QStringLiteral(
+                            "manual request card ready; no hosted address is active")
+                      : QStringLiteral("request card ready"));
     return true;
   }
 
@@ -3710,6 +4079,11 @@ public:
                                                const QString &inviteeDisplayName,
                                                const QString &expiresAt,
                                                const QString &approvalPolicy) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -3807,6 +4181,11 @@ public:
                                                  const QString &requestId,
                                                  const QString &responseDeliveryPeerEndpoint =
                                                      QString()) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -3900,6 +4279,18 @@ public:
   Q_INVOKABLE bool prepareClaimableWorkspaceInvite(
       const QString &displayName, const QString &role,
       const QString &peerEndpoint, const QString &expiresAt) {
+    return prepareClaimableWorkspaceInviteWithMaxClaims(
+        displayName, role, peerEndpoint, expiresAt, 1);
+  }
+
+  Q_INVOKABLE bool prepareClaimableWorkspaceInviteWithMaxClaims(
+      const QString &displayName, const QString &role,
+      const QString &peerEndpoint, const QString &expiresAt, int maxClaims) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -3907,8 +4298,12 @@ public:
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
-    if (m_createWorkspaceInviteJson == nullptr) {
+    if (m_createWorkspaceInviteWithMaxClaimsJson == nullptr) {
       setSyncStatus(QStringLiteral("secure invites unavailable"));
+      return false;
+    }
+    if (maxClaims < 1 || maxClaims > kMaxWorkspaceInviteClaims) {
+      setSyncStatus(QStringLiteral("claim limit must be between 1 and 20"));
       return false;
     }
 
@@ -3944,6 +4339,7 @@ public:
     setSyncStatus(QStringLiteral("creating secure invite..."));
     runClaimableWorkspaceInvite(normalizedDisplayName, normalizedRole,
                                 normalizedPeerEndpoint, normalizedExpiresAt,
+                                static_cast<std::uint32_t>(maxClaims),
                                 generation);
     return true;
   }
@@ -3951,6 +4347,11 @@ public:
   Q_INVOKABLE bool prepareWorkspaceInviteClaim(
       const QString &artifactJson, const QString &displayName,
       const QString &note) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureFfiReady() || m_prepareWorkspaceInviteClaimJson == nullptr) {
       setSyncStatus(QStringLiteral("secure invite claims unavailable"));
       return false;
@@ -3990,6 +4391,66 @@ public:
     return true;
   }
 
+  Q_INVOKABLE bool acceptWorkspaceInviteClaim(const QString &claimJson) {
+    if (!ensureRuntimeWorkspace()) {
+      return false;
+    }
+    if (m_keyTransferInFlight) {
+      setSyncStatus(QStringLiteral("access handoff already running"));
+      return false;
+    }
+    if (m_claimWorkspaceInviteJson == nullptr) {
+      setSyncStatus(QStringLiteral("secure invite claims unavailable"));
+      return false;
+    }
+    if (!m_keyTransferJson.trimmed().isEmpty()) {
+      setSyncStatus(isWorkspaceInviteResponseText(m_keyTransferJson)
+                        ? QStringLiteral(
+                              "return or save the current secure access response first")
+                        : QStringLiteral(
+                              "finish the current access handoff before accepting this claim"));
+      return false;
+    }
+
+    const auto normalizedClaimJson = claimJson.trimmed();
+    QString validationError;
+    if (normalizedClaimJson.isEmpty() ||
+        !validateJsonTextForImport(
+            normalizedClaimJson, kMaxPendingJoinRequestArtifactBytes,
+            QStringLiteral("invite claim"), QStringLiteral("8 KB"),
+            &validationError)) {
+      setSyncStatus(validationError.isEmpty()
+                        ? QStringLiteral("invite claim required")
+                        : validationError);
+      return false;
+    }
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(normalizedClaimJson.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      setSyncStatus(QStringLiteral("invite claim is not valid JSON"));
+      return false;
+    }
+    const auto claim = document.object();
+    if (claim.value(QStringLiteral("kind")).toString().trimmed() !=
+        QStringLiteral("chaft.workspace-invite-claim.v1")) {
+      setSyncStatus(QStringLiteral("selected request is not an invite claim"));
+      return false;
+    }
+    if (claim.value(QStringLiteral("workspaceId")).toString().trimmed() !=
+        m_workspaceId.trimmed()) {
+      setSyncStatus(QStringLiteral("switch to the invite workspace first"));
+      return false;
+    }
+
+    const auto generation = ++m_runtimeWriteGeneration;
+    setKeyTransferJson(QString());
+    setKeyTransferInFlight(true);
+    setSyncStatus(QStringLiteral("accepting secure invite claim..."));
+    runWorkspaceInviteClaim(normalizedClaimJson, generation);
+    return true;
+  }
+
   Q_INVOKABLE bool importWorkspaceInviteResponse(const QString &responseJson) {
     if (!ensureFfiReady() || m_importWorkspaceInviteResponseJson == nullptr) {
       setSyncStatus(QStringLiteral("secure invite response unavailable"));
@@ -4020,6 +4481,11 @@ public:
                                                 const QString &peerEndpoint,
                                                 const QString &inviteeDisplayName,
                                                 const QString &expiresAt) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -4328,13 +4794,28 @@ public:
   }
 
   void setPendingJoinRequests(const QVariantMap &pendingJoinRequests) {
+    (void)storePendingJoinRequests(pendingJoinRequests);
+  }
+
+  Q_INVOKABLE bool
+  storePendingJoinRequests(const QVariantMap &pendingJoinRequests) {
     const auto sanitized = sanitizedPendingJoinRequests(pendingJoinRequests);
     if (m_pendingJoinRequests == sanitized) {
-      return;
+      if (persistDesktopConfig()) {
+        return true;
+      }
+      setSyncStatus(QStringLiteral("could not save the access handoff"));
+      return false;
     }
+    const auto previous = m_pendingJoinRequests;
     m_pendingJoinRequests = sanitized;
-    persistDesktopConfig();
+    if (!persistDesktopConfig()) {
+      m_pendingJoinRequests = previous;
+      setSyncStatus(QStringLiteral("could not save the access handoff"));
+      return false;
+    }
     emit pendingJoinRequestsChanged();
+    return true;
   }
 
   bool rememberWorkspaceInviteArtifact(const QString &artifactText) {
@@ -4347,8 +4828,7 @@ public:
     QJsonParseError parseError;
     const auto document =
         QJsonDocument::fromJson(normalizedArtifactText.toUtf8(), &parseError);
-    if (parseError.error != QJsonParseError::NoError ||
-        !document.isObject()) {
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
       return false;
     }
     const auto artifact = document.object();
@@ -4361,43 +4841,26 @@ public:
     }
 
     auto next = m_workspaceInviteArtifacts;
-    if (!next.contains(inviteId) &&
-        next.size() >= kMaxWorkspaceInviteArtifacts) {
-      QString oldestKey;
-      QString oldestCreatedAt;
-      for (auto it = next.constBegin(); it != next.constEnd(); ++it) {
-        QJsonParseError candidateError;
-        const auto candidate = QJsonDocument::fromJson(
-            it.value().toString().toUtf8(), &candidateError);
-        const auto createdAt =
-            candidateError.error == QJsonParseError::NoError &&
-                    candidate.isObject()
-                ? candidate.object()
-                      .value(QStringLiteral("createdAt"))
-                      .toString()
-                : QString();
-        if (oldestKey.isEmpty() || createdAt < oldestCreatedAt) {
-          oldestKey = it.key();
-          oldestCreatedAt = createdAt;
-        }
-      }
-      next.remove(oldestKey);
-    }
     next.insert(inviteId, normalizedArtifactText);
-    m_workspaceInviteArtifacts = sanitizedWorkspaceInviteArtifacts(next);
-    if (!m_workspaceInviteArtifacts.contains(inviteId)) {
+    next = sanitizedWorkspaceInviteArtifacts(next);
+    if (!next.contains(inviteId)) {
       return false;
     }
-    persistDesktopConfig();
+    m_workspaceInviteArtifacts = next;
+    if (!m_workspaceInviteArtifactStoreCanBeRewritten ||
+        !saveWorkspaceInviteArtifacts(m_runtimeDir, next)) {
+      m_workspaceInviteArtifactStoreDirty = true;
+      return false;
+    }
+    m_workspaceInviteArtifactStoreDirty = false;
     return true;
   }
 
   void pruneWorkspaceInviteArtifacts(const QVariantMap &snapshot) {
-    if (m_workspaceInviteArtifacts.isEmpty()) {
-      return;
-    }
-    auto next = m_workspaceInviteArtifacts;
+    auto next = sanitizedWorkspaceInviteArtifacts(m_workspaceInviteArtifacts);
     const auto now = QDateTime::currentDateTimeUtc();
+    const auto snapshotWorkspaceId =
+        snapshot.value(QStringLiteral("workspaceId")).toString().trimmed();
     for (const auto &inviteValue :
          snapshot.value(QStringLiteral("invites")).toList()) {
       const auto invite = inviteValue.toMap();
@@ -4406,8 +4869,19 @@ public:
       if (inviteId.isEmpty() || !next.contains(inviteId)) {
         continue;
       }
+      QJsonParseError artifactError;
+      const auto artifact = QJsonDocument::fromJson(
+          next.value(inviteId).toString().toUtf8(), &artifactError);
+      if (artifactError.error != QJsonParseError::NoError ||
+          !artifact.isObject() ||
+          artifact.object()
+                  .value(QStringLiteral("workspaceId"))
+                  .toString()
+                  .trimmed() != snapshotWorkspaceId) {
+        continue;
+      }
       const auto status =
-          invite.value(QStringLiteral("status")).toString().trimmed();
+          invite.value(QStringLiteral("status")).toString().trimmed().toLower();
       const auto expiresAt = QDateTime::fromString(
           invite.value(QStringLiteral("expiresAt")).toString(), Qt::ISODate);
       const auto expired = expiresAt.isValid() && expiresAt.toUTC() <= now;
@@ -4416,11 +4890,18 @@ public:
         next.remove(inviteId);
       }
     }
-    if (next == m_workspaceInviteArtifacts) {
+    if (next == m_workspaceInviteArtifacts &&
+        !m_workspaceInviteArtifactStoreDirty) {
       return;
     }
-    m_workspaceInviteArtifacts = sanitizedWorkspaceInviteArtifacts(next);
-    persistDesktopConfig();
+    m_workspaceInviteArtifacts = next;
+    if (m_workspaceInviteArtifactStoreCanBeRewritten &&
+        saveWorkspaceInviteArtifacts(m_runtimeDir,
+                                     m_workspaceInviteArtifacts)) {
+      m_workspaceInviteArtifactStoreDirty = false;
+    } else {
+      m_workspaceInviteArtifactStoreDirty = true;
+    }
   }
 
   bool applyPendingJoinRequestResponse(const QString &requestId,
@@ -4437,24 +4918,38 @@ public:
     }
 
     QString key;
-    if (!normalizedWorkspaceId.isEmpty() &&
-        m_pendingJoinRequests.contains(normalizedWorkspaceId)) {
-      key = normalizedWorkspaceId;
-    } else if (!normalizedRequestId.isEmpty() &&
-               m_pendingJoinRequests.contains(normalizedRequestId)) {
-      key = normalizedRequestId;
-    } else {
+    if (!normalizedRequestId.isEmpty()) {
       for (auto it = m_pendingJoinRequests.constBegin();
            it != m_pendingJoinRequests.constEnd(); ++it) {
         const auto row = it.value().toMap();
-        if ((!normalizedRequestId.isEmpty() &&
-             row.value(QStringLiteral("requestId")).toString().trimmed() ==
-                 normalizedRequestId) ||
-            (!normalizedWorkspaceId.isEmpty() &&
-             row.value(QStringLiteral("workspaceId")).toString().trimmed() ==
-                 normalizedWorkspaceId)) {
+        auto rowRequestId =
+            row.value(QStringLiteral("requestId")).toString().trimmed();
+        if (rowRequestId.isEmpty() && it.key() == normalizedRequestId) {
+          rowRequestId = it.key();
+        }
+        const auto rowWorkspaceId =
+            row.value(QStringLiteral("workspaceId")).toString().trimmed();
+        if (rowRequestId == normalizedRequestId &&
+            (normalizedWorkspaceId.isEmpty() || rowWorkspaceId.isEmpty() ||
+             rowWorkspaceId == normalizedWorkspaceId)) {
           key = it.key();
           break;
+        }
+      }
+    } else {
+      for (auto it = m_pendingJoinRequests.constBegin();
+           it != m_pendingJoinRequests.constEnd(); ++it) {
+        const auto rowWorkspaceId =
+            it.value()
+                .toMap()
+                .value(QStringLiteral("workspaceId"))
+                .toString()
+                .trimmed();
+        if (rowWorkspaceId == normalizedWorkspaceId) {
+          if (!key.isEmpty()) {
+            return false;
+          }
+          key = it.key();
         }
       }
     }
@@ -4474,7 +4969,7 @@ public:
         row.value(QStringLiteral("resolvedAt")).toString();
     if (oldStatus == normalizedStatus && oldMessage == normalizedMessage &&
         oldResolvedAt == normalizedResolvedAt) {
-      return false;
+      return persistDesktopConfig();
     }
 
     row.insert(QStringLiteral("status"), normalizedStatus);
@@ -4485,7 +4980,17 @@ public:
       row.insert(QStringLiteral("error"), normalizedMessage);
     }
     next.insert(key, row);
-    setPendingJoinRequests(next);
+    const auto sanitized = sanitizedPendingJoinRequests(next);
+    if (!sanitized.contains(key)) {
+      return false;
+    }
+    const auto previous = m_pendingJoinRequests;
+    m_pendingJoinRequests = sanitized;
+    if (!persistDesktopConfig()) {
+      m_pendingJoinRequests = previous;
+      return false;
+    }
+    emit pendingJoinRequestsChanged();
     return true;
   }
 
@@ -5972,6 +6477,11 @@ public:
   }
 
   Q_INVOKABLE bool exportWorkspaceKey() {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -5991,6 +6501,11 @@ public:
   }
 
   Q_INVOKABLE bool exportTrustSnapshot() {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -6087,6 +6602,11 @@ public:
   }
 
   Q_INVOKABLE bool exportChannelKey(const QString &channelId) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -6189,6 +6709,11 @@ public:
   }
 
   Q_INVOKABLE bool exportRecoveryBundle(const QString &passphrase) {
+    if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
+      setSyncStatus(QStringLiteral(
+          "return or save the current secure access response first"));
+      return false;
+    }
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
@@ -6915,6 +7440,9 @@ signals:
   void joinRequestInboxInFlightChanged();
   void accessEnvelopePullInFlightChanged();
   void joinRequestDirectSubmitFinished(bool success, const QString &message);
+  void workspaceInviteClaimFinished(bool success, const QString &message);
+  void joinResponseInboxEntryAcknowledged(bool success,
+                                          const QString &message);
 
 private:
   static const char *nullableUtf8(const QByteArray &value) {
@@ -7211,6 +7739,11 @@ private:
           reinterpret_cast<RuntimeCreateWorkspaceInviteResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_create_workspace_invite_result_json"));
+      m_createWorkspaceInviteWithMaxClaimsJson = reinterpret_cast<
+          RuntimeCreateWorkspaceInviteWithMaxClaimsResultJsonFn>(
+          m_library.resolve(
+              "chaft_runtime_create_workspace_invite_with_max_claims_result_"
+              "json"));
       m_prepareWorkspaceInviteClaimJson =
           reinterpret_cast<RuntimePrepareWorkspaceInviteClaimResultJsonFn>(
               m_library.resolve(
@@ -7360,6 +7893,11 @@ private:
           reinterpret_cast<RuntimePullJoinAccessDirectResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_pull_join_responses_direct_result_json"));
+      m_pullJoinResponsesForRequestsDirectJson = reinterpret_cast<
+          RuntimePullJoinResponsesForRequestsDirectResultJsonFn>(
+          m_library.resolve(
+              "chaft_runtime_pull_join_responses_for_requests_direct_result_"
+              "json"));
       m_workspacePublishQueueJson =
           reinterpret_cast<RuntimeWorkspacePublishQueueResultJsonFn>(
               m_library.resolve(
@@ -7382,6 +7920,12 @@ private:
           reinterpret_cast<RuntimeListJoinRequestInboxResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_list_join_request_inbox_result_json"));
+      m_listJoinRequestInboxForWorkspaceJson =
+          reinterpret_cast<
+              RuntimeListJoinRequestInboxForWorkspaceResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_list_join_request_inbox_for_workspace_"
+                  "result_json"));
       m_ackJoinRequestInboxEntryJson =
           reinterpret_cast<RuntimeAckJoinRequestInboxEntryResultJsonFn>(
               m_library.resolve(
@@ -7403,10 +7947,19 @@ private:
               m_library.resolve(
                   "chaft_runtime_submit_join_request_outbox_entry_direct_result_"
                   "json"));
+      m_ackJoinRequestOutboxEntryJson =
+          reinterpret_cast<RuntimeAckJoinRequestOutboxEntryResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_ack_join_request_outbox_entry_result_json"));
       m_listJoinResponseInboxJson =
           reinterpret_cast<RuntimeListJoinResponseInboxResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_list_join_response_inbox_result_json"));
+      m_listJoinResponseInboxScopedJson =
+          reinterpret_cast<RuntimeListJoinResponseInboxScopedResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_list_join_response_inbox_scoped_result_"
+                  "json"));
       m_ackJoinResponseInboxEntryJson =
           reinterpret_cast<RuntimeAckJoinResponseInboxEntryResultJsonFn>(
               m_library.resolve(
@@ -7432,6 +7985,10 @@ private:
               m_library.resolve(
                   "chaft_runtime_submit_join_response_outbox_entry_direct_result_"
                   "json"));
+      m_ackJoinResponseOutboxEntryJson =
+          reinterpret_cast<RuntimeAckJoinResponseOutboxEntryResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_ack_join_response_outbox_entry_result_json"));
       m_stopDirectPeerJson =
           reinterpret_cast<RuntimeStopDirectPeerResultJsonFn>(
               m_library.resolve("chaft_runtime_stop_direct_peer_result_json"));
@@ -7454,6 +8011,7 @@ private:
           m_removeReactionJson != nullptr && m_markChannelReadJson != nullptr &&
           m_inviteMemberJson != nullptr &&
           m_createWorkspaceInviteJson != nullptr &&
+          m_createWorkspaceInviteWithMaxClaimsJson != nullptr &&
           m_prepareWorkspaceInviteClaimJson != nullptr &&
           m_claimWorkspaceInviteJson != nullptr &&
           m_importWorkspaceInviteResponseJson != nullptr &&
@@ -7501,22 +8059,25 @@ private:
           m_pullWorkspaceJson != nullptr && m_syncWorkspaceJson != nullptr &&
           m_retryBlobTransfersJson != nullptr &&
           m_submitJoinRequestDirectJson != nullptr &&
-          m_pullJoinRequestsDirectJson != nullptr &&
-          m_pullJoinResponsesDirectJson != nullptr &&
+          m_pullJoinResponsesForRequestsDirectJson != nullptr &&
           m_startDirectPeerJson != nullptr &&
           m_listJoinRequestInboxJson != nullptr &&
+          m_listJoinRequestInboxForWorkspaceJson != nullptr &&
           m_ackJoinRequestInboxEntryJson != nullptr &&
           m_queueJoinRequestOutboxJson != nullptr &&
           m_listJoinRequestOutboxJson != nullptr &&
           m_listDueJoinRequestOutboxJson != nullptr &&
           m_submitJoinRequestOutboxEntryDirectJson != nullptr &&
+          m_ackJoinRequestOutboxEntryJson != nullptr &&
           m_listJoinResponseInboxJson != nullptr &&
+          m_listJoinResponseInboxScopedJson != nullptr &&
           m_ackJoinResponseInboxEntryJson != nullptr &&
           m_stageJoinResponseInboxJson != nullptr &&
           m_queueJoinResponseOutboxJson != nullptr &&
           m_listJoinResponseOutboxJson != nullptr &&
           m_listDueJoinResponseOutboxJson != nullptr &&
           m_submitJoinResponseOutboxEntryDirectJson != nullptr &&
+          m_ackJoinResponseOutboxEntryJson != nullptr &&
           m_stopDirectPeerJson != nullptr;
       if (m_ffiReady) {
         return;
@@ -8220,7 +8781,8 @@ private:
   bool queueAccessEnvelopePullFromPeer(const QString &peerEndpoint,
                                        const QString &workspaceId,
                                        bool pullRequests, bool pullResponses,
-                                       bool userInitiated) {
+                                       bool userInitiated,
+                                       const QStringList &responseRequestIds = {}) {
     if (!pullRequests && !pullResponses) {
       return false;
     }
@@ -8232,7 +8794,8 @@ private:
       return false;
     }
     if ((pullRequests && m_pullJoinRequestsDirectJson == nullptr) ||
-        (pullResponses && m_pullJoinResponsesDirectJson == nullptr)) {
+        (pullResponses &&
+         m_pullJoinResponsesForRequestsDirectJson == nullptr)) {
       if (userInitiated) {
         setSyncStatus(QStringLiteral("direct access checks unavailable"));
       }
@@ -8277,22 +8840,35 @@ private:
       setSyncStatus(QStringLiteral("checking access responses..."));
     }
     runAccessEnvelopePullFromPeer(normalizedPeerEndpoint, normalizedWorkspaceId,
-                                  pullRequests, pullResponses, userInitiated);
+                                  pullRequests, pullResponses, userInitiated,
+                                  responseRequestIds);
     return true;
   }
 
   void runAccessEnvelopePullFromPeer(const QString &peerEndpoint,
                                      const QString &workspaceId,
                                      bool pullRequests, bool pullResponses,
-                                     bool userInitiated) {
+                                     bool userInitiated,
+                                     const QStringList &responseRequestIds) {
     const QPointer<ChaftController> guard(this);
     const auto requestFn = m_pullJoinRequestsDirectJson;
-    const auto responseFn = m_pullJoinResponsesDirectJson;
+    const auto responseFn = m_pullJoinResponsesForRequestsDirectJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
+    const auto pendingRequestIds = responseRequestIds.isEmpty()
+                                       ? pendingJoinResponseRequestIds(
+                                             workspaceId, peerEndpoint)
+                                       : responseRequestIds;
+    QList<QByteArray> pendingRequestIdBatches;
+    for (int offset = 0; offset < pendingRequestIds.size();
+         offset += kMaxAccessResponseRequestIdsPerPull) {
+      pendingRequestIdBatches.append(joinResponseRequestIdsJson(
+          pendingRequestIds.mid(offset, kMaxAccessResponseRequestIdsPerPull)));
+    }
     auto *thread = QThread::create(
         [guard, requestFn, responseFn, freeString, runtimeDir, peerEndpoint,
-         workspaceId, pullRequests, pullResponses, userInitiated]() {
+         workspaceId, pendingRequestIdBatches, pullRequests, pullResponses,
+         userInitiated]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto peerEndpointBytes = peerEndpoint.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -8323,25 +8899,34 @@ private:
           }
 
           if (pullResponses && responseFn != nullptr) {
-            QString responseError;
-            const auto responseJson = takeWorkerFfiString(
-                responseFn(runtimeDirBytes.constData(),
-                           peerEndpointBytes.constData(),
-                           workspaceIdBytes.constData(),
-                           kMaxAccessEnvelopePullEntries),
-                freeString, &responseError);
-            const auto responseValue =
-                responseError.isEmpty()
-                    ? resultValueFromWorkerJson(responseJson, &responseError)
-                    : QJsonObject();
-            if (responseValue.isEmpty()) {
-              if (firstError.isEmpty()) {
-                firstError = responseError;
+            if (pendingRequestIdBatches.isEmpty()) {
+              if (userInitiated && firstError.isEmpty()) {
+                firstError = QStringLiteral("no active access request");
               }
             } else {
-              responseCount = std::max(
-                  0,
-                  responseValue.value(QStringLiteral("responseCount")).toInt());
+              for (const auto &requestIdsJson : pendingRequestIdBatches) {
+                QString responseError;
+                const auto responseJson = takeWorkerFfiString(
+                    responseFn(runtimeDirBytes.constData(),
+                               peerEndpointBytes.constData(),
+                               workspaceIdBytes.constData(),
+                               requestIdsJson.constData(),
+                               kMaxAccessResponseRequestIdsPerPull),
+                    freeString, &responseError);
+                const auto responseValue =
+                    responseError.isEmpty()
+                        ? resultValueFromWorkerJson(responseJson, &responseError)
+                        : QJsonObject();
+                if (responseValue.isEmpty()) {
+                  if (firstError.isEmpty()) {
+                    firstError = responseError;
+                  }
+                  continue;
+                }
+                responseCount += std::max(
+                    0, responseValue.value(QStringLiteral("responseCount"))
+                           .toInt());
+              }
             }
           }
 
@@ -8393,7 +8978,7 @@ private:
       }
       return false;
     }
-    if (m_listJoinRequestInboxJson == nullptr ||
+    if (m_listJoinRequestInboxForWorkspaceJson == nullptr ||
         m_ackJoinRequestInboxEntryJson == nullptr ||
         m_recordWorkspaceJoinRequestJson == nullptr ||
         m_claimWorkspaceInviteJson == nullptr ||
@@ -8462,7 +9047,7 @@ private:
 
   bool queueJoinResponseInboxRefresh(bool userInitiated) {
     if (!m_ffiReady || m_freeString == nullptr ||
-        m_listJoinResponseInboxJson == nullptr ||
+        m_listJoinResponseInboxScopedJson == nullptr ||
         m_runtimeDir.trimmed().isEmpty()) {
       if (userInitiated) {
         setSyncStatus(QStringLiteral("access responses unavailable"));
@@ -8546,19 +9131,15 @@ private:
     runStoreSnapshotHydration(generation, workspaceId);
   }
 
-  void persistDesktopConfig() {
-    saveDesktopConfig(m_runtimeDir, m_workspaceId, m_defaultPeerEndpoint,
-                      m_backupPeerEndpoints, m_backupPeerStatuses,
-                      m_autoBackupEnabled, m_themeId, m_themeMode,
-                      m_darkThemeId, m_lightThemeId, m_inspectorPinned,
-                      m_reducedMotionEnabled, m_notificationsEnabled,
-                      m_notificationSoundEnabled, m_notificationPreviewEnabled,
-                      m_externalLinkConfirmationEnabled,
-                      m_mutedChannels,
-                      m_composerDrafts,
-                      m_pendingJoinRequests,
-                      m_workspaceInviteArtifacts,
-                      m_windowGeometry);
+  bool persistDesktopConfig() {
+    return saveDesktopConfig(
+        m_runtimeDir, m_workspaceId, m_defaultPeerEndpoint,
+        m_backupPeerEndpoints, m_backupPeerStatuses, m_autoBackupEnabled,
+        m_themeId, m_themeMode, m_darkThemeId, m_lightThemeId,
+        m_inspectorPinned, m_reducedMotionEnabled, m_notificationsEnabled,
+        m_notificationSoundEnabled, m_notificationPreviewEnabled,
+        m_externalLinkConfirmationEnabled, m_mutedChannels, m_composerDrafts,
+        m_pendingJoinRequests, m_windowGeometry);
   }
 
   bool backupPeerInCooldown(const QString &peerEndpoint,
@@ -8979,7 +9560,7 @@ private:
             }
             if (mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync) {
               guard->queueAccessEnvelopePullFromPeer(peerEndpoint, workspaceId,
-                                                     true, true, false);
+                                                     false, true, false);
             }
           },
           Qt::QueuedConnection);
@@ -12371,13 +12952,14 @@ private:
   void runJoinRequestInboxRefresh(const QString &workspaceId,
                                   quint64 generation, bool userInitiated) {
     const QPointer<ChaftController> guard(this);
-    const auto listFn = m_listJoinRequestInboxJson;
+    const auto listFn = m_listJoinRequestInboxForWorkspaceJson;
     const auto ackFn = m_ackJoinRequestInboxEntryJson;
     const auto recordFn = m_recordWorkspaceJoinRequestJson;
     const auto recordWithResponseRouteFn =
         m_recordWorkspaceJoinRequestWithResponseRouteJson;
     const auto claimInviteFn = m_claimWorkspaceInviteJson;
     const auto stageResponseFn = m_stageJoinResponseInboxJson;
+    const auto queueResponseOutboxFn = m_queueJoinResponseOutboxJson;
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
     const auto freeString = m_freeString;
@@ -12386,22 +12968,24 @@ private:
     const auto timelineLimit = configuredTimelineLimit();
     auto *thread = QThread::create(
         [guard, listFn, ackFn, recordFn, recordWithResponseRouteFn,
-         claimInviteFn, stageResponseFn, snapshotFn, snapshotLatestFn,
-         freeString, runtimeDir, identityFile, workspaceId, generation,
-         userInitiated, timelineLimit]() {
+         claimInviteFn, stageResponseFn, queueResponseOutboxFn, snapshotFn,
+         snapshotLatestFn, freeString, runtimeDir, identityFile, workspaceId,
+         generation, userInitiated, timelineLimit]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
 
           QString error;
           const auto listJson = takeFfiString(
-              listFn(runtimeDirBytes.constData(), kMaxJoinRequestInboxEntries),
+              listFn(runtimeDirBytes.constData(), workspaceIdBytes.constData(),
+                     kMaxJoinRequestInboxEntries),
               freeString, &error);
           const auto inboxValue =
               error.isEmpty() ? resultValueFromJson(listJson, &error)
                               : QJsonObject();
           int recordedCount = 0;
           int claimedCount = 0;
+          int queuedClaimResponseCount = 0;
           int skippedCount = 0;
           QString firstRecordError;
 
@@ -12473,25 +13057,71 @@ private:
                   if (firstRecordError.isEmpty()) {
                     firstRecordError = claimError;
                   }
+                  if (workspaceInviteClaimErrorIsTerminal(claimError)) {
+                    const auto entryIdBytes = entryId.toUtf8();
+                    QString ackError;
+                    const auto ackJson = takeFfiString(
+                        ackFn(runtimeDirBytes.constData(),
+                              entryIdBytes.constData()),
+                        freeString, &ackError);
+                    const auto ackValue =
+                        ackError.isEmpty()
+                            ? resultValueFromJson(ackJson, &ackError)
+                            : QJsonObject();
+                    if (!ackValue.isEmpty()) {
+                      ++skippedCount;
+                    } else if (firstRecordError.isEmpty()) {
+                      firstRecordError = ackError;
+                    }
+                  }
                   continue;
                 }
                 const auto responseBytes =
                     QJsonDocument(response).toJson(QJsonDocument::Compact);
-                QString stageError;
+                const auto responsePeerEndpoint =
+                    request.value(QStringLiteral("responsePeerEndpoint"))
+                        .toString()
+                        .trimmed();
+                // Persist the owner-hosted pull fallback before attempting the
+                // invitee's advertised route. A queued direct delivery only
+                // proves that a retry record exists; the endpoint may be stale.
+                // The inbox copy keeps the response recoverable by its exact
+                // request ID without exposing other workspace responses.
+                QString responseStageError;
                 const auto stageJson = takeFfiString(
                     stageResponseFn(runtimeDirBytes.constData(),
                                     workspaceIdBytes.constData(),
                                     responseBytes.constData()),
-                    freeString, &stageError);
+                    freeString, &responseStageError);
                 const auto stageValue =
-                    stageError.isEmpty()
-                        ? resultValueFromJson(stageJson, &stageError)
+                    responseStageError.isEmpty()
+                        ? resultValueFromJson(stageJson, &responseStageError)
                         : QJsonObject();
                 if (stageValue.isEmpty()) {
                   if (firstRecordError.isEmpty()) {
-                    firstRecordError = stageError;
+                    firstRecordError = responseStageError;
                   }
                   continue;
+                }
+
+                if (queueResponseOutboxFn != nullptr &&
+                    !responsePeerEndpoint.isEmpty()) {
+                  const auto responsePeerEndpointBytes =
+                      responsePeerEndpoint.toUtf8();
+                  QString queueError;
+                  const auto queuedJson = takeFfiString(
+                      queueResponseOutboxFn(
+                          runtimeDirBytes.constData(),
+                          responsePeerEndpointBytes.constData(),
+                          workspaceIdBytes.constData(), responseBytes.constData()),
+                      freeString, &queueError);
+                  const auto queuedValue =
+                      queueError.isEmpty()
+                          ? resultValueFromJson(queuedJson, &queueError)
+                          : QJsonObject();
+                  if (!queuedValue.isEmpty()) {
+                    ++queuedClaimResponseCount;
+                  }
                 }
 
                 const auto entryIdBytes = entryId.toUtf8();
@@ -12644,7 +13274,7 @@ private:
               guard.data(),
               [guard, workspaceId, generation, userInitiated, inboxValue, error,
                firstRecordError, snapshotValue, snapshotError, recordedCount,
-               skippedCount, claimedCount]() {
+               skippedCount, claimedCount, queuedClaimResponseCount]() {
                 if (guard.isNull()) {
                   return;
                 }
@@ -12661,6 +13291,9 @@ private:
                   return;
                 }
                 if (recordedCount > 0) {
+                  if (queuedClaimResponseCount > 0) {
+                    guard->queueJoinResponseOutboxDrain();
+                  }
                   if (snapshotValue.isEmpty()) {
                     guard->setSyncStatus(snapshotError);
                     return;
@@ -12701,11 +13334,12 @@ private:
     const auto submitFn = m_submitJoinRequestDirectJson;
     const auto queueOutboxFn = m_queueJoinRequestOutboxJson;
     const auto submitOutboxFn = m_submitJoinRequestOutboxEntryDirectJson;
+    const auto ackOutboxFn = m_ackJoinRequestOutboxEntryJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     auto *thread = QThread::create(
-        [guard, submitFn, queueOutboxFn, submitOutboxFn, freeString, runtimeDir,
-         peerEndpoint, workspaceId, requestJson]() {
+        [guard, submitFn, queueOutboxFn, submitOutboxFn, ackOutboxFn,
+         freeString, runtimeDir, peerEndpoint, workspaceId, requestJson]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto peerEndpointBytes = peerEndpoint.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -12740,6 +13374,16 @@ private:
               value = error.isEmpty()
                           ? resultValueFromWorkerJson(submittedJson, &error)
                           : QJsonObject();
+              if (!value.isEmpty() && ackOutboxFn != nullptr) {
+                QString ackError;
+                const auto ackJson = takeWorkerFfiString(
+                    ackOutboxFn(runtimeDirBytes.constData(),
+                                entryIdBytes.constData()),
+                    freeString, &ackError);
+                if (ackError.isEmpty()) {
+                  (void)resultValueFromWorkerJson(ackJson, &ackError);
+                }
+              }
             }
           } else {
             const auto json = takeWorkerFfiString(
@@ -12783,10 +13427,11 @@ private:
     const QPointer<ChaftController> guard(this);
     const auto listFn = m_listDueJoinRequestOutboxJson;
     const auto submitFn = m_submitJoinRequestOutboxEntryDirectJson;
+    const auto ackFn = m_ackJoinRequestOutboxEntryJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     auto *thread = QThread::create(
-        [guard, listFn, submitFn, freeString, runtimeDir]() {
+        [guard, listFn, submitFn, ackFn, freeString, runtimeDir]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           QString error;
           const auto listJson = takeWorkerFfiString(
@@ -12824,6 +13469,16 @@ private:
                       : QJsonObject();
               if (!submittedValue.isEmpty()) {
                 ++deliveredCount;
+                if (ackFn != nullptr) {
+                  QString ackError;
+                  const auto ackJson = takeWorkerFfiString(
+                      ackFn(runtimeDirBytes.constData(),
+                            entryIdBytes.constData()),
+                      freeString, &ackError);
+                  if (ackError.isEmpty()) {
+                    (void)resultValueFromWorkerJson(ackJson, &ackError);
+                  }
+                }
               }
             }
           }
@@ -12848,25 +13503,132 @@ private:
     thread->start();
   }
 
+  QStringList pendingJoinResponseRequestIds(
+      const QString &workspaceId = {}, const QString &peerEndpoint = {}) const {
+    const auto workspaceFilter = workspaceId.trimmed();
+    const auto peerFilter = peerEndpoint.trimmed();
+    QStringList requestIds;
+    const auto rememberRequestId = [&requestIds](const QString &requestId) {
+      const auto normalized = requestId.trimmed();
+      const auto bytes = normalized.toUtf8();
+      const auto valid = !bytes.isEmpty() &&
+                         bytes.size() <= kMaxJoinRequestIdBytes &&
+                         std::all_of(bytes.cbegin(), bytes.cend(), [](char byte) {
+                           return (byte >= 'a' && byte <= 'z') ||
+                                  (byte >= 'A' && byte <= 'Z') ||
+                                  (byte >= '0' && byte <= '9') || byte == '_' ||
+                                  byte == '-';
+                         });
+      if (valid && !requestIds.contains(normalized)) {
+        requestIds.append(normalized);
+      }
+    };
+    const auto requestArtifactObject = [](const QString &artifactText) {
+      QJsonParseError parseError;
+      const auto document = QJsonDocument::fromJson(
+          artifactText.trimmed().toUtf8(), &parseError);
+      if (parseError.error != QJsonParseError::NoError ||
+          !document.isObject()) {
+        return QJsonObject();
+      }
+      auto artifact = document.object();
+      if (artifact.value(QStringLiteral("kind")).toString() ==
+              QStringLiteral("chaft.join-request-file.v1") &&
+          artifact.value(QStringLiteral("request")).isObject()) {
+        artifact = artifact.value(QStringLiteral("request")).toObject();
+      }
+      const auto kind =
+          artifact.value(QStringLiteral("kind")).toString().trimmed();
+      if (kind != QStringLiteral("chaft.workspace-join-request.v1") &&
+          kind != QStringLiteral("chaft.workspace-invite-claim.v1")) {
+        return QJsonObject();
+      }
+      return artifact;
+    };
+    const auto matchesScope = [&workspaceFilter, &peerFilter](
+                                  const QString &candidateWorkspaceId,
+                                  const QString &candidatePeerEndpoint) {
+      return (workspaceFilter.isEmpty() ||
+              candidateWorkspaceId.trimmed() == workspaceFilter) &&
+             (peerFilter.isEmpty() ||
+              candidatePeerEndpoint.trimmed() == peerFilter);
+    };
+    for (auto it = m_pendingJoinRequests.constBegin();
+         it != m_pendingJoinRequests.constEnd(); ++it) {
+      const auto row = it.value().toMap();
+      const auto status =
+          row.value(QStringLiteral("status")).toString().trimmed().toLower();
+      if (status == QStringLiteral("approved") ||
+          status == QStringLiteral("declined") ||
+          status == QStringLiteral("closed")) {
+        continue;
+      }
+      const auto rowWorkspaceId =
+          row.value(QStringLiteral("workspaceId")).toString().trimmed();
+      const auto rowPeerEndpoint =
+          row.value(QStringLiteral("deliveryPeerEndpoint"))
+              .toString()
+              .trimmed();
+      if (!matchesScope(rowWorkspaceId, rowPeerEndpoint)) {
+        continue;
+      }
+      auto requestId =
+          row.value(QStringLiteral("requestId")).toString().trimmed();
+      if (requestId.isEmpty()) {
+        const auto artifact = requestArtifactObject(
+            row.value(QStringLiteral("artifact")).toString());
+        requestId =
+            artifact.value(QStringLiteral("requestId")).toString().trimmed();
+      }
+      if (requestId.isEmpty() && it.key().trimmed() != rowWorkspaceId) {
+        requestId = it.key();
+      }
+      rememberRequestId(requestId);
+    }
+    const auto currentArtifact = requestArtifactObject(m_keyTransferJson);
+    if (!currentArtifact.isEmpty() &&
+        matchesScope(
+            currentArtifact.value(QStringLiteral("workspaceId")).toString(),
+            currentArtifact.value(QStringLiteral("deliveryPeerEndpoint"))
+                .toString())) {
+      rememberRequestId(
+          currentArtifact.value(QStringLiteral("requestId")).toString());
+    }
+    return requestIds;
+  }
+
+  static QByteArray joinResponseRequestIdsJson(const QStringList &requestIds) {
+    QJsonArray values;
+    for (const auto &requestId : requestIds) {
+      values.append(requestId);
+    }
+    return QJsonDocument(values).toJson(QJsonDocument::Compact);
+  }
+
   void runJoinResponseInboxRefresh(bool userInitiated) {
     const QPointer<ChaftController> guard(this);
-    const auto listFn = m_listJoinResponseInboxJson;
+    const auto listFn = m_listJoinResponseInboxScopedJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     const auto localDeviceId = m_deviceId.trimmed();
-    auto *thread = QThread::create([guard, listFn, freeString, runtimeDir,
-                                    localDeviceId, userInitiated]() {
+    const auto pendingRequestIdsJson =
+        joinResponseRequestIdsJson(pendingJoinResponseRequestIds());
+    auto *thread = QThread::create(
+        [guard, listFn, freeString, runtimeDir, localDeviceId,
+         pendingRequestIdsJson, userInitiated]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
+      const auto localDeviceIdBytes = localDeviceId.toUtf8();
       QString error;
       const auto listJson = takeWorkerFfiString(
-          listFn(runtimeDirBytes.constData(), kMaxJoinResponseInboxEntries),
+          listFn(runtimeDirBytes.constData(), localDeviceIdBytes.constData(),
+                 pendingRequestIdsJson.constData(),
+                 kMaxJoinResponseInboxEntries),
           freeString, &error);
       const auto listValue =
           error.isEmpty() ? resultValueFromWorkerJson(listJson, &error)
                           : QJsonObject();
 
-      QString firstInviteText;
-      QString firstInviteEntryId;
+      QJsonArray inviteCandidates;
       QJsonArray responseUpdates;
       int responseCount = 0;
       if (!listValue.isEmpty()) {
@@ -12905,27 +13667,22 @@ private:
               response.value(QStringLiteral("createdAt")).toString().trimmed();
           if (kind == QStringLiteral("chaft.workspace-invite.v1") ||
               kind == QStringLiteral("chaft.workspace-invite-response.v1")) {
-            if (kind ==
-                    QStringLiteral("chaft.workspace-invite-response.v1") &&
+            const auto inviteeDeviceId =
                 response.value(QStringLiteral("inviteeDeviceId"))
-                        .toString()
-                        .trimmed() != localDeviceId) {
+                    .toString()
+                    .trimmed();
+            if (requestId.isEmpty() || workspaceId.isEmpty() ||
+                inviteeDeviceId.isEmpty() ||
+                inviteeDeviceId != localDeviceId) {
+              // This can be a pull-based fallback staged by the workspace
+              // admin for another device. Keep it available to that peer.
               continue;
             }
             ++responseCount;
-            if (!requestId.isEmpty()) {
-              QJsonObject update;
-              update.insert(QStringLiteral("requestId"), requestId);
-              update.insert(QStringLiteral("workspaceId"), workspaceId);
-              update.insert(QStringLiteral("status"),
-                            QStringLiteral("approved"));
-              update.insert(QStringLiteral("resolvedAt"), createdAt);
-              responseUpdates.append(update);
-            }
-            if (firstInviteText.isEmpty()) {
-              firstInviteText = responseText;
-              firstInviteEntryId = entryId;
-            }
+            QJsonObject candidate;
+            candidate.insert(QStringLiteral("entryId"), entryId);
+            candidate.insert(QStringLiteral("responseText"), responseText);
+            inviteCandidates.append(candidate);
             continue;
           }
           if (kind != QStringLiteral("chaft.workspace-join-response.v1") ||
@@ -12935,12 +13692,17 @@ private:
           const auto resolution =
               response.value(QStringLiteral("resolution")).toString().trimmed();
           QString status;
-          if (resolution == QStringLiteral("approved")) {
-            status = QStringLiteral("approved");
-          } else if (resolution == QStringLiteral("declined")) {
-            status = QStringLiteral("declined");
+          QString responseMessage;
+          if (resolution == QStringLiteral("declined")) {
+            status = QStringLiteral("unverified_response");
+            responseMessage = QStringLiteral(
+                "An unsigned decline notice was received. Confirm it with a "
+                "workspace admin before hiding or resending this request.");
           } else if (resolution == QStringLiteral("revoked")) {
-            status = QStringLiteral("closed");
+            status = QStringLiteral("unverified_response");
+            responseMessage = QStringLiteral(
+                "An unsigned closure notice was received. Confirm it with a "
+                "workspace admin before hiding or resending this request.");
           } else {
             continue;
           }
@@ -12950,10 +13712,7 @@ private:
           update.insert(QStringLiteral("requestId"), requestId);
           update.insert(QStringLiteral("workspaceId"), workspaceId);
           update.insert(QStringLiteral("status"), status);
-          update.insert(QStringLiteral("message"),
-                        response.value(QStringLiteral("message"))
-                            .toString()
-                            .trimmed());
+          update.insert(QStringLiteral("message"), responseMessage);
           update.insert(QStringLiteral("resolvedAt"), createdAt);
           responseUpdates.append(update);
         }
@@ -12964,8 +13723,8 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, listValue, error, userInitiated, firstInviteText,
-           firstInviteEntryId, responseUpdates, responseCount]() {
+          [guard, listValue, error, userInitiated, inviteCandidates,
+           responseUpdates, responseCount]() {
             if (guard.isNull()) {
               return;
             }
@@ -13010,22 +13769,61 @@ private:
                 }
               }
             }
-            if (!firstInviteText.isEmpty()) {
-              if (!accessApprovalMatchesCurrentHandoff(
-                      guard->m_keyTransferJson, firstInviteText)) {
-                if (userInitiated) {
-                  guard->setSyncStatus(QStringLiteral(
-                      "access approval received; finish current handoff first"));
-                }
-                return;
+            QString selectedInviteText;
+            QString selectedInviteEntryId;
+            bool deferredInviteCandidate = false;
+            for (const auto &candidateValue : inviteCandidates) {
+              const auto candidate = candidateValue.toObject();
+              const auto responseText =
+                  candidate.value(QStringLiteral("responseText"))
+                      .toString()
+                      .trimmed();
+              const auto entryId =
+                  candidate.value(QStringLiteral("entryId"))
+                      .toString()
+                      .trimmed();
+              const auto currentHandoff = guard->m_keyTransferJson.trimmed();
+              const auto matchesCurrentHandoff =
+                  accessApprovalMatchesCurrentHandoff(currentHandoff,
+                                                      responseText);
+              if (!currentHandoff.isEmpty() && !matchesCurrentHandoff) {
+                deferredInviteCandidate = true;
+                continue;
               }
-              guard->setKeyTransferJsonFromJoinResponseInbox(firstInviteText,
-                                                             firstInviteEntryId);
+
+              bool matchesPendingHandoff = matchesCurrentHandoff;
+              if (currentHandoff.isEmpty() && !matchesPendingHandoff) {
+                for (auto it = guard->m_pendingJoinRequests.constBegin();
+                     it != guard->m_pendingJoinRequests.constEnd(); ++it) {
+                  const auto artifact =
+                      it.value()
+                          .toMap()
+                          .value(QStringLiteral("artifact"))
+                          .toString();
+                  if (accessApprovalMatchesCurrentHandoff(artifact,
+                                                          responseText)) {
+                    matchesPendingHandoff = true;
+                    break;
+                  }
+                }
+              }
+
+              if (matchesPendingHandoff && selectedInviteText.isEmpty()) {
+                selectedInviteText = responseText;
+                selectedInviteEntryId = entryId;
+              }
+            }
+            if (!selectedInviteText.isEmpty()) {
+              guard->setKeyTransferJsonFromJoinResponseInbox(
+                  selectedInviteText, selectedInviteEntryId);
               guard->setSyncStatus(QStringLiteral("access approval received"));
               return;
             }
             if (appliedResponseCount > 0) {
-              if (lastAppliedStatus == QStringLiteral("declined")) {
+              if (lastAppliedStatus == QStringLiteral("unverified_response")) {
+                guard->setSyncStatus(
+                    QStringLiteral("unverified access response received"));
+              } else if (lastAppliedStatus == QStringLiteral("declined")) {
                 guard->setSyncStatus(QStringLiteral("access request declined"));
               } else if (lastAppliedStatus == QStringLiteral("closed")) {
                 guard->setSyncStatus(QStringLiteral("access request closed"));
@@ -13034,12 +13832,22 @@ private:
               }
               return;
             }
+            if (userInitiated && deferredInviteCandidate) {
+              guard->setSyncStatus(QStringLiteral(
+                  "access received; finish or save the current handoff before opening it"));
+              return;
+            }
+            if (userInitiated && !inviteCandidates.isEmpty()) {
+              guard->setSyncStatus(QStringLiteral(
+                  "no approval matched an active access request"));
+              return;
+            }
             if (userInitiated && responseCount == 0) {
               guard->setSyncStatus(QStringLiteral("no access approvals found"));
             }
           },
           Qt::QueuedConnection);
-    });
+        });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
   }
@@ -13048,9 +13856,10 @@ private:
     const QPointer<ChaftController> guard(this);
     const auto listFn = m_listDueJoinResponseOutboxJson;
     const auto submitFn = m_submitJoinResponseOutboxEntryDirectJson;
+    const auto ackFn = m_ackJoinResponseOutboxEntryJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
-    auto *thread = QThread::create([guard, listFn, submitFn, freeString,
+    auto *thread = QThread::create([guard, listFn, submitFn, ackFn, freeString,
                                     runtimeDir]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       QString error;
@@ -13088,6 +13897,15 @@ private:
                   : QJsonObject();
           if (!submittedValue.isEmpty()) {
             ++deliveredCount;
+            if (ackFn != nullptr) {
+              QString ackError;
+              const auto ackJson = takeWorkerFfiString(
+                  ackFn(runtimeDirBytes.constData(), entryIdBytes.constData()),
+                  freeString, &ackError);
+              if (ackError.isEmpty()) {
+                (void)resultValueFromWorkerJson(ackJson, &ackError);
+              }
+            }
           }
         }
       }
@@ -13594,9 +14412,10 @@ private:
                                    const QString &role,
                                    const QString &peerEndpoint,
                                    const QString &expiresAt,
+                                   std::uint32_t maxClaims,
                                    quint64 generation) {
     const QPointer<ChaftController> guard(this);
-    const auto createFn = m_createWorkspaceInviteJson;
+    const auto createFn = m_createWorkspaceInviteWithMaxClaimsJson;
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
     const auto freeString = m_freeString;
@@ -13610,7 +14429,7 @@ private:
     auto *thread = QThread::create(
         [guard, createFn, snapshotFn, snapshotLatestFn, freeString, runtimeDir,
          identityFile, workspaceId, displayName, role, peerEndpoint, expiresAt,
-         syncExpectation, generation, timelineLimit]() {
+         maxClaims, syncExpectation, generation, timelineLimit]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -13627,7 +14446,8 @@ private:
                            ? nullptr
                            : identityFileBytes.constData(),
                        workspaceIdBytes.constData(), displayNameBytes.constData(),
-                       roleBytes.constData(), expiresAtBytes.constData(),
+                       roleBytes.constData(), maxClaims,
+                       expiresAtBytes.constData(),
                        peerEndpointBytes.constData(),
                        syncExpectationBytes.constData()),
               freeString, &error);
@@ -13655,43 +14475,149 @@ private:
           }
           QMetaObject::invokeMethod(
               guard.data(),
-              [guard, value, artifactJson, error, snapshotValue, snapshotError,
-               workspaceId, generation]() {
+              [guard, value, artifactJson, error, snapshotValue, workspaceId,
+               generation]() {
                 if (guard.isNull()) {
                   return;
                 }
                 guard->setKeyTransferInFlight(false);
-                if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
-                  guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
-                                                              workspaceId);
-                  return;
-                }
                 if (value.isEmpty() || artifactJson.isEmpty()) {
-                  guard->setSyncStatus(error.isEmpty()
-                                           ? QStringLiteral("secure invite unavailable")
-                                           : error);
+                  guard->setSyncStatus(
+                      error.isEmpty() ? QStringLiteral("secure invite unavailable")
+                                      : error);
                   return;
                 }
-                if (snapshotValue.isEmpty()) {
-                  guard->setSyncStatus(snapshotError);
+                // Runtime success activates the capability. Persist it before
+                // relying on the follow-up snapshot so refresh failure cannot
+                // leave an active invite with no shareable artifact.
+                const auto artifactRemembered =
+                    guard->rememberWorkspaceInviteArtifact(artifactJson);
+                if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
+                  guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
                   return;
                 }
                 if (guard->m_workspaceId != workspaceId) {
-                  guard->setSyncStatus(QStringLiteral(
-                      "secure invite created after switching workspaces"));
+                  guard->setSyncStatus(
+                      artifactRemembered
+                          ? QStringLiteral(
+                                "secure invite created and saved after switching workspaces")
+                          : QStringLiteral(
+                                "secure invite created after switching workspaces; return and save it before quitting"));
                   guard->m_lastAppliedRuntimeWriteGeneration = generation;
                   return;
                 }
-                guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
-                const auto artifactRemembered =
-                    guard->rememberWorkspaceInviteArtifact(artifactJson);
                 guard->setKeyTransferJson(artifactJson);
+                if (snapshotValue.isEmpty()) {
+                  guard->setSyncStatus(
+                      artifactRemembered
+                          ? QStringLiteral(
+                                "secure invite ready; workspace refresh will retry")
+                          : QStringLiteral(
+                                "secure invite ready; copy or save it before creating another"));
+                  guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
+                  return;
+                }
+                guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->setSyncStatus(
                     artifactRemembered
                         ? QStringLiteral("secure invite ready to share")
                         : QStringLiteral(
                               "secure invite ready; copy or save it before creating another"));
+              },
+              Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+  }
+
+  void runWorkspaceInviteClaim(const QString &claimJson, quint64 generation) {
+    const QPointer<ChaftController> guard(this);
+    const auto claimFn = m_claimWorkspaceInviteJson;
+    const auto snapshotFn = m_runtimeSnapshotJson;
+    const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
+    const auto freeString = m_freeString;
+    const auto runtimeDir = m_runtimeDir;
+    const auto identityFile = m_identityFile;
+    const auto workspaceId = m_workspaceId;
+    const auto timelineLimit = configuredTimelineLimit();
+    auto *thread = QThread::create(
+        [guard, claimFn, snapshotFn, snapshotLatestFn, freeString, runtimeDir,
+         identityFile, workspaceId, claimJson, generation, timelineLimit]() {
+          const auto runtimeDirBytes = runtimeDir.toUtf8();
+          const auto identityFileBytes = identityFile.toUtf8();
+          const auto workspaceIdBytes = workspaceId.toUtf8();
+          const auto claimBytes = claimJson.toUtf8();
+
+          QString error;
+          const auto resultJson = takeWorkerFfiString(
+              claimFn(runtimeDirBytes.constData(),
+                      identityFileBytes.isEmpty()
+                          ? nullptr
+                          : identityFileBytes.constData(),
+                      claimBytes.constData()),
+              freeString, &error);
+          const auto value =
+              error.isEmpty() ? resultValueFromWorkerJson(resultJson, &error)
+                              : QJsonObject();
+          const auto response = value.value(QStringLiteral("response")).toObject();
+          const auto responseBytes =
+              response.isEmpty()
+                  ? QByteArray()
+                  : QJsonDocument(response).toJson(QJsonDocument::Indented);
+          if (error.isEmpty() &&
+              responseBytes.size() > kMaxKeyTransferJsonBytes) {
+            error = QStringLiteral("secure access response is too large");
+          }
+
+          QJsonObject snapshotValue;
+          QString snapshotError;
+          if (error.isEmpty() && !responseBytes.isEmpty()) {
+            snapshotValue = latestRuntimeSnapshotValue(
+                snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
+                identityFileBytes, workspaceIdBytes, timelineLimit,
+                &snapshotError);
+          }
+
+          if (guard.isNull()) {
+            return;
+          }
+          QMetaObject::invokeMethod(
+              guard.data(),
+              [guard, workspaceId, generation, error, responseBytes,
+               snapshotValue, snapshotError]() {
+                if (guard.isNull()) {
+                  return;
+                }
+                guard->setKeyTransferInFlight(false);
+                if (!error.isEmpty() || responseBytes.isEmpty()) {
+                  const auto message =
+                      error.isEmpty()
+                          ? QStringLiteral("secure invite claim could not be accepted")
+                          : error;
+                  guard->setSyncStatus(message);
+                  emit guard->workspaceInviteClaimFinished(false, message);
+                  return;
+                }
+
+                if (guard->m_workspaceId == workspaceId &&
+                    generation >= guard->m_lastAppliedRuntimeWriteGeneration) {
+                  if (!snapshotValue.isEmpty()) {
+                    guard->applyRuntimeSnapshot(snapshotValue, false);
+                    guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                  } else {
+                    guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
+                  }
+                }
+                guard->setKeyTransferJson(QString::fromUtf8(responseBytes));
+                const auto message = snapshotValue.isEmpty() &&
+                                             !snapshotError.isEmpty()
+                                         ? QStringLiteral(
+                                               "secure access ready; workspace refresh will retry")
+                                         : QStringLiteral(
+                                               "secure access ready to return");
+                guard->setSyncStatus(message);
+                emit guard->workspaceInviteClaimFinished(true, message);
               },
               Qt::QueuedConnection);
         });
@@ -15178,20 +16104,39 @@ private:
           const auto ackValue =
               error.isEmpty() ? resultValueFromWorkerJson(ackJson, &error)
                               : QJsonObject();
-          if (guard.isNull() || ackValue.isEmpty()) {
+          if (guard.isNull()) {
             return;
           }
           QMetaObject::invokeMethod(
               guard.data(),
-              [guard, normalizedEntryId, clearCurrentHandoffSource]() {
+              [guard, normalizedEntryId, clearCurrentHandoffSource, ackValue,
+               error]() {
                 if (guard.isNull()) {
+                  return;
+                }
+                if (ackValue.isEmpty()) {
+                  const auto message =
+                      error.trimmed().isEmpty()
+                          ? QStringLiteral(
+                                "could not acknowledge the access response")
+                          : error;
+                  guard->setSyncStatus(message);
+                  if (clearCurrentHandoffSource) {
+                    emit guard->joinResponseInboxEntryAcknowledged(false,
+                                                                    message);
+                  }
                   return;
                 }
                 if (clearCurrentHandoffSource &&
                     guard->m_keyTransferJoinResponseInboxEntryId ==
                         normalizedEntryId) {
                   guard->m_keyTransferJoinResponseInboxEntryId.clear();
+                  guard->m_keyTransferJson.clear();
                   emit guard->keyTransferJsonChanged();
+                }
+                if (clearCurrentHandoffSource) {
+                  emit guard->joinResponseInboxEntryAcknowledged(true,
+                                                                  QString());
                 }
               },
               Qt::QueuedConnection);
@@ -15357,6 +16302,8 @@ private:
   RuntimeMarkChannelReadResultJsonFn m_markChannelReadJson = nullptr;
   RuntimeInviteMemberResultJsonFn m_inviteMemberJson = nullptr;
   RuntimeCreateWorkspaceInviteResultJsonFn m_createWorkspaceInviteJson = nullptr;
+  RuntimeCreateWorkspaceInviteWithMaxClaimsResultJsonFn
+      m_createWorkspaceInviteWithMaxClaimsJson = nullptr;
   RuntimePrepareWorkspaceInviteClaimResultJsonFn
       m_prepareWorkspaceInviteClaimJson = nullptr;
   RuntimeWorkspaceInviteEnvelopeResultJsonFn m_claimWorkspaceInviteJson = nullptr;
@@ -15414,6 +16361,8 @@ private:
       nullptr;
   RuntimePullJoinAccessDirectResultJsonFn m_pullJoinResponsesDirectJson =
       nullptr;
+  RuntimePullJoinResponsesForRequestsDirectResultJsonFn
+      m_pullJoinResponsesForRequestsDirectJson = nullptr;
   RuntimeWorkspacePublishQueueResultJsonFn m_workspacePublishQueueJson =
       nullptr;
   RuntimeWorkspaceStorageHealthResultJsonFn m_workspaceStorageHealthJson =
@@ -15423,6 +16372,8 @@ private:
   RuntimeStartDirectPeerResultJsonFn m_startDirectPeerJson = nullptr;
   RuntimeStartIrohPeerResultJsonFn m_startIrohPeerJson = nullptr;
   RuntimeListJoinRequestInboxResultJsonFn m_listJoinRequestInboxJson = nullptr;
+  RuntimeListJoinRequestInboxForWorkspaceResultJsonFn
+      m_listJoinRequestInboxForWorkspaceJson = nullptr;
   RuntimeAckJoinRequestInboxEntryResultJsonFn
       m_ackJoinRequestInboxEntryJson = nullptr;
   RuntimeQueueJoinRequestOutboxResultJsonFn m_queueJoinRequestOutboxJson =
@@ -15433,8 +16384,12 @@ private:
       nullptr;
   RuntimeSubmitJoinRequestOutboxEntryDirectResultJsonFn
       m_submitJoinRequestOutboxEntryDirectJson = nullptr;
+  RuntimeAckJoinRequestOutboxEntryResultJsonFn
+      m_ackJoinRequestOutboxEntryJson = nullptr;
   RuntimeListJoinResponseInboxResultJsonFn m_listJoinResponseInboxJson =
       nullptr;
+  RuntimeListJoinResponseInboxScopedResultJsonFn
+      m_listJoinResponseInboxScopedJson = nullptr;
   RuntimeAckJoinResponseInboxEntryResultJsonFn
       m_ackJoinResponseInboxEntryJson = nullptr;
   RuntimeStageJoinResponseInboxResultJsonFn m_stageJoinResponseInboxJson = nullptr;
@@ -15446,6 +16401,8 @@ private:
       nullptr;
   RuntimeSubmitJoinResponseOutboxEntryDirectResultJsonFn
       m_submitJoinResponseOutboxEntryDirectJson = nullptr;
+  RuntimeAckJoinResponseOutboxEntryResultJsonFn
+      m_ackJoinResponseOutboxEntryJson = nullptr;
   RuntimeStopDirectPeerResultJsonFn m_stopDirectPeerJson = nullptr;
   RuntimeSetIdentityPassphraseFn m_setIdentityPassphrase = nullptr;
   RuntimeClearIdentityPassphraseFn m_clearIdentityPassphrase = nullptr;
@@ -15480,6 +16437,8 @@ private:
   QVariantMap m_composerDrafts;
   QVariantMap m_pendingJoinRequests;
   QVariantMap m_workspaceInviteArtifacts;
+  bool m_workspaceInviteArtifactStoreCanBeRewritten = true;
+  bool m_workspaceInviteArtifactStoreDirty = false;
   QVariantMap m_windowGeometry;
   QString m_themeId;
   QString m_themeMode = QStringLiteral("manual");

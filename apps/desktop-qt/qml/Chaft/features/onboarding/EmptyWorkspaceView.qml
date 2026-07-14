@@ -39,7 +39,7 @@ Item {
         {
             step: "2",
             title: "Invite people",
-            caption: "Share one invite with each teammate"
+            caption: "Choose how many devices each invite can admit"
         },
         {
             step: "3",
@@ -101,7 +101,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Pending requests"
+                    text: "Pending access"
                     color: Tokens.textStrong
                     font.pixelSize: Tokens.fontSizeXs
                     font.weight: Font.DemiBold
@@ -114,6 +114,8 @@ Item {
                     delegate: Rectangle {
                         id: pendingRequestCard
                         required property var modelData
+                        readonly property bool secureClaim: String(
+                            modelData.sourceType || "").trim() === "invite_claim"
 
                         Layout.fillWidth: true
                         implicitHeight: pendingRequestContent.implicitHeight + Tokens.space3 * 2
@@ -255,12 +257,21 @@ Item {
                                         || pendingRequestCard.modelData.canShareRequest
                                     text: pendingRequestCard.modelData.status === "approved"
                                         && pendingRequestCard.modelData.canOpenInvite
-                                        ? "Open invite"
-                                        : (pendingRequestCard.modelData.status === "sent"
+                                        ? (pendingRequestCard.secureClaim
+                                            ? "Open access"
+                                            : "Open invite")
+                                        : ((pendingRequestCard.modelData.status === "sent"
+                                                || pendingRequestCard.modelData.status === "sent_unpersisted"
+                                                || pendingRequestCard.modelData.status === "unverified_response")
                                             && pendingRequestCard.modelData.canCheckResponse
                                             ? (chaftController.accessEnvelopePullInFlight
                                                 ? "Checking..."
-                                                : "Check for approval")
+                                                : (pendingRequestCard.modelData.status === "unverified_response"
+                                                        || pendingRequestCard.modelData.status === "sent_unpersisted"
+                                                    ? "Check again"
+                                                    : (pendingRequestCard.secureClaim
+                                                        ? "Check for access"
+                                                        : "Check for approval")))
                                             : (pendingRequestCard.modelData.status === "sending"
                                                 ? "Sending..."
                                                 : (pendingRequestCard.modelData.status === "send_failed"
@@ -268,7 +279,9 @@ Item {
                                                     : (pendingRequestCard.modelData.canSendDirect
                                                         ? "Send now"
                                                         : (pendingRequestCard.modelData.canShareRequest
-                                                            ? "Copy request link"
+                                                            ? (pendingRequestCard.secureClaim
+                                                                ? "Copy claim"
+                                                                : "Copy request link")
                                                             : "Open invite")))))
                                     enabled: !chaftController.joinRequestSubmitInFlight
                                         && !chaftController.accessEnvelopePullInFlight
@@ -277,7 +290,9 @@ Item {
                                         if (pendingRequestCard.modelData.status === "approved"
                                                 && pendingRequestCard.modelData.canOpenInvite) {
                                             root.app.openWorkspaceEntry("join")
-                                        } else if (pendingRequestCard.modelData.status === "sent"
+                                        } else if ((pendingRequestCard.modelData.status === "sent"
+                                                    || pendingRequestCard.modelData.status === "sent_unpersisted"
+                                                    || pendingRequestCard.modelData.status === "unverified_response")
                                                 && pendingRequestCard.modelData.canCheckResponse) {
                                             root.app.checkPendingAccessRequestResponse(
                                                 pendingRequestCard.modelData)
@@ -299,7 +314,9 @@ Item {
 
                                 Button {
                                     text: "⋯"
-                                    Accessible.name: "More request actions"
+                                    Accessible.name: pendingRequestCard.secureClaim
+                                        ? "More invite claim actions"
+                                        : "More request actions"
                                     onClicked: pendingRequestActionsMenu.open()
 
                                     Menu {
@@ -309,7 +326,9 @@ Item {
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.status === "sent"
                                                 && pendingRequestCard.modelData.canSendDirect
-                                            text: "Resend request"
+                                            text: pendingRequestCard.secureClaim
+                                                ? "Resend claim"
+                                                : "Resend request"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.sendPendingAccessRequest(
                                                 pendingRequestCard.modelData)
@@ -317,7 +336,9 @@ Item {
 
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.canShareRequest
-                                            text: "Copy request link"
+                                            text: pendingRequestCard.secureClaim
+                                                ? "Copy invite claim"
+                                                : "Copy request link"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.copyPendingAccessRequest(
                                                 pendingRequestCard.modelData)
@@ -325,7 +346,9 @@ Item {
 
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.canShareRequest
-                                            text: "Save request file"
+                                            text: pendingRequestCard.secureClaim
+                                                ? "Save claim file"
+                                                : "Save request file"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.openSavePendingAccessRequestDialog(
                                                 pendingRequestCard.modelData)
@@ -334,7 +357,9 @@ Item {
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.canCheckResponse
                                                 && pendingRequestCard.modelData.status !== "sent"
-                                            text: "Check for approval"
+                                            text: pendingRequestCard.secureClaim
+                                                ? "Check for access"
+                                                : "Check for approval"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                                 && !chaftController.accessEnvelopePullInFlight
                                             onTriggered: root.app.checkPendingAccessRequestResponse(
@@ -342,7 +367,9 @@ Item {
                                         }
 
                                         MenuItem {
-                                            text: "Hide request"
+                                            text: pendingRequestCard.secureClaim
+                                                ? "Hide claim"
+                                                : "Hide request"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.confirmDismissPendingAccessRequest(
                                                 pendingRequestCard.modelData)

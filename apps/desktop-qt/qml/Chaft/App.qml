@@ -7,6 +7,9 @@ import Chaft
 
 ApplicationWindow {
     id: root
+    signal keyTransferFileSaveFinished(bool success, string label,
+                                       string artifactKind, string operationToken)
+    property int keyTransferFileSaveSequence: 0
     width: root.restoredWindowWidth()
     height: root.restoredWindowHeight()
     minimumWidth: 1040
@@ -175,7 +178,10 @@ ApplicationWindow {
     property string pendingWorkspaceImportSource: ""
     property string pendingExternalLink: ""
     property string pendingAccessRequestSaveText: ""
+    property string pendingAccessRequestSaveKey: ""
+    property string pendingAccessRequestSaveLabel: "access request"
     property string pendingAccessRequestSendingKey: ""
+    property string pendingAccessRequestSentUnpersistedKey: ""
     property string pendingAccessResponseAutoCheckLastKey: ""
     property int lastNotificationUnreadCount: 0
     property bool unreadNotificationsReady: false
@@ -759,6 +765,8 @@ ApplicationWindow {
             } else if (id.indexOf("replace-workspace-invite:") === 0) {
                 setupPanel.startPendingWorkspaceInviteReplacement(
                     id.slice("replace-workspace-invite:".length))
+            } else if (id === "discard-secure-invite-response") {
+                setupPanel.discardSecureInviteResponse()
             } else if (id.indexOf("dismiss-pending-access-request:") === 0) {
                 root.dismissPendingAccessRequest({
                     key: id.slice("dismiss-pending-access-request:".length)
@@ -1156,8 +1164,14 @@ ApplicationWindow {
         if (status === "closed" && resolvedAt.length > 0) {
             return "Closed " + resolvedAt
         }
+        if (status === "unverified_response" && resolvedAt.length > 0) {
+            return "Notice received " + resolvedAt
+        }
         if (status === "sent" && sentAt.length > 0) {
             return "Sent " + sentAt
+        }
+        if (status === "sent_unpersisted") {
+            return "Sent · storage retry needed"
         }
         if (status === "send_failed" && lastAttemptAt.length > 0) {
             return "Last tried " + lastAttemptAt
@@ -1187,6 +1201,15 @@ ApplicationWindow {
                 ? "Encrypted workspace access is ready. Open it here to finish joining."
                 : "An admin approved this request. Open the received invite here to finish joining."
         }
+        if (status === "unverified_response") {
+            var notice = String((row && row.error) || "").trim()
+            return notice.length > 0
+                ? notice
+                : "An unsigned response was received. Confirm it with a workspace admin before hiding or resending this request."
+        }
+        if (status === "sent_unpersisted") {
+            return "The request was sent, but Chaft could not save that status. Restore disk access; response checks will keep running."
+        }
         if (status === "declined") {
             return "An admin declined this request. Ask for a fresh invite or send a new request if this changed."
         }
@@ -1205,24 +1228,37 @@ ApplicationWindow {
         }
         if (status === "sending") {
             return secureClaim
-                ? "Delivering the one-time claim to " + label + "."
+                ? "Delivering the signed claim to " + label + "."
                 : "Sending to " + label + "."
         }
         if (status === "send_failed") {
             if (secureClaim) {
                 return "Could not reach " + label
-                    + ". Try again when their Chaft device is reachable."
+                    + ". Copy or save the claim, or try again when their Chaft device is reachable."
             }
             return "Could not reach " + label
                 + ". Copy the request link or save the file, then send it to them. Check after they approve, then open the invite here."
         }
         if (status === "copied") {
-            return "Send the copied request link to " + label
-                + ". Check after they approve, then open the invite here."
+            return secureClaim
+                ? "Send the copied invite claim to " + label
+                    + ", then open the encrypted access response here."
+                : "Send the copied request link to " + label
+                    + ". Check after they approve, then open the invite here."
         }
         if (status === "file_ready") {
-            return "Save or send the request file to " + label
-                + ". Check after they approve, then open the invite here."
+            return secureClaim
+                ? "Send the saved invite claim file to " + label
+                    + ", then open the encrypted access response here."
+                : "Save or send the request file to " + label
+                    + ". Check after they approve, then open the invite here."
+        }
+        if (secureClaim) {
+            return row.canSendDirect
+                ? "Send the claim now, or copy or save it for " + label
+                    + ". Open the encrypted access response here when it arrives."
+                : "Copy or save the invite claim, then send it to " + label
+                    + ". Open the encrypted access response here when it arrives."
         }
         return row.canSendDirect
             ? "Send it now, or share the request link or file with "
@@ -1577,11 +1613,7 @@ ApplicationWindow {
     }
 
     function preferredInvitePeerEndpoint() {
-        var hostedEndpoint = String(chaftController.hostedPeerEndpoint || "").trim()
-        if (hostedEndpoint.length > 0) {
-            return hostedEndpoint
-        }
-        return root.preferredSyncPeerEndpoint()
+        return String(chaftController.hostedPeerEndpoint || "").trim()
     }
 
     function preferredManualBackupPeerEndpoint() {
@@ -4354,6 +4386,64 @@ ApplicationWindow {
         return isFinite(timestamp) && timestamp <= Date.now()
     }
 
+    function inviteMaxClaims(invite) {
+        var value = Number(invite && invite.maxClaims)
+        if (!isFinite(value) || value < 1) {
+            return 1
+        }
+        return Math.floor(value)
+    }
+
+    function inviteClaimCount(invite) {
+        var maximum = root.inviteMaxClaims(invite)
+        var value = Number(invite && invite.claimCount)
+        if (!isFinite(value) || value < 0) {
+            return 0
+        }
+        return Math.min(maximum, Math.floor(value))
+    }
+
+    function inviteRemainingClaims(invite) {
+        var maximum = root.inviteMaxClaims(invite)
+        var explicit = invite && invite.remainingClaims !== undefined
+                && invite.remainingClaims !== null
+            ? Number(invite.remainingClaims)
+            : NaN
+        if (isFinite(explicit) && explicit >= 0) {
+            return Math.min(maximum, Math.floor(explicit))
+        }
+        return Math.max(0, maximum - root.inviteClaimCount(invite))
+    }
+
+    function inviteClaimLimitLabel(invite) {
+        var maximum = root.inviteMaxClaims(invite)
+        return maximum === 1 ? "1 claim" : maximum + " claims"
+    }
+
+    function inviteClaimAvailabilityLabel(invite) {
+        var maximum = root.inviteMaxClaims(invite)
+        var remaining = root.inviteRemainingClaims(invite)
+        if (remaining === 0) {
+            return "No claims remaining"
+        }
+        if (maximum === 1) {
+            return "1 claim remaining"
+        }
+        return remaining + " of " + maximum + " claims remaining"
+    }
+
+    function inviteClaimUsageLabel(invite) {
+        var maximum = root.inviteMaxClaims(invite)
+        var used = root.inviteClaimCount(invite)
+        if (used === 0) {
+            return "No claims used"
+        }
+        if (maximum === 1) {
+            return "1 claim used"
+        }
+        return used + " of " + maximum + " claims used"
+    }
+
     function inviteApprovalLabel(policy) {
         var value = String(policy || "preapproved").trim()
         return value === "admin_required" ? "Needs admin approval" : "Approved when created"
@@ -4463,6 +4553,7 @@ ApplicationWindow {
             return false
         }
         var existingText = String(workspaceEntryDialog.credentialsText || "").trim()
+        var secureResponse = root.keyTransferIsInviteResponse()
         var shouldForce = forceOpen === true
         var waitingForThisApproval = workspaceEntryDialog.visible
             && workspaceEntryDialog.joinRequestPrepared
@@ -4474,7 +4565,9 @@ ApplicationWindow {
                 && !shouldForce) {
             toastHost.show(
                 "success",
-                "Approval received. Finish the open handoff or open the new invite when ready.",
+                secureResponse
+                    ? "Encrypted access received. Finish the open handoff or open it when ready."
+                    : "Approval received. Finish the open handoff or open the new invite when ready.",
                 "Open",
                 "open-received-approval",
                 9000)
@@ -4499,7 +4592,9 @@ ApplicationWindow {
         })
         toastHost.show(
             "success",
-            "Approval received. Review the invite and join when ready.",
+            secureResponse
+                ? "Encrypted access received. Review it and join when ready."
+                : "Approval received. Review the invite and join when ready.",
             "Open",
             "open-received-approval",
             7000)
@@ -4898,6 +4993,11 @@ ApplicationWindow {
             if (row !== null) {
                 rows.push(row)
             }
+            row = root.credentialSummaryRow("Claim limit",
+                root.inviteClaimLimitLabel(parsed))
+            if (row !== null) {
+                rows.push(row)
+            }
             row = root.credentialSummaryRow("Expires", root.inviteExpiryLabel(parsed.expiresAt))
             if (row !== null) {
                 rows.push(row)
@@ -4906,7 +5006,10 @@ ApplicationWindow {
                 title: claimInviteExpired ? "Invite expired" : "Secure invite ready",
                 message: claimInviteExpired
                     ? "Ask a workspace admin for a new invite."
-                    : "Claim this invite from this device. The workspace key stays encrypted until the invite is accepted.",
+                    : (root.inviteMaxClaims(parsed) === 1
+                        ? "Claim this invite from this device. The workspace key stays encrypted until the claim is accepted."
+                        : "This invite allows up to " + root.inviteMaxClaims(parsed)
+                            + " device claims. Claim it from this device; the workspace key stays encrypted until this claim is accepted."),
                 rows: rows,
                 canImport: false,
                 warning: claimInviteExpired
@@ -5075,8 +5178,13 @@ ApplicationWindow {
             root.clearPendingWorkspaceImport()
             workspaceEntryDialog.clearCredentialImportFailure()
             if (peerEndpoint.length > 0) {
+                chaftController.defaultPeerEndpoint = peerEndpoint
                 root.pendingJoinPeerEndpoint = peerEndpoint
-                root.clearJoinWaitingForPeer()
+                root.rememberJoinWaitingForPeer(
+                    workspaceId,
+                    false,
+                    source,
+                    privateRoomCount)
                 root.pullPendingJoinPeerIfReady()
             } else {
                 root.rememberJoinWaitingForPeer(
@@ -5156,9 +5264,6 @@ ApplicationWindow {
         if (peerEndpoint.length === 0 && packagePeerEndpoint.length > 0) {
             peerEndpoint = packagePeerEndpoint
             workspaceEntryDialog.peerEndpointText = peerEndpoint
-        }
-        if (peerEndpoint.length > 0) {
-            chaftController.defaultPeerEndpoint = peerEndpoint
         }
         var passphrase = workspaceEntryDialog.recoveryPassphraseText.trim()
         var parsedCredential = root.parsedCredentialObject(credentials)
@@ -5486,7 +5591,11 @@ ApplicationWindow {
             return "secure access"
         }
         if (root.keyTransferIsJoinRequest()) {
-            return "access request"
+            var request = root.keyTransferObject()
+            return String((request && request.kind) || "")
+                === "chaft.workspace-invite-claim.v1"
+                ? "invite claim"
+                : "access request"
         }
         if (root.keyTransferIsWorkspaceCard()) {
             return "request card"
@@ -5577,7 +5686,8 @@ ApplicationWindow {
                 || kind === "chaft.workspace-invite.v2") {
             return root.inviteArtifactObject(parsed)
         }
-        if (kind === "chaft.workspace-join-request.v1") {
+        if (kind === "chaft.workspace-join-request.v1"
+                || kind === "chaft.workspace-invite-claim.v1") {
             return root.joinRequestArtifactObject(parsed)
         }
         if (kind === "chaft.workspace-card.v1") {
@@ -5602,7 +5712,8 @@ ApplicationWindow {
                 || String(parsed.kind || "") === "chaft.workspace-invite.v2") {
             return root.artifactLink("chaft-invite:", root.inviteArtifactObject(parsed))
         }
-        if (String(parsed.kind || "") === "chaft.workspace-join-request.v1") {
+        if (String(parsed.kind || "") === "chaft.workspace-join-request.v1"
+                || String(parsed.kind || "") === "chaft.workspace-invite-claim.v1") {
             return root.artifactLink("chaft-request:", root.joinRequestArtifactObject(parsed))
         }
         if (String(parsed.kind || "") === "chaft.workspace-card.v1") {
@@ -5616,7 +5727,7 @@ ApplicationWindow {
             return "invite link"
         }
         if (root.keyTransferIsJoinRequest()) {
-            return "access request"
+            return root.keyTransferLabel()
         }
         if (root.keyTransferIsWorkspaceCard()) {
             return "request link"
@@ -5631,12 +5742,13 @@ ApplicationWindow {
 
     function keyTransferFileExtension(label) {
         var normalized = String(label || root.keyTransferLabel()).toLowerCase()
-        if (normalized.indexOf("invite") >= 0) {
-            return ".chaftinvite"
-        }
-        if (normalized.indexOf("join request") >= 0
+        if (normalized.indexOf("invite claim") >= 0
+                || normalized.indexOf("join request") >= 0
                 || normalized.indexOf("access request") >= 0) {
             return ".chaftrequest"
+        }
+        if (normalized.indexOf("invite") >= 0) {
+            return ".chaftinvite"
         }
         if (normalized.indexOf("workspace card") >= 0
                 || normalized.indexOf("request card") >= 0
@@ -5648,20 +5760,24 @@ ApplicationWindow {
         }
         if (normalized.indexOf("access file") >= 0
                 || normalized.indexOf("workspace access") >= 0
-                || normalized.indexOf("room access") >= 0) {
+                || normalized.indexOf("room access") >= 0
+                || normalized.indexOf("secure access") >= 0) {
             return ".chaftaccess"
         }
         return ".json"
     }
 
     function keyTransferNameFilters(label) {
+        var normalized = String(label || root.keyTransferLabel()).toLowerCase()
         var extension = root.keyTransferFileExtension(label)
         var olderSupportFilter = "Older support files (*.json)"
         if (extension === ".chaftinvite") {
             return [ "Chaft invites (*.chaftinvite)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftrequest") {
-            return [ "Chaft access requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
+            return normalized.indexOf("invite claim") >= 0
+                ? [ "Chaft invite claims (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
+                : [ "Chaft access requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftworkspace") {
             return [ "Chaft request cards (*.chaftworkspace)", olderSupportFilter, "All files (*)" ]
@@ -5877,6 +5993,8 @@ ApplicationWindow {
                 row.deliveryHasAddress = String(row.deliveryPeerEndpoint || "").trim().length > 0
                 row.sourceLabel = root.joinRequestSourceLabel(row)
                 row.status = String(row.status || "ready_to_send").trim()
+                var secureClaim = String(row.sourceType || "").trim()
+                    === "invite_claim"
                 var badgeLabels = {
                     approved: "Approved",
                     closed: "Closed",
@@ -5886,7 +6004,9 @@ ApplicationWindow {
                     ready_to_send: "Ready",
                     send_failed: "Not sent",
                     sending: "Sending",
-                    sent: "Waiting"
+                    sent: "Waiting",
+                    sent_unpersisted: "Storage",
+                    unverified_response: "Review"
                 }
                 var titleLabels = {
                     approved: "Approval received",
@@ -5897,10 +6017,32 @@ ApplicationWindow {
                     ready_to_send: "Request ready",
                     send_failed: "Request not sent",
                     sending: "Sending request",
-                    sent: "Waiting for approval"
+                    sent: "Waiting for approval",
+                    sent_unpersisted: "Sent; status not saved",
+                    unverified_response: "Unverified response"
+                }
+                if (secureClaim) {
+                    badgeLabels.approved = "Ready"
+                    titleLabels = {
+                        approved: "Encrypted access received",
+                        closed: "Invite claim closed",
+                        copied: "Invite claim copied",
+                        declined: "Invite claim declined",
+                        file_ready: "Claim file ready",
+                        ready_to_send: "Invite claim ready",
+                        send_failed: "Invite claim not sent",
+                        sending: "Sending invite claim",
+                        sent: "Waiting for secure access",
+                        sent_unpersisted: "Sent; status not saved",
+                        unverified_response: "Unverified response"
+                    }
                 }
                 if (row.key === root.pendingAccessRequestSendingKey) {
                     row.status = "sending"
+                } else if (row.key === root.pendingAccessRequestSentUnpersistedKey
+                           && (row.status === "ready_to_send"
+                               || row.status === "sending")) {
+                    row.status = "sent_unpersisted"
                 } else if (row.status === "sending") {
                     // The app restarted before the in-flight send resolved.
                     // Keep the persisted artifact available for a safe retry.
@@ -5908,10 +6050,6 @@ ApplicationWindow {
                 } else if (!Object.prototype.hasOwnProperty.call(
                                badgeLabels, row.status)) {
                     row.status = "ready_to_send"
-                }
-                if (row.status === "sent"
-                        && String(row.sourceType || "").trim() === "invite_claim") {
-                    titleLabels.sent = "Waiting for secure access"
                 }
                 row.isTerminalStatus = row.status === "approved"
                     || row.status === "declined"
@@ -5921,11 +6059,13 @@ ApplicationWindow {
                 row.canSendDirect = row.deliveryHasAddress
                     && root.runtimeAccessReady
                     && !row.isTerminalStatus
+                    && row.status !== "sent_unpersisted"
                     && String(row.artifact || "").trim().length > 0
                 row.canShareRequest = !row.isTerminalStatus
                     && String(row.artifact || "").trim().length > 0
                 row.canOpenInvite = row.status !== "declined"
                     && row.status !== "closed"
+                    && row.status !== "unverified_response"
                 row.canCheckResponse = row.deliveryHasAddress
                     && root.runtimeAccessReady
                     && !row.isTerminalStatus
@@ -5957,8 +6097,12 @@ ApplicationWindow {
         return ({})
     }
 
-    function recordPendingAccessRequestFromCurrentJoinRequest(status) {
-        if (!root.keyTransferIsJoinRequest()) {
+    function recordPendingAccessRequestFromArtifact(status, artifactText) {
+        var normalizedArtifactText = String(artifactText || "").trim()
+        var request = root.parsedCredentialObject(normalizedArtifactText)
+        var kind = String((request && request.kind) || "")
+        if (kind !== "chaft.workspace-join-request.v1"
+                && kind !== "chaft.workspace-invite-claim.v1") {
             return false
         }
         var normalizedStatus = String(status || "ready_to_send").trim()
@@ -5969,15 +6113,13 @@ ApplicationWindow {
                 && normalizedStatus !== "sending") {
             normalizedStatus = "ready_to_send"
         }
-        var request = root.keyTransferObject()
         var workspaceId = String(request.workspaceId || "").trim()
         var requestId = String(request.requestId || "").trim()
         var key = workspaceId.length > 0 ? workspaceId : requestId
         if (key.length === 0) {
             return false
         }
-        var artifactText = root.keyTransferFileText()
-        if (artifactText.trim().length === 0) {
+        if (normalizedArtifactText.length === 0) {
             return false
         }
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
@@ -6004,10 +6146,17 @@ ApplicationWindow {
                     || normalizedStatus === "sending"
                 ? now
                 : String(existing.lastAttemptAt || ""),
-            artifact: artifactText
+            artifact: normalizedArtifactText
         }
-        chaftController.pendingJoinRequests = next
-        return true
+        return chaftController.storePendingJoinRequests(next)
+    }
+
+    function recordPendingAccessRequestFromCurrentJoinRequest(status) {
+        if (!root.keyTransferIsJoinRequest()) {
+            return false
+        }
+        return root.recordPendingAccessRequestFromArtifact(
+            status, root.keyTransferFileText())
     }
 
     function pendingAccessRequestCopyText(row) {
@@ -6027,7 +6176,10 @@ ApplicationWindow {
         if (text.length === 0) {
             return false
         }
-        if (!root.copyTextToClipboard(text, "access request")) {
+        var secureClaim = String((row && row.sourceType) || "").trim()
+            === "invite_claim"
+        if (!root.copyTextToClipboard(
+                text, secureClaim ? "invite claim" : "access request")) {
             return false
         }
         if (String((row && row.status) || "").trim() !== "sent") {
@@ -6045,12 +6197,16 @@ ApplicationWindow {
             return false
         }
         root.pendingAccessRequestSaveText = artifactText
+        root.pendingAccessRequestSaveKey = String(
+            (row && (row.key || row.workspaceId || row.requestId)) || "").trim()
+        root.pendingAccessRequestSaveLabel = String(
+            (row && row.sourceType) || "").trim() === "invite_claim"
+            ? "invite claim"
+            : "access request"
         pendingAccessRequestSaveDialog.selectedFile =
-            root.credentialSuggestedFileUrl(artifactText, "access request")
+            root.credentialSuggestedFileUrl(
+                artifactText, root.pendingAccessRequestSaveLabel)
         pendingAccessRequestSaveDialog.open()
-        if (String((row && row.status) || "").trim() !== "sent") {
-            root.updatePendingAccessRequestStatus(row, "file_ready", "")
-        }
         return true
     }
 
@@ -6094,8 +6250,11 @@ ApplicationWindow {
             delete updated.error
         }
         next[key] = updated
-        chaftController.pendingJoinRequests = next
-        return true
+        var stored = chaftController.storePendingJoinRequests(next)
+        if (stored && key === root.pendingAccessRequestSentUnpersistedKey) {
+            root.pendingAccessRequestSentUnpersistedKey = ""
+        }
+        return stored
     }
 
     function sendPendingAccessRequest(row) {
@@ -6112,7 +6271,16 @@ ApplicationWindow {
             return false
         }
         root.pendingAccessRequestSendingKey = key
-        root.updatePendingAccessRequestStatus(row, "ready_to_send", "")
+        if (!root.updatePendingAccessRequestStatus(row, "ready_to_send", "")) {
+            root.pendingAccessRequestSendingKey = ""
+            toastHost.show(
+                "warning",
+                "Could not save the access handoff. Free disk space or restore write access, then try again.",
+                "",
+                "",
+                6000)
+            return false
+        }
         if (!chaftController.submitWorkspaceJoinRequestDirect(
                     endpoint,
                     String(payload.workspaceId || row.workspaceId || "").trim(),
@@ -6120,10 +6288,15 @@ ApplicationWindow {
             root.pendingAccessRequestSendingKey = ""
             root.updatePendingAccessRequestStatus(row, "send_failed",
                                                   chaftController.syncStatus)
+            var secureClaim = String((row && row.sourceType) || "").trim()
+                === "invite_claim"
             toastHost.show(
                 "warning",
-                "Request not sent. Copy the request link or try again when "
-                    + row.deliveryLabel + " is reachable.",
+                secureClaim
+                    ? "Invite claim not sent. Copy or save it, or try again when "
+                        + row.deliveryLabel + " is reachable."
+                    : "Request not sent. Copy the request link or try again when "
+                        + row.deliveryLabel + " is reachable.",
                 "",
                 "",
                 6000)
@@ -6144,7 +6317,16 @@ ApplicationWindow {
         if (endpoint.length === 0 || workspaceId.length === 0) {
             return false
         }
-        if (!chaftController.pullAccessResponsesFromPeer(endpoint, workspaceId)) {
+        var requestId = String((row && row.requestId) || "").trim()
+        if (String((row && row.status) || "") === "sent_unpersisted") {
+            // Retry the durable status write, but do not block a response
+            // check: the request artifact and correlation ID were saved before
+            // network submission.
+            root.updatePendingAccessRequestStatus(row, "sent", "")
+        }
+        if (requestId.length === 0
+                || !chaftController.pullAccessResponsesFromPeer(
+                    endpoint, workspaceId, requestId)) {
             return false
         }
         if (userInitiated) {
@@ -6201,8 +6383,11 @@ ApplicationWindow {
             return false
         }
         delete next[key]
-        chaftController.pendingJoinRequests = next
-        return true
+        var stored = chaftController.storePendingJoinRequests(next)
+        if (stored && key === root.pendingAccessRequestSentUnpersistedKey) {
+            root.pendingAccessRequestSentUnpersistedKey = ""
+        }
+        return stored
     }
 
     function confirmDismissPendingAccessRequest(row) {
@@ -6211,10 +6396,15 @@ ApplicationWindow {
             return false
         }
         var workspace = String((row && row.workspaceLabel) || "this workspace").trim()
+        var secureClaim = String((row && row.sourceType) || "").trim()
+            === "invite_claim"
         confirmDialog.ask(
-            "Hide access request",
-            "Hide the access request reminder for " + workspace
-                + "? Keep the copied link or saved file before hiding. You can still open an invite here after an admin approves.",
+            secureClaim ? "Hide invite claim" : "Hide access request",
+            secureClaim
+                ? "Hide the invite claim reminder for " + workspace
+                    + "? Keep the copied claim or saved file before hiding. You can still open encrypted access here when it arrives."
+                : "Hide the access request reminder for " + workspace
+                    + "? Keep the copied link or saved file before hiding. You can still open an invite here after an admin approves.",
             "Hide",
             "dismiss-pending-access-request:" + key,
             false)
@@ -6244,8 +6434,11 @@ ApplicationWindow {
             return false
         }
         delete next[key]
-        chaftController.pendingJoinRequests = next
-        return true
+        var stored = chaftController.storePendingJoinRequests(next)
+        if (stored && key === root.pendingAccessRequestSentUnpersistedKey) {
+            root.pendingAccessRequestSentUnpersistedKey = ""
+        }
+        return stored
     }
 
     function outputPathWithExtension(path, extension) {
@@ -6267,13 +6460,33 @@ ApplicationWindow {
             String(label || root.keyTransferCopyLabel()))
     }
 
-    function openSaveKeyTransferDialog(label) {
-        if (chaftController.keyTransferJson.length === 0) {
+    function nextKeyTransferFileSaveToken() {
+        root.keyTransferFileSaveSequence += 1
+        return "key-transfer-save-" + String(Date.now()) + "-"
+            + String(root.keyTransferFileSaveSequence)
+    }
+
+    function openSaveKeyTransferDialog(label, operationToken,
+                                       trackPendingAccessRequest) {
+        if (saveKeyTransferDialog.visible
+                || chaftController.keyTransferJson.length === 0) {
             return false
         }
+        var transferText = root.keyTransferFileText()
+        if (String(transferText || "").trim().length === 0) {
+            return false
+        }
+        var transfer = root.keyTransferObject()
+        saveKeyTransferDialog.transferText = transferText
+        saveKeyTransferDialog.transferKind = String(
+            (transfer && transfer.kind) || "")
+        saveKeyTransferDialog.operationToken = String(
+            operationToken || root.nextKeyTransferFileSaveToken())
+        saveKeyTransferDialog.trackPendingAccessRequest =
+            trackPendingAccessRequest === true
         saveKeyTransferDialog.transferLabel = String(label || root.keyTransferLabel())
-        saveKeyTransferDialog.selectedFile = root.keyTransferSuggestedFileUrl(
-            saveKeyTransferDialog.transferLabel)
+        saveKeyTransferDialog.selectedFile = root.credentialSuggestedFileUrl(
+            transferText, saveKeyTransferDialog.transferLabel)
         saveKeyTransferDialog.open()
         return true
     }
@@ -6522,7 +6735,6 @@ ApplicationWindow {
             return false
         }
         root.pendingJoinPeerEndpoint = ""
-        root.clearJoinWaitingForPeer()
         peerEndpointField.text = endpoint
         root.autoSyncEnabled = true
         toastHost.show("info", "Fetching workspace history", "", "", 3000)
@@ -6939,23 +7151,56 @@ ApplicationWindow {
             root.maybeClearJoinWaitingForPeerFromStatus()
             root.handleWorkspaceEntryImportStatus()
         }
+        function onPendingJoinRequestsChanged() {
+            var key = root.pendingAccessRequestSentUnpersistedKey
+            if (key.length === 0) {
+                return
+            }
+            var requests = chaftController.pendingJoinRequests || ({})
+            if (!Object.prototype.hasOwnProperty.call(requests, key)) {
+                root.pendingAccessRequestSentUnpersistedKey = ""
+                return
+            }
+            var status = String((requests[key] || {}).status || "").trim()
+            if (status !== "ready_to_send" && status !== "sending") {
+                root.pendingAccessRequestSentUnpersistedKey = ""
+            }
+        }
         function onJoinRequestDirectSubmitFinished(success, message) {
             if (root.pendingAccessRequestSendingKey.length === 0) {
                 return
             }
             var row = root.pendingAccessRequestRowByKey(root.pendingAccessRequestSendingKey)
             var deliveryLabel = String(row.deliveryLabel || "the workspace admin")
+            var secureClaim = String(row.sourceType || "").trim()
+                === "invite_claim"
             row.key = root.pendingAccessRequestSendingKey
             root.pendingAccessRequestSendingKey = ""
-            root.updatePendingAccessRequestStatus(
+            var statusSaved = root.updatePendingAccessRequestStatus(
                 row,
                 success ? "sent" : "send_failed",
                 success ? "" : String(message || ""))
+            if (success && !statusSaved) {
+                root.pendingAccessRequestSentUnpersistedKey = row.key
+                toastHost.show(
+                    "warning",
+                    "Request sent, but its status could not be saved. Restore disk access; Chaft will keep checking for the response.",
+                    "",
+                    "",
+                    8000)
+                return
+            }
             var toastMessage = success
-                ? "Request sent to " + deliveryLabel
-                    + ". Wait for their invite after approval."
-                : "Request not sent. Copy the request link or try again when "
-                    + deliveryLabel + " is reachable."
+                ? (secureClaim
+                    ? "Invite claim sent to " + deliveryLabel
+                        + ". Chaft will check for encrypted access."
+                    : "Request sent to " + deliveryLabel
+                        + ". Wait for their invite after approval.")
+                : (secureClaim
+                    ? "Invite claim not sent. Copy or save it, or try again when "
+                        + deliveryLabel + " is reachable."
+                    : "Request not sent. Copy the request link or try again when "
+                        + deliveryLabel + " is reachable.")
             toastHost.show(
                 success ? "success" : "warning",
                 toastMessage,
@@ -7382,39 +7627,78 @@ ApplicationWindow {
     FileDialog {
         id: saveKeyTransferDialog
         property string transferLabel: "support detail"
+        property string transferText: ""
+        property string transferKind: ""
+        property string operationToken: ""
+        property bool trackPendingAccessRequest: false
         title: "Save " + transferLabel
         fileMode: FileDialog.SaveFile
         nameFilters: root.keyTransferNameFilters(transferLabel)
         onAccepted: {
+            var savedLabel = transferLabel
+            var savedText = transferText
+            var savedKind = transferKind
+            var savedToken = operationToken
+            var shouldTrackPendingAccessRequest = trackPendingAccessRequest
             var outputPath = root.outputPathWithExtension(
                 root.localPathFromUrl(selectedFile),
-                root.keyTransferFileExtension(transferLabel))
-            chaftController.saveTextFile(
+                root.keyTransferFileExtension(savedLabel))
+            var saved = chaftController.saveTextFile(
                 outputPath,
-                root.keyTransferFileText(),
-                transferLabel)
+                savedText,
+                savedLabel)
+            if (saved && shouldTrackPendingAccessRequest) {
+                saved = root.recordPendingAccessRequestFromArtifact(
+                    "file_ready", savedText)
+            }
+            root.keyTransferFileSaveFinished(
+                saved, savedLabel, savedKind, savedToken)
             transferLabel = "support detail"
+            transferText = ""
+            transferKind = ""
+            operationToken = ""
+            trackPendingAccessRequest = false
         }
-        onRejected: transferLabel = "support detail"
+        onRejected: {
+            transferLabel = "support detail"
+            transferText = ""
+            transferKind = ""
+            operationToken = ""
+            trackPendingAccessRequest = false
+        }
     }
 
     FileDialog {
         id: pendingAccessRequestSaveDialog
-        title: "Save access request"
+        title: "Save " + root.pendingAccessRequestSaveLabel
         fileMode: FileDialog.SaveFile
-        nameFilters: [ "Chaft access requests (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
+        nameFilters: root.pendingAccessRequestSaveLabel === "invite claim"
+            ? [ "Chaft invite claims (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
+            : [ "Chaft access requests (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
         onAccepted: {
             var outputPath = root.outputPathWithExtension(
                 root.localPathFromUrl(selectedFile),
                 ".chaftrequest")
-            chaftController.saveTextFile(
+            var saved = chaftController.saveTextFile(
                 outputPath,
                 root.pendingAccessRequestSaveText,
-                "access request")
+                root.pendingAccessRequestSaveLabel)
+            if (saved && root.pendingAccessRequestSaveKey.length > 0) {
+                var pendingRow = root.pendingAccessRequestRowByKey(
+                    root.pendingAccessRequestSaveKey)
+                if (String(pendingRow.status || "").trim() !== "sent") {
+                    root.updatePendingAccessRequestStatus(
+                        pendingRow, "file_ready", "")
+                }
+            }
             root.pendingAccessRequestSaveText = ""
+            root.pendingAccessRequestSaveKey = ""
+            root.pendingAccessRequestSaveLabel = "access request"
         }
         onRejected: {
             root.pendingAccessRequestSaveText = ""
+            root.pendingAccessRequestSaveKey = ""
+            root.pendingAccessRequestSaveLabel = "access request"
         }
     }
 
