@@ -107,13 +107,15 @@ Dialog {
     property string credentialImportFailureTitle: ""
     property string credentialImportFailureMessage: ""
     property string credentialImportFailureDetail: ""
+    readonly property bool handoffOperationPending: root.credentialImportPending
+        || root.joinRequestPreparedAction === "sending"
 
     modal: true
     width: Math.min(root.app.width - 48, 560)
     x: Math.round((root.app.width - width) / 2)
     y: Math.round((root.app.height - height) / 2)
     padding: Tokens.space4
-    closePolicy: root.credentialImportPending
+    closePolicy: root.handoffOperationPending
         ? Popup.NoAutoClose
         : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
 
@@ -583,30 +585,55 @@ Dialog {
     }
 
     function sendPreparedJoinRequest() {
-        if (root.prepareJoinRequest("prepared")
-                && chaftController.submitWorkspaceJoinRequestDirect(
-                    root.workspaceCardDeliveryPeerEndpoint(),
-                    root.joinRequestWorkspaceId(),
-                    chaftController.keyTransferJson)) {
+        if (!root.joinRequestPrepared && !root.prepareJoinRequest("prepared")) {
+            return
+        }
+        if (root.joinRequestPrepared && !root.app.keyTransferIsJoinRequest()) {
+            root.joinRequestDirectSubmitError =
+                "Encrypted workspace access has arrived. Open it to finish joining."
+            return
+        }
+        if (!root.app.recordPendingAccessRequestFromCurrentJoinRequest("sending")) {
+            root.joinRequestDirectSubmitError = "Could not save the pending invite claim."
+            root.joinRequestPreparedAction = "send-failed"
+            return
+        }
+        if (chaftController.submitWorkspaceJoinRequestDirect(
+                root.workspaceCardDeliveryPeerEndpoint(),
+                root.joinRequestWorkspaceId(),
+                chaftController.keyTransferJson)) {
             root.joinRequestDirectSubmitError = ""
             root.joinRequestPreparedAction = "sending"
-        } else if (root.joinRequestPrepared) {
+        } else {
             root.joinRequestDirectSubmitError = String(chaftController.syncStatus || "")
+            root.app.recordPendingAccessRequestFromCurrentJoinRequest("send_failed")
             root.joinRequestPreparedAction = "send-failed"
         }
     }
 
     function copyPreparedJoinRequest() {
-        if (root.prepareJoinRequest("prepared")
-                && root.app.copyKeyTransferArtifact("access request")) {
+        if (!root.joinRequestPrepared && !root.prepareJoinRequest("prepared")) {
+            return
+        }
+        if (!root.app.keyTransferIsJoinRequest()) {
+            return
+        }
+        if (root.app.copyKeyTransferArtifact(
+                root.secureInviteClaim ? "invite claim" : "access request")) {
             root.app.recordPendingAccessRequestFromCurrentJoinRequest("copied")
             root.joinRequestPreparedAction = "copied"
         }
     }
 
     function savePreparedJoinRequest() {
-        if (root.prepareJoinRequest("prepared")
-                && root.app.openSaveKeyTransferDialog("access request")) {
+        if (!root.joinRequestPrepared && !root.prepareJoinRequest("prepared")) {
+            return
+        }
+        if (!root.app.keyTransferIsJoinRequest()) {
+            return
+        }
+        if (root.app.openSaveKeyTransferDialog(
+                root.secureInviteClaim ? "invite claim" : "access request")) {
             root.app.recordPendingAccessRequestFromCurrentJoinRequest("file_ready")
             root.joinRequestPreparedAction = "save"
         }
@@ -645,6 +672,7 @@ Dialog {
                 return
             }
             root.joinRequestDirectSubmitError = String(message || "")
+            root.app.recordPendingAccessRequestFromCurrentJoinRequest("send_failed")
             root.joinRequestPreparedAction = "send-failed"
         }
     }
@@ -1496,10 +1524,12 @@ Dialog {
                                     visible: root.joinRequestCanSendDirect()
                                         && root.joinRequestPreparedAction !== "sent"
                                     text: root.joinRequestPreparedAction === "sending"
-                                        ? "Sending..."
+                                        ? (root.secureInviteClaim ? "Claiming..." : "Sending...")
                                         : (root.joinRequestPreparedAction === "send-failed"
                                                 ? "Try again"
-                                                : "Send request")
+                                                : (root.secureInviteClaim
+                                                    ? "Claim invite"
+                                                    : "Send request"))
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
                                         && !chaftController.joinRequestSubmitInFlight
@@ -1530,7 +1560,9 @@ Dialog {
                                         }
 
                                         MenuItem {
-                                            text: "Copy request link"
+                                            text: root.secureInviteClaim
+                                                ? "Copy claim link"
+                                                : "Copy request link"
                                             enabled: root.app.runtimeAccessReady
                                                 && !chaftController.keyTransferInFlight
                                                 && !chaftController.joinRequestSubmitInFlight
@@ -1538,7 +1570,9 @@ Dialog {
                                         }
 
                                         MenuItem {
-                                            text: "Save request file"
+                                            text: root.secureInviteClaim
+                                                ? "Save claim file"
+                                                : "Save request file"
                                             enabled: root.app.runtimeAccessReady
                                                 && !chaftController.keyTransferInFlight
                                                 && !chaftController.joinRequestSubmitInFlight

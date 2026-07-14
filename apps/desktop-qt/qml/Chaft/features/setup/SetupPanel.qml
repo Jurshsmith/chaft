@@ -858,21 +858,36 @@ ScrollView {
     }
 
     function canShareCurrentWorkspaceInvite(invite) {
-        return setupScroll.workspaceInviteStatus(invite) === "invited"
-            && setupScroll.invitePackageId().length > 0
-            && setupScroll.invitePackageId() === String((invite && invite.inviteId) || "").trim()
+        var inviteId = String((invite && invite.inviteId) || "").trim()
+        var currentlyStaged = setupScroll.invitePackageId().length > 0
+            && setupScroll.invitePackageId() === inviteId
             && setupScroll.keyTransferIsInvitePackage()
+        return setupScroll.workspaceInviteStatus(invite) === "invited"
+            && inviteId.length > 0
+            && (currentlyStaged
+                || chaftController.hasWorkspaceInviteArtifact(inviteId))
+    }
+
+    function stageWorkspaceInviteForSharing(invite) {
+        var inviteId = String((invite && invite.inviteId) || "").trim()
+        if (setupScroll.invitePackageId() === inviteId
+                && setupScroll.keyTransferIsInvitePackage()) {
+            return true
+        }
+        return chaftController.stageWorkspaceInviteArtifact(inviteId)
     }
 
     function copyCurrentWorkspaceInvite(invite) {
-        if (!setupScroll.canShareCurrentWorkspaceInvite(invite)) {
+        if (!setupScroll.canShareCurrentWorkspaceInvite(invite)
+                || !setupScroll.stageWorkspaceInviteForSharing(invite)) {
             return false
         }
         return setupScroll.app.copyKeyTransferArtifact("invite link")
     }
 
     function saveCurrentWorkspaceInvite(invite) {
-        if (!setupScroll.canShareCurrentWorkspaceInvite(invite)) {
+        if (!setupScroll.canShareCurrentWorkspaceInvite(invite)
+                || !setupScroll.stageWorkspaceInviteForSharing(invite)) {
             return false
         }
         return setupScroll.app.openSaveKeyTransferDialog("invite")
@@ -3798,7 +3813,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            visible: false
+                            visible: setupScroll.invitePackageSyncExpectationMessage().length > 0
                             text: setupScroll.invitePackageSyncExpectationLabel()
                                 + ". " + setupScroll.invitePackageSyncExpectationMessage()
                             color: Tokens.textMuted

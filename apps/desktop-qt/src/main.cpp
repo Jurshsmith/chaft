@@ -940,7 +940,7 @@ QString desktopConfigPath(const QString &runtimeDir) {
   return desktopPathWithinLimit(configPath) ? configPath : QString();
 }
 
-constexpr qint64 kMaxDesktopConfigBytes = 64LL * 1024;
+constexpr qint64 kMaxDesktopConfigBytes = 256LL * 1024;
 constexpr qsizetype kMaxWorkspaceIdBytes = 128;
 constexpr qsizetype kMaxThemeIdBytes = 64;
 constexpr qsizetype kMaxComposerDrafts = 12;
@@ -949,6 +949,9 @@ constexpr qsizetype kMaxComposerDraftBytes = 4096;
 constexpr qsizetype kMaxPendingJoinRequests = 5;
 constexpr qsizetype kMaxPendingJoinRequestKeyBytes = 160;
 constexpr qsizetype kMaxPendingJoinRequestArtifactBytes = 8192;
+constexpr qsizetype kMaxWorkspaceInviteArtifacts = 12;
+constexpr qsizetype kMaxWorkspaceInviteArtifactKeyBytes = 128;
+constexpr qsizetype kMaxWorkspaceInviteArtifactBytes = 8192;
 constexpr std::size_t kMaxJoinRequestInboxEntries = 20;
 constexpr std::size_t kMaxJoinRequestOutboxEntries = 20;
 constexpr qsizetype kMaxJoinRequestOutboxDrainBatch = 3;
@@ -2312,6 +2315,55 @@ QVariantMap loadPendingJoinRequests(const QString &runtimeDir) {
           .toVariantMap());
 }
 
+QVariantMap sanitizedWorkspaceInviteArtifacts(const QVariantMap &artifacts) {
+  QVariantMap sanitized;
+  for (auto it = artifacts.constBegin(); it != artifacts.constEnd(); ++it) {
+    if (sanitized.size() >= kMaxWorkspaceInviteArtifacts) {
+      break;
+    }
+    const auto inviteId = it.key().trimmed();
+    const auto artifactText = it.value().toString().trimmed();
+    if (inviteId.isEmpty() ||
+        inviteId.toUtf8().size() > kMaxWorkspaceInviteArtifactKeyBytes ||
+        artifactText.isEmpty() ||
+        artifactText.toUtf8().size() > kMaxWorkspaceInviteArtifactBytes) {
+      continue;
+    }
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(artifactText.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !document.isObject()) {
+      continue;
+    }
+    const auto artifact = document.object();
+    if (artifact.value(QStringLiteral("kind")).toString() !=
+            QStringLiteral("chaft.workspace-invite.v2") ||
+        artifact.value(QStringLiteral("inviteId")).toString().trimmed() !=
+            inviteId ||
+        artifact.value(QStringLiteral("workspaceId"))
+            .toString()
+            .trimmed()
+            .isEmpty() ||
+        artifact.value(QStringLiteral("capabilitySecret"))
+            .toString()
+            .trimmed()
+            .isEmpty()) {
+      continue;
+    }
+    sanitized.insert(inviteId, artifactText);
+  }
+  return sanitized;
+}
+
+QVariantMap loadWorkspaceInviteArtifacts(const QString &runtimeDir) {
+  return sanitizedWorkspaceInviteArtifacts(
+      loadDesktopConfig(runtimeDir)
+          .value(QStringLiteral("workspaceInviteArtifacts"))
+          .toObject()
+          .toVariantMap());
+}
+
 QVariantMap sanitizedWindowGeometry(const QVariantMap &geometry) {
   QVariantMap sanitized;
   const auto width = geometry.value(QStringLiteral("width")).toInt(0);
@@ -2603,6 +2655,48 @@ QString keyTransferStatusLabel(const QByteArray &bytes) {
   return QStringLiteral("credentials");
 }
 
+bool accessApprovalMatchesCurrentHandoff(const QString &currentText,
+                                         const QString &approvalText) {
+  const auto currentTrimmed = currentText.trimmed();
+  const auto approvalTrimmed = approvalText.trimmed();
+  if (currentTrimmed.isEmpty() || currentTrimmed == approvalTrimmed) {
+    return true;
+  }
+
+  QJsonParseError currentError;
+  QJsonParseError approvalError;
+  const auto currentDocument =
+      QJsonDocument::fromJson(currentTrimmed.toUtf8(), &currentError);
+  const auto approvalDocument =
+      QJsonDocument::fromJson(approvalTrimmed.toUtf8(), &approvalError);
+  if (currentError.error != QJsonParseError::NoError ||
+      approvalError.error != QJsonParseError::NoError ||
+      !currentDocument.isObject() || !approvalDocument.isObject()) {
+    return false;
+  }
+
+  const auto current = currentDocument.object();
+  const auto approval = approvalDocument.object();
+  const auto currentKind =
+      current.value(QStringLiteral("kind")).toString().trimmed();
+  const auto approvalKind =
+      approval.value(QStringLiteral("kind")).toString().trimmed();
+  if (currentKind != QStringLiteral("chaft.workspace-join-request.v1") &&
+      currentKind != QStringLiteral("chaft.workspace-invite-claim.v1")) {
+    return false;
+  }
+  if (approvalKind != QStringLiteral("chaft.workspace-invite.v1") &&
+      approvalKind != QStringLiteral("chaft.workspace-invite-response.v1")) {
+    return false;
+  }
+
+  const auto currentRequestId =
+      current.value(QStringLiteral("requestId")).toString().trimmed();
+  const auto approvalRequestId =
+      approval.value(QStringLiteral("requestId")).toString().trimmed();
+  return !currentRequestId.isEmpty() && currentRequestId == approvalRequestId;
+}
+
 QIcon desktopNotificationIcon() {
   const auto appIcon = QGuiApplication::windowIcon();
   if (!appIcon.isNull()) {
@@ -2629,6 +2723,7 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
                        const QVariantMap &mutedChannels,
                        const QVariantMap &composerDrafts,
                        const QVariantMap &pendingJoinRequests,
+                       const QVariantMap &workspaceInviteArtifacts,
                        const QVariantMap &windowGeometry) {
   const auto configPath = desktopConfigPath(runtimeDir);
   if (configPath.isEmpty()) {
@@ -2715,6 +2810,12 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
     config.insert(QStringLiteral("pendingJoinRequests"),
                   QJsonObject::fromVariantMap(sanitizedRequests));
   }
+  const auto sanitizedInviteArtifacts =
+      sanitizedWorkspaceInviteArtifacts(workspaceInviteArtifacts);
+  if (!sanitizedInviteArtifacts.isEmpty()) {
+    config.insert(QStringLiteral("workspaceInviteArtifacts"),
+                  QJsonObject::fromVariantMap(sanitizedInviteArtifacts));
+  }
   const auto sanitizedGeometry = sanitizedWindowGeometry(windowGeometry);
   if (!sanitizedGeometry.isEmpty()) {
     config.insert(QStringLiteral("windowGeometry"),
@@ -2730,11 +2831,15 @@ void saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
   if (!file.open(QIODevice::WriteOnly)) {
     return;
   }
+  file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
   if (file.write(bytes) != static_cast<qint64>(bytes.size())) {
     file.cancelWriting();
     return;
   }
-  file.commit();
+  if (file.commit()) {
+    QFile::setPermissions(configPath,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  }
 }
 
 QVariantMap initialWorkspaceSnapshot() {
@@ -2895,6 +3000,7 @@ public:
     m_mutedChannels = loadMutedChannels(m_runtimeDir);
     m_composerDrafts = loadComposerDrafts(m_runtimeDir);
     m_pendingJoinRequests = loadPendingJoinRequests(m_runtimeDir);
+    m_workspaceInviteArtifacts = loadWorkspaceInviteArtifacts(m_runtimeDir);
     m_windowGeometry = loadWindowGeometry(m_runtimeDir);
     const auto configuredAutoBackup = qEnvironmentVariable("CHAFT_AUTO_BACKUP");
     if (!configuredAutoBackup.isEmpty()) {
@@ -3275,6 +3381,36 @@ public:
   }
 
   Q_INVOKABLE void clearKeyTransferJson() { setKeyTransferJson(QString()); }
+
+  Q_INVOKABLE bool hasWorkspaceInviteArtifact(const QString &inviteId) const {
+    const auto normalizedInviteId = inviteId.trimmed();
+    return !normalizedInviteId.isEmpty() &&
+           m_workspaceInviteArtifacts.contains(normalizedInviteId);
+  }
+
+  Q_INVOKABLE bool stageWorkspaceInviteArtifact(const QString &inviteId) {
+    const auto normalizedInviteId = inviteId.trimmed();
+    const auto artifactText =
+        m_workspaceInviteArtifacts.value(normalizedInviteId).toString().trimmed();
+    if (normalizedInviteId.isEmpty() || artifactText.isEmpty()) {
+      setSyncStatus(QStringLiteral("invite is no longer available on this device"));
+      return false;
+    }
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(artifactText.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !document.isObject() ||
+        document.object().value(QStringLiteral("workspaceId"))
+                .toString()
+                .trimmed() != m_workspaceId.trimmed()) {
+      setSyncStatus(QStringLiteral("switch to the invite workspace first"));
+      return false;
+    }
+    setKeyTransferJson(artifactText);
+    setSyncStatus(QStringLiteral("invite ready to share"));
+    return true;
+  }
 
   Q_INVOKABLE bool acknowledgeCurrentJoinResponseInboxEntry() {
     const auto entryId = m_keyTransferJoinResponseInboxEntryId.trimmed();
@@ -4199,6 +4335,92 @@ public:
     m_pendingJoinRequests = sanitized;
     persistDesktopConfig();
     emit pendingJoinRequestsChanged();
+  }
+
+  bool rememberWorkspaceInviteArtifact(const QString &artifactText) {
+    const auto normalizedArtifactText = artifactText.trimmed();
+    if (normalizedArtifactText.isEmpty() ||
+        normalizedArtifactText.toUtf8().size() >
+            kMaxWorkspaceInviteArtifactBytes) {
+      return false;
+    }
+    QJsonParseError parseError;
+    const auto document =
+        QJsonDocument::fromJson(normalizedArtifactText.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !document.isObject()) {
+      return false;
+    }
+    const auto artifact = document.object();
+    const auto inviteId =
+        artifact.value(QStringLiteral("inviteId")).toString().trimmed();
+    if (artifact.value(QStringLiteral("kind")).toString() !=
+            QStringLiteral("chaft.workspace-invite.v2") ||
+        inviteId.isEmpty()) {
+      return false;
+    }
+
+    auto next = m_workspaceInviteArtifacts;
+    if (!next.contains(inviteId) &&
+        next.size() >= kMaxWorkspaceInviteArtifacts) {
+      QString oldestKey;
+      QString oldestCreatedAt;
+      for (auto it = next.constBegin(); it != next.constEnd(); ++it) {
+        QJsonParseError candidateError;
+        const auto candidate = QJsonDocument::fromJson(
+            it.value().toString().toUtf8(), &candidateError);
+        const auto createdAt =
+            candidateError.error == QJsonParseError::NoError &&
+                    candidate.isObject()
+                ? candidate.object()
+                      .value(QStringLiteral("createdAt"))
+                      .toString()
+                : QString();
+        if (oldestKey.isEmpty() || createdAt < oldestCreatedAt) {
+          oldestKey = it.key();
+          oldestCreatedAt = createdAt;
+        }
+      }
+      next.remove(oldestKey);
+    }
+    next.insert(inviteId, normalizedArtifactText);
+    m_workspaceInviteArtifacts = sanitizedWorkspaceInviteArtifacts(next);
+    if (!m_workspaceInviteArtifacts.contains(inviteId)) {
+      return false;
+    }
+    persistDesktopConfig();
+    return true;
+  }
+
+  void pruneWorkspaceInviteArtifacts(const QVariantMap &snapshot) {
+    if (m_workspaceInviteArtifacts.isEmpty()) {
+      return;
+    }
+    auto next = m_workspaceInviteArtifacts;
+    const auto now = QDateTime::currentDateTimeUtc();
+    for (const auto &inviteValue :
+         snapshot.value(QStringLiteral("invites")).toList()) {
+      const auto invite = inviteValue.toMap();
+      const auto inviteId =
+          invite.value(QStringLiteral("inviteId")).toString().trimmed();
+      if (inviteId.isEmpty() || !next.contains(inviteId)) {
+        continue;
+      }
+      const auto status =
+          invite.value(QStringLiteral("status")).toString().trimmed();
+      const auto expiresAt = QDateTime::fromString(
+          invite.value(QStringLiteral("expiresAt")).toString(), Qt::ISODate);
+      const auto expired = expiresAt.isValid() && expiresAt.toUTC() <= now;
+      if (status == QStringLiteral("accepted") ||
+          status == QStringLiteral("revoked") || expired) {
+        next.remove(inviteId);
+      }
+    }
+    if (next == m_workspaceInviteArtifacts) {
+      return;
+    }
+    m_workspaceInviteArtifacts = sanitizedWorkspaceInviteArtifacts(next);
+    persistDesktopConfig();
   }
 
   bool applyPendingJoinRequestResponse(const QString &requestId,
@@ -7552,6 +7774,7 @@ private:
     setChannelPageInFlight(false);
     setMemberPageInFlight(false);
     m_workspaceSnapshot = snapshotWithPreservedResolvedChannels(value);
+    pruneWorkspaceInviteArtifacts(m_workspaceSnapshot);
     emit workspaceSnapshotChanged();
     if (!m_rawEventStoreMode) {
       queueWorkspaceSummariesRefresh();
@@ -8334,6 +8557,7 @@ private:
                       m_mutedChannels,
                       m_composerDrafts,
                       m_pendingJoinRequests,
+                      m_workspaceInviteArtifacts,
                       m_windowGeometry);
   }
 
@@ -12787,8 +13011,8 @@ private:
               }
             }
             if (!firstInviteText.isEmpty()) {
-              if (!guard->m_keyTransferJson.trimmed().isEmpty() &&
-                  guard->m_keyTransferJson != firstInviteText) {
+              if (!accessApprovalMatchesCurrentHandoff(
+                      guard->m_keyTransferJson, firstInviteText)) {
                 if (userInitiated) {
                   guard->setSyncStatus(QStringLiteral(
                       "access approval received; finish current handoff first"));
@@ -13460,8 +13684,14 @@ private:
                 }
                 guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                const auto artifactRemembered =
+                    guard->rememberWorkspaceInviteArtifact(artifactJson);
                 guard->setKeyTransferJson(artifactJson);
-                guard->setSyncStatus(QStringLiteral("secure invite ready to share"));
+                guard->setSyncStatus(
+                    artifactRemembered
+                        ? QStringLiteral("secure invite ready to share")
+                        : QStringLiteral(
+                              "secure invite ready; copy or save it before creating another"));
               },
               Qt::QueuedConnection);
         });
@@ -15249,6 +15479,7 @@ private:
   QVariantMap m_mutedChannels;
   QVariantMap m_composerDrafts;
   QVariantMap m_pendingJoinRequests;
+  QVariantMap m_workspaceInviteArtifacts;
   QVariantMap m_windowGeometry;
   QString m_themeId;
   QString m_themeMode = QStringLiteral("manual");

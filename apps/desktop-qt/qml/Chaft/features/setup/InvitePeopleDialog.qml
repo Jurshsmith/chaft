@@ -8,7 +8,12 @@ Dialog {
 
     property var app
     property var roleOptions: []
+    property bool creationPending: false
+    property bool creationDispatching: false
+    property string creationError: ""
     readonly property var expiryDays: [1, 7, 30, 0]
+    readonly property bool secureRouteReady: root.app
+        && root.app.preferredInvitePeerEndpoint().length > 0
 
     parent: Overlay.overlay
     modal: true
@@ -16,7 +21,9 @@ Dialog {
     x: parent ? Math.round((parent.width - width) / 2) : 0
     y: parent ? Math.max(16, Math.round((parent.height - height) / 2)) : 0
     padding: Tokens.space4
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    closePolicy: root.creationPending
+        ? Popup.NoAutoClose
+        : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
 
     function resetForm() {
         inviteLabelField.text = ""
@@ -26,7 +33,46 @@ Dialog {
 
     onOpened: {
         root.resetForm()
+        root.creationPending = false
+        root.creationDispatching = false
+        root.creationError = ""
         inviteLabelField.forceActiveFocus()
+    }
+
+    function finishCreationIfReady() {
+        if (!root.creationPending || root.creationDispatching
+                || chaftController.keyTransferInFlight) {
+            return
+        }
+        var parsed = null
+        try {
+            parsed = JSON.parse(String(chaftController.keyTransferJson || ""))
+        } catch (error) {
+            parsed = null
+        }
+        if (parsed !== null
+                && String(parsed.kind || "") === "chaft.workspace-invite.v2") {
+            root.creationPending = false
+            root.close()
+            return
+        }
+        root.creationPending = false
+        root.creationError = String(chaftController.syncStatus
+            || "Could not create the invite. Try again.")
+    }
+
+    Connections {
+        target: chaftController
+
+        function onKeyTransferJsonChanged() {
+            root.finishCreationIfReady()
+        }
+
+        function onKeyTransferInFlightChanged() {
+            if (root.creationPending && !chaftController.keyTransferInFlight) {
+                Qt.callLater(root.finishCreationIfReady)
+            }
+        }
     }
 
     contentItem: ColumnLayout {
@@ -42,7 +88,7 @@ Dialog {
 
         Text {
             Layout.fillWidth: true
-            text: "Create a one-time invite. It contains no workspace secret; access is encrypted to the recipient after they claim it."
+            text: "Create a one-time invite. It contains no message keys, but anyone who receives it can claim the selected role once. Send it privately."
             color: Tokens.textMuted
             font.pixelSize: Tokens.fontSizeSm
             wrapMode: Text.WordWrap
@@ -116,10 +162,10 @@ Dialog {
                 spacing: Tokens.space2
 
                 StatusChip {
-                    text: root.app && root.app.preferredInvitePeerEndpoint().length > 0
+                    text: root.secureRouteReady
                         ? "Secure delivery ready"
-                        : "Manual exchange"
-                    secure: root.app && root.app.preferredInvitePeerEndpoint().length > 0
+                        : "Delivery unavailable"
+                    secure: root.secureRouteReady
                     warning: !secure
                     minWidth: 132
                     maxWidth: 168
@@ -127,14 +173,33 @@ Dialog {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.app && root.app.preferredInvitePeerEndpoint().length > 0
+                    text: root.secureRouteReady
                         ? "Chaft can complete the claim while this peer route is reachable."
-                        : "Send the invite privately. Chaft packages any follow-up as a secure file when no peer route is available."
+                        : "Keep Chaft online while it prepares a secure delivery route, then try again."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap
                 }
             }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: root.creationError.length > 0
+            text: root.creationError
+            color: Tokens.warningText
+            font.pixelSize: Tokens.fontSizeXs
+            wrapMode: Text.WordWrap
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: String(roleBox.currentValue || "member") === "admin"
+                && expiryBox.currentIndex === 3
+            text: "Admin access with no expiry is high risk. Prefer a short expiry and send the invite directly to the recipient."
+            color: Tokens.warningText
+            font.pixelSize: Tokens.fontSizeXs
+            wrapMode: Text.WordWrap
         }
 
         RowLayout {
@@ -151,21 +216,35 @@ Dialog {
             }
 
             Button {
-                text: chaftController.keyTransferInFlight
+                text: root.creationPending || chaftController.keyTransferInFlight
                     ? "Creating..."
                     : "Create invite"
                 enabled: root.app && root.app.runtimeWorkReady
                     && root.app.canManageWorkspaceAccess()
+                    && root.secureRouteReady
+                    && !root.creationPending
                     && !chaftController.keyTransferInFlight
                 onClicked: {
+                    root.creationError = ""
                     var role = String(roleBox.currentValue || "member")
                     var days = root.expiryDays[expiryBox.currentIndex]
-                    if (chaftController.prepareClaimableWorkspaceInvite(
+                    root.creationPending = true
+                    root.creationDispatching = true
+                    var accepted = chaftController.prepareClaimableWorkspaceInvite(
                             inviteLabelField.text.trim(),
                             role,
                             root.app.preferredInvitePeerEndpoint(),
-                            root.app.inviteExpiresAtIso(days))) {
-                        root.close()
+                            root.app.inviteExpiresAtIso(days))
+                    root.creationDispatching = false
+                    if (accepted) {
+                        if (!chaftController.keyTransferInFlight) {
+                            Qt.callLater(root.finishCreationIfReady)
+                        }
+                        return
+                    } else {
+                        root.creationPending = false
+                        root.creationError = String(chaftController.syncStatus
+                            || "Could not create the invite. Try again.")
                     }
                 }
             }

@@ -512,6 +512,8 @@ ApplicationWindow {
                 root.openReceivedApprovalInvite(true)
             } else if (id === "open-access-requests") {
                 root.openAccessRequestsPanel()
+            } else if (id === "invite-after-create") {
+                root.openPeopleAccess(true)
             }
         }
     }
@@ -1178,8 +1180,12 @@ ApplicationWindow {
     function pendingAccessRequestStatusMessage(row) {
         var status = String((row && row.status) || "").trim()
         var label = String((row && row.deliveryLabel) || "an owner or admin")
+        var secureClaim = String((row && row.sourceType) || "").trim()
+            === "invite_claim"
         if (status === "approved") {
-            return "An admin approved this request. Open the received invite here to finish joining."
+            return secureClaim
+                ? "Encrypted workspace access is ready. Open it here to finish joining."
+                : "An admin approved this request. Open the received invite here to finish joining."
         }
         if (status === "declined") {
             return "An admin declined this request. Ask for a fresh invite or send a new request if this changed."
@@ -1188,15 +1194,25 @@ ApplicationWindow {
             return "An admin closed this request. Send a new request if you still need access."
         }
         if (status === "sent") {
+            if (secureClaim) {
+                return "Claim delivered to " + label
+                    + ". Keep Chaft open while it checks for encrypted workspace access."
+            }
             return row.canSendDirect
                 ? "Sent to " + label
                     + ". Check after they approve, open the invite here when it arrives, or resend if they did not receive it."
                 : "Sent to " + label + ". Check after they approve, then open the invite here."
         }
         if (status === "sending") {
-            return "Sending to " + label + "."
+            return secureClaim
+                ? "Delivering the one-time claim to " + label + "."
+                : "Sending to " + label + "."
         }
         if (status === "send_failed") {
+            if (secureClaim) {
+                return "Could not reach " + label
+                    + ". Try again when their Chaft device is reachable."
+            }
             return "Could not reach " + label
                 + ". Copy the request link or save the file, then send it to them. Check after they approve, then open the invite here."
         }
@@ -3083,7 +3099,7 @@ ApplicationWindow {
                 peerEndpoint: "direct+tcp://127.0.0.1:44944",
                 syncExpectation: "history_after_claim",
                 createdAt: "2026-07-10T12:00:00Z",
-                expiresAt: "2026-07-14T12:00:00Z"
+                expiresAt: root.inviteExpiresAtIso(30)
             }, null, 2))
         } else if (state === "entry-approval-invite") {
             root.openWorkspaceEntry("join")
@@ -3101,7 +3117,7 @@ ApplicationWindow {
                 approvalPolicy: "admin_required",
                 syncExpectation: "waiting_for_admin_approval",
                 peerEndpoint: "direct+tcp://127.0.0.1:44944",
-                expiresAt: "2026-07-14T12:00:00Z"
+                expiresAt: root.inviteExpiresAtIso(30)
             }, null, 2))
         } else if (state === "entry-workspace-card") {
             root.openWorkspaceEntry("join")
@@ -4442,14 +4458,19 @@ ApplicationWindow {
         var inviteText = String(chaftController.keyTransferJson || "").trim()
         if (inviteText.length === 0
                 || !chaftController.keyTransferFromJoinResponseInbox
-                || !root.keyTransferIsInvitePackage()) {
+                || (!root.keyTransferIsInvitePackage()
+                    && !root.keyTransferIsInviteResponse())) {
             return false
         }
         var existingText = String(workspaceEntryDialog.credentialsText || "").trim()
         var shouldForce = forceOpen === true
+        var waitingForThisApproval = workspaceEntryDialog.visible
+            && workspaceEntryDialog.joinRequestPrepared
+            && workspaceEntryDialog.joinRequestPreparedAction === "sent"
         if (workspaceEntryDialog.visible
                 && existingText.length > 0
                 && existingText !== inviteText
+                && !waitingForThisApproval
                 && !shouldForce) {
             toastHost.show(
                 "success",
@@ -5880,9 +5901,17 @@ ApplicationWindow {
                 }
                 if (row.key === root.pendingAccessRequestSendingKey) {
                     row.status = "sending"
+                } else if (row.status === "sending") {
+                    // The app restarted before the in-flight send resolved.
+                    // Keep the persisted artifact available for a safe retry.
+                    row.status = "ready_to_send"
                 } else if (!Object.prototype.hasOwnProperty.call(
                                badgeLabels, row.status)) {
                     row.status = "ready_to_send"
+                }
+                if (row.status === "sent"
+                        && String(row.sourceType || "").trim() === "invite_claim") {
+                    titleLabels.sent = "Waiting for secure access"
                 }
                 row.isTerminalStatus = row.status === "approved"
                     || row.status === "declined"
@@ -5936,7 +5965,8 @@ ApplicationWindow {
         if (normalizedStatus !== "sent"
                 && normalizedStatus !== "send_failed"
                 && normalizedStatus !== "copied"
-                && normalizedStatus !== "file_ready") {
+                && normalizedStatus !== "file_ready"
+                && normalizedStatus !== "sending") {
             normalizedStatus = "ready_to_send"
         }
         var request = root.keyTransferObject()
@@ -5950,11 +5980,9 @@ ApplicationWindow {
         if (artifactText.trim().length === 0) {
             return false
         }
-        chaftController.queueWorkspaceJoinRequestOutbox(
-            String(request.deliveryPeerEndpoint || "").trim(),
-            workspaceId,
-            artifactText)
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
+        var existing = root.copyMap(next[key] || ({}))
+        var now = (new Date()).toISOString()
         next[key] = {
             requestId: requestId,
             workspaceId: workspaceId,
@@ -5968,9 +5996,14 @@ ApplicationWindow {
             sourceDisplayName: String(request.sourceDisplayName || "").trim(),
             sourceApprovalPolicy: String(request.sourceApprovalPolicy || "").trim(),
             status: normalizedStatus,
-            createdAt: (new Date()).toISOString(),
-            sentAt: normalizedStatus === "sent" ? (new Date()).toISOString() : "",
-            lastAttemptAt: normalizedStatus === "send_failed" ? (new Date()).toISOString() : "",
+            createdAt: String(existing.createdAt || now),
+            sentAt: normalizedStatus === "sent"
+                ? now
+                : String(existing.sentAt || ""),
+            lastAttemptAt: normalizedStatus === "send_failed"
+                    || normalizedStatus === "sending"
+                ? now
+                : String(existing.lastAttemptAt || ""),
             artifact: artifactText
         }
         chaftController.pendingJoinRequests = next
@@ -6724,7 +6757,7 @@ ApplicationWindow {
 
     Timer {
         id: pendingAccessResponseAutoCheckTimer
-        interval: 45000
+        interval: 5000
         repeat: true
         running: root.runtimeAccessReady
             && root.pendingAccessRequests.length > 0
@@ -6848,7 +6881,12 @@ ApplicationWindow {
                     && root.runtimeWorkReady
                     && root.currentWorkspaceId().length > 0) {
                 root.pendingPostCreateExport = false
-                postCreateExportDialog.open()
+                toastHost.show(
+                    "success",
+                    String(root.workspaceSnapshot.name || "Workspace") + " created.",
+                    "Invite people",
+                    "invite-after-create",
+                    8000)
             }
         }
         function onSelectedWorkspaceChanged() {
@@ -6963,7 +7001,7 @@ ApplicationWindow {
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         closePolicy: Popup.CloseOnEscape
-        title: "You're in"
+        title: "Workspace created"
 
         ColumnLayout {
             anchors.fill: parent
@@ -6971,8 +7009,7 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                text: (root.workspaceSnapshot.name || "Your workspace")
-                    + " is ready. Invite people now or start chatting."
+                text: (root.workspaceSnapshot.name || "Your workspace") + " is ready."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeSm
                 wrapMode: Text.WordWrap
@@ -7030,7 +7067,7 @@ ApplicationWindow {
             Button {
                 id: postCreateStartButton
                 Layout.fillWidth: true
-                text: "Start chatting"
+                text: "Open workspace"
                 onClicked: postCreateExportDialog.close()
 
                 background: Rectangle {

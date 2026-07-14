@@ -221,6 +221,10 @@ mkdir -p "$runtime_dir" "$artifacts_dir"
 workspace_name="Chaft Visual Smoke"
 desktop_expected_text="desktop visual smoke ready"
 workspace_access_policy="${CHAFT_VISUAL_SMOKE_ACCESS_POLICY:-invite-only}"
+smoke_expires_at="$($python_bin -c '
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(days=30)).isoformat().replace("+00:00", "Z"))
+')"
 
 created_json="$artifacts_dir/created.json"
 "$cli_bin" --data-dir "$runtime_dir" init-workspace \
@@ -251,7 +255,7 @@ general_channel_id="$(json_field "$created_json" channelId)"
   --device-id dev_visual_smoke_member \
   --display-name "Taylor Kim" \
   --role member \
-  --expires-at "2026-07-14T12:00:00Z" \
+  --expires-at "$smoke_expires_at" \
   --approval-policy preapproved \
   --sync-expectation needs_reachable_teammate \
   > "$artifacts_dir/record-revoked-invite.json"
@@ -268,7 +272,7 @@ if [ "${CHAFT_VISUAL_SMOKE_LOST_INVITE:-0}" = "1" ]; then
     --device-id dev_visual_smoke_lost \
     --display-name "Jordan Lee" \
     --role member \
-    --expires-at "2026-07-14T12:00:00Z" \
+    --expires-at "$smoke_expires_at" \
     --approval-policy preapproved \
     --sync-expectation needs_reachable_teammate \
     > "$artifacts_dir/record-lost-invite.json"
@@ -302,7 +306,7 @@ if [ "${CHAFT_VISUAL_SMOKE_REQUEST_LOST_INVITE:-0}" = "1" ]; then
     --display-name "Riley Chen" \
     --role member \
     --request-id req_visual_smoke_request_lost \
-    --expires-at "2026-07-14T12:00:00Z" \
+    --expires-at "$smoke_expires_at" \
     --approval-policy preapproved \
     --sync-expectation needs_reachable_teammate \
     > "$artifacts_dir/request-lost-invite-record.json"
@@ -328,7 +332,7 @@ if [ "${CHAFT_VISUAL_SMOKE_REINVITE_REQUEST:-0}" = "1" ]; then
     --display-name "Mina Park" \
     --role member \
     --request-id req_visual_smoke_reinvite \
-    --expires-at "2026-07-14T12:00:00Z" \
+    --expires-at "$smoke_expires_at" \
     --approval-policy preapproved \
     --sync-expectation needs_reachable_teammate \
     > "$artifacts_dir/record-reinvite-revoked.json"
