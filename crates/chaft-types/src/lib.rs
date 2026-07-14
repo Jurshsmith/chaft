@@ -29,6 +29,7 @@ pub const WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES: usize = 64;
+pub const WORKSPACE_INVITE_MAX_CLAIMS: u32 = 20;
 pub const WORKSPACE_ACCESS_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES: usize = 128;
 pub const WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES: usize = 512;
@@ -66,6 +67,25 @@ pub const OPENMLS_PROTOCOL_MAX_BYTES: usize = 128;
 pub const OPENMLS_CIPHERSUITE_MAX_BYTES: usize = 128;
 pub const OPENMLS_GROUP_ID_MAX_BYTES: usize = 512;
 pub const OPENMLS_KEY_PACKAGE_REF_MAX_BYTES: usize = 256;
+
+pub const fn default_workspace_invite_max_claims() -> u32 {
+    1
+}
+
+pub const fn normalize_workspace_invite_max_claims(max_claims: u32) -> u32 {
+    if max_claims == 0 {
+        default_workspace_invite_max_claims()
+    } else {
+        max_claims
+    }
+}
+
+pub const fn effective_workspace_invite_max_claims(max_claims: Option<u32>) -> u32 {
+    match max_claims {
+        Some(max_claims) => normalize_workspace_invite_max_claims(max_claims),
+        None => default_workspace_invite_max_claims(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EventId(pub String);
@@ -511,6 +531,8 @@ pub enum EventBody {
         expires_at: String,
         capability_public_key: String,
         sync_expectation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_claims: Option<u32>,
     },
     WorkspaceInviteClaimed {
         invite_id: String,
@@ -984,6 +1006,82 @@ mod tests {
         let second = SignedEvent::from_signed_bytes(event, vec![1, 2, 3]);
 
         assert_eq!(first.event_id, second.event_id);
+    }
+
+    #[test]
+    fn capability_invite_json_keeps_legacy_presence_while_defaulting_effective_limit() {
+        let legacy = serde_json::json!({
+            "kind": "workspace_invite_capability_created",
+            "invite_id": "inv_legacy",
+            "display_name": "Team",
+            "role": "member",
+            "expires_at": "2026-07-14T12:00:00Z",
+            "capability_public_key": "capability-key",
+            "sync_expectation": "manual"
+        });
+        let zero = serde_json::json!({
+            "kind": "workspace_invite_capability_created",
+            "invite_id": "inv_zero",
+            "display_name": "Team",
+            "role": "member",
+            "expires_at": "2026-07-14T12:00:00Z",
+            "capability_public_key": "capability-key",
+            "sync_expectation": "manual",
+            "max_claims": 0
+        });
+
+        let legacy: EventBody = serde_json::from_value(legacy).unwrap();
+        let zero: EventBody = serde_json::from_value(zero).unwrap();
+
+        assert!(matches!(
+            legacy,
+            EventBody::WorkspaceInviteCapabilityCreated {
+                max_claims: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            zero,
+            EventBody::WorkspaceInviteCapabilityCreated {
+                max_claims: Some(0),
+                ..
+            }
+        ));
+        assert_eq!(effective_workspace_invite_max_claims(None), 1);
+        assert_eq!(effective_workspace_invite_max_claims(Some(0)), 1);
+    }
+
+    #[test]
+    fn capability_invite_json_preserves_explicit_max_claims() {
+        let body: EventBody = serde_json::from_value(serde_json::json!({
+            "kind": "workspace_invite_capability_created",
+            "invite_id": "inv_group",
+            "display_name": "Team",
+            "role": "member",
+            "expires_at": "2026-07-14T12:00:00Z",
+            "capability_public_key": "capability-key",
+            "sync_expectation": "manual",
+            "max_claims": 3
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            body,
+            EventBody::WorkspaceInviteCapabilityCreated {
+                max_claims: Some(3),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn legacy_capability_invite_signing_json_round_trips_without_adding_max_claims() {
+        let legacy = br#"{"schema_version":1,"workspace_id":"wrk_legacy","channel_id":null,"author_device_id":"dev_owner","timestamp":{"physical_ms":10,"logical":0},"parents":[],"body":{"kind":"workspace_invite_capability_created","invite_id":"inv_legacy","display_name":"Team","role":"member","expires_at":"2026-07-14T12:00:00Z","capability_public_key":"capability-key","sync_expectation":"manual"}}"#;
+
+        let event: SignableEvent = serde_json::from_slice(legacy).unwrap();
+        let reserialized = serde_json::to_vec(&event).unwrap();
+
+        assert_eq!(reserialized, legacy);
     }
 
     #[test]

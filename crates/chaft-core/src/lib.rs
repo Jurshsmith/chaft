@@ -21,10 +21,11 @@ use chaft_types::{
     TrustSnapshotPersonDeviceLink, TrustSnapshotRole, WORKSPACE_ACCESS_POLICY_MAX_BYTES,
     WORKSPACE_ID_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
     WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
-    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
-    WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES, WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
-    WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy, WorkspaceId, WorkspaceInviteResolution,
-    WorkspaceJoinRequestResolution, WorkspaceRole, peer_endpoint_hint_is_supported,
+    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_MAX_CLAIMS,
+    WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+    WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
+    WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
+    effective_workspace_invite_max_claims, peer_endpoint_hint_is_supported,
     peer_endpoint_hint_transport_is_consistent,
 };
 use thiserror::Error;
@@ -79,6 +80,10 @@ pub enum AuthorizationError {
     JoinRequestNotFound { request_id: String },
     #[error("invite {invite_id:?} is not authorized by workspace history")]
     InviteNotFound { invite_id: String },
+    #[error("invite {invite_id:?} has been revoked")]
+    InviteRevoked { invite_id: String },
+    #[error("invite {invite_id:?} has no claims remaining")]
+    InviteExhausted { invite_id: String },
     #[error("device {device_id:?} is not a workspace member")]
     NotAMember { device_id: DeviceId },
     #[error("device {device_id:?} cannot edit person profile {person_id:?}")]
@@ -304,6 +309,8 @@ pub struct WorkspaceInviteView {
     pub approval_policy: String,
     pub sync_expectation: String,
     pub capability_public_key: String,
+    pub max_claims: u32,
+    pub claim_count: u32,
     pub created_event_id: EventId,
     pub created_by_device_id: DeviceId,
     pub created_physical_ms: i64,
@@ -601,6 +608,8 @@ impl WorkspaceState {
                         approval_policy: approval_policy.clone(),
                         sync_expectation: sync_expectation.clone(),
                         capability_public_key: String::new(),
+                        max_claims: 1,
+                        claim_count: 0,
                         created_event_id: signed.event_id.clone(),
                         created_by_device_id: signed.event.author_device_id.clone(),
                         created_physical_ms: signed.event.timestamp.physical_ms,
@@ -629,7 +638,9 @@ impl WorkspaceState {
                 expires_at,
                 capability_public_key,
                 sync_expectation,
+                max_claims,
             } => {
+                let max_claims = effective_workspace_invite_max_claims(*max_claims);
                 self.invites.insert(
                     invite_id.clone(),
                     WorkspaceInviteView {
@@ -642,6 +653,8 @@ impl WorkspaceState {
                         approval_policy: "preapproved".to_owned(),
                         sync_expectation: sync_expectation.clone(),
                         capability_public_key: capability_public_key.clone(),
+                        max_claims,
+                        claim_count: 0,
                         created_event_id: signed.event_id.clone(),
                         created_by_device_id: signed.event.author_device_id.clone(),
                         created_physical_ms: signed.event.timestamp.physical_ms,
@@ -662,12 +675,15 @@ impl WorkspaceState {
                 if let Some(invite) = self.invites.get_mut(invite_id) {
                     invite.invitee_device_id = invitee_device_id.clone();
                     invite.request_id = Some(request_id.clone());
-                    invite.status = WorkspaceInviteStatus::Accepted;
-                    invite.accepted_event_id = Some(signed.event_id.clone());
-                    invite.accepted_physical_ms = Some(signed.event.timestamp.physical_ms);
-                    invite.resolved_event_id = Some(signed.event_id.clone());
-                    invite.resolved_by_device_id = Some(signed.event.author_device_id.clone());
-                    invite.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                    invite.claim_count = invite.claim_count.saturating_add(1);
+                    if invite.claim_count >= invite.max_claims {
+                        invite.status = WorkspaceInviteStatus::Accepted;
+                        invite.accepted_event_id = Some(signed.event_id.clone());
+                        invite.accepted_physical_ms = Some(signed.event.timestamp.physical_ms);
+                        invite.resolved_event_id = Some(signed.event_id.clone());
+                        invite.resolved_by_device_id = Some(signed.event.author_device_id.clone());
+                        invite.resolved_physical_ms = Some(signed.event.timestamp.physical_ms);
+                    }
                 }
                 self.approve_join_request_from_invite(
                     request_id,
@@ -1114,8 +1130,10 @@ impl WorkspaceState {
         for invite in self.invites.values_mut() {
             if invite.invitee_device_id == signed.event.author_device_id
                 && invite.status == WorkspaceInviteStatus::Invited
+                && invite.capability_public_key.is_empty()
             {
                 invite.status = WorkspaceInviteStatus::Accepted;
+                invite.claim_count = invite.max_claims;
                 invite.accepted_event_id = Some(signed.event_id.clone());
                 invite.accepted_physical_ms = Some(signed.event.timestamp.physical_ms);
             }
@@ -1130,7 +1148,7 @@ pub struct WorkspaceAccessIndex {
     channels: HashMap<ChannelId, ChannelAccess>,
     messages: HashMap<MessageId, ChannelId>,
     event_channels: HashMap<EventId, ChannelId>,
-    invites: HashSet<String>,
+    invites: HashMap<String, WorkspaceInviteAccess>,
     join_requests: HashSet<String>,
     person_links: HashMap<DeviceId, PersonId>,
     root_device_id: Option<DeviceId>,
@@ -1144,6 +1162,14 @@ struct ChannelAccess {
     members: HashSet<DeviceId>,
 }
 
+#[derive(Debug, Clone)]
+struct WorkspaceInviteAccess {
+    max_claims: u32,
+    claim_count: u32,
+    revoked: bool,
+    invitee_device_id: Option<DeviceId>,
+}
+
 impl WorkspaceAccessIndex {
     pub fn new(workspace_id: WorkspaceId) -> Self {
         Self {
@@ -1152,7 +1178,7 @@ impl WorkspaceAccessIndex {
             channels: HashMap::new(),
             messages: HashMap::new(),
             event_channels: HashMap::new(),
-            invites: HashSet::new(),
+            invites: HashMap::new(),
             join_requests: HashSet::new(),
             person_links: HashMap::new(),
             root_device_id: None,
@@ -1317,18 +1343,27 @@ impl WorkspaceAccessIndex {
             EventBody::WorkspaceInviteClaimed { invite_id, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 require_role(author_role, Action::InviteMember)?;
-                if self.invites.contains(invite_id) {
-                    Ok(())
-                } else {
-                    Err(AuthorizationError::InviteNotFound {
+                let invite = self.invites.get(invite_id).ok_or_else(|| {
+                    AuthorizationError::InviteNotFound {
                         invite_id: invite_id.clone(),
-                    })
+                    }
+                })?;
+                if invite.revoked {
+                    return Err(AuthorizationError::InviteRevoked {
+                        invite_id: invite_id.clone(),
+                    });
                 }
+                if invite.claim_count >= invite.max_claims {
+                    return Err(AuthorizationError::InviteExhausted {
+                        invite_id: invite_id.clone(),
+                    });
+                }
+                Ok(())
             }
             EventBody::WorkspaceInviteResolved { invite_id, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 require_role(author_role, Action::InviteMember)?;
-                if self.invites.contains(invite_id) {
+                if self.invites.contains_key(invite_id) {
                     Ok(())
                 } else {
                     Err(AuthorizationError::InviteNotFound {
@@ -1645,12 +1680,46 @@ impl WorkspaceAccessIndex {
                 self.roles.insert(member_device_id.clone(), *role);
             }
             EventBody::WorkspaceAccessPolicyUpdated { .. } => {}
-            EventBody::WorkspaceInviteRecorded { invite_id, .. }
-            | EventBody::WorkspaceInviteCapabilityCreated { invite_id, .. } => {
-                self.invites.insert(invite_id.clone());
+            EventBody::WorkspaceInviteRecorded {
+                invite_id,
+                invitee_device_id,
+                ..
+            } => {
+                self.invites.insert(
+                    invite_id.clone(),
+                    WorkspaceInviteAccess {
+                        max_claims: 1,
+                        claim_count: 0,
+                        revoked: false,
+                        invitee_device_id: Some(invitee_device_id.clone()),
+                    },
+                );
             }
-            EventBody::WorkspaceInviteClaimed { .. } => {}
-            EventBody::WorkspaceInviteResolved { .. } => {}
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id,
+                max_claims,
+                ..
+            } => {
+                self.invites.insert(
+                    invite_id.clone(),
+                    WorkspaceInviteAccess {
+                        max_claims: effective_workspace_invite_max_claims(*max_claims),
+                        claim_count: 0,
+                        revoked: false,
+                        invitee_device_id: None,
+                    },
+                );
+            }
+            EventBody::WorkspaceInviteClaimed { invite_id, .. } => {
+                if let Some(invite) = self.invites.get_mut(invite_id) {
+                    invite.claim_count = invite.claim_count.saturating_add(1);
+                }
+            }
+            EventBody::WorkspaceInviteResolved { invite_id, .. } => {
+                if let Some(invite) = self.invites.get_mut(invite_id) {
+                    invite.revoked = true;
+                }
+            }
             EventBody::WorkspaceJoinRequestRecorded { request_id, .. } => {
                 self.join_requests.insert(request_id.clone());
             }
@@ -1782,6 +1851,20 @@ impl WorkspaceAccessIndex {
             EventBody::ReadMarkerUpdated { channel_id, .. } => {
                 self.event_channels
                     .insert(event.event_id.clone(), channel_id.clone());
+            }
+        }
+
+        if !matches!(
+            event.event.body,
+            EventBody::WorkspaceInviteRecorded { .. }
+                | EventBody::WorkspaceInviteCapabilityCreated { .. }
+                | EventBody::WorkspaceInviteClaimed { .. }
+                | EventBody::WorkspaceInviteResolved { .. }
+        ) {
+            for invite in self.invites.values_mut() {
+                if invite.invitee_device_id.as_ref() == Some(&event.event.author_device_id) {
+                    invite.claim_count = invite.max_claims;
+                }
             }
         }
     }
@@ -1940,6 +2023,8 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::MessageNotFound { .. }
                     | AuthorizationError::ReadMarkerTargetNotFound { .. }
                     | AuthorizationError::InviteNotFound { .. }
+                    | AuthorizationError::InviteRevoked { .. }
+                    | AuthorizationError::InviteExhausted { .. }
                     | AuthorizationError::JoinRequestNotFound { .. }
                     | AuthorizationError::NotAMember { .. }
                     | AuthorizationError::WorkspaceRootCannotBeRemoved { .. }
@@ -2800,8 +2885,17 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             expires_at,
             capability_public_key,
             sync_expectation,
+            max_claims,
             ..
         } => {
+            let max_claims = effective_workspace_invite_max_claims(*max_claims);
+            if max_claims > WORKSPACE_INVITE_MAX_CLAIMS {
+                return Err(AuthorizationError::EventItemCountTooLarge {
+                    label: "invite claims",
+                    actual_count: max_claims as usize,
+                    max_count: WORKSPACE_INVITE_MAX_CLAIMS as usize,
+                });
+            }
             validate_event_text_required("invite ID", invite_id)?;
             validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)?;
             validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
@@ -3442,6 +3536,47 @@ mod tests {
             owner.clone(),
             EventBody::WorkspaceCreated {
                 name: "Chaft".to_owned(),
+            },
+        ))
+    }
+
+    fn capability_invite(
+        workspace_id: &WorkspaceId,
+        owner: &DeviceId,
+        invite_id: &str,
+        max_claims: Option<u32>,
+    ) -> SignedEvent {
+        signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id: invite_id.to_owned(),
+                display_name: "Launch team".to_owned(),
+                role: WorkspaceRole::Member,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                capability_public_key: "capability-key".to_owned(),
+                sync_expectation: "manual".to_owned(),
+                max_claims,
+            },
+        ))
+    }
+
+    fn capability_invite_claim(
+        workspace_id: &WorkspaceId,
+        owner: &DeviceId,
+        invite_id: &str,
+        invitee_device_id: &str,
+        request_id: &str,
+    ) -> SignedEvent {
+        signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteClaimed {
+                invite_id: invite_id.to_owned(),
+                invitee_device_id: DeviceId(invitee_device_id.to_owned()),
+                request_id: request_id.to_owned(),
             },
         ))
     }
@@ -7296,6 +7431,208 @@ mod tests {
         assert_eq!(
             invite_first.resolved_physical_ms,
             Some(invite.event.timestamp.physical_ms)
+        );
+    }
+
+    #[test]
+    fn legacy_capability_invite_is_single_use_and_replays_as_exhausted() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = capability_invite(&workspace_id, &owner, "inv_legacy", None);
+        let first_claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_legacy",
+            "dev_first",
+            "req_first",
+        );
+        let second_claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_legacy",
+            "dev_second",
+            "req_second",
+        );
+
+        let mut state = WorkspaceState::new(workspace_id);
+        state
+            .apply_batch(&[root.clone(), invite.clone(), first_claim.clone()])
+            .unwrap();
+
+        let materialized = state.invites.get("inv_legacy").unwrap();
+        assert_eq!(materialized.max_claims, 1);
+        assert_eq!(materialized.claim_count, 1);
+        assert_eq!(materialized.status, WorkspaceInviteStatus::Accepted);
+        let expected = Err(AuthorizationError::InviteExhausted {
+            invite_id: "inv_legacy".to_owned(),
+        });
+        assert_eq!(
+            authorize_event_with_history(
+                &[root.clone(), invite.clone(), first_claim.clone()],
+                &second_claim,
+            ),
+            expected
+        );
+        assert_eq!(
+            authorize_event_with_history(&[first_claim, invite, root], &second_claim),
+            expected
+        );
+    }
+
+    #[test]
+    fn legacy_direct_invite_activity_exhausts_authorization_capacity() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let invitee = DeviceId("dev_invitee".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let membership = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: invitee.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteRecorded {
+                invite_id: "inv_direct".to_owned(),
+                invitee_device_id: invitee.clone(),
+                display_name: "Invitee".to_owned(),
+                role: WorkspaceRole::Member,
+                request_id: None,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                approval_policy: "invite_file".to_owned(),
+                sync_expectation: "manual".to_owned(),
+            },
+        ));
+        let activity = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            invitee,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Joined".to_owned(),
+            },
+        ));
+        let claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_direct",
+            "dev_other",
+            "req_other",
+        );
+
+        assert_eq!(
+            authorize_event_with_history(&[root, membership, invite, activity], &claim),
+            Err(AuthorizationError::InviteExhausted {
+                invite_id: "inv_direct".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn two_claim_capability_invite_stays_open_then_exhausts() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = capability_invite(&workspace_id, &owner, "inv_team", Some(2));
+        let first_claim =
+            capability_invite_claim(&workspace_id, &owner, "inv_team", "dev_first", "req_first");
+        let second_claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_team",
+            "dev_second",
+            "req_second",
+        );
+        let third_claim =
+            capability_invite_claim(&workspace_id, &owner, "inv_team", "dev_third", "req_third");
+        let mut state = WorkspaceState::new(workspace_id);
+        state
+            .apply_batch(&[root.clone(), invite.clone(), first_claim.clone()])
+            .unwrap();
+
+        let partially_claimed = state.invites.get("inv_team").unwrap();
+        assert_eq!(partially_claimed.max_claims, 2);
+        assert_eq!(partially_claimed.claim_count, 1);
+        assert_eq!(partially_claimed.status, WorkspaceInviteStatus::Invited);
+        assert_eq!(partially_claimed.accepted_event_id, None);
+
+        state.apply(&second_claim).unwrap();
+        let exhausted = state.invites.get("inv_team").unwrap();
+        assert_eq!(exhausted.claim_count, 2);
+        assert_eq!(exhausted.status, WorkspaceInviteStatus::Accepted);
+        assert_eq!(
+            exhausted.accepted_event_id.as_ref(),
+            Some(&second_claim.event_id)
+        );
+        assert_eq!(
+            authorize_event_with_history(&[root, invite, first_claim, second_claim], &third_claim,),
+            Err(AuthorizationError::InviteExhausted {
+                invite_id: "inv_team".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn revoked_capability_invite_rejects_remaining_claims() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = capability_invite(&workspace_id, &owner, "inv_revoked", Some(2));
+        let first_claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_revoked",
+            "dev_first",
+            "req_first",
+        );
+        let revoked = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteResolved {
+                invite_id: "inv_revoked".to_owned(),
+                resolution: WorkspaceInviteResolution::Revoked,
+            },
+        ));
+        let second_claim = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_revoked",
+            "dev_second",
+            "req_second",
+        );
+
+        assert_eq!(
+            authorize_event_with_history(&[root, invite, first_claim, revoked], &second_claim),
+            Err(AuthorizationError::InviteRevoked {
+                invite_id: "inv_revoked".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn capability_invite_claim_limit_is_bounded() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = capability_invite(
+            &workspace_id,
+            &owner,
+            "inv_too_many",
+            Some(WORKSPACE_INVITE_MAX_CLAIMS + 1),
+        );
+
+        assert_item_count_too_large(
+            authorize_event_with_history(&[root], &invite).unwrap_err(),
+            "invite claims",
+            (WORKSPACE_INVITE_MAX_CLAIMS + 1) as usize,
+            WORKSPACE_INVITE_MAX_CLAIMS as usize,
         );
     }
 

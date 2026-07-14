@@ -205,6 +205,9 @@ pub struct WorkspaceInviteSnapshot {
     pub approval_policy: String,
     pub sync_expectation: String,
     pub capability_public_key: String,
+    pub max_claims: u32,
+    pub claim_count: u32,
+    pub remaining_claims: u32,
     pub claimable: bool,
     pub status: String,
     pub created_event_id: String,
@@ -1436,7 +1439,12 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
             approval_policy: invite.approval_policy.clone(),
             sync_expectation: invite.sync_expectation.clone(),
             capability_public_key: invite.capability_public_key.clone(),
-            claimable: !invite.capability_public_key.is_empty(),
+            max_claims: invite.max_claims,
+            claim_count: invite.claim_count,
+            remaining_claims: invite.max_claims.saturating_sub(invite.claim_count),
+            claimable: !invite.capability_public_key.is_empty()
+                && invite.status == WorkspaceInviteStatus::Invited
+                && invite.claim_count < invite.max_claims,
             status: invite_status_label(invite.status).to_owned(),
             created_event_id: invite.created_event_id.0.clone(),
             created_by_device_id: invite.created_by_device_id.0.clone(),
@@ -4887,12 +4895,17 @@ mod tests {
         assert_eq!(invited.request_id.as_deref(), Some("req_snapshot"));
         assert_eq!(invited.approval_policy, "invite_file");
         assert_eq!(invited.sync_expectation, "endpoint_bootstrap");
+        assert_eq!(invited.max_claims, 1);
+        assert_eq!(invited.claim_count, 0);
+        assert_eq!(invited.remaining_claims, 1);
         assert_eq!(invited.status, "invited");
         assert_eq!(invited.created_by_display_name.as_deref(), Some("Ada"));
         assert_eq!(invited.accepted_event_id, None);
 
         let accepted = &accepted_snapshot.invites[0];
         assert_eq!(accepted.status, "accepted");
+        assert_eq!(accepted.claim_count, 1);
+        assert_eq!(accepted.remaining_claims, 0);
         assert_eq!(
             accepted.accepted_event_id.as_deref(),
             Some(invitee_profile.event_id.0.as_str())
@@ -4902,6 +4915,82 @@ mod tests {
             Some(invitee_profile.event.timestamp.physical_ms)
         );
         assert_eq!(accepted.invitee_display_name.as_deref(), Some("Rina Cole"));
+    }
+
+    #[test]
+    fn snapshot_reports_multi_claim_invite_capacity_and_exhaustion() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let first_invitee = DeviceId("dev_first".to_owned());
+        let second_invitee = DeviceId("dev_second".to_owned());
+        let workspace = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft Labs".to_owned(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id: "inv_team".to_owned(),
+                display_name: "Launch team".to_owned(),
+                role: WorkspaceRole::Member,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                capability_public_key: "capability-key".to_owned(),
+                sync_expectation: "manual".to_owned(),
+                max_claims: Some(2),
+            },
+        ));
+        let first_claim = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteClaimed {
+                invite_id: "inv_team".to_owned(),
+                invitee_device_id: first_invitee,
+                request_id: "req_first".to_owned(),
+            },
+        ));
+        let second_claim = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::WorkspaceInviteClaimed {
+                invite_id: "inv_team".to_owned(),
+                invitee_device_id: second_invitee,
+                request_id: "req_second".to_owned(),
+            },
+        ));
+
+        let partially_claimed = WorkspaceSnapshot::from_events(
+            workspace_id.clone(),
+            &[workspace.clone(), invite.clone(), first_claim.clone()],
+        )
+        .unwrap();
+        let exhausted = WorkspaceSnapshot::from_events(
+            workspace_id,
+            &[workspace, invite, first_claim, second_claim],
+        )
+        .unwrap();
+
+        let invite = &partially_claimed.invites[0];
+        assert_eq!(invite.max_claims, 2);
+        assert_eq!(invite.claim_count, 1);
+        assert_eq!(invite.remaining_claims, 1);
+        assert_eq!(invite.status, "invited");
+        assert!(invite.claimable);
+        assert_eq!(invite.accepted_event_id, None);
+
+        let invite = &exhausted.invites[0];
+        assert_eq!(invite.max_claims, 2);
+        assert_eq!(invite.claim_count, 2);
+        assert_eq!(invite.remaining_claims, 0);
+        assert_eq!(invite.status, "accepted");
+        assert!(!invite.claimable);
     }
 
     #[test]
@@ -6319,6 +6408,9 @@ mod tests {
                 approval_policy: "invite_file".to_owned(),
                 sync_expectation: "endpoint_bootstrap".to_owned(),
                 capability_public_key: String::new(),
+                max_claims: 1,
+                claim_count: 0,
+                remaining_claims: 1,
                 claimable: false,
                 status: "invited".to_owned(),
                 created_event_id: "evt_invite".to_owned(),
@@ -6522,6 +6614,9 @@ mod tests {
         assert_eq!(value["invites"][0]["expiresAt"], "2026-07-14T12:00:00Z");
         assert_eq!(value["invites"][0]["approvalPolicy"], "invite_file");
         assert_eq!(value["invites"][0]["syncExpectation"], "endpoint_bootstrap");
+        assert_eq!(value["invites"][0]["maxClaims"], 1);
+        assert_eq!(value["invites"][0]["claimCount"], 0);
+        assert_eq!(value["invites"][0]["remainingClaims"], 1);
         assert_eq!(value["invites"][0]["status"], "invited");
         assert_eq!(value["invites"][0]["createdEventId"], "evt_invite");
         assert_eq!(value["invites"][0]["createdByDisplayName"], "Mira");

@@ -270,6 +270,8 @@ pub struct WireWorkspaceInviteCapabilityCreated {
     pub capability_public_key: String,
     #[prost(string, tag = "6")]
     pub sync_expectation: String,
+    #[prost(uint32, optional, tag = "7")]
+    pub max_claims: Option<u32>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -966,6 +968,7 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             expires_at,
             capability_public_key,
             sync_expectation,
+            max_claims,
         } => Kind::WorkspaceInviteCapabilityCreated(WireWorkspaceInviteCapabilityCreated {
             invite_id: invite_id.clone(),
             display_name: display_name.clone(),
@@ -973,6 +976,7 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             expires_at: expires_at.clone(),
             capability_public_key: capability_public_key.clone(),
             sync_expectation: sync_expectation.clone(),
+            max_claims: *max_claims,
         }),
         EventBody::WorkspaceInviteClaimed {
             invite_id,
@@ -1359,6 +1363,7 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
                 expires_at: body.expires_at,
                 capability_public_key: body.capability_public_key,
                 sync_expectation: body.sync_expectation,
+                max_claims: body.max_claims,
             })
         }
         Kind::WorkspaceInviteClaimed(body) => Ok(EventBody::WorkspaceInviteClaimed {
@@ -2231,6 +2236,20 @@ mod tests {
                 approval_policy: "preapproved".to_owned(),
                 sync_expectation: "auto_fetch_from_invite_source".to_owned(),
             },
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id: "inv_wire_capability".to_owned(),
+                display_name: "Launch team".to_owned(),
+                role: WorkspaceRole::Member,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                capability_public_key: "capability-key".to_owned(),
+                sync_expectation: "manual".to_owned(),
+                max_claims: Some(3),
+            },
+            EventBody::WorkspaceInviteClaimed {
+                invite_id: "inv_wire_capability".to_owned(),
+                invitee_device_id: DeviceId("dev_claimant".to_owned()),
+                request_id: "req_wire_claim".to_owned(),
+            },
             EventBody::WorkspaceInviteResolved {
                 invite_id: "inv_wire".to_owned(),
                 resolution: WorkspaceInviteResolution::Revoked,
@@ -2490,6 +2509,42 @@ mod tests {
 
             assert_eq!(decoded, signed);
         }
+    }
+
+    #[test]
+    fn legacy_capability_invite_wire_preserves_missing_max_claims() {
+        let signed = signed_with_body(EventBody::WorkspaceInviteCapabilityCreated {
+            invite_id: "inv_legacy".to_owned(),
+            display_name: "Legacy invite".to_owned(),
+            role: WorkspaceRole::Member,
+            expires_at: "2026-07-14T12:00:00Z".to_owned(),
+            capability_public_key: "capability-key".to_owned(),
+            sync_expectation: "manual".to_owned(),
+            max_claims: None,
+        });
+        let mut envelope = encode_event_envelope(&signed);
+        let kind = envelope
+            .body
+            .as_mut()
+            .and_then(|body| body.kind.as_mut())
+            .expect("typed event body");
+        match kind {
+            wire_event_body::Kind::WorkspaceInviteCapabilityCreated(body) => {
+                assert_eq!(body.max_claims, None);
+            }
+            _ => panic!("unexpected event body"),
+        }
+
+        let decoded = decode_event_envelope(envelope).unwrap();
+
+        assert_eq!(decoded, signed);
+        assert!(matches!(
+            decoded.event.body,
+            EventBody::WorkspaceInviteCapabilityCreated {
+                max_claims: None,
+                ..
+            }
+        ));
     }
 
     #[test]

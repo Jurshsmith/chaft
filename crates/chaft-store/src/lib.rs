@@ -3,7 +3,9 @@ use std::{collections::BTreeMap, path::Path};
 use chaft_identity::verify_self_contained_event;
 use chaft_types::{EventId, SignedEvent};
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{
+    Connection, OptionalExtension, Transaction, TransactionBehavior, params, params_from_iter,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,6 +25,14 @@ pub enum StoreError {
     StorePathTooLarge {
         actual_bytes: usize,
         max_bytes: usize,
+    },
+    #[error("workspace event history changed while committing an atomic batch")]
+    WorkspaceHistoryChanged,
+    #[error("event {event_id:?} belongs to {actual_workspace_id:?}, expected {workspace_id:?}")]
+    EventWorkspaceMismatch {
+        event_id: EventId,
+        workspace_id: String,
+        actual_workspace_id: String,
     },
 }
 
@@ -187,43 +197,46 @@ impl EventStore {
     }
 
     pub fn append_event(&self, event: &SignedEvent) -> Result<(), StoreError> {
-        let event_json = serde_json::to_vec(event)?;
-        validate_event_json_size(event_json.len())?;
-        let is_servable = is_servable_event(event);
-        self.connection.execute(
-            "
-            INSERT INTO events (
-                event_id,
-                workspace_id,
-                channel_id,
-                author_device_id,
-                physical_ms,
-                logical,
-                self_contained_signature_valid,
-                event_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            ON CONFLICT(event_id) DO UPDATE SET
-                workspace_id = excluded.workspace_id,
-                channel_id = excluded.channel_id,
-                author_device_id = excluded.author_device_id,
-                physical_ms = excluded.physical_ms,
-                logical = excluded.logical,
-                self_contained_signature_valid = excluded.self_contained_signature_valid,
-                event_json = excluded.event_json
-            WHERE COALESCE(events.self_contained_signature_valid, 0) != 1
-              AND excluded.self_contained_signature_valid = 1
-            ",
-            params![
-                event.event_id.0,
-                event.event.workspace_id.0,
-                event.event.channel_id.as_ref().map(|id| id.0.as_str()),
-                event.event.author_device_id.0,
-                event.event.timestamp.physical_ms,
-                event.event.timestamp.logical,
-                bool_to_sqlite_integer(is_servable),
-                event_json
-            ],
-        )?;
+        let serialized = SerializedEvent::from_event(event)?;
+        insert_serialized_event(&self.connection, &serialized)?;
+        Ok(())
+    }
+
+    /// Appends a workspace-local event batch in one SQLite transaction, but
+    /// only when the workspace history is still the exact history the caller
+    /// used for authorization. All events are serialized and size-validated
+    /// before the write transaction begins.
+    pub fn append_events_atomically_if_workspace_history_matches(
+        &self,
+        workspace_id: &str,
+        expected_event_ids: &[EventId],
+        events: &[SignedEvent],
+    ) -> Result<(), StoreError> {
+        let serialized = events
+            .iter()
+            .map(|event| {
+                if event.event.workspace_id.0 != workspace_id {
+                    return Err(StoreError::EventWorkspaceMismatch {
+                        event_id: event.event_id.clone(),
+                        workspace_id: workspace_id.to_owned(),
+                        actual_workspace_id: event.event.workspace_id.0.clone(),
+                    });
+                }
+                SerializedEvent::from_event(event)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let current_event_ids =
+            list_event_ids_for_workspace_from_connection(&transaction, workspace_id)?;
+        if current_event_ids != expected_event_ids {
+            return Err(StoreError::WorkspaceHistoryChanged);
+        }
+        for event in &serialized {
+            insert_serialized_event(&transaction, event)?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -640,21 +653,10 @@ impl EventStore {
         &self,
         workspace_id: &str,
     ) -> Result<Vec<EventId>, StoreError> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT event_id FROM events
-            WHERE workspace_id = ?1
-            ORDER BY rowid ASC
-            ",
-        )?;
-        let rows = statement.query_map(params![workspace_id], |row| row.get::<_, String>(0))?;
-        let mut event_ids = Vec::new();
-
-        for row in rows {
-            event_ids.push(EventId(row?));
-        }
-
-        Ok(event_ids)
+        Ok(list_event_ids_for_workspace_from_connection(
+            &self.connection,
+            workspace_id,
+        )?)
     }
 
     pub fn list_servable_event_ids(&self) -> Result<Vec<EventId>, StoreError> {
@@ -874,6 +876,96 @@ impl EventStore {
     }
 }
 
+struct SerializedEvent {
+    event_id: String,
+    workspace_id: String,
+    channel_id: Option<String>,
+    author_device_id: String,
+    physical_ms: i64,
+    logical: u32,
+    self_contained_signature_valid: i64,
+    event_json: Vec<u8>,
+}
+
+impl SerializedEvent {
+    fn from_event(event: &SignedEvent) -> Result<Self, StoreError> {
+        let event_json = serde_json::to_vec(event)?;
+        validate_event_json_size(event_json.len())?;
+        Ok(Self {
+            event_id: event.event_id.0.clone(),
+            workspace_id: event.event.workspace_id.0.clone(),
+            channel_id: event.event.channel_id.as_ref().map(|id| id.0.clone()),
+            author_device_id: event.event.author_device_id.0.clone(),
+            physical_ms: event.event.timestamp.physical_ms,
+            logical: event.event.timestamp.logical,
+            self_contained_signature_valid: bool_to_sqlite_integer(is_servable_event(event)),
+            event_json,
+        })
+    }
+}
+
+fn insert_serialized_event(
+    connection: &Connection,
+    event: &SerializedEvent,
+) -> Result<(), rusqlite::Error> {
+    connection.execute(
+        "
+        INSERT INTO events (
+            event_id,
+            workspace_id,
+            channel_id,
+            author_device_id,
+            physical_ms,
+            logical,
+            self_contained_signature_valid,
+            event_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(event_id) DO UPDATE SET
+            workspace_id = excluded.workspace_id,
+            channel_id = excluded.channel_id,
+            author_device_id = excluded.author_device_id,
+            physical_ms = excluded.physical_ms,
+            logical = excluded.logical,
+            self_contained_signature_valid = excluded.self_contained_signature_valid,
+            event_json = excluded.event_json
+        WHERE COALESCE(events.self_contained_signature_valid, 0) != 1
+          AND excluded.self_contained_signature_valid = 1
+        ",
+        params![
+            event.event_id,
+            event.workspace_id,
+            event.channel_id,
+            event.author_device_id,
+            event.physical_ms,
+            event.logical,
+            event.self_contained_signature_valid,
+            event.event_json,
+        ],
+    )?;
+    Ok(())
+}
+
+fn list_event_ids_for_workspace_from_connection(
+    connection: &Connection,
+    workspace_id: &str,
+) -> Result<Vec<EventId>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "
+        SELECT event_id FROM events
+        WHERE workspace_id = ?1
+        ORDER BY rowid ASC
+        ",
+    )?;
+    let rows = statement.query_map(params![workspace_id], |row| row.get::<_, String>(0))?;
+    let mut event_ids = Vec::new();
+
+    for row in rows {
+        event_ids.push(EventId(row?));
+    }
+
+    Ok(event_ids)
+}
+
 fn is_servable_event(event: &SignedEvent) -> bool {
     verify_self_contained_event(event).is_ok()
 }
@@ -998,6 +1090,104 @@ mod tests {
 
         assert_eq!(store.get_event(&signed.event_id).unwrap(), Some(signed));
         assert_eq!(store.list_events().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn atomic_workspace_batch_rolls_back_every_event_when_a_later_insert_fails() {
+        let store = EventStore::open_in_memory().unwrap();
+        let workspace_id = WorkspaceId::new();
+        let first = SignedEvent::from_signed_bytes(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                DeviceId("dev_atomic_first".to_owned()),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "first".to_owned(),
+                },
+            ),
+            vec![1],
+        );
+        let second = SignedEvent::from_signed_bytes(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                DeviceId("dev_atomic_fail".to_owned()),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "second".to_owned(),
+                },
+            ),
+            vec![2],
+        );
+        store
+            .connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_atomic_event_insert
+                BEFORE INSERT ON events
+                WHEN NEW.author_device_id = 'dev_atomic_fail'
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected atomic batch failure');
+                END;
+                ",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            store.append_events_atomically_if_workspace_history_matches(
+                &workspace_id.0,
+                &[],
+                &[first, second],
+            ),
+            Err(StoreError::Sqlite(_))
+        ));
+        assert!(
+            store
+                .list_event_ids_for_workspace(&workspace_id.0)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn atomic_workspace_batch_rejects_a_stale_history_without_writing() {
+        let store = EventStore::open_in_memory().unwrap();
+        let workspace_id = WorkspaceId::new();
+        let existing = SignedEvent::from_signed_bytes(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                DeviceId("dev_existing".to_owned()),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "existing".to_owned(),
+                },
+            ),
+            vec![1],
+        );
+        let candidate = SignedEvent::from_signed_bytes(
+            SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                DeviceId("dev_candidate".to_owned()),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "candidate".to_owned(),
+                },
+            ),
+            vec![2],
+        );
+        store.append_event(&existing).unwrap();
+
+        assert!(matches!(
+            store.append_events_atomically_if_workspace_history_matches(
+                &workspace_id.0,
+                &[],
+                &[candidate],
+            ),
+            Err(StoreError::WorkspaceHistoryChanged)
+        ));
+        assert_eq!(
+            store.list_event_ids_for_workspace(&workspace_id.0).unwrap(),
+            vec![existing.event_id]
+        );
     }
 
     #[test]
