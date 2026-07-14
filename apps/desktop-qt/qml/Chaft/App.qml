@@ -1218,7 +1218,7 @@ ApplicationWindow {
         }
         if (status === "sent") {
             if (secureClaim) {
-                return "Claim delivered to " + label
+                return "Join request delivered to " + label
                     + ". Keep Chaft open while it checks for encrypted workspace access."
             }
             return row.canSendDirect
@@ -1228,36 +1228,36 @@ ApplicationWindow {
         }
         if (status === "sending") {
             return secureClaim
-                ? "Delivering the signed claim to " + label + "."
+                ? "Sending the join request to " + label + "."
                 : "Sending to " + label + "."
         }
         if (status === "send_failed") {
             if (secureClaim) {
                 return "Could not reach " + label
-                    + ". Copy or save the claim, or try again when their Chaft device is reachable."
+                    + ". Copy or save the join request, or try again when their Chaft device is reachable."
             }
             return "Could not reach " + label
                 + ". Copy the request link or save the file, then send it to them. Check after they approve, then open the invite here."
         }
         if (status === "copied") {
             return secureClaim
-                ? "Send the copied invite claim to " + label
+                ? "Send the copied join request to " + label
                     + ", then open the encrypted access response here."
                 : "Send the copied request link to " + label
                     + ". Check after they approve, then open the invite here."
         }
         if (status === "file_ready") {
             return secureClaim
-                ? "Send the saved invite claim file to " + label
+                ? "Send the saved join request to " + label
                     + ", then open the encrypted access response here."
                 : "Save or send the request file to " + label
                     + ". Check after they approve, then open the invite here."
         }
         if (secureClaim) {
             return row.canSendDirect
-                ? "Send the claim now, or copy or save it for " + label
+                ? "Send the join request now, or copy or save it for " + label
                     + ". Open the encrypted access response here when it arrives."
-                : "Copy or save the invite claim, then send it to " + label
+                : "Copy or save the join request, then send it to " + label
                     + ". Open the encrypted access response here when it arrives."
         }
         return row.canSendDirect
@@ -4993,8 +4993,11 @@ ApplicationWindow {
             if (row !== null) {
                 rows.push(row)
             }
-            row = root.credentialSummaryRow("Claim limit",
-                root.inviteClaimLimitLabel(parsed))
+            var inviteDeviceLimit = root.inviteMaxClaims(parsed)
+            row = root.credentialSummaryRow("Device limit",
+                inviteDeviceLimit === 1
+                    ? "1 device"
+                    : inviteDeviceLimit + " devices")
             if (row !== null) {
                 rows.push(row)
             }
@@ -5006,10 +5009,7 @@ ApplicationWindow {
                 title: claimInviteExpired ? "Invite expired" : "Secure invite ready",
                 message: claimInviteExpired
                     ? "Ask a workspace admin for a new invite."
-                    : (root.inviteMaxClaims(parsed) === 1
-                        ? "Claim this invite from this device. The workspace key stays encrypted until the claim is accepted."
-                        : "This invite allows up to " + root.inviteMaxClaims(parsed)
-                            + " device claims. Claim it from this device; the workspace key stays encrypted until this claim is accepted."),
+                    : "Join from this device. Workspace access stays encrypted until the owner responds.",
                 rows: rows,
                 canImport: false,
                 warning: claimInviteExpired
@@ -5038,8 +5038,8 @@ ApplicationWindow {
                     ? "Secure access approved"
                     : "Approval belongs to another device",
                 message: responseTargetsThisDevice
-                    ? "This encrypted approval can be opened only on the device that claimed the invite."
-                    : "Open this approval on the device that originally claimed the invite.",
+                    ? "This encrypted approval can be opened only on the device that requested access."
+                    : "Open this approval on the device that originally requested access.",
                 rows: rows,
                 canImport: responseTargetsThisDevice,
                 warning: !responseTargetsThisDevice
@@ -5594,7 +5594,7 @@ ApplicationWindow {
             var request = root.keyTransferObject()
             return String((request && request.kind) || "")
                 === "chaft.workspace-invite-claim.v1"
-                ? "invite claim"
+                ? "join request"
                 : "access request"
         }
         if (root.keyTransferIsWorkspaceCard()) {
@@ -5775,6 +5775,9 @@ ApplicationWindow {
             return [ "Chaft invites (*.chaftinvite)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftrequest") {
+            if (normalized.indexOf("join request") >= 0) {
+                return [ "Chaft join requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
+            }
             return normalized.indexOf("invite claim") >= 0
                 ? [ "Chaft invite claims (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
                 : [ "Chaft access requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
@@ -6025,14 +6028,14 @@ ApplicationWindow {
                     badgeLabels.approved = "Ready"
                     titleLabels = {
                         approved: "Encrypted access received",
-                        closed: "Invite claim closed",
-                        copied: "Invite claim copied",
-                        declined: "Invite claim declined",
-                        file_ready: "Claim file ready",
-                        ready_to_send: "Invite claim ready",
-                        send_failed: "Invite claim not sent",
-                        sending: "Sending invite claim",
-                        sent: "Waiting for secure access",
+                        closed: "Join request closed",
+                        copied: "Join request copied",
+                        declined: "Join request declined",
+                        file_ready: "Join request ready",
+                        ready_to_send: "Join request ready",
+                        send_failed: "Join request not sent",
+                        sending: "Sending join request",
+                        sent: "Waiting for access",
                         sent_unpersisted: "Sent; status not saved",
                         unverified_response: "Unverified response"
                     }
@@ -6179,7 +6182,7 @@ ApplicationWindow {
         var secureClaim = String((row && row.sourceType) || "").trim()
             === "invite_claim"
         if (!root.copyTextToClipboard(
-                text, secureClaim ? "invite claim" : "access request")) {
+                text, secureClaim ? "join request" : "access request")) {
             return false
         }
         if (String((row && row.status) || "").trim() !== "sent") {
@@ -6201,7 +6204,7 @@ ApplicationWindow {
             (row && (row.key || row.workspaceId || row.requestId)) || "").trim()
         root.pendingAccessRequestSaveLabel = String(
             (row && row.sourceType) || "").trim() === "invite_claim"
-            ? "invite claim"
+            ? "join request"
             : "access request"
         pendingAccessRequestSaveDialog.selectedFile =
             root.credentialSuggestedFileUrl(
@@ -6293,7 +6296,7 @@ ApplicationWindow {
             toastHost.show(
                 "warning",
                 secureClaim
-                    ? "Invite claim not sent. Copy or save it, or try again when "
+                    ? "Join request not sent. Copy or save it, or try again when "
                         + row.deliveryLabel + " is reachable."
                     : "Request not sent. Copy the request link or try again when "
                         + row.deliveryLabel + " is reachable.",
@@ -6399,10 +6402,10 @@ ApplicationWindow {
         var secureClaim = String((row && row.sourceType) || "").trim()
             === "invite_claim"
         confirmDialog.ask(
-            secureClaim ? "Hide invite claim" : "Hide access request",
+            secureClaim ? "Hide join request" : "Hide access request",
             secureClaim
-                ? "Hide the invite claim reminder for " + workspace
-                    + "? Keep the copied claim or saved file before hiding. You can still open encrypted access here when it arrives."
+                ? "Hide the join request reminder for " + workspace
+                    + "? Keep the copied request or saved file before hiding. You can still open encrypted access here when it arrives."
                 : "Hide the access request reminder for " + workspace
                     + "? Keep the copied link or saved file before hiding. You can still open an invite here after an admin approves.",
             "Hide",
@@ -7192,12 +7195,12 @@ ApplicationWindow {
             }
             var toastMessage = success
                 ? (secureClaim
-                    ? "Invite claim sent to " + deliveryLabel
+                    ? "Join request sent to " + deliveryLabel
                         + ". Chaft will check for encrypted access."
                     : "Request sent to " + deliveryLabel
                         + ". Wait for their invite after approval.")
                 : (secureClaim
-                    ? "Invite claim not sent. Copy or save it, or try again when "
+                    ? "Join request not sent. Copy or save it, or try again when "
                         + deliveryLabel + " is reachable."
                     : "Request not sent. Copy the request link or try again when "
                         + deliveryLabel + " is reachable.")
@@ -7672,8 +7675,8 @@ ApplicationWindow {
         id: pendingAccessRequestSaveDialog
         title: "Save " + root.pendingAccessRequestSaveLabel
         fileMode: FileDialog.SaveFile
-        nameFilters: root.pendingAccessRequestSaveLabel === "invite claim"
-            ? [ "Chaft invite claims (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
+        nameFilters: root.pendingAccessRequestSaveLabel === "join request"
+            ? [ "Chaft join requests (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
             : [ "Chaft access requests (*.chaftrequest)", "Older support files (*.json)", "All files (*)" ]
         onAccepted: {
             var outputPath = root.outputPathWithExtension(

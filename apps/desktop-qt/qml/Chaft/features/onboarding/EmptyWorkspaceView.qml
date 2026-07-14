@@ -280,7 +280,7 @@ Item {
                                                         ? "Send now"
                                                         : (pendingRequestCard.modelData.canShareRequest
                                                             ? (pendingRequestCard.secureClaim
-                                                                ? "Copy claim"
+                                                                ? "Copy join request"
                                                                 : "Copy request link")
                                                             : "Open invite")))))
                                     enabled: !chaftController.joinRequestSubmitInFlight
@@ -315,7 +315,7 @@ Item {
                                 Button {
                                     text: "⋯"
                                     Accessible.name: pendingRequestCard.secureClaim
-                                        ? "More invite claim actions"
+                                        ? "More join request actions"
                                         : "More request actions"
                                     onClicked: pendingRequestActionsMenu.open()
 
@@ -327,7 +327,7 @@ Item {
                                             visible: pendingRequestCard.modelData.status === "sent"
                                                 && pendingRequestCard.modelData.canSendDirect
                                             text: pendingRequestCard.secureClaim
-                                                ? "Resend claim"
+                                                ? "Resend join request"
                                                 : "Resend request"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.sendPendingAccessRequest(
@@ -337,7 +337,7 @@ Item {
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.canShareRequest
                                             text: pendingRequestCard.secureClaim
-                                                ? "Copy invite claim"
+                                                ? "Copy join request"
                                                 : "Copy request link"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.copyPendingAccessRequest(
@@ -347,7 +347,7 @@ Item {
                                         MenuItem {
                                             visible: pendingRequestCard.modelData.canShareRequest
                                             text: pendingRequestCard.secureClaim
-                                                ? "Save claim file"
+                                                ? "Save join request"
                                                 : "Save request file"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.openSavePendingAccessRequestDialog(
@@ -368,7 +368,7 @@ Item {
 
                                         MenuItem {
                                             text: pendingRequestCard.secureClaim
-                                                ? "Hide claim"
+                                                ? "Hide join request"
                                                 : "Hide request"
                                             enabled: !chaftController.joinRequestSubmitInFlight
                                             onTriggered: root.app.confirmDismissPendingAccessRequest(

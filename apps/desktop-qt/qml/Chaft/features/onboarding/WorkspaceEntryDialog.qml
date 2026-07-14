@@ -107,6 +107,7 @@ Dialog {
     property string joinRequestPreparedDisplayName: ""
     property string joinRequestDirectSubmitError: ""
     property string joinRequestSaveOperationToken: ""
+    property bool joinRequestNoteExpanded: false
     property bool credentialImportPending: false
     property string credentialImportFailureTitle: ""
     property string credentialImportFailureMessage: ""
@@ -205,6 +206,7 @@ Dialog {
         root.joinRequestPrepared = false
         root.joinRequestDirectSubmitError = ""
         root.joinRequestSaveOperationToken = ""
+        root.joinRequestNoteExpanded = false
         root.credentialImportPending = false
         root.clearCredentialImportFailure()
         root.app.workspaceEntryMode = mode
@@ -242,7 +244,7 @@ Dialog {
             return "Open another request link or drop one here to replace it."
         }
         if (root.secureInviteClaim) {
-            return "Review this invite, then claim it from this device."
+            return "Review this invite, then join from this device."
         }
         if (root.workspaceInviteResponse !== null) {
             return "Review this encrypted approval, then join the workspace."
@@ -269,6 +271,7 @@ Dialog {
         root.joinRequestPreparedDisplayName = ""
         root.joinRequestDirectSubmitError = ""
         root.joinRequestSaveOperationToken = ""
+        root.joinRequestNoteExpanded = false
         root.credentialImportPending = false
         root.clearCredentialImportFailure()
     }
@@ -460,7 +463,7 @@ Dialog {
 
     function joinRequestNextStepLabel() {
         if (root.joinRequestPreparedAction === "sending") {
-            return (root.secureInviteClaim ? "Claiming with " : "Sending to ")
+            return (root.secureInviteClaim ? "Contacting " : "Sending to ")
                 + root.joinRequestDeliveryLabel()
         }
         if (root.joinRequestPreparedAction === "sent") {
@@ -470,25 +473,25 @@ Dialog {
         }
         if (root.joinRequestPreparedAction === "send-failed") {
             return root.secureInviteClaim
-                ? "Try again or copy the claim"
+                ? "Try again or transfer the join request"
                 : "Try again or copy the request"
         }
         if (root.joinRequestPreparedAction === "save-failed") {
             return root.secureInviteClaim
-                ? "Try saving again or copy the claim"
+                ? "Try saving again or copy the join request"
                 : "Try saving again or copy the request"
         }
         if (root.joinRequestPreparedAction === "copied") {
             return (root.secureInviteClaim
-                ? "Send copied claim to "
+                ? "Send copied join request to "
                 : "Send copied link to ") + root.joinRequestDeliveryLabel()
         }
         if (root.joinRequestPreparedAction === "save") {
             return root.secureInviteClaim
-                ? "Send the saved claim file"
+                ? "Send the saved join request"
                 : "Save or send the request file"
         }
-        return (root.secureInviteClaim ? "Send claim to " : "Send request to ")
+        return (root.secureInviteClaim ? "Send join request to " : "Send request to ")
             + root.joinRequestDeliveryLabel()
     }
 
@@ -504,36 +507,36 @@ Dialog {
     function joinRequestPreparedMessage() {
         var target = root.joinRequestDeliveryLabel()
         if (root.joinRequestPreparedAction === "sending") {
-            return (root.secureInviteClaim ? "Claiming your invite with " : "Sending your request to ")
+            return (root.secureInviteClaim ? "Contacting " : "Sending your request to ")
                 + target + ". Keep this window open until delivery finishes."
         }
         if (root.joinRequestPreparedAction === "sent") {
             return root.secureInviteClaim
-                ? "Invite claimed with " + target + ". Chaft will check for encrypted access."
+                ? "Request sent to " + target + ". Chaft will check for encrypted access."
                 : "Request sent to " + target + ". Wait for their invite, then open it here."
         }
         if (root.joinRequestPreparedAction === "send-failed") {
             return root.secureInviteClaim
-                ? "Could not reach " + target + ". Copy or save the signed claim, then send it to them."
+                ? "Could not reach " + target + ". Try again or send the join request manually."
                 : "Could not reach " + target + ". Copy the request link or save the file, then send it to them."
         }
         if (root.joinRequestPreparedAction === "save-failed") {
             return root.secureInviteClaim
-                ? "The claim file was not saved. Try again or copy the signed claim."
+                ? "The join request was not saved. Try again or copy it instead."
                 : "The request file was not saved. Try again or copy the request link."
         }
         if (root.joinRequestPreparedAction === "copied") {
             return root.secureInviteClaim
-                ? "Invite claim copied. Send it to " + target + ", then open the encrypted access response here."
+                ? "Join request copied. Send it to " + target + ", then open the encrypted access response here."
                 : "Request link copied. Send it to " + target + ", then open the invite here after approval."
         }
         if (root.joinRequestPreparedAction === "save") {
             return root.secureInviteClaim
-                ? "Send the saved claim file to " + target + ", then open the encrypted access response here."
+                ? "Send the saved join request to " + target + ", then open the encrypted access response here."
                 : "Send the saved request file to " + target + ", then open the invite here after approval."
         }
         return root.secureInviteClaim
-            ? "Copy or save the signed claim, then send it to " + target + ". Chaft keeps the claim on the start screen while you wait."
+            ? "Send this join request to " + target + ". Chaft keeps it on the start screen while you wait."
             : "Copy the request link or save the file, then send it to " + target + ". Chaft keeps the request on the start screen while you wait."
     }
 
@@ -561,24 +564,24 @@ Dialog {
 
     function joinRequestPreparedTitle() {
         if (root.joinRequestPreparedAction === "sending") {
-            return root.secureInviteClaim ? "Claiming invite" : "Sending request"
+            return root.secureInviteClaim ? "Joining workspace" : "Sending request"
         }
         if (root.joinRequestPreparedAction === "sent") {
-            return root.secureInviteClaim ? "Waiting for secure access" : "Waiting for approval"
+            return root.secureInviteClaim ? "Waiting for access" : "Waiting for approval"
         }
         if (root.joinRequestPreparedAction === "send-failed") {
-            return root.secureInviteClaim ? "Invite claim not sent" : "Request not sent"
+            return root.secureInviteClaim ? "Couldn't contact workspace" : "Request not sent"
         }
         if (root.joinRequestPreparedAction === "save-failed") {
-            return root.secureInviteClaim ? "Claim file not saved" : "Request file not saved"
+            return root.secureInviteClaim ? "Join request not saved" : "Request file not saved"
         }
         if (root.joinRequestPreparedAction === "copied") {
-            return root.secureInviteClaim ? "Invite claim copied" : "Request link copied"
+            return root.secureInviteClaim ? "Join request copied" : "Request link copied"
         }
         if (root.joinRequestPreparedAction === "save") {
-            return root.secureInviteClaim ? "Claim file ready" : "Request file ready"
+            return root.secureInviteClaim ? "Join request ready" : "Request file ready"
         }
-        return root.secureInviteClaim ? "Invite claim ready" : "Request ready"
+        return root.secureInviteClaim ? "Manual transfer needed" : "Request ready"
     }
 
     function joinRequestPreparedSourceLabel() {
@@ -623,6 +626,18 @@ Dialog {
             && root.app.runtimeAccessReady
     }
 
+    function startWorkspaceAccess() {
+        root.joinRequestDirectSubmitError = ""
+        if (root.joinRequestCanSendDirect()) {
+            root.sendPreparedJoinRequest()
+            return
+        }
+        if (!root.prepareJoinRequest("prepared")) {
+            root.joinRequestDirectSubmitError = String(
+                chaftController.syncStatus || "Could not prepare the join request.")
+        }
+    }
+
     function sendPreparedJoinRequest() {
         if (!root.joinRequestPrepared && !root.prepareJoinRequest("prepared")) {
             return
@@ -633,7 +648,9 @@ Dialog {
             return
         }
         if (!root.app.recordPendingAccessRequestFromCurrentJoinRequest("sending")) {
-            root.joinRequestDirectSubmitError = "Could not save the pending invite claim."
+            root.joinRequestDirectSubmitError = root.secureInviteClaim
+                ? "Could not save the pending join request."
+                : "Could not save the pending access request."
             root.joinRequestPreparedAction = "send-failed"
             return
         }
@@ -658,10 +675,10 @@ Dialog {
             return
         }
         if (root.app.copyKeyTransferArtifact(
-                root.secureInviteClaim ? "invite claim" : "access request")) {
+                root.secureInviteClaim ? "join request" : "access request")) {
             if (!root.app.recordPendingAccessRequestFromCurrentJoinRequest("copied")) {
                 root.joinRequestDirectSubmitError = root.secureInviteClaim
-                    ? "Claim copied, but Chaft could not save its pending response details. Keep this dialog open and restore disk access."
+                    ? "Join request copied, but Chaft could not save its pending response details. Keep this dialog open and restore disk access."
                     : "Request copied, but Chaft could not save its pending response details. Keep this dialog open and restore disk access."
                 return
             }
@@ -681,12 +698,12 @@ Dialog {
         var operationToken = root.app.nextKeyTransferFileSaveToken()
         root.joinRequestSaveOperationToken = operationToken
         if (!root.app.openSaveKeyTransferDialog(
-                root.secureInviteClaim ? "invite claim" : "access request",
+                root.secureInviteClaim ? "join request" : "access request",
                 operationToken,
                 true)) {
             root.joinRequestSaveOperationToken = ""
             root.joinRequestDirectSubmitError = root.secureInviteClaim
-                ? "Could not prepare the claim file."
+                ? "Could not prepare the join request file."
                 : "Could not prepare the request file."
             root.joinRequestPreparedAction = "save-failed"
         }
@@ -696,6 +713,7 @@ Dialog {
         root.joinRequestPrepared = false
         root.joinRequestDirectSubmitError = ""
         root.joinRequestSaveOperationToken = ""
+        root.joinRequestNoteExpanded = joinRequestNoteArea.text.trim().length > 0
         joinRequestNoteArea.forceActiveFocus()
     }
 
@@ -750,7 +768,7 @@ Dialog {
                 return
             }
             var expectedLabel = root.secureInviteClaim
-                ? "invite claim"
+                ? "join request"
                 : "access request"
             var expectedKind = root.secureInviteClaim
                 ? "chaft.workspace-invite-claim.v1"
@@ -766,7 +784,7 @@ Dialog {
                 root.joinRequestDirectSubmitError = String(
                     chaftController.syncStatus
                         || (root.secureInviteClaim
-                            ? "Could not save the claim file."
+                            ? "Could not save the join request file."
                             : "Could not save the request file."))
                 root.joinRequestPreparedAction = "save-failed"
                 return
@@ -1269,8 +1287,12 @@ Dialog {
                             || root.secureInviteClaim)
                     implicitHeight: joinRequestColumn.implicitHeight + Tokens.space3 * 2
                     radius: Tokens.radiusSm
-                    color: Tokens.surfaceRaised
-                    border.width: 1
+                    color: root.secureInviteClaim && !root.joinRequestPrepared
+                        ? "transparent"
+                        : Tokens.surfaceRaised
+                    border.width: root.secureInviteClaim && !root.joinRequestPrepared
+                        ? 0
+                        : 1
                     border.color: Tokens.borderSubtle
 
                     ColumnLayout {
@@ -1315,9 +1337,10 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
+                                visible: !root.secureInviteClaim
                                 text: root.secureInviteClaim
-                                    ? "Join securely"
-                                    : "Need access?"
+                                    ? "Join workspace"
+                                    : "Request access"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
@@ -1326,14 +1349,14 @@ Dialog {
 
                             Text {
                                 Layout.fillWidth: true
+                                visible: !root.secureInviteClaim
                                 text: root.secureInviteClaim
-                                    ? "Claim this invite from this device. "
+                                    ? "Access is encrypted for this device. "
                                         + (root.secureInviteMaxClaims === 1
-                                            ? "It allows one device claim. "
-                                            : "It allows up to "
+                                            ? "This invite can add one device."
+                                            : "This invite can add up to "
                                                 + root.secureInviteMaxClaims
-                                                + " device claims. ")
-                                        + "The admin sends back encrypted access that only this device can open."
+                                                + " devices.")
                                     : (root.workspaceCard !== null || root.approvalInviteNeedsRequest
                                     ? "Send an access request for " + root.joinRequestTargetLabel()
                                         + ". An owner or admin will send back an invite you can open here."
@@ -1343,20 +1366,27 @@ Dialog {
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Note for admin"
-                                color: Tokens.textMuted
-                                font.pixelSize: Tokens.fontSizeXs
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
+                            Button {
+                                Layout.alignment: Qt.AlignLeft
+                                text: root.joinRequestNoteExpanded
+                                    ? "Hide note"
+                                    : "Add a note"
+                                flat: true
+                                Accessible.description: "Optional context for the workspace admin"
+                                onClicked: {
+                                    root.joinRequestNoteExpanded = !root.joinRequestNoteExpanded
+                                    if (root.joinRequestNoteExpanded) {
+                                        joinRequestNoteArea.forceActiveFocus()
+                                    }
+                                }
                             }
 
                             TextArea {
                                 id: joinRequestNoteArea
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 58
-                                placeholderText: "Optional, e.g. team or project"
+                                visible: root.joinRequestNoteExpanded
+                                placeholderText: "Team or project (optional)"
                                 Accessible.name: "Access request note"
                                 color: Tokens.textStrong
                                 placeholderTextColor: Tokens.textMuted
@@ -1372,45 +1402,25 @@ Dialog {
                                 }
                             }
 
-                            RowLayout {
+                            EntryPrimaryButton {
                                 Layout.fillWidth: true
-                                spacing: Tokens.space2
+                                text: chaftController.joinRequestSubmitInFlight
+                                    ? (root.secureInviteClaim ? "Joining..." : "Sending...")
+                                    : (root.secureInviteClaim ? "Join workspace" : "Request access")
+                                enabled: root.app.runtimeAccessReady
+                                    && !chaftController.keyTransferInFlight
+                                    && !chaftController.joinRequestSubmitInFlight
+                                onClicked: root.startWorkspaceAccess()
+                            }
 
-                                Button {
-                                    Layout.fillWidth: true
-                                    visible: root.joinRequestCanSendDirect()
-                                    text: chaftController.joinRequestSubmitInFlight
-                                        ? "Sending..."
-                                        : (root.secureInviteClaim ? "Claim invite" : "Send request")
-                                    enabled: root.app.runtimeAccessReady
-                                        && !chaftController.keyTransferInFlight
-                                        && !chaftController.joinRequestSubmitInFlight
-                                    onClicked: root.sendPreparedJoinRequest()
-                                }
-
-                                Button {
-                                    Layout.fillWidth: true
-                                    text: root.secureInviteClaim ? "Copy claim" : "Copy link"
-                                    enabled: root.app.runtimeAccessReady
-                                        && !chaftController.keyTransferInFlight
-                                        && !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: root.secureInviteClaim
-                                        ? "Copy invite claim"
-                                        : "Copy request link"
-                                    onClicked: root.copyPreparedJoinRequest()
-                                }
-
-                                Button {
-                                    Layout.fillWidth: true
-                                    text: root.secureInviteClaim ? "Save claim" : "Save file"
-                                    enabled: root.app.runtimeAccessReady
-                                        && !chaftController.keyTransferInFlight
-                                        && !chaftController.joinRequestSubmitInFlight
-                                    Accessible.name: root.secureInviteClaim
-                                        ? "Save invite claim file"
-                                        : "Save request file"
-                                    onClicked: root.savePreparedJoinRequest()
-                                }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: !root.joinRequestPrepared
+                                    && root.joinRequestDirectSubmitError.length > 0
+                                text: root.joinRequestDirectSubmitError
+                                color: Tokens.warningText
+                                font.pixelSize: Tokens.fontSizeXs
+                                wrapMode: Text.WordWrap
                             }
                         }
 
@@ -1634,11 +1644,11 @@ Dialog {
                                     visible: root.joinRequestCanSendDirect()
                                         && root.joinRequestPreparedAction !== "sent"
                                     text: root.joinRequestPreparedAction === "sending"
-                                        ? (root.secureInviteClaim ? "Claiming..." : "Sending...")
+                                        ? (root.secureInviteClaim ? "Joining..." : "Sending...")
                                         : (root.joinRequestPreparedAction === "send-failed"
                                                 ? "Try again"
                                                 : (root.secureInviteClaim
-                                                    ? "Claim invite"
+                                                    ? "Join workspace"
                                                     : "Send request"))
                                     enabled: root.app.runtimeAccessReady
                                         && !chaftController.keyTransferInFlight
@@ -1651,10 +1661,13 @@ Dialog {
                                 }
 
                                 Button {
-                                    text: "⋯"
-                                    Accessible.name: root.secureInviteClaim
-                                        ? "More invite claim actions"
-                                        : "More request actions"
+                                    text: root.joinRequestPreparedAction !== "sent"
+                                        && root.joinRequestPreparedAction !== "sending"
+                                        ? "Manual transfer"
+                                        : "⋯"
+                                    Accessible.name: text === "Manual transfer"
+                                        ? "Open manual transfer options"
+                                        : "More join options"
                                     onClicked: preparedRequestActionsMenu.open()
 
                                     Menu {
@@ -1665,7 +1678,7 @@ Dialog {
                                             visible: root.joinRequestPreparedAction === "sent"
                                                 && root.joinRequestCanSendDirect()
                                             text: root.secureInviteClaim
-                                                ? "Resend claim"
+                                                ? "Resend join request"
                                                 : "Resend request"
                                             enabled: root.app.runtimeAccessReady
                                                 && !chaftController.keyTransferInFlight
@@ -1675,7 +1688,7 @@ Dialog {
 
                                         MenuItem {
                                             text: root.secureInviteClaim
-                                                ? "Copy claim link"
+                                                ? "Copy join request"
                                                 : "Copy request link"
                                             enabled: root.app.runtimeAccessReady
                                                 && !chaftController.keyTransferInFlight
@@ -1685,7 +1698,7 @@ Dialog {
 
                                         MenuItem {
                                             text: root.secureInviteClaim
-                                                ? "Save claim file"
+                                                ? "Save join request"
                                                 : "Save request file"
                                             enabled: root.app.runtimeAccessReady
                                                 && !chaftController.keyTransferInFlight
@@ -1701,10 +1714,10 @@ Dialog {
                                 visible: false
                                 text: root.joinRequestPreparedAction === "sent"
                                     ? (root.secureInviteClaim
-                                        ? "Done keeps this claim on the start screen while you wait for encrypted access."
+                                        ? "Done keeps this join request on the start screen while you wait for encrypted access."
                                         : "Done keeps this request on the start screen while you wait for the invite.")
                                     : (root.secureInviteClaim
-                                        ? "Done keeps this claim on the start screen so you can send it later."
+                                        ? "Done keeps this join request on the start screen so you can send it later."
                                         : "Done keeps this request on the start screen so you can send it later.")
                                 color: Tokens.textMuted
                                 font.pixelSize: Tokens.fontSizeXs
@@ -1724,7 +1737,7 @@ Dialog {
                     }
 
                     Button {
-                        text: root.joinRequestPrepared ? "Edit request" : "Cancel"
+                        text: root.joinRequestPrepared ? "Edit details" : "Cancel"
                         enabled: !chaftController.joinRequestSubmitInFlight
                             && !root.credentialImportPending
                         onClicked: {
