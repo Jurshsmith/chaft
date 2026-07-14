@@ -5015,10 +5015,11 @@ fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
     let endpoint = started["value"]["endpoint"].as_str().unwrap().to_owned();
 
     let request_payload = serde_json::to_string(&json!({
-        "kind": "chaft.workspace-join-request.v1",
+        "kind": "chaft.workspace-invite-claim.v1",
         "schemaVersion": 1,
         "requestId": "req_outbox_direct_123",
         "workspaceId": workspace_id.0,
+        "inviteId": "inv_outbox_direct_123",
         "deviceId": "dev_joiner_outbox_123",
         "displayName": "Queued Joiner",
         "message": "Please add me from the outbox"
@@ -5081,6 +5082,7 @@ fn runtime_join_request_outbox_ffi_submits_queued_entry_directly() {
     assert_eq!(inbox_entries.len(), 1);
     let request_text = inbox_entries[0]["requestText"].as_str().unwrap();
     let request_value = serde_json::from_str::<Value>(request_text).unwrap();
+    assert_eq!(request_value["kind"], "chaft.workspace-invite-claim.v1");
     assert_eq!(request_value["requestId"], "req_outbox_direct_123");
     assert_eq!(request_value["deviceId"], "dev_joiner_outbox_123");
 

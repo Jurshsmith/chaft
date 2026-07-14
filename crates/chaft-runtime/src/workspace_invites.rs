@@ -852,6 +852,59 @@ mod tests {
     }
 
     #[test]
+    fn two_distinct_invites_add_two_devices_to_one_workspace() {
+        let admin_dir = tempdir().unwrap();
+        let bob_dir = tempdir().unwrap();
+        let charlie_dir = tempdir().unwrap();
+        let admin = LocalRuntime::open(admin_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let charlie = LocalRuntime::open(charlie_dir.path(), None).unwrap();
+        let created = admin.create_workspace("Three people", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let mut invite_ids = Vec::new();
+
+        for (invitee, display_name) in [(&bob, "Bob"), (&charlie, "Charlie")] {
+            let invite = admin
+                .create_workspace_invite(
+                    workspace_id.clone(),
+                    display_name.to_owned(),
+                    WorkspaceRole::Member,
+                    String::new(),
+                    String::new(),
+                    "history_after_claim".to_owned(),
+                )
+                .unwrap();
+            invite_ids.push(invite.invite_id.clone());
+            let claim = invitee
+                .prepare_workspace_invite_claim(
+                    invite.artifact,
+                    display_name.to_owned(),
+                    String::new(),
+                    String::new(),
+                )
+                .unwrap();
+            let claimed = admin.claim_workspace_invite(claim).unwrap();
+            let imported = invitee
+                .import_workspace_invite_response(claimed.response)
+                .unwrap();
+            assert_eq!(imported.workspace_id, workspace_id.0);
+            assert_eq!(imported.importer_device_id, invitee.identity.device_id().0);
+        }
+
+        assert_ne!(invite_ids[0], invite_ids[1]);
+        let state = admin.workspace_write_context(&workspace_id).unwrap().state;
+        assert_eq!(state.members.len(), 3);
+        assert!(state.members.contains_key(bob.identity.device_id()));
+        assert!(state.members.contains_key(charlie.identity.device_id()));
+        for invite_id in invite_ids {
+            assert_eq!(
+                state.invites.get(&invite_id).unwrap().status,
+                WorkspaceInviteStatus::Accepted
+            );
+        }
+    }
+
+    #[test]
     fn claimable_invite_rejects_tampered_admin_routing_metadata() {
         let admin_dir = tempdir().unwrap();
         let invitee_dir = tempdir().unwrap();

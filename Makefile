@@ -39,6 +39,7 @@ help:
 		'  make clippy           cargo clippy --workspace --all-targets -- -D warnings' \
 		'  make test             cargo test --workspace --all-targets' \
 		'  make test-app         Test chaft-app and chaft-ffi packages' \
+		'  make test-invite-flow Test the two-invite, three-device secure flow' \
 		'  make bench-check      Compile hot-path benchmarks without running them' \
 		'  make rust-gates       Run tools/ci/rust-gates.sh' \
 		'' \
@@ -80,7 +81,7 @@ help:
 		'  make release-metadata-check   Verify release metadata for PLATFORM' \
 		'  make release-metadata-smoke   Run release metadata smoke'
 
-.PHONY: fmt fmt-check check clippy test test-app bench-check rust-gates
+.PHONY: fmt fmt-check check clippy test test-app test-invite-flow bench-check rust-gates
 fmt:
 	$(CARGO) fmt --all
 
@@ -98,6 +99,10 @@ test:
 
 test-app:
 	$(CARGO) test -p chaft-app -p chaft-ffi $(ARGS)
+
+test-invite-flow:
+	$(CARGO) test -p chaft-runtime two_distinct_invites_add_two_devices_to_one_workspace $(ARGS)
+	$(CARGO) test -p chaft-ffi runtime_join_request_outbox_ffi_submits_queued_entry_directly $(ARGS)
 
 bench-check:
 	$(CARGO) bench -p chaft-benchmarks --bench hot_paths --no-run $(ARGS)

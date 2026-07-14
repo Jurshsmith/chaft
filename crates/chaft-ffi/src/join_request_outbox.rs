@@ -553,12 +553,14 @@ fn validated_join_request_metadata(request_text: &str) -> Result<JoinRequestMeta
             "join request payload must be a JSON object",
         )
     })?;
-    if object
+    let kind = object
         .get("kind")
         .and_then(|value| value.as_str())
-        .map(str::trim)
-        != Some("chaft.workspace-join-request.v1")
-    {
+        .map(str::trim);
+    if !matches!(
+        kind,
+        Some("chaft.workspace-join-request.v1" | "chaft.workspace-invite-claim.v1")
+    ) {
         return Err(ffi_error(
             "join_request_payload_invalid",
             "join request payload kind is unsupported",
