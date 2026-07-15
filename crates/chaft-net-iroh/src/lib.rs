@@ -15,12 +15,15 @@ use chaft_media::{
 };
 use chaft_net::{ChaftTransport, NetError, PeerAddress, PeerId};
 use chaft_net_direct::{
-    AuthorizedPublishTransport, BlobSyncTransport, DirectTransport, MAX_ACTIVE_DIRECT_CONNECTIONS,
-    MAX_BLOB_UPLOAD_ENVELOPES_PER_REQUEST, MAX_CHUNK_UPLOAD_BATCH_BYTES,
-    MAX_FETCH_BLOB_HASHES_PER_REQUEST, MAX_FETCH_EVENT_IDS_PER_REQUEST, MAX_FRAME_LEN,
-    MAX_INVENTORY_EVENT_IDS_PER_RESPONSE, MAX_SYNC_RESPONSE_ERROR_BYTES,
-    MAX_WHOLE_BLOB_UPLOAD_BATCH_BYTES, SyncPeerStore, build_publish_events_requests,
-    request_sync_stream, response_error_may_be_oversized_response, validate_decoded_event_size,
+    AccessEnvelopeTransport, AuthorizedPublishTransport, BlobSyncTransport, DirectTransport,
+    MAX_ACTIVE_DIRECT_CONNECTIONS, MAX_BLOB_UPLOAD_ENVELOPES_PER_REQUEST,
+    MAX_CHUNK_UPLOAD_BATCH_BYTES, MAX_FETCH_BLOB_HASHES_PER_REQUEST,
+    MAX_FETCH_EVENT_IDS_PER_REQUEST, MAX_FRAME_LEN, MAX_INVENTORY_EVENT_IDS_PER_RESPONSE,
+    MAX_SYNC_RESPONSE_ERROR_BYTES, MAX_WHOLE_BLOB_UPLOAD_BATCH_BYTES,
+    PreparedAccessEnvelopeExchange, SyncPeerStore, build_publish_events_requests,
+    prepare_join_request_fetch, prepare_join_request_submission, prepare_join_response_fetch,
+    prepare_join_response_submission, prepare_scoped_join_response_fetch, request_sync_stream,
+    response_error_may_be_oversized_response, validate_decoded_event_size,
     validate_empty_ack_response, validate_fetch_blob_availability_response,
     validate_fetch_blobs_response, validate_fetch_events_response,
     validate_fetch_events_wire_response, validate_inventory_page_response,
@@ -683,6 +686,127 @@ impl IrohTransport {
         response_error(response.error.take())?;
         validate_fetch_blob_availability_response(&response, &requested)?;
         Ok(response)
+    }
+
+    pub async fn submit_join_request(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError> {
+        let exchange = prepare_join_request_submission(workspace_id, &request)?;
+        match self.resolve_peer(peer)? {
+            ResolvedPeer::DirectTcp(peer) => {
+                self.direct
+                    .submit_join_request(&peer, workspace_id, request)
+                    .await
+            }
+            ResolvedPeer::NativeIroh { endpoint } => self
+                .execute_native_access_envelope_exchange(&endpoint, exchange)
+                .await
+                .map(|_| ()),
+        }
+    }
+
+    pub async fn submit_join_response(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        response_package: Vec<u8>,
+    ) -> Result<(), NetError> {
+        let exchange = prepare_join_response_submission(workspace_id, &response_package)?;
+        match self.resolve_peer(peer)? {
+            ResolvedPeer::DirectTcp(peer) => {
+                self.direct
+                    .submit_join_response(&peer, workspace_id, response_package)
+                    .await
+            }
+            ResolvedPeer::NativeIroh { endpoint } => self
+                .execute_native_access_envelope_exchange(&endpoint, exchange)
+                .await
+                .map(|_| ()),
+        }
+    }
+
+    pub async fn fetch_join_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        let exchange = prepare_join_request_fetch(workspace_id, max_entries)?;
+        match self.resolve_peer(peer)? {
+            ResolvedPeer::DirectTcp(peer) => {
+                self.direct
+                    .fetch_join_requests(&peer, workspace_id, max_entries)
+                    .await
+            }
+            ResolvedPeer::NativeIroh { endpoint } => {
+                self.execute_native_access_envelope_exchange(&endpoint, exchange)
+                    .await
+            }
+        }
+    }
+
+    pub async fn fetch_join_responses(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        let exchange = prepare_join_response_fetch(workspace_id, max_entries)?;
+        match self.resolve_peer(peer)? {
+            ResolvedPeer::DirectTcp(peer) => {
+                self.direct
+                    .fetch_join_responses(&peer, workspace_id, max_entries)
+                    .await
+            }
+            ResolvedPeer::NativeIroh { endpoint } => {
+                self.execute_native_access_envelope_exchange(&endpoint, exchange)
+                    .await
+            }
+        }
+    }
+
+    pub async fn fetch_join_responses_for_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        request_ids: Vec<String>,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        let Some(exchange) =
+            prepare_scoped_join_response_fetch(workspace_id, &request_ids, max_entries)?
+        else {
+            return Ok(Vec::new());
+        };
+        match self.resolve_peer(peer)? {
+            ResolvedPeer::DirectTcp(peer) => {
+                self.direct
+                    .fetch_join_responses_for_requests(
+                        &peer,
+                        workspace_id,
+                        request_ids,
+                        max_entries,
+                    )
+                    .await
+            }
+            ResolvedPeer::NativeIroh { endpoint } => {
+                self.execute_native_access_envelope_exchange(&endpoint, exchange)
+                    .await
+            }
+        }
+    }
+
+    async fn execute_native_access_envelope_exchange(
+        &self,
+        endpoint: &str,
+        exchange: PreparedAccessEnvelopeExchange,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        let response = self
+            .native_request(endpoint, exchange.wire_request())
+            .await?;
+        exchange.validate_response(response)
     }
 }
 
@@ -1489,6 +1613,62 @@ impl ChaftTransport for IrohTransport {
 }
 
 #[async_trait]
+impl AccessEnvelopeTransport for IrohTransport {
+    async fn submit_join_request(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError> {
+        IrohTransport::submit_join_request(self, peer, workspace_id, request).await
+    }
+
+    async fn submit_join_response(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        response_package: Vec<u8>,
+    ) -> Result<(), NetError> {
+        IrohTransport::submit_join_response(self, peer, workspace_id, response_package).await
+    }
+
+    async fn fetch_join_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        IrohTransport::fetch_join_requests(self, peer, workspace_id, max_entries).await
+    }
+
+    async fn fetch_join_responses(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        IrohTransport::fetch_join_responses(self, peer, workspace_id, max_entries).await
+    }
+
+    async fn fetch_join_responses_for_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        request_ids: Vec<String>,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        IrohTransport::fetch_join_responses_for_requests(
+            self,
+            peer,
+            workspace_id,
+            request_ids,
+            max_entries,
+        )
+        .await
+    }
+}
+
+#[async_trait]
 impl AuthorizedPublishTransport for IrohTransport {
     async fn publish_events_with_authorization(
         &self,
@@ -1783,10 +1963,12 @@ impl BlobSyncTransport for IrohTransport {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex as StdMutex;
+
     use chaft_identity::DeviceIdentity;
     use chaft_media::{BLOB_CHUNK_FILE_MAX_BYTES, BlobStore};
     use chaft_net::PeerId;
-    use chaft_net_direct::{DirectPeerServer, SyncPeerStore};
+    use chaft_net_direct::{DirectPeerServer, JoinRequestInbox, JoinResponseInbox, SyncPeerStore};
     use chaft_store::{EVENT_JSON_MAX_BYTES, EventStore};
     use chaft_types::{
         ChannelId, DeviceId, EventBody, MessageId, SignableEvent, SignedEvent,
@@ -1798,6 +1980,111 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Default)]
+    struct MemoryAccessInbox {
+        join_requests: StdMutex<Vec<(String, Vec<u8>)>>,
+        join_responses: StdMutex<Vec<(String, Vec<u8>)>>,
+    }
+
+    impl JoinRequestInbox for MemoryAccessInbox {
+        fn submit_join_request(
+            &self,
+            workspace_id: Option<&str>,
+            request: Vec<u8>,
+        ) -> Result<(), NetError> {
+            self.join_requests
+                .lock()
+                .unwrap()
+                .push((workspace_id.unwrap_or_default().to_owned(), request));
+            Ok(())
+        }
+    }
+
+    impl JoinResponseInbox for MemoryAccessInbox {
+        fn submit_join_response(
+            &self,
+            workspace_id: Option<&str>,
+            response: Vec<u8>,
+        ) -> Result<(), NetError> {
+            self.join_responses
+                .lock()
+                .unwrap()
+                .push((workspace_id.unwrap_or_default().to_owned(), response));
+            Ok(())
+        }
+
+        fn list_join_responses(
+            &self,
+            workspace_id: &str,
+            max_entries: usize,
+        ) -> Result<Vec<Vec<u8>>, NetError> {
+            Ok(self
+                .join_responses
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(entry_workspace_id, _)| entry_workspace_id == workspace_id)
+                .take(max_entries)
+                .map(|(_, response)| response.clone())
+                .collect())
+        }
+    }
+
+    async fn assert_access_envelope_transport_round_trip(
+        transport: &IrohTransport,
+        peer: &PeerAddress,
+        inbox: &MemoryAccessInbox,
+    ) {
+        let workspace_id = WorkspaceId("wrk_access_transport".to_owned());
+        let request =
+            br#"{"kind":"chaft.workspace-invite-claim.v1","requestId":"req_route_1"}"#.to_vec();
+        let response = br#"{"kind":"chaft.workspace-invite-response.v1","requestId":"req_route_1","workspaceId":"wrk_access_transport"}"#
+            .to_vec();
+
+        transport
+            .submit_join_request(peer, Some(&workspace_id), request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            inbox.join_requests.lock().unwrap().as_slice(),
+            [(workspace_id.0.clone(), request)].as_slice()
+        );
+
+        transport
+            .submit_join_response(peer, Some(&workspace_id), response.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            inbox.join_responses.lock().unwrap().as_slice(),
+            [(workspace_id.0.clone(), response.clone())].as_slice()
+        );
+
+        let request_listing_error = transport
+            .fetch_join_requests(peer, &workspace_id, 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(request_listing_error.contains("remote join request listing is disabled"));
+
+        let unscoped_response_error = transport
+            .fetch_join_responses(peer, &workspace_id, 1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(unscoped_response_error.contains("requires at least one request id"));
+
+        let responses = transport
+            .fetch_join_responses_for_requests(
+                peer,
+                &workspace_id,
+                vec!["req_route_1".to_owned(), "req_route_1".to_owned()],
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(responses, vec![response]);
+    }
 
     #[test]
     fn response_error_accepts_bounded_peer_error_message() {
@@ -2258,6 +2545,56 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn direct_tcp_bridge_carries_access_envelope_protocol() {
+        let inbox = Arc::new(MemoryAccessInbox::default());
+        let blob_dir = tempfile::tempdir().unwrap();
+        let server = DirectPeerServer::bind_with_blobs_and_access_envelope_inboxes(
+            "127.0.0.1:0",
+            EventStore::open_in_memory().unwrap(),
+            BlobStore::open(blob_dir.path()).unwrap(),
+            inbox.clone(),
+            inbox.clone(),
+        )
+        .await
+        .unwrap();
+        let peer = PeerAddress {
+            peer_id: PeerId("direct-access-envelope-peer".to_owned()),
+            endpoint: format!("direct+tcp://{}", server.local_addr().unwrap()),
+        };
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_task =
+            tokio::spawn(async move { server.serve_until_shutdown(shutdown_rx).await });
+
+        assert_access_envelope_transport_round_trip(&IrohTransport::default(), &peer, &inbox).await;
+
+        shutdown_tx.send(()).unwrap();
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_iroh_carries_access_envelope_protocol() {
+        let inbox = Arc::new(MemoryAccessInbox::default());
+        let server = IrohSyncPeer::bind(
+            SyncPeerStore::with_access_envelope_inboxes(
+                EventStore::open_in_memory().unwrap(),
+                inbox.clone(),
+                inbox.clone(),
+            ),
+            IrohTransportConfig::default(),
+        )
+        .await
+        .unwrap();
+        let peer = PeerAddress {
+            peer_id: PeerId("native-access-envelope-peer".to_owned()),
+            endpoint: server.endpoint_url(),
+        };
+
+        assert_access_envelope_transport_round_trip(&IrohTransport::default(), &peer, &inbox).await;
+
+        server.close().await.unwrap();
     }
 
     #[tokio::test]

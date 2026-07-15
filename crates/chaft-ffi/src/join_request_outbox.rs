@@ -7,9 +7,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use chaft_net_direct::{DirectTransport, MAX_JOIN_REQUEST_SUBMISSION_BYTES};
+use chaft_net_direct::MAX_JOIN_REQUEST_SUBMISSION_BYTES;
+use chaft_net_iroh::IrohTransport;
 use chaft_runtime::WorkspaceInviteClaim;
-use chaft_types::WorkspaceId;
+use chaft_types::{DEVICE_DISPLAY_NAME_MAX_BYTES, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -122,6 +123,15 @@ pub(crate) fn runtime_queue_join_request_outbox_result(
             "join request",
         )?;
         let metadata = validated_join_request_metadata(&request_text)?;
+        if workspace_id.is_some()
+            && metadata.workspace_id.is_some()
+            && workspace_id != metadata.workspace_id
+        {
+            return Err(ffi_error(
+                "join_request_workspace_id_mismatch",
+                "join request payload workspace ID must match the requested workspace",
+            ));
+        }
         let workspace_id = workspace_id
             .or(metadata.workspace_id)
             .map(direct_workspace_id_arg)
@@ -224,7 +234,8 @@ pub(crate) fn runtime_submit_join_request_outbox_entry_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let submit_result = runtime.block_on(DirectTransport.submit_join_request(
+            let transport = IrohTransport::from_environment();
+            let submit_result = runtime.block_on(transport.submit_join_request(
                 &peer,
                 workspace_id.as_ref(),
                 request_bytes,
@@ -343,7 +354,16 @@ fn list_join_request_outbox_entries(
     };
     let mut entries = Vec::new();
     for path in paths {
-        entries.push(read_join_request_outbox_entry_path(&path)?);
+        match read_join_request_outbox_entry_path(&path) {
+            Ok(entry) => entries.push(entry),
+            Err(_) => {
+                // Older builds could persist requests that no longer satisfy
+                // the outbound security contract. Preserve the raw entry for
+                // diagnostics, but keep it out of future retry scans so one
+                // invalid request cannot starve every valid handoff.
+                let _ = fs::rename(&path, path.with_extension("invalid"));
+            }
+        }
     }
     entries.sort_by(|left, right| {
         left.created_at_unix_ms
@@ -498,6 +518,12 @@ fn validate_join_request_outbox_entry(entry: &JoinRequestOutboxEntry) -> Result<
             "join request payload request ID must match the outbox entry",
         ));
     }
+    if metadata.workspace_id != entry.workspace_id {
+        return Err(ffi_error(
+            "join_request_outbox_payload_workspace_mismatch",
+            "join request payload workspace must match the outbox entry",
+        ));
+    }
     Ok(())
 }
 
@@ -536,12 +562,14 @@ fn is_join_request_outbox_entry_terminal(entry: &JoinRequestOutboxEntry) -> bool
     )
 }
 
-struct JoinRequestMetadata {
-    request_id: String,
-    workspace_id: Option<String>,
+pub(crate) struct JoinRequestMetadata {
+    pub(crate) request_id: String,
+    pub(crate) workspace_id: Option<String>,
 }
 
-fn validated_join_request_metadata(request_text: &str) -> Result<JoinRequestMetadata, FfiError> {
+pub(crate) fn validated_join_request_metadata(
+    request_text: &str,
+) -> Result<JoinRequestMetadata, FfiError> {
     if request_text.trim().is_empty() {
         return Err(ffi_error(
             "join_request_payload_empty",
@@ -580,6 +608,32 @@ fn validated_join_request_metadata(request_text: &str) -> Result<JoinRequestMeta
         return Err(ffi_error(
             "join_request_payload_invalid",
             "join request payload kind is unsupported",
+        ));
+    }
+    if object.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return Err(ffi_error(
+            "join_request_payload_invalid",
+            "join request payload schema version must be 1",
+        ));
+    }
+    let display_name = object
+        .get("displayName")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ffi_error(
+                "join_request_display_name_required",
+                "join request payload must include the joiner's display name",
+            )
+        })?;
+    if display_name.len() > DEVICE_DISPLAY_NAME_MAX_BYTES {
+        return Err(ffi_error(
+            "join_request_display_name_too_large",
+            format!(
+                "join request display name is too large: {} bytes",
+                display_name.len()
+            ),
         ));
     }
     if kind == Some("chaft.workspace-invite-claim.v1") {
@@ -632,13 +686,17 @@ fn validated_join_request_metadata(request_text: &str) -> Result<JoinRequestMeta
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    if let Some(workspace_id) = &workspace_id {
-        direct_workspace_id_arg(workspace_id.clone())?;
-    }
+        .ok_or_else(|| {
+            ffi_error(
+                "join_request_workspace_id_required",
+                "join request payload must include workspaceId",
+            )
+        })?
+        .to_owned();
+    direct_workspace_id_arg(workspace_id.clone())?;
     Ok(JoinRequestMetadata {
         request_id,
-        workspace_id,
+        workspace_id: Some(workspace_id),
     })
 }
 

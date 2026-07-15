@@ -110,6 +110,106 @@ pub trait BlobSyncTransport: ChaftTransport {
     ) -> Result<Option<Vec<u8>>, NetError>;
 }
 
+#[async_trait]
+pub trait AccessEnvelopeTransport {
+    async fn submit_join_request(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError>;
+
+    async fn submit_join_response(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        response_package: Vec<u8>,
+    ) -> Result<(), NetError>;
+
+    async fn fetch_join_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError>;
+
+    async fn fetch_join_responses(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError>;
+
+    async fn fetch_join_responses_for_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        request_ids: Vec<String>,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedAccessEnvelopeExchange {
+    request: WireSyncRequest,
+    response: AccessEnvelopeResponseExpectation,
+}
+
+#[derive(Debug, Clone)]
+enum AccessEnvelopeResponseExpectation {
+    EmptyAck,
+    JoinRequests {
+        max_entries: usize,
+    },
+    JoinResponses {
+        max_entries: usize,
+        requested: Option<BTreeSet<String>>,
+    },
+}
+
+impl PreparedAccessEnvelopeExchange {
+    pub fn wire_request(&self) -> WireSyncRequest {
+        self.request.clone()
+    }
+
+    pub fn validate_response(
+        self,
+        mut response: WireSyncResponse,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        response_error(response.error.take())?;
+        match self.response {
+            AccessEnvelopeResponseExpectation::EmptyAck => {
+                validate_empty_ack_response(&response)?;
+                Ok(Vec::new())
+            }
+            AccessEnvelopeResponseExpectation::JoinRequests { max_entries } => {
+                validate_join_envelope_fetch_response(
+                    "fetch-join-requests",
+                    &response,
+                    max_entries,
+                    validate_join_request_submission_bytes,
+                )?;
+                Ok(response.events)
+            }
+            AccessEnvelopeResponseExpectation::JoinResponses {
+                max_entries,
+                requested,
+            } => {
+                validate_join_envelope_fetch_response(
+                    "fetch-join-responses",
+                    &response,
+                    max_entries,
+                    validate_join_response_submission_bytes,
+                )?;
+                if let Some(requested) = requested {
+                    validate_scoped_join_response_envelopes(&response.events, &requested)?;
+                }
+                Ok(response.events)
+            }
+        }
+    }
+}
+
 pub trait JoinRequestInbox: Send + Sync {
     fn submit_join_request(
         &self,
@@ -468,6 +568,154 @@ impl ChaftTransport for DirectTransport {
     }
 }
 
+pub fn prepare_join_request_submission(
+    workspace_id: Option<&WorkspaceId>,
+    request: &[u8],
+) -> Result<PreparedAccessEnvelopeExchange, NetError> {
+    validate_join_request_submission_bytes(request)?;
+    if let Some(workspace_id) = workspace_id {
+        validate_wire_workspace_id("submit-join-request", &workspace_id.0)?;
+    }
+    Ok(PreparedAccessEnvelopeExchange {
+        request: access_envelope_wire_request(
+            WireSyncRequestKind::SubmitJoinRequest,
+            workspace_id.map(|id| id.0.clone()),
+            Vec::new(),
+            vec![request.to_vec()],
+            None,
+        ),
+        response: AccessEnvelopeResponseExpectation::EmptyAck,
+    })
+}
+
+pub fn prepare_join_response_submission(
+    workspace_id: Option<&WorkspaceId>,
+    response_package: &[u8],
+) -> Result<PreparedAccessEnvelopeExchange, NetError> {
+    validate_join_response_submission_bytes(response_package)?;
+    if let Some(workspace_id) = workspace_id {
+        validate_wire_workspace_id("submit-join-response", &workspace_id.0)?;
+    }
+    Ok(PreparedAccessEnvelopeExchange {
+        request: access_envelope_wire_request(
+            WireSyncRequestKind::SubmitJoinResponse,
+            workspace_id.map(|id| id.0.clone()),
+            Vec::new(),
+            vec![response_package.to_vec()],
+            None,
+        ),
+        response: AccessEnvelopeResponseExpectation::EmptyAck,
+    })
+}
+
+pub fn prepare_join_request_fetch(
+    workspace_id: &WorkspaceId,
+    max_entries: usize,
+) -> Result<PreparedAccessEnvelopeExchange, NetError> {
+    validate_wire_workspace_id("fetch-join-requests", &workspace_id.0)?;
+    let limit = access_envelope_fetch_limit(
+        "fetch-join-requests limit",
+        max_entries,
+        MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
+    )?;
+    Ok(PreparedAccessEnvelopeExchange {
+        request: access_envelope_wire_request(
+            WireSyncRequestKind::FetchJoinRequests,
+            Some(workspace_id.0.clone()),
+            Vec::new(),
+            Vec::new(),
+            Some(limit),
+        ),
+        response: AccessEnvelopeResponseExpectation::JoinRequests { max_entries: limit },
+    })
+}
+
+pub fn prepare_join_response_fetch(
+    workspace_id: &WorkspaceId,
+    max_entries: usize,
+) -> Result<PreparedAccessEnvelopeExchange, NetError> {
+    validate_wire_workspace_id("fetch-join-responses", &workspace_id.0)?;
+    let limit = access_envelope_fetch_limit(
+        "fetch-join-responses limit",
+        max_entries,
+        MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+    )?;
+    Ok(PreparedAccessEnvelopeExchange {
+        request: access_envelope_wire_request(
+            WireSyncRequestKind::FetchJoinResponses,
+            Some(workspace_id.0.clone()),
+            Vec::new(),
+            Vec::new(),
+            Some(limit),
+        ),
+        response: AccessEnvelopeResponseExpectation::JoinResponses {
+            max_entries: limit,
+            requested: None,
+        },
+    })
+}
+
+pub fn prepare_scoped_join_response_fetch(
+    workspace_id: &WorkspaceId,
+    request_ids: &[String],
+    max_entries: usize,
+) -> Result<Option<PreparedAccessEnvelopeExchange>, NetError> {
+    validate_wire_workspace_id("fetch-join-responses", &workspace_id.0)?;
+    let limit = access_envelope_fetch_limit(
+        "fetch-join-responses limit",
+        max_entries,
+        MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+    )?;
+    let request_ids = deduplicate_join_response_request_ids(request_ids.to_vec())?;
+    if request_ids.is_empty() {
+        return Ok(None);
+    }
+    validate_request_item_count(
+        "fetch-join-responses request id",
+        request_ids.len(),
+        MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
+    )?;
+    let requested = request_ids.iter().cloned().collect::<BTreeSet<_>>();
+    Ok(Some(PreparedAccessEnvelopeExchange {
+        request: access_envelope_wire_request(
+            WireSyncRequestKind::FetchJoinResponses,
+            Some(workspace_id.0.clone()),
+            request_ids,
+            Vec::new(),
+            Some(limit),
+        ),
+        response: AccessEnvelopeResponseExpectation::JoinResponses {
+            max_entries: limit,
+            requested: Some(requested),
+        },
+    }))
+}
+
+fn access_envelope_wire_request(
+    kind: WireSyncRequestKind,
+    workspace_id: Option<String>,
+    event_ids: Vec<String>,
+    events: Vec<Vec<u8>>,
+    max_entries: Option<usize>,
+) -> WireSyncRequest {
+    WireSyncRequest {
+        kind: kind as i32,
+        event_ids,
+        events,
+        authorization_events: Vec::new(),
+        authorization_snapshots: Vec::new(),
+        blob_hashes: Vec::new(),
+        blobs: Vec::new(),
+        blob_descriptors: Vec::new(),
+        workspace_id,
+        event_envelopes: Vec::new(),
+        authorization_event_envelopes: Vec::new(),
+        authorization_snapshot_envelopes: Vec::new(),
+        inventory_start_index: None,
+        inventory_limit: max_entries.map(|limit| limit as u64),
+    }
+}
+
 impl DirectTransport {
     pub async fn fetch_workspace_inventory(
         &self,
@@ -483,29 +731,9 @@ impl DirectTransport {
         workspace_id: Option<&WorkspaceId>,
         request: Vec<u8>,
     ) -> Result<(), NetError> {
-        validate_join_request_submission_bytes(&request)?;
-        if let Some(workspace_id) = workspace_id {
-            validate_wire_workspace_id("submit-join-request", &workspace_id.0)?;
-        }
-        let request = WireSyncRequest {
-            kind: WireSyncRequestKind::SubmitJoinRequest as i32,
-            event_ids: Vec::new(),
-            events: vec![request],
-            authorization_events: Vec::new(),
-            authorization_snapshots: Vec::new(),
-            blob_hashes: Vec::new(),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            workspace_id: workspace_id.map(|id| id.0.clone()),
-            event_envelopes: Vec::new(),
-            authorization_event_envelopes: Vec::new(),
-            authorization_snapshot_envelopes: Vec::new(),
-            inventory_start_index: None,
-            inventory_limit: None,
-        };
-        let mut response = request_peer(peer, request).await?;
-        response_error(response.error.take())?;
-        validate_empty_ack_response(&response)
+        let exchange = prepare_join_request_submission(workspace_id, &request)?;
+        let response = request_peer(peer, exchange.wire_request()).await?;
+        exchange.validate_response(response).map(|_| ())
     }
 
     pub async fn submit_join_response(
@@ -514,29 +742,9 @@ impl DirectTransport {
         workspace_id: Option<&WorkspaceId>,
         response_package: Vec<u8>,
     ) -> Result<(), NetError> {
-        validate_join_response_submission_bytes(&response_package)?;
-        if let Some(workspace_id) = workspace_id {
-            validate_wire_workspace_id("submit-join-response", &workspace_id.0)?;
-        }
-        let request = WireSyncRequest {
-            kind: WireSyncRequestKind::SubmitJoinResponse as i32,
-            event_ids: Vec::new(),
-            events: vec![response_package],
-            authorization_events: Vec::new(),
-            authorization_snapshots: Vec::new(),
-            blob_hashes: Vec::new(),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            workspace_id: workspace_id.map(|id| id.0.clone()),
-            event_envelopes: Vec::new(),
-            authorization_event_envelopes: Vec::new(),
-            authorization_snapshot_envelopes: Vec::new(),
-            inventory_start_index: None,
-            inventory_limit: None,
-        };
-        let mut response = request_peer(peer, request).await?;
-        response_error(response.error.take())?;
-        validate_empty_ack_response(&response)
+        let exchange = prepare_join_response_submission(workspace_id, &response_package)?;
+        let response = request_peer(peer, exchange.wire_request()).await?;
+        exchange.validate_response(response).map(|_| ())
     }
 
     pub async fn fetch_join_requests(
@@ -545,37 +753,9 @@ impl DirectTransport {
         workspace_id: &WorkspaceId,
         max_entries: usize,
     ) -> Result<Vec<Vec<u8>>, NetError> {
-        validate_wire_workspace_id("fetch-join-requests", &workspace_id.0)?;
-        let limit = access_envelope_fetch_limit(
-            "fetch-join-requests limit",
-            max_entries,
-            MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
-        )?;
-        let request = WireSyncRequest {
-            kind: WireSyncRequestKind::FetchJoinRequests as i32,
-            event_ids: Vec::new(),
-            events: Vec::new(),
-            authorization_events: Vec::new(),
-            authorization_snapshots: Vec::new(),
-            blob_hashes: Vec::new(),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            workspace_id: Some(workspace_id.0.clone()),
-            event_envelopes: Vec::new(),
-            authorization_event_envelopes: Vec::new(),
-            authorization_snapshot_envelopes: Vec::new(),
-            inventory_start_index: None,
-            inventory_limit: Some(limit as u64),
-        };
-        let mut response = request_peer(peer, request).await?;
-        response_error(response.error.take())?;
-        validate_join_envelope_fetch_response(
-            "fetch-join-requests",
-            &response,
-            limit,
-            validate_join_request_submission_bytes,
-        )?;
-        Ok(response.events)
+        let exchange = prepare_join_request_fetch(workspace_id, max_entries)?;
+        let response = request_peer(peer, exchange.wire_request()).await?;
+        exchange.validate_response(response)
     }
 
     pub async fn fetch_join_responses(
@@ -584,37 +764,9 @@ impl DirectTransport {
         workspace_id: &WorkspaceId,
         max_entries: usize,
     ) -> Result<Vec<Vec<u8>>, NetError> {
-        validate_wire_workspace_id("fetch-join-responses", &workspace_id.0)?;
-        let limit = access_envelope_fetch_limit(
-            "fetch-join-responses limit",
-            max_entries,
-            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
-        )?;
-        let request = WireSyncRequest {
-            kind: WireSyncRequestKind::FetchJoinResponses as i32,
-            event_ids: Vec::new(),
-            events: Vec::new(),
-            authorization_events: Vec::new(),
-            authorization_snapshots: Vec::new(),
-            blob_hashes: Vec::new(),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            workspace_id: Some(workspace_id.0.clone()),
-            event_envelopes: Vec::new(),
-            authorization_event_envelopes: Vec::new(),
-            authorization_snapshot_envelopes: Vec::new(),
-            inventory_start_index: None,
-            inventory_limit: Some(limit as u64),
-        };
-        let mut response = request_peer(peer, request).await?;
-        response_error(response.error.take())?;
-        validate_join_envelope_fetch_response(
-            "fetch-join-responses",
-            &response,
-            limit,
-            validate_join_response_submission_bytes,
-        )?;
-        Ok(response.events)
+        let exchange = prepare_join_response_fetch(workspace_id, max_entries)?;
+        let response = request_peer(peer, exchange.wire_request()).await?;
+        exchange.validate_response(response)
     }
 
     pub async fn fetch_join_responses_for_requests(
@@ -624,48 +776,13 @@ impl DirectTransport {
         request_ids: Vec<String>,
         max_entries: usize,
     ) -> Result<Vec<Vec<u8>>, NetError> {
-        validate_wire_workspace_id("fetch-join-responses", &workspace_id.0)?;
-        let limit = access_envelope_fetch_limit(
-            "fetch-join-responses limit",
-            max_entries,
-            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
-        )?;
-        let request_ids = deduplicate_join_response_request_ids(request_ids)?;
-        if request_ids.is_empty() {
+        let Some(exchange) =
+            prepare_scoped_join_response_fetch(workspace_id, &request_ids, max_entries)?
+        else {
             return Ok(Vec::new());
-        }
-        validate_request_item_count(
-            "fetch-join-responses request id",
-            request_ids.len(),
-            MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
-        )?;
-        let requested = request_ids.iter().cloned().collect::<BTreeSet<_>>();
-        let request = WireSyncRequest {
-            kind: WireSyncRequestKind::FetchJoinResponses as i32,
-            event_ids: request_ids,
-            events: Vec::new(),
-            authorization_events: Vec::new(),
-            authorization_snapshots: Vec::new(),
-            blob_hashes: Vec::new(),
-            blobs: Vec::new(),
-            blob_descriptors: Vec::new(),
-            workspace_id: Some(workspace_id.0.clone()),
-            event_envelopes: Vec::new(),
-            authorization_event_envelopes: Vec::new(),
-            authorization_snapshot_envelopes: Vec::new(),
-            inventory_start_index: None,
-            inventory_limit: Some(limit as u64),
         };
-        let mut response = request_peer(peer, request).await?;
-        response_error(response.error.take())?;
-        validate_join_envelope_fetch_response(
-            "fetch-join-responses",
-            &response,
-            limit,
-            validate_join_response_submission_bytes,
-        )?;
-        validate_scoped_join_response_envelopes(&response.events, &requested)?;
-        Ok(response.events)
+        let response = request_peer(peer, exchange.wire_request()).await?;
+        exchange.validate_response(response)
     }
 
     async fn fetch_inventory_page(
@@ -1008,6 +1125,62 @@ impl DirectTransport {
         validate_reassembled_blob(&descriptor, &bytes)
             .map_err(|error| NetError::Protocol(error.to_string()))?;
         Ok(Some(bytes))
+    }
+}
+
+#[async_trait]
+impl AccessEnvelopeTransport for DirectTransport {
+    async fn submit_join_request(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        request: Vec<u8>,
+    ) -> Result<(), NetError> {
+        DirectTransport::submit_join_request(self, peer, workspace_id, request).await
+    }
+
+    async fn submit_join_response(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: Option<&WorkspaceId>,
+        response_package: Vec<u8>,
+    ) -> Result<(), NetError> {
+        DirectTransport::submit_join_response(self, peer, workspace_id, response_package).await
+    }
+
+    async fn fetch_join_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        DirectTransport::fetch_join_requests(self, peer, workspace_id, max_entries).await
+    }
+
+    async fn fetch_join_responses(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        DirectTransport::fetch_join_responses(self, peer, workspace_id, max_entries).await
+    }
+
+    async fn fetch_join_responses_for_requests(
+        &self,
+        peer: &PeerAddress,
+        workspace_id: &WorkspaceId,
+        request_ids: Vec<String>,
+        max_entries: usize,
+    ) -> Result<Vec<Vec<u8>>, NetError> {
+        DirectTransport::fetch_join_responses_for_requests(
+            self,
+            peer,
+            workspace_id,
+            request_ids,
+            max_entries,
+        )
+        .await
     }
 }
 

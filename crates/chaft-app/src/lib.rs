@@ -198,7 +198,10 @@ pub struct WorkspaceInviteSnapshot {
     pub invite_id: String,
     pub invitee_device_id: String,
     pub invitee_display_name: Option<String>,
+    /// Legacy recipient display name for device-targeted v1 invites.
     pub display_name: String,
+    /// Inviter-defined label for v2 claimable invites; never a member display name.
+    pub invite_label: String,
     pub role: WorkspaceRole,
     pub request_id: Option<String>,
     pub expires_at: String,
@@ -1427,47 +1430,65 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
     let mut invites = state
         .invites
         .values()
-        .map(|invite| WorkspaceInviteSnapshot {
-            invite_id: invite.invite_id.clone(),
-            invitee_device_id: invite.invitee_device_id.0.clone(),
-            invitee_display_name: profile_display_name(state, &invite.invitee_device_id)
-                .or_else(|| non_empty_string(invite.display_name.clone())),
-            display_name: invite.display_name.clone(),
-            role: invite.role,
-            request_id: invite.request_id.clone(),
-            expires_at: invite.expires_at.clone(),
-            approval_policy: invite.approval_policy.clone(),
-            sync_expectation: invite.sync_expectation.clone(),
-            capability_public_key: invite.capability_public_key.clone(),
-            max_claims: invite.max_claims,
-            claim_count: invite.claim_count,
-            remaining_claims: invite.max_claims.saturating_sub(invite.claim_count),
-            claimable: !invite.capability_public_key.is_empty()
-                && invite.status == WorkspaceInviteStatus::Invited
-                && invite.claim_count < invite.max_claims,
-            status: invite_status_label(invite.status).to_owned(),
-            created_event_id: invite.created_event_id.0.clone(),
-            created_by_device_id: invite.created_by_device_id.0.clone(),
-            created_by_display_name: profile_display_name(state, &invite.created_by_device_id),
-            created_physical_ms: invite.created_physical_ms,
-            accepted_event_id: invite
-                .accepted_event_id
-                .as_ref()
-                .map(|event_id| event_id.0.clone()),
-            accepted_physical_ms: invite.accepted_physical_ms,
-            resolved_event_id: invite
-                .resolved_event_id
-                .as_ref()
-                .map(|event_id| event_id.0.clone()),
-            resolved_by_device_id: invite
-                .resolved_by_device_id
-                .as_ref()
-                .map(|device_id| device_id.0.clone()),
-            resolved_by_display_name: invite
-                .resolved_by_device_id
-                .as_ref()
-                .and_then(|device_id| profile_display_name(state, device_id)),
-            resolved_physical_ms: invite.resolved_physical_ms,
+        .map(|invite| {
+            let is_multi_claim = !invite.capability_public_key.is_empty() && invite.max_claims > 1;
+            let invitee_device_id = if is_multi_claim {
+                String::new()
+            } else {
+                invite.invitee_device_id.0.clone()
+            };
+            let invitee_display_name = if is_multi_claim {
+                None
+            } else {
+                profile_display_name(state, &invite.invitee_device_id)
+                    .or_else(|| invite.invitee_display_name.clone())
+            };
+            WorkspaceInviteSnapshot {
+                invite_id: invite.invite_id.clone(),
+                invitee_device_id,
+                invitee_display_name,
+                display_name: invite.invitee_display_name.clone().unwrap_or_default(),
+                invite_label: invite.invite_label.clone(),
+                role: invite.role,
+                request_id: if is_multi_claim {
+                    None
+                } else {
+                    invite.request_id.clone()
+                },
+                expires_at: invite.expires_at.clone(),
+                approval_policy: invite.approval_policy.clone(),
+                sync_expectation: invite.sync_expectation.clone(),
+                capability_public_key: invite.capability_public_key.clone(),
+                max_claims: invite.max_claims,
+                claim_count: invite.claim_count,
+                remaining_claims: invite.max_claims.saturating_sub(invite.claim_count),
+                claimable: !invite.capability_public_key.is_empty()
+                    && invite.status == WorkspaceInviteStatus::Invited
+                    && invite.claim_count < invite.max_claims,
+                status: invite_status_label(invite.status).to_owned(),
+                created_event_id: invite.created_event_id.0.clone(),
+                created_by_device_id: invite.created_by_device_id.0.clone(),
+                created_by_display_name: profile_display_name(state, &invite.created_by_device_id),
+                created_physical_ms: invite.created_physical_ms,
+                accepted_event_id: invite
+                    .accepted_event_id
+                    .as_ref()
+                    .map(|event_id| event_id.0.clone()),
+                accepted_physical_ms: invite.accepted_physical_ms,
+                resolved_event_id: invite
+                    .resolved_event_id
+                    .as_ref()
+                    .map(|event_id| event_id.0.clone()),
+                resolved_by_device_id: invite
+                    .resolved_by_device_id
+                    .as_ref()
+                    .map(|device_id| device_id.0.clone()),
+                resolved_by_display_name: invite
+                    .resolved_by_device_id
+                    .as_ref()
+                    .and_then(|device_id| profile_display_name(state, device_id)),
+                resolved_physical_ms: invite.resolved_physical_ms,
+            }
         })
         .collect::<Vec<_>>();
     sort_invite_snapshots(&mut invites);
@@ -4891,6 +4912,7 @@ mod tests {
         assert_eq!(invited.invitee_device_id, "dev_invitee");
         assert_eq!(invited.invitee_display_name.as_deref(), Some("Rina"));
         assert_eq!(invited.display_name, "Rina");
+        assert!(invited.invite_label.is_empty());
         assert_eq!(invited.role, WorkspaceRole::Member);
         assert_eq!(invited.request_id.as_deref(), Some("req_snapshot"));
         assert_eq!(invited.approval_policy, "invite_file");
@@ -4915,6 +4937,100 @@ mod tests {
             Some(invitee_profile.event.timestamp.physical_ms)
         );
         assert_eq!(accepted.invitee_display_name.as_deref(), Some("Rina Cole"));
+    }
+
+    #[test]
+    fn snapshot_keeps_claimable_invite_label_separate_from_claimant_profile() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let invitee = DeviceId("dev_invitee".to_owned());
+        let workspace = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft Labs".to_owned(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteCapabilityCreated {
+                invite_id: "inv_design".to_owned(),
+                display_name: "Design team".to_owned(),
+                role: WorkspaceRole::Member,
+                expires_at: "2026-07-14T12:00:00Z".to_owned(),
+                capability_public_key: "capability-key".to_owned(),
+                sync_expectation: "manual".to_owned(),
+                max_claims: Some(1),
+            },
+        ));
+        let claim = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceInviteClaimed {
+                invite_id: "inv_design".to_owned(),
+                invitee_device_id: invitee.clone(),
+                request_id: "req_design".to_owned(),
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::MemberInvited {
+                invitee_device_id: invitee.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            invitee,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Sam Rivera".to_owned(),
+            },
+        ));
+
+        let pending = WorkspaceSnapshot::from_events(
+            workspace_id.clone(),
+            &[workspace.clone(), invite.clone()],
+        )
+        .unwrap();
+        let claimed = WorkspaceSnapshot::from_events(
+            workspace_id.clone(),
+            &[
+                workspace.clone(),
+                invite.clone(),
+                member_invite.clone(),
+                claim.clone(),
+            ],
+        )
+        .unwrap();
+        let profiled = WorkspaceSnapshot::from_events(
+            workspace_id,
+            &[workspace, invite, member_invite, claim, profile],
+        )
+        .unwrap();
+
+        let pending = &pending.invites[0];
+        assert_eq!(pending.invite_label, "Design team");
+        assert!(pending.display_name.is_empty());
+        assert!(pending.invitee_device_id.is_empty());
+        assert_eq!(pending.invitee_display_name, None);
+
+        let claimed = &claimed.invites[0];
+        assert_eq!(claimed.invite_label, "Design team");
+        assert!(claimed.display_name.is_empty());
+        assert_eq!(claimed.invitee_device_id, "dev_invitee");
+        assert_eq!(claimed.invitee_display_name, None);
+
+        let profiled = &profiled.invites[0];
+        assert_eq!(profiled.invite_label, "Design team");
+        assert_eq!(profiled.invitee_device_id, "dev_invitee");
+        assert_eq!(profiled.invitee_display_name.as_deref(), Some("Sam Rivera"));
     }
 
     #[test]
@@ -4978,6 +5094,11 @@ mod tests {
         .unwrap();
 
         let invite = &partially_claimed.invites[0];
+        assert_eq!(invite.invite_label, "Launch team");
+        assert!(invite.display_name.is_empty());
+        assert!(invite.invitee_device_id.is_empty());
+        assert_eq!(invite.invitee_display_name, None);
+        assert_eq!(invite.request_id, None);
         assert_eq!(invite.max_claims, 2);
         assert_eq!(invite.claim_count, 1);
         assert_eq!(invite.remaining_claims, 1);
@@ -4986,6 +5107,11 @@ mod tests {
         assert_eq!(invite.accepted_event_id, None);
 
         let invite = &exhausted.invites[0];
+        assert_eq!(invite.invite_label, "Launch team");
+        assert!(invite.display_name.is_empty());
+        assert!(invite.invitee_device_id.is_empty());
+        assert_eq!(invite.invitee_display_name, None);
+        assert_eq!(invite.request_id, None);
         assert_eq!(invite.max_claims, 2);
         assert_eq!(invite.claim_count, 2);
         assert_eq!(invite.remaining_claims, 0);
@@ -6402,6 +6528,7 @@ mod tests {
                 invitee_device_id: "dev_invitee".to_owned(),
                 invitee_display_name: Some("Rina".to_owned()),
                 display_name: "Rina".to_owned(),
+                invite_label: String::new(),
                 role: WorkspaceRole::Member,
                 request_id: Some("req_test".to_owned()),
                 expires_at: "2026-07-14T12:00:00Z".to_owned(),
@@ -6609,6 +6736,7 @@ mod tests {
         assert_eq!(value["invites"][0]["inviteeDeviceId"], "dev_invitee");
         assert_eq!(value["invites"][0]["inviteeDisplayName"], "Rina");
         assert_eq!(value["invites"][0]["displayName"], "Rina");
+        assert_eq!(value["invites"][0]["inviteLabel"], "");
         assert_eq!(value["invites"][0]["role"], "member");
         assert_eq!(value["invites"][0]["requestId"], "req_test");
         assert_eq!(value["invites"][0]["expiresAt"], "2026-07-14T12:00:00Z");

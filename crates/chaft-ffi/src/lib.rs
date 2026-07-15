@@ -32,10 +32,10 @@ use chaft_types::WorkspaceId;
 #[cfg(test)]
 use chaft_types::{
     ATTACHMENT_ID_MAX_BYTES, ATTACHMENT_MEDIA_TYPE_MAX_BYTES, CHANNEL_ID_MAX_BYTES,
-    CHANNEL_NAME_MAX_BYTES, DEVICE_DISPLAY_NAME_MAX_BYTES, DEVICE_ID_MAX_BYTES,
-    DEVICE_KEY_PACKAGE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, EVENT_ID_MAX_BYTES,
-    MESSAGE_ID_MAX_BYTES, MESSAGE_MARKDOWN_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES,
-    REACTION_TEXT_MAX_BYTES, WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES,
+    CHANNEL_NAME_MAX_BYTES, DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES,
+    DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, EVENT_ID_MAX_BYTES, MESSAGE_ID_MAX_BYTES,
+    MESSAGE_MARKDOWN_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES, REACTION_TEXT_MAX_BYTES,
+    WORKSPACE_ID_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES,
 };
 #[cfg(test)]
 use chaft_types::{SignedEvent, WorkspaceRole};
@@ -2331,10 +2331,11 @@ pub unsafe extern "C" fn chaft_runtime_retry_blob_transfers_direct_result_json(
     into_c_string(&result)
 }
 
-/// Submits a prepared workspace join request directly to a reachable admin peer.
+/// Submits a prepared workspace join request to a reachable admin peer.
 ///
 /// `workspace_id` may be null or empty when the request itself carries the
-/// target workspace context.
+/// target workspace context. The endpoint may use direct TCP or native Iroh;
+/// the exported name is retained for ABI compatibility.
 ///
 /// # Safety
 ///
@@ -2351,8 +2352,8 @@ pub unsafe extern "C" fn chaft_runtime_submit_join_request_direct_result_json(
     into_c_string(&result)
 }
 
-/// Pulls pending workspace join-request envelopes from a known direct peer into
-/// the local runtime inbox.
+/// Pulls pending workspace join-request envelopes from a known peer into the
+/// local runtime inbox.
 ///
 /// This is a workspace-scoped known-peer exchange; it does not discover
 /// workspaces or peers.
@@ -2377,8 +2378,8 @@ pub unsafe extern "C" fn chaft_runtime_pull_join_requests_direct_result_json(
     into_c_string(&result)
 }
 
-/// Pulls pending workspace join-response envelopes from a known direct peer
-/// into the local runtime inbox.
+/// Pulls pending workspace join-response envelopes from a known peer into the
+/// local runtime inbox.
 ///
 /// This is a workspace-scoped known-peer exchange; it does not discover
 /// workspaces or peers.
@@ -2404,10 +2405,10 @@ pub unsafe extern "C" fn chaft_runtime_pull_join_responses_direct_result_json(
 }
 
 /// Pulls only the requested workspace join-response envelopes from a known
-/// direct peer into the local runtime inbox.
+/// peer into the local runtime inbox.
 ///
 /// `request_ids_json` must encode an array of request-ID strings. The array,
-/// each ID, and `max_entries` are bounded by the direct transport protocol.
+/// each ID, and `max_entries` are bounded by the access-envelope protocol.
 /// The remote peer applies request-ID filtering before the result limit, and
 /// the caller rejects a response whose request ID was not requested.
 ///
@@ -2602,10 +2603,11 @@ pub unsafe extern "C" fn chaft_runtime_mark_join_request_outbox_entry_result_jso
     into_c_string(&result)
 }
 
-/// Submits one queued join request directly to its stored peer endpoint.
+/// Submits one queued join request to its stored peer endpoint.
 ///
 /// The outbox entry is marked `delivered` on success and `failed` on transport
-/// failure.
+/// failure. Direct TCP and native Iroh endpoints are both supported; the
+/// exported name is retained for ABI compatibility.
 ///
 /// # Safety
 ///
@@ -2787,10 +2789,11 @@ pub unsafe extern "C" fn chaft_runtime_mark_join_response_outbox_entry_result_js
     into_c_string(&result)
 }
 
-/// Submits one queued join response directly to its stored peer endpoint.
+/// Submits one queued join response to its stored peer endpoint.
 ///
 /// The outbox entry is marked `delivered` on success and `failed` on transport
-/// failure.
+/// failure. Direct TCP and native Iroh endpoints are both supported; the
+/// exported name is retained for ABI compatibility.
 ///
 /// # Safety
 ///

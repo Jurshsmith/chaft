@@ -17,7 +17,8 @@ use chaft_runtime::{
 };
 use chaft_store::EventStore;
 use chaft_types::{
-    ChannelId, DeviceId, EventBody, MessageId, PayloadEncryption, SealedPayload, SignableEvent,
+    ChannelId, DEVICE_DISPLAY_NAME_MAX_BYTES, DeviceId, EventBody, MessageId, PayloadEncryption,
+    SealedPayload, SignableEvent,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::oneshot;
@@ -738,7 +739,15 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
     let hosted_endpoint =
         CString::new(started_direct_peer["value"]["endpoint"].as_str().unwrap()).unwrap();
     let contract_join_request = CString::new(
-        r#"{"kind":"chaft.workspace-join-request.v1","schemaVersion":1,"requestId":"req_contract_direct","deviceId":"dev_contract_joiner","displayName":"Contract Joiner"}"#,
+        serde_json::to_string(&json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": "req_contract_direct",
+            "workspaceId": runtime_workspace_id.to_str().unwrap(),
+            "deviceId": "dev_contract_joiner",
+            "displayName": "Contract Joiner"
+        }))
+        .unwrap(),
     )
     .unwrap();
     insert_contract_shape(
@@ -4851,6 +4860,7 @@ fn runtime_direct_peer_ffi_submits_and_persists_join_requests() {
         "kind": "chaft.workspace-join-request.v1",
         "schemaVersion": 1,
         "requestId": "req_joiner_123",
+        "workspaceId": workspace_id.0,
         "deviceId": "dev_joiner_123",
         "displayName": "Joiner Person",
         "message": "Please add me"
@@ -5628,7 +5638,8 @@ fn runtime_access_inboxes_reject_incomplete_or_unsupported_secure_envelopes() {
         "requestId": "req_incomplete_claim",
         "workspaceId": "wrk_secure_ingress",
         "inviteId": "inv_incomplete_claim",
-        "deviceId": "dev_incomplete_claim"
+        "deviceId": "dev_incomplete_claim",
+        "displayName": "Incomplete Claimant"
     }))
     .unwrap();
     assert!(
@@ -5931,7 +5942,211 @@ fn runtime_join_request_outbox_ffi_queues_marks_and_acks_entries() {
 }
 
 #[test]
+fn runtime_join_request_outbound_ffi_rejects_invalid_identity_and_workspace_before_delivery() {
+    let outbox_dir = tempfile::tempdir().unwrap();
+    let outbox_dir_c = CString::new(outbox_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let endpoint = CString::new("direct+tcp://127.0.0.1:1").unwrap();
+    let workspace_id = CString::new("wrk_outbound_validation").unwrap();
+
+    let queue_request = |request: Value, workspace_id: &CString| {
+        let request = CString::new(serde_json::to_string(&request).unwrap()).unwrap();
+        let result_json = unsafe {
+            take_ffi_string(chaft_runtime_queue_join_request_outbox_result_json(
+                outbox_dir_c.as_ptr(),
+                endpoint.as_ptr(),
+                workspace_id.as_ptr(),
+                request.as_ptr(),
+            ))
+        };
+        serde_json::from_str::<Value>(&result_json).unwrap()
+    };
+    let submit_request = |request: Value, workspace_id: &CString| {
+        let request = CString::new(serde_json::to_string(&request).unwrap()).unwrap();
+        let result_json = unsafe {
+            take_ffi_string(chaft_runtime_submit_join_request_direct_result_json(
+                endpoint.as_ptr(),
+                workspace_id.as_ptr(),
+                request.as_ptr(),
+            ))
+        };
+        serde_json::from_str::<Value>(&result_json).unwrap()
+    };
+    let join_request = |request_id: &str, display_name: String, payload_workspace_id: &str| {
+        json!({
+            "kind": "chaft.workspace-join-request.v1",
+            "schemaVersion": 1,
+            "requestId": request_id,
+            "workspaceId": payload_workspace_id,
+            "deviceId": "dev_outbound_validation",
+            "displayName": display_name
+        })
+    };
+
+    let blank_name = join_request(
+        "req_outbound_blank_name",
+        " \t\n ".to_owned(),
+        "wrk_outbound_validation",
+    );
+    let queued_blank = queue_request(blank_name.clone(), &workspace_id);
+    assert_eq!(queued_blank["ok"], false);
+    assert_eq!(
+        queued_blank["error"]["code"],
+        "join_request_display_name_required"
+    );
+    let submitted_blank = submit_request(blank_name, &workspace_id);
+    assert_eq!(submitted_blank["ok"], false);
+    assert_eq!(
+        submitted_blank["error"]["code"],
+        "join_request_display_name_required"
+    );
+
+    let oversized_name = join_request(
+        "req_outbound_oversized_name",
+        "a".repeat(DEVICE_DISPLAY_NAME_MAX_BYTES + 1),
+        "wrk_outbound_validation",
+    );
+    let queued_oversized = queue_request(oversized_name.clone(), &workspace_id);
+    assert_eq!(queued_oversized["ok"], false);
+    assert_eq!(
+        queued_oversized["error"]["code"],
+        "join_request_display_name_too_large"
+    );
+    let submitted_oversized = submit_request(oversized_name, &workspace_id);
+    assert_eq!(submitted_oversized["ok"], false);
+    assert_eq!(
+        submitted_oversized["error"]["code"],
+        "join_request_display_name_too_large"
+    );
+
+    let mismatched_workspace = join_request(
+        "req_outbound_workspace_mismatch",
+        "Outbound Person".to_owned(),
+        "wrk_other",
+    );
+    let queued_mismatch = queue_request(mismatched_workspace.clone(), &workspace_id);
+    assert_eq!(queued_mismatch["ok"], false);
+    assert_eq!(
+        queued_mismatch["error"]["code"],
+        "join_request_workspace_id_mismatch"
+    );
+    let submitted_mismatch = submit_request(mismatched_workspace, &workspace_id);
+    assert_eq!(submitted_mismatch["ok"], false);
+    assert_eq!(
+        submitted_mismatch["error"]["code"],
+        "join_request_workspace_id_mismatch"
+    );
+
+    let listed_json = unsafe {
+        take_ffi_string(chaft_runtime_list_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let listed = serde_json::from_str::<Value>(&listed_json).unwrap();
+    assert_eq!(listed["ok"], true);
+    assert!(listed["value"]["entries"].as_array().unwrap().is_empty());
+
+    let legacy_outbox_dir = outbox_dir.path().join("join-request-outbox");
+    std::fs::create_dir_all(&legacy_outbox_dir).unwrap();
+    let persist_legacy_entry = |entry_id: &str, entry_workspace_id: &str, request: Value| {
+        std::fs::write(
+            legacy_outbox_dir.join(format!("{entry_id}.json")),
+            serde_json::to_vec_pretty(&json!({
+                "schemaVersion": 1,
+                "entryId": entry_id,
+                "requestId": entry_id,
+                "workspaceId": entry_workspace_id,
+                "peerEndpoint": "direct+tcp://127.0.0.1:1",
+                "createdAtUnixMs": 1,
+                "updatedAtUnixMs": 1,
+                "attemptCount": 0,
+                "status": "pending",
+                "requestText": serde_json::to_string(&request).unwrap()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    let submit_legacy_entry = |entry_id: &str| {
+        let entry_id = CString::new(entry_id).unwrap();
+        let result_json = unsafe {
+            take_ffi_string(
+                chaft_runtime_submit_join_request_outbox_entry_direct_result_json(
+                    outbox_dir_c.as_ptr(),
+                    entry_id.as_ptr(),
+                ),
+            )
+        };
+        serde_json::from_str::<Value>(&result_json).unwrap()
+    };
+
+    let legacy_blank_id = "req_legacy_blank_name";
+    persist_legacy_entry(
+        legacy_blank_id,
+        "wrk_outbound_validation",
+        join_request(legacy_blank_id, "  ".to_owned(), "wrk_outbound_validation"),
+    );
+    let legacy_blank = submit_legacy_entry(legacy_blank_id);
+    assert_eq!(legacy_blank["ok"], false);
+    assert_eq!(
+        legacy_blank["error"]["code"],
+        "join_request_display_name_required"
+    );
+
+    let legacy_mismatch_id = "req_legacy_workspace_mismatch";
+    persist_legacy_entry(
+        legacy_mismatch_id,
+        "wrk_outbound_validation",
+        join_request(legacy_mismatch_id, "Legacy Person".to_owned(), "wrk_other"),
+    );
+    let legacy_mismatch = submit_legacy_entry(legacy_mismatch_id);
+    assert_eq!(legacy_mismatch["ok"], false);
+    assert_eq!(
+        legacy_mismatch["error"]["code"],
+        "join_request_outbox_payload_workspace_mismatch"
+    );
+
+    let valid_after_legacy = join_request(
+        "req_valid_after_legacy",
+        "Valid Person".to_owned(),
+        "wrk_outbound_validation",
+    );
+    let queued_valid = queue_request(valid_after_legacy, &workspace_id);
+    assert_eq!(queued_valid["ok"], true);
+    let due_json = unsafe {
+        take_ffi_string(chaft_runtime_list_due_join_request_outbox_result_json(
+            outbox_dir_c.as_ptr(),
+            10,
+        ))
+    };
+    let due = serde_json::from_str::<Value>(&due_json).unwrap();
+    assert_eq!(due["ok"], true);
+    let due_entries = due["value"]["entries"].as_array().unwrap();
+    assert_eq!(due_entries.len(), 1);
+    assert_eq!(due_entries[0]["entryId"], "req_valid_after_legacy");
+    assert!(
+        legacy_outbox_dir
+            .join(format!("{legacy_blank_id}.invalid"))
+            .exists()
+    );
+    assert!(
+        legacy_outbox_dir
+            .join(format!("{legacy_mismatch_id}.invalid"))
+            .exists()
+    );
+}
+
+#[test]
 fn runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport() {
+    runtime_claimable_workspace_invite_ffi_round_trips_over_transport(false);
+}
+
+#[test]
+fn runtime_claimable_workspace_invite_ffi_round_trips_over_iroh_transport() {
+    runtime_claimable_workspace_invite_ffi_round_trips_over_transport(true);
+}
+
+fn runtime_claimable_workspace_invite_ffi_round_trips_over_transport(use_iroh: bool) {
     let admin_dir = tempfile::tempdir().unwrap();
     let invitee_dir = tempfile::tempdir().unwrap();
     let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
@@ -5954,24 +6169,39 @@ fn runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport() {
 
     let listen = CString::new("127.0.0.1:0").unwrap();
     let admin_peer_json = unsafe {
-        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
-            admin_dir_c.as_ptr(),
-            std::ptr::null(),
-            listen.as_ptr(),
-        ))
+        if use_iroh {
+            take_ffi_string(chaft_runtime_start_iroh_peer_result_json(
+                admin_dir_c.as_ptr(),
+                std::ptr::null(),
+            ))
+        } else {
+            take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+                admin_dir_c.as_ptr(),
+                std::ptr::null(),
+                listen.as_ptr(),
+            ))
+        }
     };
     let admin_peer = serde_json::from_str::<Value>(&admin_peer_json).unwrap();
     assert_eq!(admin_peer["ok"], true);
     let admin_peer_id = admin_peer["value"]["peerId"].as_str().unwrap().to_owned();
     let admin_endpoint = admin_peer["value"]["endpoint"].as_str().unwrap().to_owned();
+    assert_eq!(admin_endpoint.starts_with("iroh://"), use_iroh);
     let admin_endpoint_c = CString::new(admin_endpoint.clone()).unwrap();
 
     let invitee_peer_json = unsafe {
-        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
-            invitee_dir_c.as_ptr(),
-            std::ptr::null(),
-            listen.as_ptr(),
-        ))
+        if use_iroh {
+            take_ffi_string(chaft_runtime_start_iroh_peer_result_json(
+                invitee_dir_c.as_ptr(),
+                std::ptr::null(),
+            ))
+        } else {
+            take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+                invitee_dir_c.as_ptr(),
+                std::ptr::null(),
+                listen.as_ptr(),
+            ))
+        }
     };
     let invitee_peer = serde_json::from_str::<Value>(&invitee_peer_json).unwrap();
     assert_eq!(invitee_peer["ok"], true);
@@ -5980,6 +6210,7 @@ fn runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport() {
         .as_str()
         .unwrap()
         .to_owned();
+    assert_eq!(invitee_endpoint.starts_with("iroh://"), use_iroh);
     let invitee_endpoint_c = CString::new(invitee_endpoint.clone()).unwrap();
 
     let invite_label = CString::new("Bob").unwrap();
@@ -6668,6 +6899,15 @@ fn runtime_pull_join_responses_direct_ffi_fails_closed_without_request_ids() {
 
 #[test]
 fn runtime_pull_join_responses_for_requests_direct_ffi_filters_before_remote_limit() {
+    runtime_pull_join_responses_for_requests_ffi_filters_before_remote_limit(false);
+}
+
+#[test]
+fn runtime_pull_join_responses_for_requests_iroh_ffi_filters_before_remote_limit() {
+    runtime_pull_join_responses_for_requests_ffi_filters_before_remote_limit(true);
+}
+
+fn runtime_pull_join_responses_for_requests_ffi_filters_before_remote_limit(use_iroh: bool) {
     fn response_payload(request_id: &str, workspace_id: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({
             "kind": "chaft.workspace-join-response.v1",
@@ -6712,16 +6952,25 @@ fn runtime_pull_join_responses_for_requests_direct_ffi_filters_before_remote_lim
     let local_dir_c = CString::new(local_dir.path().to_string_lossy().as_bytes()).unwrap();
     let listen = CString::new("127.0.0.1:0").unwrap();
     let started_json = unsafe {
-        take_ffi_string(chaft_runtime_start_direct_peer_result_json(
-            relay_dir_c.as_ptr(),
-            std::ptr::null(),
-            listen.as_ptr(),
-        ))
+        if use_iroh {
+            take_ffi_string(chaft_runtime_start_iroh_peer_result_json(
+                relay_dir_c.as_ptr(),
+                std::ptr::null(),
+            ))
+        } else {
+            take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+                relay_dir_c.as_ptr(),
+                std::ptr::null(),
+                listen.as_ptr(),
+            ))
+        }
     };
     let started = serde_json::from_str::<Value>(&started_json).unwrap();
     assert_eq!(started["ok"], true);
     let peer_id = started["value"]["peerId"].as_str().unwrap().to_owned();
-    let endpoint_c = CString::new(started["value"]["endpoint"].as_str().unwrap()).unwrap();
+    let endpoint = started["value"]["endpoint"].as_str().unwrap();
+    assert_eq!(endpoint.starts_with("iroh://"), use_iroh);
+    let endpoint_c = CString::new(endpoint).unwrap();
     let workspace_id_c = CString::new(workspace_id.0.clone()).unwrap();
     let request_ids_c = CString::new(format!(r#"["{target_request_id}"]"#)).unwrap();
 

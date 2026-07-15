@@ -7,7 +7,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use chaft_net_direct::{DirectTransport, MAX_JOIN_RESPONSE_SUBMISSION_BYTES};
+use chaft_net_direct::MAX_JOIN_RESPONSE_SUBMISSION_BYTES;
+use chaft_net_iroh::IrohTransport;
 use chaft_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
@@ -216,7 +217,8 @@ pub(crate) fn runtime_submit_join_response_outbox_entry_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let submit_result = runtime.block_on(DirectTransport.submit_join_response(
+            let transport = IrohTransport::from_environment();
+            let submit_result = runtime.block_on(transport.submit_join_response(
                 &peer,
                 workspace_id.as_ref(),
                 response_bytes,

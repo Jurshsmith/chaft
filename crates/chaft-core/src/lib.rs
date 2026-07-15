@@ -21,7 +21,7 @@ use chaft_types::{
     TrustSnapshotPersonDeviceLink, TrustSnapshotRole, WORKSPACE_ACCESS_POLICY_MAX_BYTES,
     WORKSPACE_ID_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
     WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
-    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_MAX_CLAIMS,
+    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_LABEL_MAX_BYTES, WORKSPACE_INVITE_MAX_CLAIMS,
     WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
     WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
     WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
@@ -302,7 +302,14 @@ pub enum WorkspaceInviteStatus {
 pub struct WorkspaceInviteView {
     pub invite_id: String,
     pub invitee_device_id: DeviceId,
+    /// Compatibility projection of the event's historical `display_name` field. For legacy
+    /// targeted invites this is the intended recipient name; for capability invites it is the
+    /// inviter-defined label. Prefer the semantic fields below in new code.
     pub display_name: String,
+    /// The intended recipient name carried by legacy, device-targeted invites.
+    pub invitee_display_name: Option<String>,
+    /// The inviter-defined label carried by claimable capability invites.
+    pub invite_label: String,
     pub role: WorkspaceRole,
     pub request_id: Option<String>,
     pub expires_at: String,
@@ -602,6 +609,9 @@ impl WorkspaceState {
                         invite_id: invite_id.clone(),
                         invitee_device_id: invitee_device_id.clone(),
                         display_name: display_name.clone(),
+                        invitee_display_name: (!display_name.trim().is_empty())
+                            .then(|| display_name.clone()),
+                        invite_label: String::new(),
                         role: *role,
                         request_id: request_id.clone(),
                         expires_at: expires_at.clone(),
@@ -647,6 +657,8 @@ impl WorkspaceState {
                         invite_id: invite_id.clone(),
                         invitee_device_id: DeviceId(String::new()),
                         display_name: display_name.clone(),
+                        invitee_display_name: None,
+                        invite_label: display_name.clone(),
                         role: *role,
                         request_id: None,
                         expires_at: expires_at.clone(),
@@ -2898,7 +2910,11 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             }
             validate_event_text_required("invite ID", invite_id)?;
             validate_event_text_size("invite ID", invite_id, WORKSPACE_INVITE_ID_MAX_BYTES)?;
-            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            validate_event_text_size(
+                "invite label",
+                display_name,
+                WORKSPACE_INVITE_LABEL_MAX_BYTES,
+            )?;
             validate_event_text_size(
                 "invite expiry",
                 expires_at,

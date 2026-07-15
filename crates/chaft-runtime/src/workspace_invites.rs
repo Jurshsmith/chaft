@@ -10,7 +10,7 @@ use chaft_types::{
     DEVICE_DISPLAY_NAME_MAX_BYTES, DeviceId, EventBody, PEER_ENDPOINT_MAX_BYTES, SignableEvent,
     WORKSPACE_ACCESS_POLICY_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
     WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
-    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_MAX_CLAIMS,
+    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_LABEL_MAX_BYTES, WORKSPACE_INVITE_MAX_CLAIMS,
     WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
     WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WorkspaceId, WorkspaceRole,
     effective_workspace_invite_max_claims,
@@ -55,6 +55,8 @@ pub struct WorkspaceInviteArtifact {
     pub workspace_id: String,
     pub workspace_name: String,
     pub invite_id: String,
+    /// Inviter-defined metadata. The historical Rust and signed-wire name is retained for
+    /// compatibility; it must never be interpreted as the claimant's member display name.
     pub display_name: String,
     pub role: WorkspaceRole,
     pub expires_at: String,
@@ -69,6 +71,13 @@ pub struct WorkspaceInviteArtifact {
     pub peer_endpoint: String,
     pub sync_expectation: String,
     pub created_at: String,
+}
+
+impl WorkspaceInviteArtifact {
+    /// Returns the inviter-defined label using its unambiguous product meaning.
+    pub fn invite_label(&self) -> &str {
+        &self.display_name
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,7 +210,7 @@ impl LocalRuntime {
     pub fn create_workspace_invite(
         &self,
         workspace_id: WorkspaceId,
-        display_name: String,
+        invite_label: String,
         role: WorkspaceRole,
         expires_at: String,
         peer_endpoint: String,
@@ -209,7 +218,7 @@ impl LocalRuntime {
     ) -> Result<CreatedWorkspaceInvite, RuntimeError> {
         self.create_workspace_invite_with_max_claims(
             workspace_id,
-            display_name,
+            invite_label,
             role,
             1,
             expires_at,
@@ -222,7 +231,7 @@ impl LocalRuntime {
     pub fn create_workspace_invite_with_max_claims(
         &self,
         workspace_id: WorkspaceId,
-        display_name: String,
+        invite_label: String,
         role: WorkspaceRole,
         max_claims: u32,
         expires_at: String,
@@ -238,7 +247,12 @@ impl LocalRuntime {
                 max_bytes: WORKSPACE_INVITE_MAX_CLAIMS as usize,
             });
         }
-        validate_metadata_field_size("display name", &display_name, 128)?;
+        let invite_label = invite_label.trim().to_owned();
+        validate_metadata_field_size(
+            "invite label",
+            &invite_label,
+            WORKSPACE_INVITE_LABEL_MAX_BYTES,
+        )?;
         validate_metadata_field_size(
             "invite expiry",
             &expires_at,
@@ -270,7 +284,7 @@ impl LocalRuntime {
             self.identity.device_id().clone(),
             EventBody::WorkspaceInviteCapabilityCreated {
                 invite_id: invite_id.clone(),
-                display_name: display_name.clone(),
+                display_name: invite_label.clone(),
                 role,
                 expires_at: expires_at.clone(),
                 capability_public_key: capability_public_key.clone(),
@@ -292,7 +306,7 @@ impl LocalRuntime {
             workspace_id: workspace_id.0.clone(),
             workspace_name: context.state.name.unwrap_or_default(),
             invite_id: invite_id.clone(),
-            display_name,
+            display_name: invite_label,
             role,
             expires_at,
             capability_secret: encode_hex(&capability.secret_bytes()),
@@ -327,6 +341,17 @@ impl LocalRuntime {
         response_peer_endpoint: String,
     ) -> Result<WorkspaceInviteClaim, RuntimeError> {
         validate_invite_artifact(&artifact)?;
+        let display_name = display_name.trim().to_owned();
+        if display_name.is_empty() {
+            return Err(RuntimeError::DisplayNameRequired);
+        }
+        validate_metadata_field_size("display name", &display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+        let note = note.trim().to_owned();
+        validate_metadata_field_size(
+            "join request note",
+            &note,
+            WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
+        )?;
         let capability_secret = decode_hex_32(&artifact.capability_secret)
             .map_err(|_| RuntimeError::InvalidWorkspaceInviteClaim)?;
         let capability = InvitationCapability::from_secret_bytes(capability_secret);
@@ -976,6 +1001,9 @@ fn validate_workspace_invite_claim_record_fields(
     invitee_device_id: &DeviceId,
 ) -> Result<(), RuntimeError> {
     validate_device_id_reference(invitee_device_id)?;
+    if claim.payload.display_name.trim().is_empty() {
+        return Err(RuntimeError::DisplayNameRequired);
+    }
     validate_metadata_field_size(
         "join request ID",
         &claim.payload.request_id,
@@ -1035,6 +1063,11 @@ fn validate_invite_artifact(artifact: &WorkspaceInviteArtifact) -> Result<(), Ru
         "invite ID",
         &artifact.invite_id,
         WORKSPACE_INVITE_ID_MAX_BYTES,
+    )?;
+    validate_metadata_field_size(
+        "invite label",
+        artifact.invite_label(),
+        WORKSPACE_INVITE_LABEL_MAX_BYTES,
     )?;
     if invite_is_expired(&artifact.expires_at)? {
         return Err(RuntimeError::WorkspaceInviteExpired {
@@ -1157,7 +1190,7 @@ mod tests {
         let invite = alice
             .create_workspace_invite(
                 workspace_id.clone(),
-                "Bob".to_owned(),
+                "  Design team  ".to_owned(),
                 WorkspaceRole::Member,
                 String::new(),
                 String::new(),
@@ -1169,7 +1202,14 @@ mod tests {
         let pending = before_claim.state.invites.get(&invite.invite_id).unwrap();
         assert_eq!(pending.status, WorkspaceInviteStatus::Invited);
         assert!(pending.invitee_device_id.0.is_empty());
+        assert_eq!(pending.display_name, "Design team");
+        assert_eq!(pending.invite_label, "Design team");
+        assert_eq!(pending.invitee_display_name, None);
+        assert_eq!(invite.artifact.invite_label(), "Design team");
         let artifact_json = serde_json::to_string(&invite.artifact).unwrap();
+        let artifact_value = serde_json::from_str::<serde_json::Value>(&artifact_json).unwrap();
+        assert_eq!(artifact_value["displayName"], "Design team");
+        assert!(artifact_value.get("inviteLabel").is_none());
         assert!(!artifact_json.contains("workspaceKey"));
         assert!(!artifact_json.contains("aes256GcmSivKey"));
 
@@ -1194,6 +1234,9 @@ mod tests {
         let accepted = after_claim.state.invites.get(&claimed.invite_id).unwrap();
         assert_eq!(accepted.status, WorkspaceInviteStatus::Accepted);
         assert_eq!(accepted.invitee_device_id, *bob.identity.device_id());
+        assert_eq!(accepted.display_name, "Design team");
+        assert_eq!(accepted.invite_label, "Design team");
+        assert_eq!(accepted.invitee_display_name, None);
 
         let imported = bob
             .import_workspace_invite_response(claimed.response)
@@ -1598,6 +1641,82 @@ mod tests {
         assert!(matches!(
             admin.claim_workspace_invite(charlie_claim),
             Err(RuntimeError::WorkspaceInviteAlreadyClaimed { .. })
+        ));
+    }
+
+    const FROZEN_PRE_LABEL_INVITE_ARTIFACT_JSON: &str = concat!(
+        r#"{"kind":"chaft.workspace-invite.v2","schemaVersion":2,"workspaceId":"wrk_fixture_legacy","workspaceName":"Fixture workspace","inviteId":"inv_fixture_legacy","displayName":"Design team","role":"member","expiresAt":"","#,
+        r#""capabilitySecret":"0909090909090909090909090909090909090909090909090909090909090909","capabilityPublicKey":"fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618","#,
+        r#""inviterDeviceId":"dev_0871f3aabc26e4582c508af5c03884e6a96f0989d1dd8cfb49cd17ed25792433","inviterDisplayName":"Fixture Admin","inviterPublicKey":"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c","#,
+        r#""inviterSignature":"1299a633b2be13f226584ee60bcddcfc155abdb3e60b8e3d9da453433bfd08cb91590488f91849fdef907232400b99e8d66e2139531a468144cc25574e4dde0e","peerEndpoint":"","syncExpectation":"history_after_claim","createdAt":"2025-01-02T03:04:05Z"}"#,
+    );
+
+    #[test]
+    fn frozen_pre_label_signed_artifact_still_deserializes_and_validates() {
+        let artifact =
+            serde_json::from_str::<WorkspaceInviteArtifact>(FROZEN_PRE_LABEL_INVITE_ARTIFACT_JSON)
+                .unwrap();
+
+        assert_eq!(artifact.display_name, "Design team");
+        assert_eq!(artifact.invite_label(), "Design team");
+        assert_eq!(artifact.max_claims, None);
+        assert!(FROZEN_PRE_LABEL_INVITE_ARTIFACT_JSON.contains("\"displayName\""));
+        assert!(!FROZEN_PRE_LABEL_INVITE_ARTIFACT_JSON.contains("inviteLabel"));
+        assert_eq!(
+            serde_json::to_string(&artifact).unwrap(),
+            FROZEN_PRE_LABEL_INVITE_ARTIFACT_JSON
+        );
+        validate_invite_artifact(&artifact).unwrap();
+
+        let mut tampered = artifact;
+        tampered.display_name = "Different label".to_owned();
+        assert!(matches!(
+            validate_invite_artifact(&tampered),
+            Err(RuntimeError::InvalidWorkspaceInviteClaim)
+        ));
+    }
+
+    #[test]
+    fn signed_invite_artifact_rejects_an_oversized_invite_label() {
+        let admin_dir = tempdir().unwrap();
+        let joiner_dir = tempdir().unwrap();
+        let admin = LocalRuntime::open(admin_dir.path(), None).unwrap();
+        let joiner = LocalRuntime::open(joiner_dir.path(), None).unwrap();
+        let created = admin
+            .create_workspace("Oversized invite label", "general")
+            .unwrap();
+        let mut artifact = admin
+            .create_workspace_invite(
+                WorkspaceId(created.workspace_id),
+                String::new(),
+                WorkspaceRole::Member,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap()
+            .artifact;
+        artifact.display_name = "x".repeat(WORKSPACE_INVITE_LABEL_MAX_BYTES + 1);
+        artifact.inviter_signature = encode_hex(
+            &admin
+                .identity
+                .sign_bytes(&workspace_invite_artifact_signing_bytes(&artifact).unwrap()),
+        );
+
+        let error = joiner
+            .prepare_workspace_invite_claim(
+                artifact,
+                "Joiner".to_owned(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::MetadataFieldTooLarge {
+                field: "invite label",
+                ..
+            }
         ));
     }
 

@@ -25,6 +25,7 @@ pub const DEVICE_DISPLAY_NAME_MAX_BYTES: usize = 128;
 pub const PERSON_ID_MAX_BYTES: usize = 128;
 pub const PERSON_ID_PREFIX: &str = "person_";
 pub const WORKSPACE_INVITE_ID_MAX_BYTES: usize = 128;
+pub const WORKSPACE_INVITE_LABEL_MAX_BYTES: usize = 128;
 pub const WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES: usize = 64;
@@ -526,6 +527,8 @@ pub enum EventBody {
     },
     WorkspaceInviteCapabilityCreated {
         invite_id: String,
+        /// Inviter-defined label for organizing the invite. The legacy wire field is named
+        /// `display_name`; it is not the claimant's member display name.
         display_name: String,
         role: WorkspaceRole,
         expires_at: String,

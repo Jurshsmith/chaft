@@ -1070,6 +1070,9 @@ impl LocalRuntime {
                 field: "join request ID",
             });
         }
+        if display_name.is_empty() {
+            return Err(RuntimeError::DisplayNameRequired);
+        }
         validate_metadata_field_size(
             "join request ID",
             &request_id,

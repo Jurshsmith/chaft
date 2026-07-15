@@ -1,9 +1,10 @@
 use std::{collections::HashSet, ffi::c_char, path::PathBuf};
 
 use chaft_net_direct::{
-    DirectTransport, JoinRequestInbox, JoinResponseInbox, MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
+    JoinRequestInbox, JoinResponseInbox, MAX_FETCH_JOIN_REQUESTS_PER_REQUEST,
     MAX_FETCH_JOIN_RESPONSES_PER_REQUEST, MAX_JOIN_REQUEST_SUBMISSION_BYTES,
 };
+use chaft_net_iroh::IrohTransport;
 use chaft_runtime::{
     BlobTransferRetryReport, PEER_ENDPOINT_MAX_BYTES, PublishedWorkspace, PulledWorkspace,
     SyncedWorkspace,
@@ -20,6 +21,7 @@ use crate::{
         read_c_string_with_max_bytes,
     },
     join_request_inbox::FileJoinRequestInbox,
+    join_request_outbox::validated_join_request_metadata,
     join_response_inbox::{
         FileJoinResponseInbox, JOIN_RESPONSE_INBOX_ENTRY_ID_MAX_BYTES,
         validate_join_response_entry_id,
@@ -276,6 +278,17 @@ pub(crate) fn runtime_submit_join_request_direct_result(
             "join_request_too_large",
             "join request",
         )?;
+        let metadata = validated_join_request_metadata(&request_json)?;
+        if workspace_id.is_some()
+            && metadata.workspace_id.as_deref()
+                != workspace_id.as_ref().map(|value| value.0.as_str())
+        {
+            return Err(ffi_error(
+                "join_request_workspace_id_mismatch",
+                "join request payload workspace ID must match the requested workspace",
+            ));
+        }
+        let workspace_id = workspace_id.or_else(|| metadata.workspace_id.map(WorkspaceId));
         let request_bytes = request_json.into_bytes();
         let request_byte_len = request_bytes.len();
         let result_workspace_id = workspace_id.as_ref().map(|id| id.0.clone());
@@ -286,8 +299,9 @@ pub(crate) fn runtime_submit_join_request_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            let transport = IrohTransport::from_environment();
             runtime
-                .block_on(DirectTransport.submit_join_request(
+                .block_on(transport.submit_join_request(
                     &peer,
                     workspace_id.as_ref(),
                     request_bytes,
@@ -338,8 +352,9 @@ pub(crate) fn runtime_pull_join_requests_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            let transport = IrohTransport::from_environment();
             let requests = runtime
-                .block_on(DirectTransport.fetch_join_requests(&peer, &workspace_id, max_entries))
+                .block_on(transport.fetch_join_requests(&peer, &workspace_id, max_entries))
                 .map_err(|error| {
                     ffi_error("runtime_pull_join_requests_failed", error.to_string())
                 })?;
@@ -395,8 +410,9 @@ pub(crate) fn runtime_pull_join_responses_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            let transport = IrohTransport::from_environment();
             let responses = runtime
-                .block_on(DirectTransport.fetch_join_responses(&peer, &workspace_id, max_entries))
+                .block_on(transport.fetch_join_responses(&peer, &workspace_id, max_entries))
                 .map_err(|error| {
                     ffi_error("runtime_pull_join_responses_failed", error.to_string())
                 })?;
@@ -461,8 +477,9 @@ pub(crate) fn runtime_pull_join_responses_for_requests_direct_result(
                 .enable_all()
                 .build()
                 .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
+            let transport = IrohTransport::from_environment();
             let responses = runtime
-                .block_on(DirectTransport.fetch_join_responses_for_requests(
+                .block_on(transport.fetch_join_responses_for_requests(
                     &peer,
                     &workspace_id,
                     request_ids,
