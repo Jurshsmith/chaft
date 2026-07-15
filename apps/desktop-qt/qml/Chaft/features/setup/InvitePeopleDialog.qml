@@ -13,11 +13,11 @@ Dialog {
     property string creationError: ""
     readonly property var expiryDays: [1, 7, 30, 0]
     readonly property var claimLimitOptions: [
-        { label: "1 claim", value: 1 },
-        { label: "2 claims", value: 2 },
-        { label: "5 claims", value: 5 },
-        { label: "10 claims", value: 10 },
-        { label: "20 claims", value: 20 }
+        { label: "1 device", value: 1 },
+        { label: "2 devices", value: 2 },
+        { label: "5 devices", value: 5 },
+        { label: "10 devices", value: 10 },
+        { label: "20 devices", value: 20 }
     ]
     readonly property int selectedMaxClaims:
         Math.max(1, Number(claimLimitBox.currentValue || 1))
@@ -28,7 +28,6 @@ Dialog {
     readonly property bool reusableInvite: root.selectedMaxClaims > 1
     readonly property bool inviteNeverExpires: expiryBox.currentIndex === 3
     readonly property bool highRiskInvite: root.adminInvite
-        && (root.reusableInvite || root.inviteNeverExpires)
 
     onHighRiskInviteChanged: {
         if (!root.highRiskInvite) {
@@ -44,7 +43,7 @@ Dialog {
     padding: Tokens.space4
     closePolicy: root.creationPending
         ? Popup.NoAutoClose
-        : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+        : Popup.CloseOnEscape
 
     function resetForm() {
         inviteLabelField.text = ""
@@ -56,29 +55,32 @@ Dialog {
 
     function claimLimitHelperText() {
         if (root.selectedMaxClaims === 1) {
-            return "The first successful claim grants one device the selected role."
+            return "The first device to use this invite gets the selected role."
         }
         return "Up to " + root.selectedMaxClaims
-            + " devices can claim the same invite. Revoke it early if it spreads beyond the intended group."
+            + " devices can use this invite. Revoke it if it reaches the wrong people."
     }
 
     function highRiskWarningText() {
         if (root.reusableInvite && root.inviteNeverExpires) {
-            return "This invite can grant admin access " + root.selectedMaxClaims
-                + " times and never expires. Use a smaller limit and shorter expiry when possible."
+            return "This invite can grant admin access to " + root.selectedMaxClaims
+                + " devices and never expires. Use fewer devices and a shorter expiry when possible."
         }
         if (root.reusableInvite) {
-            return "This invite can grant admin access " + root.selectedMaxClaims
-                + " times. Send it only to the intended recipients."
+            return "This invite can grant admin access to " + root.selectedMaxClaims
+                + " devices. Send it only to the intended people."
         }
-        return "This admin invite never expires. Prefer a short expiry and send it directly to the recipient."
+        if (root.inviteNeverExpires) {
+            return "This admin invite never expires. Prefer a short expiry and send it privately."
+        }
+        return "This invite grants admin access. Admins can invite or remove people and manage workspace access."
     }
 
     function highRiskConfirmationText() {
         var text = root.reusableInvite
-            ? "I understand this invite can grant admin access "
-                + root.selectedMaxClaims + " times"
-            : "I understand this invite grants admin access"
+            ? "I understand this invite can grant admin access to "
+                + root.selectedMaxClaims + " devices"
+            : "I understand this invite grants admin access to one device"
         return root.inviteNeverExpires ? text + " and never expires" : text
     }
 
@@ -139,7 +141,7 @@ Dialog {
 
         Text {
             Layout.fillWidth: true
-            text: "Set a role, expiry, and claim limit. No message keys are included; send the invite privately."
+            text: "Choose the access this invite grants and how long it can be used."
             color: Tokens.textMuted
             font.pixelSize: Tokens.fontSizeSm
             wrapMode: Text.WordWrap
@@ -148,8 +150,10 @@ Dialog {
         LabeledField {
             id: inviteLabelField
             Layout.fillWidth: true
-            label: "Name or label (optional)"
-            placeholderText: "e.g. Sam Rivera"
+            label: "Invite label (optional)"
+            placeholderText: "e.g. Design team"
+            supportText: "For your invite list. Each joiner chooses their own name."
+            maximumLength: 80
         }
 
         RowLayout {
@@ -183,7 +187,7 @@ Dialog {
                 spacing: Tokens.space1
 
                 Text {
-                    text: "Expires"
+                    text: "Expires after"
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     font.weight: Font.DemiBold
@@ -205,7 +209,7 @@ Dialog {
             spacing: Tokens.space1
 
             Text {
-                text: "Claim limit"
+                text: "Can be used by"
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeXs
                 font.weight: Font.DemiBold
@@ -218,7 +222,7 @@ Dialog {
                 textRole: "label"
                 valueRole: "value"
                 currentIndex: 0
-                Accessible.name: "Invite claim limit"
+                Accessible.name: "Number of devices that can use this invite"
                 onActivated: highRiskConfirmation.checked = false
             }
 
@@ -248,7 +252,7 @@ Dialog {
                 StatusChip {
                     text: root.secureRouteReady
                         ? "Automatic delivery"
-                        : "Manual exchange"
+                        : "Manual fallback"
                     secure: true
                     warning: !root.secureRouteReady
                     minWidth: 132
@@ -258,8 +262,8 @@ Dialog {
                 Text {
                     Layout.fillWidth: true
                     text: root.secureRouteReady
-                        ? "Chaft can complete the claim while this peer route is reachable."
-                        : "The recipient saves their claim, you open it in Access Requests, then return the encrypted access file."
+                        ? "Join requests can be delivered automatically while this device is reachable."
+                        : "If automatic delivery is unavailable, the joiner can transfer the request manually."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap

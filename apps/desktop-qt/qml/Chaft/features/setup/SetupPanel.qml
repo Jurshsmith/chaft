@@ -51,7 +51,22 @@ ScrollView {
     property bool addAnotherDeviceGuideVisible: false
     property bool addAnotherDeviceOpenSaveWhenReady: false
     property string autoLoadedKeyTransferText: ""
+    property string profileSaveError: ""
+    property string profileDraftWorkspaceId: ""
     readonly property string standardAccessUpdateProtocol: "openmls/key-package"
+
+    onAdvancedAccessToolsOpenChanged: {
+        if (!setupScroll.advancedAccessToolsOpen) {
+            setupScroll.clearRecoveryPassphraseDrafts()
+        }
+    }
+
+    onAddAnotherDeviceGuideVisibleChanged: {
+        if (!setupScroll.addAnotherDeviceGuideVisible) {
+            addDeviceRecoveryPassphraseField.text = ""
+            addDeviceRecoveryPassphraseConfirmationField.text = ""
+        }
+    }
 
     onCategoryChanged: Qt.callLater(function() {
         if (setupScroll.contentItem !== null) {
@@ -99,9 +114,25 @@ ScrollView {
             addDeviceRecoveryPassphraseField.forceFieldFocus()
             return false
         }
+        if (addDeviceRecoveryPassphraseConfirmationField.text
+                !== addDeviceRecoveryPassphraseField.text) {
+            addDeviceRecoveryPassphraseConfirmationField.forceFieldFocus()
+            return false
+        }
         setupScroll.addAnotherDeviceOpenSaveWhenReady =
             chaftController.exportRecoveryBundle(addDeviceRecoveryPassphraseField.text)
+        if (setupScroll.addAnotherDeviceOpenSaveWhenReady) {
+            addDeviceRecoveryPassphraseField.text = ""
+            addDeviceRecoveryPassphraseConfirmationField.text = ""
+        }
         return setupScroll.addAnotherDeviceOpenSaveWhenReady
+    }
+
+    function clearRecoveryPassphraseDrafts() {
+        recoveryPassphraseField.text = ""
+        recoveryPassphraseConfirmationField.text = ""
+        addDeviceRecoveryPassphraseField.text = ""
+        addDeviceRecoveryPassphraseConfirmationField.text = ""
     }
 
     function localPersonDeviceLink() {
@@ -134,6 +165,56 @@ ScrollView {
             return name + " is saved for this device."
         }
         return "Set your name so teammates can recognize you."
+    }
+
+    function syncDisplayNameDraft(force) {
+        if (!setupScroll.app) {
+            return false
+        }
+        var workspaceId = setupScroll.app.currentWorkspaceId()
+        var workspaceChanged = workspaceId !== setupScroll.profileDraftWorkspaceId
+        if (!force && !workspaceChanged && displayNameField.dirty) {
+            return false
+        }
+        displayNameField.text = setupScroll.app.localDeviceDisplayName()
+        displayNameField.markClean()
+        setupScroll.profileDraftWorkspaceId = workspaceId
+        setupScroll.profileSaveError = ""
+        return true
+    }
+
+    function saveDisplayNameDraft() {
+        if (!setupScroll.app) {
+            setupScroll.profileSaveError = "Workspace profile is unavailable."
+            return false
+        }
+        var workspaceId = setupScroll.app.currentWorkspaceId()
+        if (workspaceId !== setupScroll.profileDraftWorkspaceId) {
+            setupScroll.syncDisplayNameDraft(true)
+            setupScroll.profileSaveError =
+                "The workspace changed. Review the name for this workspace before saving."
+            return false
+        }
+        var displayName = displayNameField.text.trim()
+        if (displayName.length === 0) {
+            setupScroll.profileSaveError = "Enter the name teammates should see."
+            displayNameField.forceFieldFocus()
+            return false
+        }
+        if (!setupScroll.app.runtimeWorkReady) {
+            setupScroll.profileSaveError = "Unlock this workspace before saving your name."
+            return false
+        }
+        if (!chaftController.updateDeviceProfile(displayName)) {
+            setupScroll.profileSaveError = String(chaftController.syncStatus
+                || "Could not save your name. Try again.")
+            return false
+        }
+        displayNameField.text = displayName
+        displayNameField.markClean()
+        setupScroll.profileDraftWorkspaceId = workspaceId
+        setupScroll.profileSaveError = ""
+        return true
     }
 
     function localDeviceLinkStatusText() {
@@ -252,7 +333,7 @@ ScrollView {
             return "Discovery is not live yet. Use access requests or direct invites."
         case "invite_only":
         default:
-            return "Invite only is on. Create a secure invite and set how many claims it allows."
+            return "Invite only is on. Create an invite and choose how many devices can use it."
         }
     }
 
@@ -343,18 +424,31 @@ ScrollView {
 
     function workspaceInviteClaimAvailabilityLabel(invite) {
         if (!setupScroll.app) {
-            return "1 claim remaining"
+            return "1 device remaining"
         }
-        return setupScroll.workspaceInviteStatus(invite) === "invited"
-            ? setupScroll.app.inviteClaimAvailabilityLabel(invite)
-            : setupScroll.app.inviteClaimUsageLabel(invite)
+        var maximum = setupScroll.workspaceInviteMaxClaims(invite)
+        if (setupScroll.workspaceInviteStatus(invite) === "invited") {
+            var remaining = setupScroll.app.inviteRemainingClaims(invite)
+            if (remaining === 0) {
+                return "No uses remaining"
+            }
+            return maximum === 1
+                ? "1 device remaining"
+                : remaining + " of " + maximum + " devices remaining"
+        }
+        var used = setupScroll.app.inviteClaimCount(invite)
+        if (used === 0) {
+            return "Not used"
+        }
+        return maximum === 1
+            ? "Used by 1 device"
+            : "Used by " + used + " of " + maximum + " devices"
     }
 
     function invitePackageClaimLimitLabel() {
         var invite = setupScroll.invitePackageObject()
-        return setupScroll.app
-            ? setupScroll.app.inviteClaimLimitLabel(invite)
-            : "1 claim"
+        var maximum = setupScroll.workspaceInviteMaxClaims(invite)
+        return maximum === 1 ? "1 device" : maximum + " devices"
     }
 
     function invitePackageId() {
@@ -371,6 +465,9 @@ ScrollView {
         var invite = setupScroll.invitePackageObject()
         if (invite === null) {
             return "your teammate"
+        }
+        if (String(invite.kind || "") === "chaft.workspace-invite.v2") {
+            return "the people you share it with"
         }
         var displayName = String(invite.inviteeDisplayName || "").trim()
         if (displayName.length === 0) {
@@ -414,8 +511,8 @@ ScrollView {
         var invite = setupScroll.invitePackageObject()
         if (setupScroll.invitePackageIsClaimable()) {
             return setupScroll.workspaceInviteMaxClaims(invite) === 1
-                ? "Access granted after claim"
-                : "Access granted per claim"
+                ? "Approval required"
+                : "Approval required per device"
         }
         return setupScroll.app.inviteApprovalLabel(invite ? invite.approvalPolicy : "preapproved")
     }
@@ -431,15 +528,12 @@ ScrollView {
                 && String(invite.kind || "") === "chaft.workspace-invite.v2") {
             var maximum = setupScroll.workspaceInviteMaxClaims(invite)
             if (maximum === 1) {
-                return "Send this invite to "
-                    + setupScroll.invitePackageRecipientLabel()
-                    + ". They can claim " + setupScroll.invitePackageRoleLabel()
-                    + " access from their device."
+                return "Send this invite privately. One device can use it to join with "
+                    + setupScroll.invitePackageRoleLabel() + " access."
             }
-            return "Share this invite privately with up to " + maximum
-                + " recipients. Each can claim "
-                + setupScroll.invitePackageRoleLabel()
-                + " access from their own device."
+            return "Share this invite privately. Up to " + maximum
+                + " devices can use it to join with "
+                + setupScroll.invitePackageRoleLabel() + " access."
         }
         if (setupScroll.invitePackageRequiresApproval()) {
             return "Send this approval invite to "
@@ -597,7 +691,7 @@ ScrollView {
         if (setupScroll.keyTransferIsJoinRequest()) {
             return setupScroll.joinRequestIsSecureClaim(
                 setupScroll.keyTransferObject())
-                ? "invite claim"
+                ? "join request"
                 : "access request"
         }
         if (setupScroll.keyTransferIsWorkspaceCard()) {
@@ -775,7 +869,7 @@ ScrollView {
     function joinRequestCompactContextLabel(request) {
         var sourceType = String((request && request.sourceType) || "").trim()
         if (sourceType === "invite_claim") {
-            return "Secure invite claim"
+            return "Invite join request"
         }
         if (sourceType === "approval_invite") {
             return "Approval invite"
@@ -935,7 +1029,18 @@ ScrollView {
     }
 
     function workspaceInviteLabel(invite) {
-        var name = String((invite && (invite.inviteeDisplayName || invite.displayName)) || "").trim()
+        if (setupScroll.workspaceInviteUsesClaims(invite)) {
+            var inviteLabel = setupScroll.workspaceInviteTrackingLabel(invite)
+            if (inviteLabel.length > 0) {
+                return inviteLabel
+            }
+            var maximum = setupScroll.workspaceInviteMaxClaims(invite)
+            return maximum === 1
+                ? "Single-device invite"
+                : maximum + "-device invite"
+        }
+        var name = String((invite
+            && (invite.inviteeDisplayName || invite.displayName)) || "").trim()
         if (name.length > 0) {
             return name
         }
@@ -943,6 +1048,16 @@ ScrollView {
         return deviceId.length > 0
             ? setupScroll.app.unnamedPersonLabel(deviceId)
             : "Teammate"
+    }
+
+    function workspaceInviteTrackingLabel(invite) {
+        if (!setupScroll.workspaceInviteUsesClaims(invite)) {
+            return ""
+        }
+        // Older v2 snapshots exposed the tracking label as displayName. Keep
+        // that compatibility path without treating it as recipient identity.
+        return String((invite && (invite.inviteLabel || invite.displayName))
+            || "").trim()
     }
 
     function workspaceInviteAccessLabel(invite) {
@@ -979,8 +1094,8 @@ ScrollView {
         if (status === "accepted") {
             if (setupScroll.workspaceInviteUsesClaims(invite)) {
                 return setupScroll.workspaceInviteMaxClaims(invite) === 1
-                    ? "Claimed"
-                    : "Fully claimed"
+                    ? "Used"
+                    : "Fully used"
             }
             return "Accepted"
         }
@@ -1002,9 +1117,9 @@ ScrollView {
             if (setupScroll.workspaceInviteUsesClaims(invite)) {
                 var maximum = setupScroll.workspaceInviteMaxClaims(invite)
                 return maximum === 1
-                    ? "This invite has been claimed and cannot be used again."
+                    ? "This invite has been used and cannot be used again."
                     : "All " + maximum
-                        + " claims have been used. This invite cannot be used again."
+                        + " uses are complete. This invite cannot be used again."
             }
             return "They have opened Chaft and received updates at least once."
         }
@@ -1037,13 +1152,19 @@ ScrollView {
             return "No action needed."
         }
         if (setupScroll.canShareCurrentWorkspaceInvite(invite)) {
-            return "Send the invite link or file to " + label + "."
+            return setupScroll.workspaceInviteUsesClaims(invite)
+                ? "Send the invite privately."
+                : "Send the invite link or file to " + label + "."
         }
         if (status === "invited") {
-            return "Replace the missing invite, then send the new link or file to " + label + "."
+            return setupScroll.workspaceInviteUsesClaims(invite)
+                ? "Replace the missing invite, then share the new one privately."
+                : "Replace the missing invite, then send the new link or file to " + label + "."
         }
         if (status === "expired" || status === "revoked") {
-            return "Create a new invite if " + label + " still needs access."
+            return setupScroll.workspaceInviteUsesClaims(invite)
+                ? "Create a new invite if access is still needed."
+                : "Create a new invite if " + label + " still needs access."
         }
         return ""
     }
@@ -1320,7 +1441,7 @@ ScrollView {
         }
         if (setupScroll.workspaceInviteUsesClaims(invite)) {
             return chaftController.prepareClaimableWorkspaceInviteWithMaxClaims(
-                setupScroll.workspaceInviteLabel(invite),
+                setupScroll.workspaceInviteTrackingLabel(invite),
                 String(invite.role || "member").trim(),
                 setupScroll.app.preferredInvitePeerEndpoint(),
                 setupScroll.app.inviteExpiresAtIso(setupScroll.inviteExpiryDays()),
@@ -1397,7 +1518,10 @@ ScrollView {
         setupScroll.pendingReplacementInviteId = String((invite && invite.inviteId) || "").trim()
         setupScroll.pendingReplacementInviteDeviceId = String((invite && invite.inviteeDeviceId) || "").trim()
         setupScroll.pendingReplacementInviteRole = String((invite && invite.role) || "member").trim()
-        setupScroll.pendingReplacementInviteDisplayName = setupScroll.workspaceInviteLabel(invite)
+        setupScroll.pendingReplacementInviteDisplayName =
+            setupScroll.workspaceInviteUsesClaims(invite)
+                ? setupScroll.workspaceInviteTrackingLabel(invite)
+                : setupScroll.workspaceInviteLabel(invite)
         setupScroll.pendingReplacementInviteRequestId = String((invite && invite.requestId) || "").trim()
         setupScroll.pendingReplacementInviteApprovalPolicy =
             String((invite && invite.approvalPolicy) || "preapproved").trim()
@@ -1418,9 +1542,15 @@ ScrollView {
         }
         setupScroll.rememberPendingWorkspaceInviteReplacement(invite)
         var label = setupScroll.workspaceInviteLabel(invite)
+        var reusableMessage = setupScroll.workspaceInviteTrackingLabel(invite).length > 0
+            ? "Close the \"" + label + "\" invite and create a fresh link or file? "
+            : "Close this invite and create a fresh link or file? "
         return setupScroll.app.confirmSetupAction(
             "Replace invite",
-            "Close the old invite for " + label + " and create a fresh invite link or file? This does not remove access from anyone who already joined.",
+            (setupScroll.workspaceInviteUsesClaims(invite)
+                ? reusableMessage
+                : "Close the old invite for " + label + " and create a fresh invite link or file? ")
+                + "This does not remove access from anyone who already joined.",
             "Replace invite",
             "replace-workspace-invite:" + setupScroll.pendingReplacementInviteId)
     }
@@ -1597,12 +1727,12 @@ ScrollView {
         if (String(chaftController.keyTransferJson || "").trim().length > 0) {
             setupScroll.manualInviteClaimError = setupScroll.hasUnreturnedInviteResponse()
                 ? setupScroll.unreturnedInviteResponseReason()
-                : "Finish the current access handoff before accepting this claim."
+                : "Finish the current access handoff before approving this join request."
             return false
         }
         if (!setupScroll.secureClaimTargetsThisDevice(request)) {
             setupScroll.manualInviteClaimError =
-                "Open this claim on the device that created the invite."
+                "Open this join request on the device that created the invite."
             return false
         }
         if (setupScroll.secureClaimIsKnownExpired(request)) {
@@ -1613,7 +1743,7 @@ ScrollView {
         if (!setupScroll.joinRequestTargetsCurrentWorkspace(request)) {
             setupScroll.manualInviteClaimError = "Switch to "
                 + setupScroll.joinRequestWorkspaceLabel(request)
-                + " before accepting this claim."
+                + " before approving this join request."
             return false
         }
         setupScroll.manualInviteClaimError = ""
@@ -1625,7 +1755,7 @@ ScrollView {
         }
         setupScroll.manualInviteClaimPending = false
         setupScroll.manualInviteClaimError = String(
-            chaftController.syncStatus || "Could not accept this invite claim.")
+            chaftController.syncStatus || "Could not approve this join request.")
         return false
     }
 
@@ -2060,11 +2190,11 @@ ScrollView {
         }
         if (setupScroll.joinRequestIsSecureClaim(request)) {
             if (!setupScroll.secureClaimTargetsThisDevice(request)) {
-                return "This claim belongs on the device that created the invite. Open Access Requests there to accept it."
+                return "This join request belongs on the device that created the invite. Open Requests there to approve it."
             }
             if (setupScroll.secureClaimIsKnownExpired(request)) {
                 return label
-                    + "'s claim uses an expired invite. Create and send a new invite."
+                    + " used an expired invite. Create and send a new invite."
             }
             var access = setupScroll.secureClaimAccessLabel(request)
             var expiry = setupScroll.secureClaimExpiryLabel(request)
@@ -2074,8 +2204,8 @@ ScrollView {
             if (expiry.length > 0) {
                 context += ", " + expiry.toLowerCase()
             }
-            return "Accept " + label
-                + "'s signed claim" + context
+            return "Approve " + label
+                + "'s signed join request" + context
                 + ", then return the encrypted access file to them."
         }
         if (setupScroll.app.canManageWorkspaceAccess()) {
@@ -2131,6 +2261,8 @@ ScrollView {
             }
             if (state === "setup-add-device") {
                 addDeviceRecoveryPassphraseField.text = "visual smoke recovery kit"
+                addDeviceRecoveryPassphraseConfirmationField.text =
+                    addDeviceRecoveryPassphraseField.text
                 setupScroll.startAddAnotherDeviceFlow()
                 return
             }
@@ -2213,7 +2345,9 @@ ScrollView {
                 workspaceKeyField.text = ""
                 setupScroll.autoLoadedKeyTransferText = ""
                 recoveryPassphraseField.text = ""
+                recoveryPassphraseConfirmationField.text = ""
                 addDeviceRecoveryPassphraseField.text = ""
+                addDeviceRecoveryPassphraseConfirmationField.text = ""
                 setupScroll.addAnotherDeviceOpenSaveWhenReady = false
                 setupScroll.manualInviteClaimPending = false
                 setupScroll.manualInviteClaimError = ""
@@ -2250,7 +2384,7 @@ ScrollView {
             setupScroll.manualInviteClaimPending = false
             if (!success) {
                 setupScroll.manualInviteClaimError = String(
-                    message || "Could not accept this invite claim.")
+                    message || "Could not approve this join request.")
                 return
             }
             setupScroll.manualInviteClaimError = ""
@@ -2275,9 +2409,7 @@ ScrollView {
             setupScroll.secureAccessReadyDismissed = true
         }
         function onWorkspaceSnapshotChanged() {
-            if (!displayNameField.fieldActiveFocus) {
-                displayNameField.text = setupScroll.app.localDeviceDisplayName()
-            }
+            setupScroll.syncDisplayNameDraft(false)
             setupScroll.maybeCompletePendingWorkspaceInviteReplacement()
             var state = String(chaftController.smokeUiState || "")
             if (state === "setup-invite"
@@ -2291,9 +2423,7 @@ ScrollView {
             }
         }
         function onDeviceIdChanged() {
-            if (!displayNameField.fieldActiveFocus) {
-                displayNameField.text = setupScroll.app.localDeviceDisplayName()
-            }
+            setupScroll.syncDisplayNameDraft(false)
         }
     }
 
@@ -2320,8 +2450,12 @@ ScrollView {
         request: setupScroll.reviewAccessRequest
         roleOptions: setupScroll.inviteRoleOptions()
         onApproveRequested: function(role, days) {
-            setupScroll.approveJoinRequestWithOptions(
-                setupScroll.reviewAccessRequest, role, days)
+            if (!setupScroll.approveJoinRequestWithOptions(
+                        setupScroll.reviewAccessRequest, role, days)) {
+                reviewAccessRequestDialog.actionError = String(
+                    chaftController.syncStatus
+                        || "Could not approve this request. Try again.")
+            }
         }
         onDeclineRequested: {
             reviewAccessRequestDialog.close()
@@ -2331,7 +2465,7 @@ ScrollView {
 
     FileDialog {
         id: joinRequestDialog
-        title: "Open access request or invite claim"
+        title: "Open join request"
         fileMode: FileDialog.OpenFile
         nameFilters: [
             "Chaft access requests (*.chaftrequest)",
@@ -2355,12 +2489,13 @@ ScrollView {
         x: parent ? Math.round((parent.width - width) / 2) : 0
         y: parent ? Math.max(16, Math.round((parent.height - height) / 2)) : 0
         padding: Tokens.space4
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape
 
         onOpened: {
             pastedJoinRequestArea.text = ""
             pastedJoinRequestArea.forceActiveFocus()
         }
+        onClosed: pastedJoinRequestArea.text = ""
 
         contentItem: ColumnLayout {
             spacing: Tokens.space3
@@ -2375,7 +2510,7 @@ ScrollView {
 
             Text {
                 Layout.fillWidth: true
-                text: "Paste the request or secure invite claim exactly as the recipient sent it."
+                text: "Paste the join request exactly as the recipient sent it."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeSm
                 wrapMode: Text.WordWrap
@@ -2385,8 +2520,8 @@ ScrollView {
                 id: pastedJoinRequestArea
                 Layout.fillWidth: true
                 Layout.preferredHeight: 180
-                placeholderText: "chaft-request:… or request/claim JSON"
-                Accessible.name: "Access request or secure invite claim"
+                placeholderText: "chaft-request:… or join-request JSON"
+                Accessible.name: "Join request"
                 wrapMode: TextEdit.WrapAnywhere
                 selectByMouse: true
             }
@@ -2466,25 +2601,22 @@ ScrollView {
                         Layout.fillWidth: true
                         label: "Your name"
                         placeholderText: "e.g. Ada Lovelace"
-                        Component.onCompleted: text = setupScroll.app.localDeviceDisplayName()
-                        onAccepted: {
-                            if (app.runtimeWorkReady
-                                    && chaftController.updateDeviceProfile(text)) {
-                                text = app.localDeviceDisplayName()
-                            }
-                        }
+                        requiredField: true
+                        maximumLength: 80
+                        supportText: "This is how teammates see you."
+                        errorText: setupScroll.profileSaveError
+                        Component.onCompleted: setupScroll.syncDisplayNameDraft(true)
+                        onEdited: setupScroll.profileSaveError = ""
+                        onAccepted: setupScroll.saveDisplayNameDraft()
                     }
 
                     Button {
-                        Layout.alignment: Qt.AlignBottom
+                        Layout.alignment: Qt.AlignVCenter
                         text: "Save"
                         enabled: app.runtimeWorkReady
                             && displayNameField.text.trim().length > 0
-                        onClicked: {
-                            if (chaftController.updateDeviceProfile(displayNameField.text)) {
-                                displayNameField.text = app.localDeviceDisplayName()
-                            }
-                        }
+                            && displayNameField.dirty
+                        onClicked: setupScroll.saveDisplayNameDraft()
                     }
                 }
 
@@ -2504,15 +2636,6 @@ ScrollView {
                         anchors.top: parent.top
                         anchors.margins: Tokens.space2
                         spacing: Tokens.space1
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: "Your profile"
-                            color: Tokens.textStrong
-                            font.pixelSize: Tokens.fontSizeXs
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
 
                         Text {
                             Layout.fillWidth: true
@@ -3021,14 +3144,6 @@ ScrollView {
                     visible: setupScroll.peopleAccessTab === "members"
                     spacing: Tokens.space2
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Members"
-                        color: Tokens.textStrong
-                        font.pixelSize: Tokens.fontSizeSm
-                        font.weight: Font.DemiBold
-                    }
-
                     Repeater {
                         model: app ? app.members : []
 
@@ -3126,9 +3241,9 @@ ScrollView {
 
                         Button {
                             Layout.fillWidth: true
-                            text: "Open request or claim"
+                            text: "Open join request"
                             enabled: app.runtimeWorkReady
-                            Accessible.name: "Open access request or invite claim file"
+                            Accessible.name: "Open join request file"
                             onClicked: joinRequestDialog.open()
                         }
 
@@ -3248,7 +3363,7 @@ ScrollView {
 
                                 StatusChip {
                                     text: "No key inside"
-                                    description: "Access is encrypted after the recipient claims the invite"
+                                    description: "Access is encrypted after the recipient uses the invite"
                                     warning: false
                                     secure: true
                                     minWidth: 108
@@ -3389,7 +3504,7 @@ ScrollView {
                             Text {
                                 Layout.fillWidth: true
                                 text: setupScroll.loadedJoinRequestIsSecureClaim()
-                                    ? "Secure invite claim"
+                                    ? "Invite join request"
                                     : "Access request"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
@@ -3402,7 +3517,7 @@ ScrollView {
                                     ? "Signed"
                                     : "Waiting"
                                 description: setupScroll.loadedJoinRequestIsSecureClaim()
-                                    ? "The signed claim is verified before access is granted"
+                                    ? "The signed request is verified before access is granted"
                                     : "Waiting for an admin to create and send an invite"
                                 warning: !setupScroll.loadedJoinRequestIsSecureClaim()
                                 secure: setupScroll.loadedJoinRequestIsSecureClaim()
@@ -3412,9 +3527,9 @@ ScrollView {
 
                             Button {
                                 text: setupScroll.manualInviteClaimPending
-                                    ? "Accepting..."
+                                    ? "Approving..."
                                     : (setupScroll.loadedJoinRequestIsSecureClaim()
-                                        ? "Accept claim"
+                                        ? "Approve"
                                         : "Track")
                                 visible: !setupScroll.joinRequestAlreadyTracked(setupScroll.loadedJoinRequestObject())
                                 enabled: app.runtimeWorkReady
@@ -3427,7 +3542,7 @@ ScrollView {
                                     && !setupScroll.manualInviteClaimPending
                                     && !chaftController.keyTransferInFlight
                                 Accessible.name: setupScroll.loadedJoinRequestIsSecureClaim()
-                                    ? "Accept secure invite claim"
+                                    ? "Approve invite join request"
                                     : "Track access request"
                                 ToolTip.visible: hovered && !enabled
                                 ToolTip.text: !setupScroll.secureClaimTargetsThisDevice(
@@ -3560,7 +3675,7 @@ ScrollView {
 
                             StatusChip {
                                 text: "Device-bound"
-                                description: "Only the claiming device can open it"
+                                description: "Only the requesting device can open it"
                                 secure: true
                                 minWidth: 104
                                 maxWidth: 132
@@ -3569,7 +3684,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Return this access file to the person who sent the claim. Copy or save it before marking this handoff done."
+                            text: "Return this access file to the requester. Copy or save it before clearing this handoff."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -3632,20 +3747,15 @@ ScrollView {
                                 Layout.fillWidth: true
                                 spacing: Tokens.space2
 
-                                Text {
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "Access requests and claims"
-                                    color: Tokens.textStrong
-                                    font.pixelSize: Tokens.fontSizeSm
-                                    font.weight: Font.DemiBold
-                                    elide: Text.ElideRight
                                 }
 
                                 Button {
                                     id: openAccessRequestButton
                                     visible: app && app.canManageWorkspaceAccess()
                                     text: "Open"
-                                    Accessible.name: "Open access request or invite claim"
+                                    Accessible.name: "Open join request"
                                     onClicked: openAccessRequestMenu.open()
 
                                     Menu {
@@ -3653,12 +3763,12 @@ ScrollView {
                                         y: openAccessRequestButton.height
 
                                         MenuItem {
-                                            text: "Paste request or claim"
+                                            text: "Paste join request"
                                             onTriggered: pasteJoinRequestDialog.open()
                                         }
 
                                         MenuItem {
-                                            text: "Open request or claim file"
+                                            text: "Open join request file"
                                             onTriggered: joinRequestDialog.open()
                                         }
                                     }
@@ -4093,13 +4203,8 @@ ScrollView {
                             Layout.fillWidth: true
                             spacing: Tokens.space2
 
-                            Text {
+                            Item {
                                 Layout.fillWidth: true
-                                text: "Invitations"
-                                color: Tokens.textStrong
-                                font.pixelSize: Tokens.fontSizeSm
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
                             }
 
                             Button {
@@ -4127,7 +4232,7 @@ ScrollView {
                             text: setupScroll.showInviteHistory
                                 ? "Expired, revoked, and completed invitations"
                                 : (setupScroll.activeWorkspaceInvites().length > 0
-                                    ? "Invitations with claims remaining"
+                                    ? "Invitations that can still be used"
                                     : "No active invitations")
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
@@ -4373,7 +4478,7 @@ ScrollView {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Invite ready"
+                                text: "Ready to share"
                                 color: Tokens.textStrong
                                 font.pixelSize: Tokens.fontSizeSm
                                 font.weight: Font.DemiBold
@@ -4381,15 +4486,11 @@ ScrollView {
                             }
 
                             StatusChip {
-                                text: setupScroll.invitePackageRequiresApproval()
-                                    ? "Approval first"
-                                    : "Ready"
-                                description: setupScroll.invitePackageRequiresApproval()
-                                    ? "Ready to send for approval"
-                                    : "Ready to send"
-                                warning: setupScroll.invitePackageRequiresApproval()
-                                secure: !setupScroll.invitePackageRequiresApproval()
-                                minWidth: setupScroll.invitePackageRequiresApproval() ? 108 : 72
+                                visible: setupScroll.invitePackageRequiresApproval()
+                                text: "Approval required"
+                                description: "The recipient requests approval before joining"
+                                warning: true
+                                minWidth: 118
                                 maxWidth: 130
                             }
                         }
@@ -4430,21 +4531,35 @@ ScrollView {
 
                             Button {
                                 Layout.fillWidth: true
-                                text: "Copy invite link"
+                                text: "Copy invite"
                                 onClicked: app.copyKeyTransferArtifact("invite link")
                             }
 
                             Button {
-                                Layout.fillWidth: true
-                                text: "Save invite"
-                                onClicked: app.openSaveKeyTransferDialog("invite")
-                            }
+                                id: readyInviteActionsButton
+                                text: "⋯"
+                                Layout.preferredWidth: 42
+                                Accessible.name: "More invite actions"
+                                onClicked: readyInviteActionsMenu.open()
 
-                            Button {
-                                text: "Done"
-                                onClicked: {
-                                    chaftController.clearKeyTransferJson()
-                                    setupScroll.inviteReadyDismissed = true
+                                Menu {
+                                    id: readyInviteActionsMenu
+                                    y: readyInviteActionsButton.height
+
+                                    MenuItem {
+                                        text: "Save invite file"
+                                        onTriggered: app.openSaveKeyTransferDialog("invite")
+                                    }
+
+                                    MenuSeparator {}
+
+                                    MenuItem {
+                                        text: "Close"
+                                        onTriggered: {
+                                            chaftController.clearKeyTransferJson()
+                                            setupScroll.inviteReadyDismissed = true
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4589,6 +4704,26 @@ ScrollView {
                             label: "Kit passphrase"
                             placeholderText: "Choose a passphrase"
                             echoMode: TextInput.Password
+                            requiredField: true
+                            maximumLength: 1024
+                            supportText: "Keep this passphrase separate from the recovery kit."
+                            onAccepted: setupScroll.createAddAnotherDeviceRecoveryKit()
+                        }
+
+                        LabeledField {
+                            id: addDeviceRecoveryPassphraseConfirmationField
+                            Layout.fillWidth: true
+                            visible: addDeviceRecoveryPassphraseField.visible
+                            label: "Confirm passphrase"
+                            placeholderText: "Enter the passphrase again"
+                            echoMode: TextInput.Password
+                            requiredField: true
+                            maximumLength: 1024
+                            errorText: text.length > 0
+                                && text !== addDeviceRecoveryPassphraseField.text
+                                    ? "Passphrases do not match."
+                                    : ""
+                            supportText: "Enter the same passphrase again."
                             onAccepted: setupScroll.createAddAnotherDeviceRecoveryKit()
                         }
 
@@ -4617,14 +4752,20 @@ ScrollView {
                                     && !chaftController.keyTransferInFlight
                                     && ((chaftController.keyTransferJson.length > 0
                                             && setupScroll.keyTransferIsRecoveryBundle())
-                                        || addDeviceRecoveryPassphraseField.text.trim().length > 0)
+                                        || (addDeviceRecoveryPassphraseField.text.trim().length > 0
+                                            && addDeviceRecoveryPassphraseConfirmationField.text
+                                                === addDeviceRecoveryPassphraseField.text))
                                 onClicked: setupScroll.createAddAnotherDeviceRecoveryKit()
                             }
 
                             Button {
                                 Layout.preferredWidth: 72
                                 text: "Cancel"
-                                onClicked: setupScroll.addAnotherDeviceGuideVisible = false
+                                onClicked: {
+                                    addDeviceRecoveryPassphraseField.text = ""
+                                    addDeviceRecoveryPassphraseConfirmationField.text = ""
+                                    setupScroll.addAnotherDeviceGuideVisible = false
+                                }
                             }
                         }
                     }
@@ -4888,6 +5029,23 @@ ScrollView {
                         && setupScroll.advancedAccessToolsOpen
                     label: "Recovery passphrase"
                     echoMode: TextInput.Password
+                    maximumLength: 1024
+                    supportText: "Used to save or restore a recovery kit."
+                }
+
+                LabeledField {
+                    id: recoveryPassphraseConfirmationField
+                    Layout.fillWidth: true
+                    visible: recoveryPassphraseField.visible
+                        && chaftController.hasRuntimeWorkspace
+                    label: "Confirm passphrase to save"
+                    echoMode: TextInput.Password
+                    maximumLength: 1024
+                    errorText: text.length > 0
+                        && text !== recoveryPassphraseField.text
+                            ? "Passphrases do not match."
+                            : ""
+                    supportText: "Required only when creating a recovery kit."
                 }
 
                 RowLayout {
@@ -4928,11 +5086,18 @@ ScrollView {
                         visible: chaftController.hasRuntimeWorkspace
                         text: "Save recovery kit"
                         enabled: recoveryPassphraseField.text.trim().length > 0
+                            && recoveryPassphraseConfirmationField.text
+                                === recoveryPassphraseField.text
                             && app.runtimeWorkReady
                             && !setupScroll.hasUnreturnedInviteResponse()
                             && !chaftController.keyTransferInFlight
-                        onClicked: chaftController.exportRecoveryBundle(
-                            recoveryPassphraseField.text)
+                        onClicked: {
+                            if (chaftController.exportRecoveryBundle(
+                                        recoveryPassphraseField.text)) {
+                                recoveryPassphraseField.text = ""
+                                recoveryPassphraseConfirmationField.text = ""
+                            }
+                        }
                     }
 
                     Button {
@@ -4943,9 +5108,14 @@ ScrollView {
                             && app.runtimeAccessReady
                             && !chaftController.rawEventStoreMode
                             && !chaftController.keyTransferInFlight
-                        onClicked: chaftController.importRecoveryBundle(
-                            workspaceKeyField.text,
-                            recoveryPassphraseField.text)
+                        onClicked: {
+                            if (chaftController.importRecoveryBundle(
+                                        workspaceKeyField.text,
+                                        recoveryPassphraseField.text)) {
+                                recoveryPassphraseField.text = ""
+                                recoveryPassphraseConfirmationField.text = ""
+                            }
+                        }
                     }
                 }
 

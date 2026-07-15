@@ -161,7 +161,10 @@ ApplicationWindow {
     property string workspaceEntryMode: "join"
     property string workspaceEntryIntent: "join"
     property bool pendingPostCreateExport: false
+    property string pendingPostCreateWorkspaceId: ""
+    property string pendingWorkspaceCreateDisplayName: ""
     property string pendingEntryDisplayName: ""
+    property string pendingEntryDisplayNameWorkspaceId: ""
     property string pendingJoinPeerEndpoint: ""
     property bool pendingJoinPullCompletion: false
     property bool pendingPrivateRoomHistoryRepairCompletion: false
@@ -174,8 +177,10 @@ ApplicationWindow {
     property int pendingJoinRecoveryPrivateRoomCount: -1
     property bool pendingWorkspaceImportActive: false
     property string pendingWorkspaceImportWorkspaceId: ""
+    property string pendingWorkspaceImportRequestId: ""
     property string pendingWorkspaceImportPeerEndpoint: ""
     property string pendingWorkspaceImportSource: ""
+    property string pendingWorkspaceImportInboxArtifact: ""
     property string pendingExternalLink: ""
     property string pendingAccessRequestSaveText: ""
     property string pendingAccessRequestSaveKey: ""
@@ -183,6 +188,7 @@ ApplicationWindow {
     property string pendingAccessRequestSendingKey: ""
     property string pendingAccessRequestSentUnpersistedKey: ""
     property string pendingAccessResponseAutoCheckLastKey: ""
+    property string peerEndpointFormError: ""
     property int lastNotificationUnreadCount: 0
     property bool unreadNotificationsReady: false
     property string accessRequestNotificationWorkspaceId: ""
@@ -1587,8 +1593,18 @@ ApplicationWindow {
             return "direct+tcp://127.0.0.1:44944"
         }
         var manualEndpoint = String(peerEndpointField.text || "").trim()
-        if (manualEndpoint.length > 0) {
+        if (manualEndpoint.length > 0
+                && root.supportedPeerEndpointRouteKind(manualEndpoint)
+                    !== "unsupported") {
             return manualEndpoint
+        }
+
+        var savedEndpoint = String(
+            chaftController.defaultPeerEndpoint || "").trim()
+        if (savedEndpoint.length > 0
+                && root.supportedPeerEndpointRouteKind(savedEndpoint)
+                    !== "unsupported") {
+            return savedEndpoint
         }
 
         var fallback = ""
@@ -1834,6 +1850,41 @@ ApplicationWindow {
         }
         peerEndpointField.text = endpoint
         chaftController.defaultPeerEndpoint = endpoint
+        return true
+    }
+
+    function peerEndpointFormValue() {
+        return String(peerEndpointField.text || "").trim()
+    }
+
+    function peerEndpointFormIsValid() {
+        return root.supportedPeerEndpointRouteKind(
+            root.peerEndpointFormValue()) !== "unsupported"
+    }
+
+    function savePeerEndpointFromField() {
+        var endpoint = root.peerEndpointFormValue()
+        if (!root.peerEndpointFormIsValid()) {
+            root.peerEndpointFormError = "Enter a valid teammate address."
+            return false
+        }
+        chaftController.defaultPeerEndpoint = endpoint
+        root.peerEndpointFormError = ""
+        toastHost.show("success", "Teammate address saved.", "", "", 2500)
+        return true
+    }
+
+    function connectPeerEndpointFromField() {
+        var endpoint = root.peerEndpointFormValue()
+        if (!root.peerEndpointFormIsValid()) {
+            root.peerEndpointFormError = "Enter a valid teammate address."
+            return false
+        }
+        root.peerEndpointFormError = ""
+        if (!root.runtimeWorkReady || chaftController.syncInFlight) {
+            return false
+        }
+        chaftController.syncWorkspace(endpoint)
         return true
     }
 
@@ -4095,15 +4146,28 @@ ApplicationWindow {
         if (!root.runtimeWorkReady || root.currentWorkspaceId().length === 0) {
             return false
         }
+        var targetWorkspaceId = String(
+            root.pendingEntryDisplayNameWorkspaceId || "").trim()
+        if (targetWorkspaceId.length > 0
+                && root.currentWorkspaceId() !== targetWorkspaceId) {
+            return false
+        }
         if (root.localDeviceDisplayName().trim() === displayName) {
             root.pendingEntryDisplayName = ""
+            root.pendingEntryDisplayNameWorkspaceId = ""
             return true
         }
         if (chaftController.updateDeviceProfile(displayName)) {
             root.pendingEntryDisplayName = ""
+            root.pendingEntryDisplayNameWorkspaceId = ""
             return true
         }
         return false
+    }
+
+    function clearPendingEntryDisplayName() {
+        root.pendingEntryDisplayName = ""
+        root.pendingEntryDisplayNameWorkspaceId = ""
     }
 
     function memberLabel(member) {
@@ -4342,13 +4406,32 @@ ApplicationWindow {
         if (label.length === 0) {
             label = "this person"
         }
-        var roleLabel = root.roleLabel(normalizedRole)
+        var member = root.memberByDeviceId(normalizedDeviceId)
+        var currentRole = root.normalizedRole(member ? member.role : "")
+        if (currentRole === normalizedRole) {
+            return false
+        }
+        var nextRoleLabel = root.roleLabel(normalizedRole)
+        var currentRoleLabel = root.roleLabel(currentRole)
+        var grantsAccessManagement = normalizedRole === "admin"
+            || normalizedRole === "owner"
+        var removesAccessManagement = (currentRole === "admin"
+                || currentRole === "owner")
+            && !grantsAccessManagement
+        var consequence = root.roleDescription(normalizedRole)
+        if (grantsAccessManagement) {
+            consequence += " This grants access-management privileges, including the ability to invite or remove people."
+        } else if (removesAccessManagement) {
+            consequence += " They will no longer be able to manage workspace access."
+        }
         confirmDialog.ask(
-            "Change role",
-            "Change " + label + " to " + roleLabel + "? Their workspace permissions will update after they receive this change.",
-            "Change",
+            "Make " + label + " " + nextRoleLabel.toLowerCase() + "?",
+            "Change from " + currentRoleLabel + " to " + nextRoleLabel
+                + ". " + consequence
+                + " The change takes effect after their device receives it.",
+            "Change to " + nextRoleLabel,
             "update-member-role:" + normalizedDeviceId + "::" + normalizedRole,
-            false)
+            grantsAccessManagement || removesAccessManagement)
         return true
     }
 
@@ -4417,31 +4500,31 @@ ApplicationWindow {
 
     function inviteClaimLimitLabel(invite) {
         var maximum = root.inviteMaxClaims(invite)
-        return maximum === 1 ? "1 claim" : maximum + " claims"
+        return maximum === 1 ? "1 device" : maximum + " devices"
     }
 
     function inviteClaimAvailabilityLabel(invite) {
         var maximum = root.inviteMaxClaims(invite)
         var remaining = root.inviteRemainingClaims(invite)
         if (remaining === 0) {
-            return "No claims remaining"
+            return "No uses remaining"
         }
         if (maximum === 1) {
-            return "1 claim remaining"
+            return "1 device remaining"
         }
-        return remaining + " of " + maximum + " claims remaining"
+        return remaining + " of " + maximum + " devices remaining"
     }
 
     function inviteClaimUsageLabel(invite) {
         var maximum = root.inviteMaxClaims(invite)
         var used = root.inviteClaimCount(invite)
         if (used === 0) {
-            return "No claims used"
+            return "Not used"
         }
         if (maximum === 1) {
-            return "1 claim used"
+            return "Used by 1 device"
         }
-        return used + " of " + maximum + " claims used"
+        return "Used by " + used + " of " + maximum + " devices"
     }
 
     function inviteApprovalLabel(policy) {
@@ -4552,12 +4635,28 @@ ApplicationWindow {
                     && !root.keyTransferIsInviteResponse())) {
             return false
         }
+        if (workspaceEntryDialog.createOperationPending) {
+            toastHost.show(
+                "success",
+                "Workspace access received. Finish creating the workspace; Chaft will keep it ready to open.",
+                "Open when ready",
+                "open-received-approval",
+                9000)
+            return false
+        }
+        var response = root.parsedCredentialObject(inviteText)
+        var responseRequestId = String((response && response.requestId) || "").trim()
+        var pendingRequest = root.pendingAccessRequestRowByRequestId(responseRequestId)
+        var pendingDisplayName = String(
+            (pendingRequest && pendingRequest.displayName) || "").trim()
         var existingText = String(workspaceEntryDialog.credentialsText || "").trim()
         var secureResponse = root.keyTransferIsInviteResponse()
         var shouldForce = forceOpen === true
         var waitingForThisApproval = workspaceEntryDialog.visible
             && workspaceEntryDialog.joinRequestPrepared
-            && workspaceEntryDialog.joinRequestPreparedAction === "sent"
+            && responseRequestId.length > 0
+            && responseRequestId
+                === String(workspaceEntryDialog.joinRequestPreparedRequestId || "").trim()
         if (workspaceEntryDialog.visible
                 && existingText.length > 0
                 && existingText !== inviteText
@@ -4574,7 +4673,8 @@ ApplicationWindow {
             return false
         }
 
-        workspaceEntryDialog.resetForm()
+        workspaceEntryDialog.beginReceivedApproval(
+            pendingDisplayName, responseRequestId)
         root.openWorkspaceEntry("join", "received-approval")
         Qt.callLater(function() {
             var currentInviteText = String(chaftController.keyTransferJson || "").trim()
@@ -4940,8 +5040,8 @@ ApplicationWindow {
             if (row !== null) {
                 rows.push(row)
             }
-            row = root.credentialSummaryRow("For", parsed.inviteeDisplayName
-                || root.shortDeviceId(parsed.inviteeDeviceId))
+            row = root.credentialSummaryRow(
+                "Invite label", parsed.inviteeDisplayName)
             if (row !== null) {
                 rows.push(row)
             }
@@ -5138,41 +5238,56 @@ ApplicationWindow {
         })
     }
 
-    function workspaceImportSucceededStatus(status) {
-        var normalized = String(status || "").trim().toLowerCase()
-        return normalized === "workspace access imported"
-            || normalized === "recovery kit imported"
-    }
-
-    function workspaceImportInProgressStatus(status) {
-        var normalized = String(status || "").trim().toLowerCase()
-        return normalized === "importing workspace access..."
-            || normalized === "importing secure workspace access..."
-            || normalized === "importing recovery kit..."
-    }
-
     function clearPendingWorkspaceImport() {
         root.pendingWorkspaceImportActive = false
         root.pendingWorkspaceImportWorkspaceId = ""
+        root.pendingWorkspaceImportRequestId = ""
         root.pendingWorkspaceImportPeerEndpoint = ""
         root.pendingWorkspaceImportSource = ""
+        root.pendingWorkspaceImportInboxArtifact = ""
         workspaceEntryDialog.credentialImportPending = false
     }
 
-    function handleWorkspaceEntryImportStatus() {
+    function handleWorkspaceCredentialImportFinished(source, workspaceId,
+                                                     success, message) {
         if (!root.pendingWorkspaceImportActive) {
             return
         }
-        var status = String(chaftController.syncStatus || "").trim()
-        if (root.workspaceImportSucceededStatus(status)) {
-            var workspaceId = root.pendingWorkspaceImportWorkspaceId
+        var normalizedSource = String(source || "").trim()
+        if (normalizedSource !== root.pendingWorkspaceImportSource) {
+            return
+        }
+        var expectedWorkspaceId = root.pendingWorkspaceImportWorkspaceId
+        var importedWorkspaceId = String(workspaceId || "").trim()
+        if (success && expectedWorkspaceId.length > 0
+                && importedWorkspaceId.length > 0
+                && importedWorkspaceId !== expectedWorkspaceId) {
+            success = false
+            message = "The imported access belongs to a different workspace."
+        }
+        if (success) {
+            var completedWorkspaceId = importedWorkspaceId.length > 0
+                ? importedWorkspaceId
+                : expectedWorkspaceId
+            var requestId = root.pendingWorkspaceImportRequestId
             var peerEndpoint = root.pendingWorkspaceImportPeerEndpoint
-            var source = root.pendingWorkspaceImportSource
-            var privateRoomCount = source === "recovery"
+            var inboxArtifact = root.pendingWorkspaceImportInboxArtifact
+            var privateRoomCount = normalizedSource === "recovery"
                 ? chaftController.lastRecoveryImportedChannelCount
                 : -1
-            root.clearPendingAccessRequestForWorkspace(workspaceId)
-            if (source === "access") {
+            if (requestId.length > 0) {
+                root.clearPendingAccessRequestForRequestId(requestId)
+            } else {
+                root.clearPendingAccessRequestForWorkspace(completedWorkspaceId)
+            }
+            // A different approval can arrive while this import is running.
+            // Acknowledge only the exact inbox artifact that started it, never
+            // whichever response happens to be staged at completion time.
+            if (normalizedSource === "access"
+                    && inboxArtifact.length > 0
+                    && chaftController.keyTransferFromJoinResponseInbox
+                    && String(chaftController.keyTransferJson || "").trim()
+                        === inboxArtifact) {
                 chaftController.acknowledgeCurrentJoinResponseInboxEntry()
             }
             root.clearPendingWorkspaceImport()
@@ -5181,28 +5296,64 @@ ApplicationWindow {
                 chaftController.defaultPeerEndpoint = peerEndpoint
                 root.pendingJoinPeerEndpoint = peerEndpoint
                 root.rememberJoinWaitingForPeer(
-                    workspaceId,
+                    completedWorkspaceId,
                     false,
-                    source,
+                    normalizedSource,
                     privateRoomCount)
                 root.pullPendingJoinPeerIfReady()
             } else {
                 root.rememberJoinWaitingForPeer(
-                    workspaceId,
+                    completedWorkspaceId,
                     true,
-                    source,
+                    normalizedSource,
                     privateRoomCount)
             }
             workspaceEntryDialog.close()
             return
         }
-        if (chaftController.keyTransferInFlight
-                || root.workspaceImportInProgressStatus(status)) {
-            return
-        }
         var failedSource = root.pendingWorkspaceImportSource
+        if (root.pendingEntryDisplayNameWorkspaceId
+                === root.pendingWorkspaceImportWorkspaceId) {
+            root.clearPendingEntryDisplayName()
+        }
         root.clearPendingWorkspaceImport()
-        workspaceEntryDialog.showCredentialImportFailure(failedSource, status)
+        workspaceEntryDialog.showCredentialImportFailure(
+            failedSource, String(message || "Workspace import failed."))
+    }
+
+    function workspaceCredentialApprovalContext(credentials) {
+        var parsed = root.parsedCredentialObject(credentials)
+        var kind = String((parsed && parsed.kind) || "").trim()
+        var candidateRequestId = String(
+            (parsed && parsed.requestId) || "").trim()
+        var pendingRequest = candidateRequestId.length > 0
+            ? root.pendingAccessRequestRowByRequestId(candidateRequestId)
+            : ({})
+        var pendingDisplayName = String(
+            (pendingRequest && pendingRequest.displayName) || "").trim()
+        // A legacy approval can be reopened from disk outside the original
+        // received-approval action. Only restore its identity when the exact
+        // request is still recorded locally; never trust an invite-supplied
+        // display name as the joiner's identity.
+        var matchingLegacyApproval = kind === "chaft.workspace-invite.v1"
+            && candidateRequestId.length > 0
+            && (root.workspaceEntryIntent === "received-approval"
+                || pendingDisplayName.length > 0)
+        var recognized = kind === "chaft.workspace-invite-response.v1"
+            || matchingLegacyApproval
+        return {
+            recognized: recognized,
+            requestId: recognized ? candidateRequestId : "",
+            pendingDisplayName: recognized ? pendingDisplayName : ""
+        }
+    }
+
+    function rebindWorkspaceEntryIdentity(credentials) {
+        var approval = root.workspaceCredentialApprovalContext(credentials)
+        workspaceEntryDialog.bindCredentialIdentity(
+            String(approval.pendingDisplayName || "").trim(),
+            String(approval.requestId || "").trim(),
+            approval.recognized === true)
     }
 
     function loadWorkspaceCredentialText(text) {
@@ -5211,6 +5362,7 @@ ApplicationWindow {
             return false
         }
         workspaceEntryDialog.credentialsText = normalized
+        root.rebindWorkspaceEntryIdentity(normalized)
         var endpoint = root.credentialPeerEndpoint(normalized)
         if (endpoint.length > 0
                 && workspaceEntryDialog.peerEndpointText.trim().length === 0) {
@@ -5228,17 +5380,89 @@ ApplicationWindow {
         if (!root.runtimeAccessReady) {
             return false
         }
+        if (workspaceEntryDialog.createOperationPending) {
+            return false
+        }
+        if (root.localDeviceDisplayName().trim().length === 0
+                && workspaceEntryDialog.displayNameText.trim().length === 0) {
+            return false
+        }
+        var displayNameError = chaftController.deviceDisplayNameValidationError(
+            workspaceEntryDialog.displayNameText)
+        if (displayNameError.length > 0) {
+            workspaceEntryDialog.createOperationError = displayNameError
+            return false
+        }
+        workspaceEntryDialog.createOperationError = ""
         if (chaftController.createWorkspace(
                     workspaceEntryDialog.createNameText,
                     workspaceEntryDialog.createChannelText,
                     workspaceEntryDialog.createAccessPolicyText)) {
-            chaftController.clearKeyTransferJson()
-            root.pendingEntryDisplayName = workspaceEntryDialog.displayNameText.trim()
-            root.pendingPostCreateExport = true
-            workspaceEntryDialog.close()
+            root.pendingWorkspaceCreateDisplayName =
+                workspaceEntryDialog.displayNameText.trim()
+            workspaceEntryDialog.createOperationPending = true
             return true
         }
+        workspaceEntryDialog.createOperationError = String(
+            chaftController.syncStatus || "Could not create the workspace.")
         return false
+    }
+
+    function handleWorkspaceCreateFinished(workspaceId, success, selected,
+                                           message) {
+        if (!workspaceEntryDialog.createOperationPending) {
+            return
+        }
+        workspaceEntryDialog.createOperationPending = false
+        var createdWorkspaceId = String(workspaceId || "").trim()
+        if (!success || createdWorkspaceId.length === 0) {
+            root.pendingWorkspaceCreateDisplayName = ""
+            workspaceEntryDialog.createOperationError = String(
+                message || "Could not create the workspace.")
+            return
+        }
+
+        var displayName = String(
+            root.pendingWorkspaceCreateDisplayName || "").trim()
+        root.pendingWorkspaceCreateDisplayName = ""
+        if (displayName.length > 0) {
+            root.pendingEntryDisplayName = displayName
+            root.pendingEntryDisplayNameWorkspaceId = createdWorkspaceId
+        }
+        root.pendingPostCreateExport = true
+        root.pendingPostCreateWorkspaceId = createdWorkspaceId
+        workspaceEntryDialog.createOperationError = ""
+        workspaceEntryDialog.close()
+        Qt.callLater(function() {
+            if (chaftController.keyTransferFromJoinResponseInbox
+                    && (root.keyTransferIsInvitePackage()
+                        || root.keyTransferIsInviteResponse())) {
+                root.openReceivedApprovalInvite(false)
+            }
+        })
+
+        if (selected === true) {
+            root.applyPendingEntryDisplayName()
+            if (root.runtimeWorkReady
+                    && root.currentWorkspaceId() === createdWorkspaceId) {
+                root.pendingPostCreateExport = false
+                root.pendingPostCreateWorkspaceId = ""
+                toastHost.show(
+                    "success",
+                    String(root.workspaceSnapshot.name || "Workspace")
+                        + " created.",
+                    "Invite people",
+                    "invite-after-create",
+                    8000)
+            }
+            return
+        }
+        toastHost.show(
+            "success",
+            "Workspace created. Open it from the workspace switcher to finish setup.",
+            "",
+            "",
+            6500)
     }
 
     function submitWorkspaceJoin() {
@@ -5250,6 +5474,13 @@ ApplicationWindow {
         }
         var credentials = workspaceEntryDialog.credentialsText.trim()
         if (credentials.length === 0) {
+            return false
+        }
+        // Correctness must not depend on the zero-delay paste helper having
+        // fired before the user presses Join.
+        root.rebindWorkspaceEntryIdentity(credentials)
+        if (workspaceEntryDialog.joinIdentityVisible
+                && workspaceEntryDialog.displayNameText.trim().length === 0) {
             return false
         }
         workspaceEntryDialog.clearCredentialImportFailure()
@@ -5265,27 +5496,79 @@ ApplicationWindow {
             peerEndpoint = packagePeerEndpoint
             workspaceEntryDialog.peerEndpointText = peerEndpoint
         }
-        var passphrase = workspaceEntryDialog.recoveryPassphraseText.trim()
+        // Whitespace-only input is blank, but leading and trailing whitespace
+        // in a real passphrase is significant and must reach crypto unchanged.
+        var passphrase = workspaceEntryDialog.recoveryPassphraseText
+        var hasPassphrase = passphrase.trim().length > 0
         var parsedCredential = root.parsedCredentialObject(credentials)
         var isRecoveryRestore = parsedCredential !== null
             && root.credentialRecoveryBundleObject(parsedCredential) !== null
-            && passphrase.length > 0
+            && hasPassphrase
         var credentialJson = root.credentialJsonForImport(credentials, passphrase)
         var credentialKind = parsedCredential === null
             ? ""
             : String(parsedCredential.kind || "")
+        var approvalContext = root.workspaceCredentialApprovalContext(credentials)
+        var responseRequestId = approvalContext.recognized === true
+            ? String(approvalContext.requestId || "").trim()
+            : ""
+        var pendingRequest = approvalContext.recognized === true
+            ? root.pendingAccessRequestRowByRequestId(responseRequestId)
+            : ({})
+        // Restore uses the identity carried by the recovery data. The hidden
+        // join-name field must never overwrite it with a name from whichever
+        // workspace happened to be selected before the restore.
+        var entryDisplayName = workspaceEntryDialog.restoreMode
+            ? ""
+            : workspaceEntryDialog.displayNameText.trim()
+        var requestedDisplayName = String(
+            (pendingRequest && pendingRequest.displayName) || "").trim()
+        var requestedDisplayNameError = requestedDisplayName.length > 0
+            ? chaftController.deviceDisplayNameValidationError(
+                requestedDisplayName)
+            : ""
+        if (requestedDisplayName.length > 0
+                && requestedDisplayNameError.length === 0) {
+            entryDisplayName = requestedDisplayName
+        }
+        if (!workspaceEntryDialog.restoreMode && entryDisplayName.length > 0) {
+            var entryDisplayNameError =
+                chaftController.deviceDisplayNameValidationError(entryDisplayName)
+            if (entryDisplayNameError.length > 0) {
+                if (requestedDisplayNameError.length > 0) {
+                    workspaceEntryDialog.receivedApprovalDisplayNamePreserved = false
+                }
+                workspaceEntryDialog.displayNameEditing = true
+                return false
+            }
+        }
         var accepted = credentialKind === "chaft.workspace-invite-response.v1"
             ? chaftController.importWorkspaceInviteResponse(JSON.stringify(parsedCredential))
-            : (passphrase.length > 0
+            : (hasPassphrase
                     && !root.credentialUsesWorkspaceKey(credentials)
                 ? chaftController.importRecoveryBundle(credentialJson, passphrase)
                 : chaftController.importWorkspaceKey(credentialJson))
         if (accepted) {
-            root.pendingEntryDisplayName = workspaceEntryDialog.displayNameText.trim()
+            if (entryDisplayName.length > 0) {
+                root.pendingEntryDisplayName = entryDisplayName
+                root.pendingEntryDisplayNameWorkspaceId =
+                    root.credentialWorkspaceId(credentials)
+            } else {
+                root.clearPendingEntryDisplayName()
+            }
             root.pendingWorkspaceImportActive = true
             root.pendingWorkspaceImportWorkspaceId = root.credentialWorkspaceId(credentials)
+            root.pendingWorkspaceImportRequestId = responseRequestId
             root.pendingWorkspaceImportPeerEndpoint = peerEndpoint
             root.pendingWorkspaceImportSource = isRecoveryRestore ? "recovery" : "access"
+            var stagedInboxArtifact = String(
+                chaftController.keyTransferJson || "").trim()
+            root.pendingWorkspaceImportInboxArtifact =
+                !isRecoveryRestore
+                    && chaftController.keyTransferFromJoinResponseInbox
+                    && stagedInboxArtifact === credentials
+                ? credentials
+                : ""
             workspaceEntryDialog.credentialImportPending = true
         } else {
             workspaceEntryDialog.showCredentialImportFailure(
@@ -5779,7 +6062,7 @@ ApplicationWindow {
                 return [ "Chaft join requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
             }
             return normalized.indexOf("invite claim") >= 0
-                ? [ "Chaft invite claims (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
+                ? [ "Chaft join requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
                 : [ "Chaft access requests (*.chaftrequest)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftworkspace") {
@@ -6093,7 +6376,24 @@ ApplicationWindow {
         }
         var rows = root.pendingAccessRequests || []
         for (var i = 0; i < rows.length; i++) {
-            if (String((rows[i] || {}).key || "").trim() === normalizedKey) {
+            if (String((rows[i] || {}).key || "").trim() === normalizedKey
+                    || String((rows[i] || {}).requestId || "").trim()
+                        === normalizedKey) {
+                return rows[i]
+            }
+        }
+        return ({})
+    }
+
+    function pendingAccessRequestRowByRequestId(requestId) {
+        var normalizedRequestId = String(requestId || "").trim()
+        if (normalizedRequestId.length === 0) {
+            return ({})
+        }
+        var rows = root.pendingAccessRequests || []
+        for (var i = 0; i < rows.length; i++) {
+            if (String((rows[i] || {}).requestId || "").trim()
+                    === normalizedRequestId) {
                 return rows[i]
             }
         }
@@ -6118,7 +6418,11 @@ ApplicationWindow {
         }
         var workspaceId = String(request.workspaceId || "").trim()
         var requestId = String(request.requestId || "").trim()
-        var key = workspaceId.length > 0 ? workspaceId : requestId
+        // A workspace can have more than one access handoff in flight. The
+        // cryptographic request ID is the correlation key; workspace-keyed
+        // entries are read and migrated only for compatibility with older
+        // saved state.
+        var key = requestId.length > 0 ? requestId : workspaceId
         if (key.length === 0) {
             return false
         }
@@ -6126,7 +6430,24 @@ ApplicationWindow {
             return false
         }
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
-        var existing = root.copyMap(next[key] || ({}))
+        var existingKey = Object.prototype.hasOwnProperty.call(next, key)
+            ? key
+            : ""
+        if (existingKey.length === 0 && requestId.length > 0) {
+            for (var candidateKey in next) {
+                if (Object.prototype.hasOwnProperty.call(next, candidateKey)
+                        && String((next[candidateKey] || {}).requestId || "").trim()
+                            === requestId) {
+                    existingKey = candidateKey
+                    break
+                }
+            }
+        }
+        var existing = root.copyMap(
+            existingKey.length > 0 ? next[existingKey] : ({}))
+        if (existingKey.length > 0 && existingKey !== key) {
+            delete next[existingKey]
+        }
         var now = (new Date()).toISOString()
         next[key] = {
             requestId: requestId,
@@ -6414,32 +6735,71 @@ ApplicationWindow {
         return true
     }
 
+    function clearPendingAccessRequestForRequestId(requestId) {
+        var normalizedRequestId = String(requestId || "").trim()
+        if (normalizedRequestId.length === 0) {
+            return false
+        }
+        var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
+        var removedKeys = []
+        for (var key in next) {
+            if (Object.prototype.hasOwnProperty.call(next, key)
+                    && (String(key).trim() === normalizedRequestId
+                        || String((next[key] || {}).requestId || "").trim()
+                            === normalizedRequestId)) {
+                removedKeys.push(key)
+                delete next[key]
+            }
+        }
+        if (removedKeys.length === 0) {
+            return false
+        }
+        var stored = chaftController.storePendingJoinRequests(next)
+        if (stored) {
+            for (var index = 0; index < removedKeys.length; index++) {
+                if (removedKeys[index] === root.pendingAccessRequestSentUnpersistedKey) {
+                    root.pendingAccessRequestSentUnpersistedKey = ""
+                    break
+                }
+            }
+        }
+        return stored
+    }
+
     function clearPendingAccessRequestForWorkspace(workspaceId) {
         var workspaceKey = String(workspaceId || "").trim()
         if (workspaceKey.length === 0) {
             return false
         }
         var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
-        var key = Object.prototype.hasOwnProperty.call(next, workspaceKey)
-            ? workspaceKey
-            : ""
-        if (key.length === 0) {
-            for (var candidate in next) {
-                if (Object.prototype.hasOwnProperty.call(next, candidate)
-                        && String((next[candidate] || {}).workspaceId || "").trim()
+        var removedKeys = []
+        if (Object.prototype.hasOwnProperty.call(next, workspaceKey)) {
+            // Legacy state used workspaceId as the storage key. This is an
+            // exact compatibility match and is safe to remove.
+            removedKeys.push(workspaceKey)
+        } else {
+            for (var key in next) {
+                if (Object.prototype.hasOwnProperty.call(next, key)
+                        && String((next[key] || {}).workspaceId || "").trim()
                             === workspaceKey) {
-                    key = candidate
-                    break
+                    removedKeys.push(key)
                 }
             }
         }
-        if (key.length === 0) {
+        // Without a request ID, never guess between concurrent handoffs for
+        // the same workspace.
+        if (removedKeys.length !== 1) {
             return false
         }
-        delete next[key]
+        delete next[removedKeys[0]]
         var stored = chaftController.storePendingJoinRequests(next)
-        if (stored && key === root.pendingAccessRequestSentUnpersistedKey) {
-            root.pendingAccessRequestSentUnpersistedKey = ""
+        if (stored) {
+            for (var index = 0; index < removedKeys.length; index++) {
+                if (removedKeys[index] === root.pendingAccessRequestSentUnpersistedKey) {
+                    root.pendingAccessRequestSentUnpersistedKey = ""
+                    break
+                }
+            }
         }
         return stored
     }
@@ -6734,7 +7094,13 @@ ApplicationWindow {
 
     function pullPendingJoinPeerIfReady() {
         var endpoint = String(root.pendingJoinPeerEndpoint || "").trim()
+        var targetWorkspaceId = String(
+            root.pendingJoinAwaitingWorkspaceId || "").trim()
         if (endpoint.length === 0 || !root.runtimeWorkReady || chaftController.syncInFlight) {
+            return false
+        }
+        if (targetWorkspaceId.length > 0
+                && root.currentWorkspaceId() !== targetWorkspaceId) {
             return false
         }
         root.pendingJoinPeerEndpoint = ""
@@ -7094,8 +7460,11 @@ ApplicationWindow {
             root.applyPendingSmokeSetupRoomAccessSelection()
             if (root.pendingPostCreateExport
                     && root.runtimeWorkReady
-                    && root.currentWorkspaceId().length > 0) {
+                    && root.currentWorkspaceId().length > 0
+                    && root.currentWorkspaceId()
+                        === root.pendingPostCreateWorkspaceId) {
                 root.pendingPostCreateExport = false
+                root.pendingPostCreateWorkspaceId = ""
                 toastHost.show(
                     "success",
                     String(root.workspaceSnapshot.name || "Workspace") + " created.",
@@ -7152,7 +7521,16 @@ ApplicationWindow {
             root.handlePendingJoinPullStatus()
             root.handlePrivateRoomHistoryRepairCompletion()
             root.maybeClearJoinWaitingForPeerFromStatus()
-            root.handleWorkspaceEntryImportStatus()
+        }
+        function onWorkspaceCredentialImportFinished(source, workspaceId,
+                                                     success, message) {
+            root.handleWorkspaceCredentialImportFinished(
+                source, workspaceId, success, message)
+        }
+        function onWorkspaceCreateFinished(workspaceId, success, selected,
+                                           message) {
+            root.handleWorkspaceCreateFinished(
+                workspaceId, success, selected, message)
         }
         function onPendingJoinRequestsChanged() {
             var key = root.pendingAccessRequestSentUnpersistedKey
@@ -7169,11 +7547,15 @@ ApplicationWindow {
                 root.pendingAccessRequestSentUnpersistedKey = ""
             }
         }
-        function onJoinRequestDirectSubmitFinished(success, message) {
+        function onJoinRequestDirectSubmitCompleted(requestId, success, message) {
             if (root.pendingAccessRequestSendingKey.length === 0) {
                 return
             }
             var row = root.pendingAccessRequestRowByKey(root.pendingAccessRequestSendingKey)
+            if (String(row.requestId || "").trim()
+                    !== String(requestId || "").trim()) {
+                return
+            }
             var deliveryLabel = String(row.deliveryLabel || "the workspace admin")
             var secureClaim = String(row.sourceType || "").trim()
                 === "invite_claim"
@@ -7347,10 +7729,34 @@ ApplicationWindow {
                 label: "Recovery passphrase"
                 placeholderText: "Choose a passphrase for your recovery kit"
                 echoMode: TextInput.Password
+                requiredField: true
+                supportText: "Keep this passphrase separate from the recovery kit."
                 onAccepted: {
-                    if (text.trim().length > 0 && root.runtimeWorkReady) {
+                    if (text.trim().length > 0) {
+                        postCreateRecoveryPassphraseConfirmationField.forceFieldFocus()
+                    }
+                }
+            }
+
+            LabeledField {
+                id: postCreateRecoveryPassphraseConfirmationField
+                Layout.fillWidth: true
+                visible: postCreateRecoveryPassphraseField.visible
+                label: "Confirm passphrase"
+                placeholderText: "Enter the passphrase again"
+                echoMode: TextInput.Password
+                requiredField: true
+                errorText: text.length > 0
+                    && text !== postCreateRecoveryPassphraseField.text
+                    ? "Passphrases do not match."
+                    : ""
+                onAccepted: {
+                    if (postCreateRecoveryPassphraseField.text.trim().length > 0
+                            && text === postCreateRecoveryPassphraseField.text
+                            && root.runtimeWorkReady) {
                         postCreateExportDialog.openRecoverySaveWhenReady =
-                            chaftController.exportRecoveryBundle(text)
+                            chaftController.exportRecoveryBundle(
+                                postCreateRecoveryPassphraseField.text)
                     }
                 }
             }
@@ -7372,7 +7778,9 @@ ApplicationWindow {
                         && ((chaftController.keyTransferJson.length > 0
                                 && root.keyTransferIsRecoveryBundle())
                             || !postCreateExportDialog.recoverySetupOpen
-                            || postCreateRecoveryPassphraseField.text.trim().length > 0)
+                            || (postCreateRecoveryPassphraseField.text.trim().length > 0
+                                && postCreateRecoveryPassphraseConfirmationField.text
+                                    === postCreateRecoveryPassphraseField.text))
                     onClicked: {
                         if (chaftController.keyTransferJson.length > 0
                                 && root.keyTransferIsRecoveryBundle()) {
@@ -7388,7 +7796,7 @@ ApplicationWindow {
                         }
                         postCreateExportDialog.openRecoverySaveWhenReady =
                             chaftController.exportRecoveryBundle(
-                            postCreateRecoveryPassphraseField.text)
+                                postCreateRecoveryPassphraseField.text)
                     }
                 }
 
@@ -7464,6 +7872,7 @@ ApplicationWindow {
         onOpened: postCreateStartButton.forceActiveFocus()
         onClosed: {
             postCreateRecoveryPassphraseField.text = ""
+            postCreateRecoveryPassphraseConfirmationField.text = ""
             postCreateExportDialog.advancedOpen = false
             postCreateExportDialog.openRecoverySaveWhenReady = false
             postCreateExportDialog.recoverySetupOpen = false
@@ -8550,23 +8959,36 @@ ApplicationWindow {
 
                         Popup {
                             id: channelDetailsPopup
+                            property string viewMode: "details"
                             parent: channelDetailsButton
                             y: channelDetailsButton.height + 4
                             x: channelDetailsButton.width - width
-                            width: 320
+                            width: Math.min(380, root.width - 48)
+                            height: Math.min(
+                                channelDetailsContent.implicitHeight + topPadding + bottomPadding,
+                                root.height - 48)
                             padding: Tokens.space3
                             modal: true
                             focus: true
-                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                            closePolicy: Popup.CloseOnEscape
                             onOpened: {
+                                channelDetailsPopup.viewMode = root.selectedChannelPrivate
+                                    && root.channelAccessToolsOpen
+                                    ? "access"
+                                    : "details"
                                 channelDetailsNameField.text = root.selectedChannelDisplayName
                                 channelDetailsTopicField.text = root.selectedChannelTopic
-                                channelDetailsNameField.forceActiveFocus()
+                                if (channelDetailsPopup.viewMode === "details") {
+                                    channelDetailsNameField.forceActiveFocus()
+                                } else {
+                                    channelAccessModeButton.forceActiveFocus()
+                                }
                             }
                             onClosed: {
                                 channelDetailsNameField.text = ""
                                 channelDetailsTopicField.text = ""
                                 root.channelAccessToolsOpen = false
+                                channelDetailsPopup.viewMode = "details"
                             }
 
                             function saveFromForm() {
@@ -8594,18 +9016,53 @@ ApplicationWindow {
                                 border.color: Tokens.borderSubtle
                             }
 
-                            contentItem: ColumnLayout {
-                                spacing: Tokens.space2
+                            contentItem: ScrollView {
+                                id: channelDetailsScroll
+                                clip: true
+                                contentWidth: availableWidth
+                                contentHeight: channelDetailsContent.implicitHeight
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                ColumnLayout {
+                                    id: channelDetailsContent
+                                    width: channelDetailsScroll.availableWidth
+                                    height: implicitHeight
+                                    spacing: Tokens.space2
 
                                 Text {
-                                    text: "Room details"
+                                    text: "Room"
                                     color: Tokens.textStrong
                                     font.pixelSize: Tokens.fontSizeSm
                                     font.weight: Font.DemiBold
                                 }
 
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: root.selectedChannelPrivate
+                                        && !root.selectedChannelDirectMessage
+                                    spacing: Tokens.space1
+
+                                    Button {
+                                        Layout.fillWidth: true
+                                        text: "Details"
+                                        checkable: true
+                                        checked: channelDetailsPopup.viewMode === "details"
+                                        onClicked: channelDetailsPopup.viewMode = "details"
+                                    }
+
+                                    Button {
+                                        id: channelAccessModeButton
+                                        Layout.fillWidth: true
+                                        text: "Access & security"
+                                        checkable: true
+                                        checked: channelDetailsPopup.viewMode === "access"
+                                        onClicked: channelDetailsPopup.viewMode = "access"
+                                    }
+                                }
+
                                 Text {
                                     Layout.fillWidth: true
+                                    visible: channelDetailsPopup.viewMode === "access"
                                     text: root.selectedChannelPeopleSummary()
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
@@ -8614,6 +9071,7 @@ ApplicationWindow {
 
                                 ColumnLayout {
                                     Layout.fillWidth: true
+                                    visible: channelDetailsPopup.viewMode === "details"
                                     spacing: 4
 
                                     Text {
@@ -8639,6 +9097,7 @@ ApplicationWindow {
 
                                 ColumnLayout {
                                     Layout.fillWidth: true
+                                    visible: channelDetailsPopup.viewMode === "details"
                                     spacing: 4
 
                                     Text {
@@ -8674,6 +9133,7 @@ ApplicationWindow {
                                 ColumnLayout {
                                     visible: root.selectedChannelPrivate
                                         && !root.selectedChannelDirectMessage
+                                        && channelDetailsPopup.viewMode === "access"
                                     Layout.fillWidth: true
                                     spacing: Tokens.space2
 
@@ -9087,6 +9547,7 @@ ApplicationWindow {
                                 Button {
                                     id: roomActionsButton
                                     visible: !root.selectedChannelDirectMessage
+                                        && channelDetailsPopup.viewMode === "details"
                                     Layout.alignment: Qt.AlignLeft
                                     text: "Room actions"
                                     Accessible.name: "Room actions"
@@ -9131,12 +9592,15 @@ ApplicationWindow {
                                     }
 
                                     Button {
-                                        text: "Cancel"
+                                        text: channelDetailsPopup.viewMode === "details"
+                                            ? "Cancel"
+                                            : "Close"
                                         Layout.preferredWidth: 72
                                         onClicked: channelDetailsPopup.close()
                                     }
 
                                     Button {
+                                        visible: channelDetailsPopup.viewMode === "details"
                                         text: "Save"
                                         Layout.preferredWidth: 72
                                         enabled: channelDetailsNameField.text.trim().length > 0
@@ -9144,6 +9608,7 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
                         }
 
                         Item {
@@ -9272,14 +9737,26 @@ ApplicationWindow {
                                     onClicked: root.repairStorageMetadata()
                                 }
 
+                                Text {
+                                    width: 116
+                                    height: 30
+                                    text: "Teammate address"
+                                    color: Tokens.textMuted
+                                    font.pixelSize: Tokens.fontSizeXs
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
                                 TextField {
                                     id: peerEndpointField
-                                    width: 180
-                                    placeholderText: "Teammate address"
+                                    width: 220
+                                    placeholderText: "Paste a teammate address"
                                     color: Tokens.textStrong
                                     placeholderTextColor: Tokens.textMuted
                                     Component.onCompleted: text = chaftController.defaultPeerEndpoint
-                                    onEditingFinished: chaftController.defaultPeerEndpoint = text.trim()
+                                    onTextEdited: root.peerEndpointFormError = ""
+                                    onAccepted: root.connectPeerEndpointFromField()
+                                    Accessible.name: "Teammate address"
+                                    Accessible.description: root.peerEndpointFormError
                                     background: Rectangle {
                                         radius: Tokens.radiusMd
                                         color: Tokens.surfaceRaised
@@ -9296,6 +9773,28 @@ ApplicationWindow {
                                     }
                                 }
 
+                                Button {
+                                    text: "Save"
+                                    enabled: root.peerEndpointFormIsValid()
+                                        && root.peerEndpointFormValue()
+                                            !== String(chaftController.defaultPeerEndpoint || "").trim()
+                                    onClicked: root.savePeerEndpointFromField()
+                                    ToolTip.visible: hovered && !enabled
+                                    ToolTip.text: root.peerEndpointFormIsValid()
+                                        ? "This address is already saved"
+                                        : "Enter a valid teammate address"
+                                }
+
+                                Text {
+                                    visible: root.peerEndpointFormError.length > 0
+                                    width: 220
+                                    height: visible ? 30 : 0
+                                    text: root.peerEndpointFormError
+                                    color: Tokens.warningText
+                                    font.pixelSize: Tokens.fontSizeXs
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
                                 PeerRouteChip {
                                     visible: root.syncAdvancedToolsOpen
                                         || root.activePeerRouteIsWarning()
@@ -9305,8 +9804,10 @@ ApplicationWindow {
                                 }
 
                                 CheckBox {
-                                    enabled: root.runtimeWorkReady
-                                        && root.preferredSyncPeerEndpoint().length > 0
+                                    id: liveUpdatesCheckBox
+                                    enabled: root.autoSyncEnabled
+                                        || (root.runtimeWorkReady
+                                            && root.peerEndpointFormIsValid())
                                     text: "Live updates"
                                     checked: root.autoSyncEnabled
                                     onToggled: root.autoSyncEnabled = checked
@@ -9315,9 +9816,9 @@ ApplicationWindow {
                                 Button {
                                     enabled: root.runtimeWorkReady
                                         && !chaftController.syncInFlight
-                                        && root.preferredSyncPeerEndpoint().length > 0
-                                    text: "Update now"
-                                    onClicked: root.syncWorkspaceFromPreferredPeer()
+                                        && root.peerEndpointFormIsValid()
+                                    text: chaftController.syncInFlight ? "Connecting..." : "Connect"
+                                    onClicked: root.connectPeerEndpointFromField()
                                 }
 
                                 Button {

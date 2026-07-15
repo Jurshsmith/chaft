@@ -1117,6 +1117,7 @@ constexpr qsizetype kMaxInviteApprovalPolicyBytes = 32;
 constexpr qsizetype kMaxWorkspaceAccessPolicyBytes = 32;
 constexpr qsizetype kEventIdHashHexBytes = 64;
 constexpr qsizetype kMaxDeviceDisplayNameBytes = 128;
+constexpr qsizetype kMaxInviteLabelBytes = 128;
 constexpr qsizetype kMaxJoinRequestIdBytes = 128;
 constexpr qsizetype kMaxJoinRequestNoteBytes = 512;
 constexpr qsizetype kMaxDeviceIdReferenceBytes = 512;
@@ -2830,7 +2831,7 @@ QString keyTransferStatusLabel(const QByteArray &bytes) {
     return QStringLiteral("invite");
   }
   if (kind == QStringLiteral("chaft.workspace-invite-claim.v1")) {
-    return QStringLiteral("invite claim");
+    return QStringLiteral("invite join request");
   }
   if (kind == QStringLiteral("chaft.workspace-invite-response.v1")) {
     return QStringLiteral("secure access");
@@ -3756,7 +3757,7 @@ public:
     setSyncStatus(
         routeChanged
             ? QStringLiteral("invite ready; its signed delivery address may be "
-                             "stale, so keep the manual claim and response path")
+                             "stale, so keep the manual request and response path")
             : QStringLiteral("invite ready to share"));
     return true;
   }
@@ -3795,6 +3796,10 @@ public:
       return false;
     }
     const auto normalizedDisplayName = displayName.trimmed();
+    if (normalizedDisplayName.isEmpty()) {
+      setSyncStatus(QStringLiteral("name required"));
+      return false;
+    }
     const auto normalizedNote = note.trimmed();
     const auto normalizedWorkspaceId = workspaceId.trimmed();
     const auto normalizedWorkspaceName = workspaceName.trimmed();
@@ -3933,10 +3938,27 @@ public:
       return false;
     }
 
+    QJsonParseError requestParseError;
+    const auto requestDocument = QJsonDocument::fromJson(
+        normalizedRequestJson.toUtf8(), &requestParseError);
+    if (requestParseError.error != QJsonParseError::NoError ||
+        !requestDocument.isObject()) {
+      setSyncStatus(QStringLiteral("access request is not valid JSON"));
+      return false;
+    }
+    const auto requestId = requestDocument.object()
+                               .value(QStringLiteral("requestId"))
+                               .toString()
+                               .trimmed();
+    if (requestId.isEmpty()) {
+      setSyncStatus(QStringLiteral("access request is missing its request ID"));
+      return false;
+    }
+
     setSyncStatus(QStringLiteral("sending access request..."));
     runWorkspaceJoinRequestDirectSubmit(normalizedPeerEndpoint,
                                         normalizedWorkspaceId,
-                                        normalizedRequestJson);
+                                        normalizedRequestJson, requestId);
     return true;
   }
 
@@ -4277,14 +4299,14 @@ public:
   }
 
   Q_INVOKABLE bool prepareClaimableWorkspaceInvite(
-      const QString &displayName, const QString &role,
+      const QString &inviteLabel, const QString &role,
       const QString &peerEndpoint, const QString &expiresAt) {
     return prepareClaimableWorkspaceInviteWithMaxClaims(
-        displayName, role, peerEndpoint, expiresAt, 1);
+        inviteLabel, role, peerEndpoint, expiresAt, 1);
   }
 
   Q_INVOKABLE bool prepareClaimableWorkspaceInviteWithMaxClaims(
-      const QString &displayName, const QString &role,
+      const QString &inviteLabel, const QString &role,
       const QString &peerEndpoint, const QString &expiresAt, int maxClaims) {
     if (isWorkspaceInviteResponseText(m_keyTransferJson)) {
       setSyncStatus(QStringLiteral(
@@ -4303,11 +4325,12 @@ public:
       return false;
     }
     if (maxClaims < 1 || maxClaims > kMaxWorkspaceInviteClaims) {
-      setSyncStatus(QStringLiteral("claim limit must be between 1 and 20"));
+      setSyncStatus(
+          QStringLiteral("an invite can be used by between 1 and 20 devices"));
       return false;
     }
 
-    const auto normalizedDisplayName = displayName.trimmed();
+    const auto normalizedInviteLabel = inviteLabel.trimmed();
     const auto normalizedRole =
         role.trimmed().isEmpty() ? QStringLiteral("member") : role.trimmed();
     const auto normalizedPeerEndpoint = peerEndpoint.trimmed();
@@ -4318,9 +4341,9 @@ public:
       setSyncStatus(metadataError);
       return false;
     }
-    if ((!normalizedDisplayName.isEmpty() &&
+    if ((!normalizedInviteLabel.isEmpty() &&
          !validateMetadataTextForWrite(
-             normalizedDisplayName, kMaxDeviceDisplayNameBytes,
+             normalizedInviteLabel, kMaxInviteLabelBytes,
              QStringLiteral("invite label"), QStringLiteral("128 bytes"),
              &metadataError)) ||
         !validateMetadataTextForWrite(
@@ -4337,7 +4360,7 @@ public:
     setKeyTransferJson(QString());
     setKeyTransferInFlight(true);
     setSyncStatus(QStringLiteral("creating secure invite..."));
-    runClaimableWorkspaceInvite(normalizedDisplayName, normalizedRole,
+    runClaimableWorkspaceInvite(normalizedInviteLabel, normalizedRole,
                                 normalizedPeerEndpoint, normalizedExpiresAt,
                                 static_cast<std::uint32_t>(maxClaims),
                                 generation);
@@ -4353,7 +4376,7 @@ public:
       return false;
     }
     if (!ensureFfiReady() || m_prepareWorkspaceInviteClaimJson == nullptr) {
-      setSyncStatus(QStringLiteral("secure invite claims unavailable"));
+      setSyncStatus(QStringLiteral("secure invite join requests unavailable"));
       return false;
     }
     const auto normalizedArtifactJson = artifactJson.trimmed();
@@ -4361,11 +4384,30 @@ public:
       setSyncStatus(QStringLiteral("invite required"));
       return false;
     }
+    const auto normalizedDisplayName = displayName.trimmed();
+    if (normalizedDisplayName.isEmpty()) {
+      setSyncStatus(QStringLiteral("name required"));
+      return false;
+    }
+    const auto normalizedNote = note.trimmed();
+    QString metadataError;
+    if (!validateMetadataTextForWrite(
+            normalizedDisplayName, kMaxDeviceDisplayNameBytes,
+            QStringLiteral("display name"), QStringLiteral("128 bytes"),
+            &metadataError) ||
+        (!normalizedNote.isEmpty() &&
+         !validateMetadataTextForWrite(
+             normalizedNote, kMaxJoinRequestNoteBytes,
+             QStringLiteral("join request note"), QStringLiteral("512 bytes"),
+             &metadataError))) {
+      setSyncStatus(metadataError);
+      return false;
+    }
     const auto runtimeDirBytes = m_runtimeDir.toUtf8();
     const auto identityFileBytes = m_identityFile.toUtf8();
     const auto artifactBytes = normalizedArtifactJson.toUtf8();
-    const auto displayNameBytes = displayName.trimmed().toUtf8();
-    const auto noteBytes = note.trimmed().toUtf8();
+    const auto displayNameBytes = normalizedDisplayName.toUtf8();
+    const auto noteBytes = normalizedNote.toUtf8();
     const auto responsePeerEndpointBytes = m_hostedPeerEndpoint.trimmed().toUtf8();
     QString error;
     const auto resultJson = takeFfiString(
@@ -4383,11 +4425,11 @@ public:
     }
     const auto bytes = QJsonDocument(value).toJson(QJsonDocument::Indented);
     if (bytes.size() > kMaxKeyTransferJsonBytes) {
-      setSyncStatus(QStringLiteral("invite claim is too large"));
+      setSyncStatus(QStringLiteral("invite join request is too large"));
       return false;
     }
     setKeyTransferJson(QString::fromUtf8(bytes));
-    setSyncStatus(QStringLiteral("invite claim ready"));
+    setSyncStatus(QStringLiteral("invite join request ready"));
     return true;
   }
 
@@ -4400,7 +4442,7 @@ public:
       return false;
     }
     if (m_claimWorkspaceInviteJson == nullptr) {
-      setSyncStatus(QStringLiteral("secure invite claims unavailable"));
+      setSyncStatus(QStringLiteral("secure invite join requests unavailable"));
       return false;
     }
     if (!m_keyTransferJson.trimmed().isEmpty()) {
@@ -4408,7 +4450,7 @@ public:
                         ? QStringLiteral(
                               "return or save the current secure access response first")
                         : QStringLiteral(
-                              "finish the current access handoff before accepting this claim"));
+                              "finish the current access handoff before approving this join request"));
       return false;
     }
 
@@ -4417,10 +4459,10 @@ public:
     if (normalizedClaimJson.isEmpty() ||
         !validateJsonTextForImport(
             normalizedClaimJson, kMaxPendingJoinRequestArtifactBytes,
-            QStringLiteral("invite claim"), QStringLiteral("8 KB"),
+            QStringLiteral("invite join request"), QStringLiteral("8 KB"),
             &validationError)) {
       setSyncStatus(validationError.isEmpty()
-                        ? QStringLiteral("invite claim required")
+                        ? QStringLiteral("invite join request required")
                         : validationError);
       return false;
     }
@@ -4428,13 +4470,13 @@ public:
     const auto document =
         QJsonDocument::fromJson(normalizedClaimJson.toUtf8(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-      setSyncStatus(QStringLiteral("invite claim is not valid JSON"));
+      setSyncStatus(QStringLiteral("invite join request is not valid JSON"));
       return false;
     }
     const auto claim = document.object();
     if (claim.value(QStringLiteral("kind")).toString().trimmed() !=
         QStringLiteral("chaft.workspace-invite-claim.v1")) {
-      setSyncStatus(QStringLiteral("selected request is not an invite claim"));
+      setSyncStatus(QStringLiteral("selected file is not an invite join request"));
       return false;
     }
     if (claim.value(QStringLiteral("workspaceId")).toString().trimmed() !=
@@ -4446,7 +4488,7 @@ public:
     const auto generation = ++m_runtimeWriteGeneration;
     setKeyTransferJson(QString());
     setKeyTransferInFlight(true);
-    setSyncStatus(QStringLiteral("accepting secure invite claim..."));
+    setSyncStatus(QStringLiteral("approving invite join request..."));
     runWorkspaceInviteClaim(normalizedClaimJson, generation);
     return true;
   }
@@ -5436,6 +5478,22 @@ public:
     return true;
   }
 
+  Q_INVOKABLE QString
+  deviceDisplayNameValidationError(const QString &displayName) const {
+    const auto normalizedDisplayName = displayName.trimmed();
+    if (normalizedDisplayName.isEmpty()) {
+      return QStringLiteral("Enter the name teammates should see.");
+    }
+    QString metadataError;
+    if (!validateMetadataTextForWrite(
+            normalizedDisplayName, kMaxDeviceDisplayNameBytes,
+            QStringLiteral("name"), QStringLiteral("128 bytes"),
+            &metadataError)) {
+      return metadataError;
+    }
+    return {};
+  }
+
   Q_INVOKABLE bool sendMessage(const QString &channelId, const QString &text) {
     if (!ensureRuntimeWorkspace()) {
       return false;
@@ -6122,6 +6180,10 @@ public:
     const auto normalizedResponsePeerEndpoint = responsePeerEndpoint.trimmed();
     if (normalizedDeviceId.isEmpty()) {
       setSyncStatus(QStringLiteral("support code required"));
+      return false;
+    }
+    if (normalizedDisplayName.isEmpty()) {
+      setSyncStatus(QStringLiteral("name required"));
       return false;
     }
     QString metadataError;
@@ -7440,6 +7502,14 @@ signals:
   void joinRequestInboxInFlightChanged();
   void accessEnvelopePullInFlightChanged();
   void joinRequestDirectSubmitFinished(bool success, const QString &message);
+  void joinRequestDirectSubmitCompleted(const QString &requestId, bool success,
+                                        const QString &message);
+  void workspaceCredentialImportFinished(const QString &source,
+                                         const QString &workspaceId,
+                                         bool success,
+                                         const QString &message);
+  void workspaceCreateFinished(const QString &workspaceId, bool success,
+                               bool selected, const QString &message);
   void workspaceInviteClaimFinished(bool success, const QString &message);
   void joinResponseInboxEntryAcknowledged(bool success,
                                           const QString &message);
@@ -10734,21 +10804,41 @@ private:
                 guard->queueRuntimeSnapshotRefreshIfCurrent(true,
                                                             createdWorkspaceId);
               }
+              const auto succeeded =
+                  !value.isEmpty() && !createdWorkspaceId.isEmpty();
+              emit guard->workspaceCreateFinished(
+                  createdWorkspaceId, succeeded, false,
+                  succeeded
+                      ? QStringLiteral(
+                            "workspace created after another local update")
+                      : (!error.isEmpty()
+                             ? error
+                             : QStringLiteral("workspace creation failed")));
               return;
             }
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
+              emit guard->workspaceCreateFinished(
+                  createdWorkspaceId, false, false,
+                  !error.isEmpty() ? error
+                                   : QStringLiteral("workspace creation failed"));
               return;
             }
             if (createdWorkspaceId.isEmpty()) {
-              guard->setSyncStatus(
-                  QStringLiteral("workspace creation returned no workspace"));
+              const auto message =
+                  QStringLiteral("workspace creation returned no workspace");
+              guard->setSyncStatus(message);
+              emit guard->workspaceCreateFinished(createdWorkspaceId, false,
+                                                  false, message);
               return;
             }
             if (guard->m_workspaceId != previousWorkspaceId) {
-              guard->setSyncStatus(
-                  QStringLiteral("workspace created after switching workspaces"));
+              const auto message =
+                  QStringLiteral("workspace created after switching workspaces");
+              guard->setSyncStatus(message);
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              emit guard->workspaceCreateFinished(createdWorkspaceId, true,
+                                                  false, message);
               return;
             }
 
@@ -10767,11 +10857,18 @@ private:
               if (!snapshotError.isEmpty()) {
                 guard->setSyncStatus(snapshotError);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                emit guard->workspaceCreateFinished(
+                    createdWorkspaceId, true, true,
+                    QStringLiteral(
+                        "workspace created; its latest view will retry loading"));
                 return;
               }
             }
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setSyncStatus(QStringLiteral("workspace created"));
+            emit guard->workspaceCreateFinished(
+                createdWorkspaceId, true, true,
+                QStringLiteral("workspace created"));
             if (guard->peerHosting()) {
               guard->refreshHostedPeerEndpointHint();
             }
@@ -11602,21 +11699,38 @@ private:
               return;
             }
             guard->setKeyTransferInFlight(false);
+            const auto importSucceeded =
+                !value.isEmpty() && !importedWorkspaceId.isEmpty();
+            const auto importMessage = importSucceeded
+                                           ? successStatus
+                                           : (!error.isEmpty()
+                                                  ? error
+                                                  : QStringLiteral(
+                                                        "workspace import returned no workspace"));
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               if (!importedWorkspaceId.isEmpty()) {
                 guard->queueWorkspaceSummariesRefresh();
                 guard->queueRuntimeSnapshotRefreshIfCurrent(
                     true, importedWorkspaceId);
               }
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("access"), importedWorkspaceId,
+                  importSucceeded, importMessage);
               return;
             }
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("access"), importedWorkspaceId, false,
+                  importMessage);
               return;
             }
             if (importedWorkspaceId.isEmpty()) {
               guard->setSyncStatus(
                   QStringLiteral("workspace import returned no workspace"));
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("access"), importedWorkspaceId, false,
+                  importMessage);
               return;
             }
 
@@ -11625,6 +11739,9 @@ private:
               guard->setSyncStatus(successStatus +
                                    QStringLiteral(" after switching workspaces"));
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("access"), importedWorkspaceId, true,
+                  importMessage);
               return;
             }
 
@@ -11644,6 +11761,9 @@ private:
             }
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setSyncStatus(successStatus);
+            emit guard->workspaceCredentialImportFinished(
+                QStringLiteral("access"), importedWorkspaceId, true,
+                importMessage);
           },
           Qt::QueuedConnection);
     });
@@ -11828,23 +11948,42 @@ private:
               return;
             }
             guard->setKeyTransferInFlight(false);
+            const auto importSucceeded =
+                !value.isEmpty() && !importedWorkspaceId.isEmpty();
+            const auto importMessage = importSucceeded
+                                           ? QStringLiteral("recovery kit imported")
+                                           : (!error.isEmpty()
+                                                  ? error
+                                                  : QStringLiteral(
+                                                        "recovery import returned no workspace"));
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               if (!importedWorkspaceId.isEmpty()) {
                 guard->queueWorkspaceSummariesRefresh();
                 guard->queueRuntimeSnapshotRefreshIfCurrent(
                     true, importedWorkspaceId);
               }
+              guard->setLastRecoveryImportedChannelCount(
+                  importSucceeded ? importedChannelCount : 0);
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("recovery"), importedWorkspaceId,
+                  importSucceeded, importMessage);
               return;
             }
             if (value.isEmpty()) {
               guard->setLastRecoveryImportedChannelCount(0);
               guard->setSyncStatus(error);
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("recovery"), importedWorkspaceId, false,
+                  importMessage);
               return;
             }
             if (importedWorkspaceId.isEmpty()) {
               guard->setLastRecoveryImportedChannelCount(0);
               guard->setSyncStatus(
                   QStringLiteral("recovery import returned no workspace"));
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("recovery"), importedWorkspaceId, false,
+                  importMessage);
               return;
             }
 
@@ -11855,6 +11994,9 @@ private:
                   QStringLiteral("recovery kit imported after workspace "
                                  "switch"));
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              emit guard->workspaceCredentialImportFinished(
+                  QStringLiteral("recovery"), importedWorkspaceId, true,
+                  importMessage);
               return;
             }
 
@@ -11875,6 +12017,9 @@ private:
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setLastRecoveryImportedChannelCount(importedChannelCount);
             guard->setSyncStatus(QStringLiteral("recovery kit imported"));
+            emit guard->workspaceCredentialImportFinished(
+                QStringLiteral("recovery"), importedWorkspaceId, true,
+                importMessage);
           },
           Qt::QueuedConnection);
     });
@@ -13299,12 +13444,18 @@ private:
                     return;
                   }
                   guard->applyRuntimeSnapshot(snapshotValue, false);
-                  guard->setSyncStatus(
+                  const auto status =
                       claimedCount > 0
-                          ? QStringLiteral("%1 secure invite claim(s) accepted")
-                                .arg(claimedCount)
-                          : QStringLiteral("%1 access request(s) received")
-                                .arg(recordedCount));
+                          ? (claimedCount == 1
+                                 ? QStringLiteral("1 invite join request approved")
+                                 : QStringLiteral(
+                                       "%1 invite join requests approved")
+                                       .arg(claimedCount))
+                          : (recordedCount == 1
+                                 ? QStringLiteral("1 access request received")
+                                 : QStringLiteral("%1 access requests received")
+                                       .arg(recordedCount));
+                  guard->setSyncStatus(status);
                   return;
                 }
                 if (userInitiated && !firstRecordError.isEmpty()) {
@@ -13328,7 +13479,8 @@ private:
 
   void runWorkspaceJoinRequestDirectSubmit(const QString &peerEndpoint,
                                            const QString &workspaceId,
-                                           const QString &requestJson) {
+                                           const QString &requestJson,
+                                           const QString &requestId) {
     setJoinRequestSubmitInFlight(true);
     const QPointer<ChaftController> guard(this);
     const auto submitFn = m_submitJoinRequestDirectJson;
@@ -13339,7 +13491,8 @@ private:
     const auto runtimeDir = m_runtimeDir;
     auto *thread = QThread::create(
         [guard, submitFn, queueOutboxFn, submitOutboxFn, ackOutboxFn,
-         freeString, runtimeDir, peerEndpoint, workspaceId, requestJson]() {
+         freeString, runtimeDir, peerEndpoint, workspaceId, requestJson,
+         requestId]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto peerEndpointBytes = peerEndpoint.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -13403,7 +13556,7 @@ private:
           }
           QMetaObject::invokeMethod(
               guard.data(),
-              [guard, value, error]() {
+              [guard, value, error, requestId]() {
                 if (guard.isNull()) {
                   return;
                 }
@@ -13411,11 +13564,15 @@ private:
                 if (value.isEmpty()) {
                   guard->setSyncStatus(error);
                   emit guard->joinRequestDirectSubmitFinished(false, error);
+                  emit guard->joinRequestDirectSubmitCompleted(requestId, false,
+                                                               error);
                   return;
                 }
                 const auto status = QStringLiteral("access request delivered");
                 guard->setSyncStatus(status);
                 emit guard->joinRequestDirectSubmitFinished(true, status);
+                emit guard->joinRequestDirectSubmitCompleted(requestId, true,
+                                                             status);
               },
               Qt::QueuedConnection);
         });
@@ -14408,7 +14565,7 @@ private:
     thread->start();
   }
 
-  void runClaimableWorkspaceInvite(const QString &displayName,
+  void runClaimableWorkspaceInvite(const QString &inviteLabel,
                                    const QString &role,
                                    const QString &peerEndpoint,
                                    const QString &expiresAt,
@@ -14428,12 +14585,12 @@ private:
                                      : QStringLiteral("history_from_inviter");
     auto *thread = QThread::create(
         [guard, createFn, snapshotFn, snapshotLatestFn, freeString, runtimeDir,
-         identityFile, workspaceId, displayName, role, peerEndpoint, expiresAt,
+         identityFile, workspaceId, inviteLabel, role, peerEndpoint, expiresAt,
          maxClaims, syncExpectation, generation, timelineLimit]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
-          const auto displayNameBytes = displayName.toUtf8();
+          const auto inviteLabelBytes = inviteLabel.toUtf8();
           const auto roleBytes = role.toUtf8();
           const auto expiresAtBytes = expiresAt.toUtf8();
           const auto peerEndpointBytes = peerEndpoint.toUtf8();
@@ -14445,7 +14602,7 @@ private:
                        identityFileBytes.isEmpty()
                            ? nullptr
                            : identityFileBytes.constData(),
-                       workspaceIdBytes.constData(), displayNameBytes.constData(),
+                       workspaceIdBytes.constData(), inviteLabelBytes.constData(),
                        roleBytes.constData(), maxClaims,
                        expiresAtBytes.constData(),
                        peerEndpointBytes.constData(),
@@ -14593,7 +14750,8 @@ private:
                 if (!error.isEmpty() || responseBytes.isEmpty()) {
                   const auto message =
                       error.isEmpty()
-                          ? QStringLiteral("secure invite claim could not be accepted")
+                          ? QStringLiteral(
+                                "invite join request could not be approved")
                           : error;
                   guard->setSyncStatus(message);
                   emit guard->workspaceInviteClaimFinished(false, message);
