@@ -41,6 +41,8 @@ the release evidence for the build under test.
 | Create workspace with invite-only access |  |  |
 | Save `.chaftrecovery` recovery kit |  |  |
 | Copy recovery kit text |  |  |
+| Recovery creation requires matching passphrase confirmation |  |  |
+| Passphrase whitespace is preserved consistently during create and restore |  |  |
 | Relaunch without `--fresh` restores workspace |  |  |
 | Restore into fresh runtime from recovery kit |  |  |
 | Wrong passphrase fails without partial workspace |  |  |
@@ -50,11 +52,14 @@ the release evidence for the build under test.
 | Check | Result | Evidence / notes |
 | --- | --- | --- |
 | Device A exposes or enters reachable peer endpoint |  |  |
-| Device A creates `.chaftinvite` for Device B |  |  |
-| Device B imports invite |  |  |
+| Device A creates a one-device `.chaftinvite` with an internal label |  |  |
+| Invite label never appears as Device B's member name |  |  |
+| Device B chooses its display name exactly once |  |  |
+| Device B imports invite without re-entering its name after approval |  |  |
 | Device A message syncs to Device B |  |  |
 | Device B reply syncs to Device A |  |  |
 | Restart keeps decrypted history readable on both devices |  |  |
+| Multi-use invite records different joiner names without relabeling the invite |  |  |
 
 ## Request Access
 
@@ -67,12 +72,16 @@ the release evidence for the build under test.
 | Fallback saved request uses `.chaftrequest` |  |  |
 | Device A receives or imports request |  |  |
 | Approval opens invite preloaded on Device B |  |  |
+| Approval response matches the original request ID |  |  |
+| Two pending requests for one workspace remain independently correlated |  |  |
+| Sent request cannot become a second request or consume another invite use |  |  |
 | Saved admin endpoint auto-check works without pressing `Check` |  |  |
 | Device B joins from received or saved invite |  |  |
 | Decline updates Device B pending request card |  |  |
 | Close updates duplicate/stale pending request card |  |  |
 | Request card state persists after restart |  |  |
 | Imported approval is not restaged after successful join |  |  |
+| Automatic failure offers only Retry and manual-transfer fallback |  |  |
 
 ## Roles and Admins
 
@@ -107,6 +116,8 @@ the release evidence for the build under test.
 | Join without reachable peer and without key material fails clearly |  |  |
 | Save-over-existing credential behavior is understandable |  |  |
 | Credential text survives copy/paste through a plain text editor |  |  |
+| Clicking outside credential/security dialogs does not discard drafts |  |  |
+| Create, Join, and Restore keep independent field state |  |  |
 
 ## Final Decision
 

@@ -45,20 +45,21 @@ history.
 Do not share the recovery kit with teammates. To add another person or device:
 
 1. Open the workspace, then open `Setup`.
-2. In People & Access, enter an optional label, choose a role, expiry, and claim
-   limit, then create a secure invite. The default limit is one; choose two when
-   the same invite should admit two devices.
+2. In People & Access, choose a role, expiry, and how many devices may use the
+   invite. The default is one device. An optional invite label is only for your
+   invite list; each person chooses their own display name.
 3. Save or copy the generated `.chaftinvite` file or invite link.
 4. Send it privately only to the intended teammate or group.
 
 The invite contains a bounded capability, workspace metadata, and the admin's
 signed routing details. It does not contain the workspace key and does not need
 recipient device IDs in advance. Treat it as a bearer credential until it
-expires, is revoked, or reaches its claim limit: anyone who receives it can use
-one of the remaining claims.
+expires, is revoked, or reaches its device limit: anyone who receives it can use
+one of the remaining uses.
 
-The recipient opens the invite in `Join workspace` and chooses `Claim invite`.
-Their device signs the claim and supplies a response-encryption key. The admin's
+The recipient opens the invite in `Join workspace`, confirms the display name
+teammates will see, and chooses `Join workspace`. Their device signs the request
+and supplies a response-encryption key. The admin's
 runtime verifies the capability, expiry, revocation state, remaining capacity,
 and device/request uniqueness before adding that device. The returned workspace
 key is encrypted for the claiming device and signed by the expected admin.
@@ -73,9 +74,11 @@ Another device cannot import the response.
    - signed invite or invite package,
    - workspace card or request handoff,
    - passphrase-protected recovery kit.
-4. Provide a peer endpoint when the credential does not already include one.
-5. For a secure invite, claim it and wait for the encrypted approval. Confirm
-   the import when Chaft receives it.
+4. Confirm the display name teammates will see. Chaft asks once and preserves it
+   through approval; existing profiles appear as `Joining as <name>`.
+5. Provide a teammate address only when the credential does not include one.
+6. Choose `Join workspace`. Chaft completes delivery automatically when the
+   inviter is reachable and offers manual transfer only as a fallback.
 
 If the credential is a recovery bundle, the app asks for the recovery
 passphrase. Recovery also needs reachable workspace history; when no peer is
@@ -88,7 +91,7 @@ imports a key directly from the invite file.
 
 Chaft saves user-facing handoff material with explicit extensions:
 
-- invites: `Chaft - <workspace> - Invite - <person> - <date>.chaftinvite`,
+- invites: `Chaft - <workspace> - Invite - <label> - <date>.chaftinvite`,
 - access requests: `Chaft - <workspace> - Access Request - <person> - <date>.chaftrequest`,
 - workspace request cards: `Chaft - <workspace> - Request Card - <date>.chaftworkspace`,
 - workspace access files: `Chaft - <workspace> - Access File - <date>.chaftaccess`,
@@ -109,7 +112,7 @@ Use request access when a workspace allows requests but does not hand over join
 credentials immediately.
 
 1. Open the workspace card or approval-first invite.
-2. Enter a display name and optional note.
+2. Confirm the display name teammates will see and optionally add a note.
 3. Submit the request if a peer is reachable.
 4. If direct delivery fails, copy or save the request package and send it to an
    admin out of band.
@@ -122,8 +125,9 @@ back to your device when both apps are reachable. Decline and close responses
 can use the same route to update the pending request card. Pending request cards
 with a saved admin endpoint can also check for approval responses in the
 background while Chaft is open; the manual `Check` action remains available.
-Received approval invites open the join dialog with the invite already loaded;
-you still confirm the import before joining. Fully asynchronous discovery,
+Received encrypted access opens the join dialog with the response already
+loaded and the original display name preserved; the name is not requested
+again. Fully asynchronous discovery,
 multi-hop request propagation across offline peers, and automatic approval import
 are later transport-hardening work.
 
@@ -134,12 +138,13 @@ Admins and owners can invite normal members. Owners control admin-level access.
 1. Open the workspace.
 2. Open `Setup`.
 3. Go to the people/access area.
-4. Enter an optional invite label, then choose the role and expiry.
-5. Save or copy the generated invite package.
+4. Choose the role, expiry, and how many devices may use the invite. Optionally
+   add an internal invite label; this does not name any recipient.
+5. Copy the invite or save it as a file for offline transfer.
 6. Send the invite package to the invitee through a trusted channel.
 
-The invitee claims the package from the `Join workspace` flow. Chaft binds the
-resulting membership and encrypted access response to that device.
+The invitee chooses their own display name in the `Join workspace` flow. Chaft
+binds the resulting membership and encrypted access response to that device.
 
 ## Approve or Decline Requests
 
@@ -147,8 +152,8 @@ Owners and admins can process join requests.
 
 1. Open `Setup`.
 2. Review pending access requests.
-3. Approve the request to create an invite handoff for the requester, or decline
-   it when access should not be granted.
+3. Review the requester-provided name together with the device support code,
+   then approve or decline access.
 4. If the requester is not reachable, save or copy the generated invite package
    and send it out of band.
 
@@ -156,9 +161,9 @@ Approvals and declines are signed workspace events. Duplicate deliveries should
 be safe because request and invite IDs are stable. When a request includes a
 response route, Chaft queues approval invite delivery or decline/close response
 delivery to that route while the app is open; otherwise use the same trusted
-out-of-band channel the requester used. The requester still confirms the
-received invite through the normal join flow; when delivery returns directly,
-the join dialog opens with the invite already loaded.
+out-of-band channel the requester used. The requester confirms the received
+access through the normal join flow. When delivery returns directly, the join
+dialog opens with the response loaded and correlated by its request ID.
 
 ## Manage Roles
 
@@ -193,7 +198,7 @@ Already-synced historical content remains a separate product/security concern.
 
 - Wrong recovery passphrase: retry with the original passphrase used when the
   recovery bundle was exported.
-- Unreachable peer: copy or save the invite claim or approval and send it out
+- Unreachable peer: copy or save the join request or approval and send it out
   of band, or retry when the admin endpoint is reachable.
 - Expired or revoked invite: ask an admin for a fresh invite.
 - Unknown credential file: verify that the file is a Chaft access file, invite

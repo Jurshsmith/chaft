@@ -161,11 +161,13 @@ files (`.chaftaccess`), invite packages, request cards, access requests, older
 JSON exports, or passphrase-protected recovery kits.
 After creating a workspace, the app prompts for a recovery export so the
 credentials can be saved or copied before inviting other devices. Setup can
-create a signed invite for 1, 2, 5, 10, or 20 device claims without collecting
-device IDs first; one claim remains the safe default. The invite contains no
-workspace key. Each recipient claims it with their local device identity, and
-Chaft returns a signed, device-bound encrypted access response after the admin
-processes the claim. Legacy access files remain readable for compatibility.
+create a signed invite for 1, 2, 5, 10, or 20 device uses without collecting
+device IDs first; one device remains the safe default. An optional invite label
+is internal metadata, while every recipient chooses the display name teammates
+will see. The invite contains no workspace key. Each recipient joins with their
+local device identity, and Chaft returns a signed, device-bound encrypted access
+response after the inviter processes the request. Legacy access files remain
+readable for compatibility.
 Admin/member roles, member removal, and private-channel grants are available
 from Setup and the pinned details panel once a workspace is selected.
 

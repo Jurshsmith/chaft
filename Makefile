@@ -104,6 +104,8 @@ test-invite-flow:
 	$(CARGO) test -p chaft-runtime bounded_invite_admits_two_devices_and_replays_an_older_claim $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defaults $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport $(ARGS)
+	$(CARGO) test -p chaft-ffi runtime_claimable_workspace_invite_ffi_round_trips_over_iroh_transport $(ARGS)
+	$(CARGO) test -p chaft-ffi runtime_pull_join_responses_for_requests_iroh_ffi_filters_before_remote_limit $(ARGS)
 
 bench-check:
 	$(CARGO) bench -p chaft-benchmarks --bench hot_paths --no-run $(ARGS)

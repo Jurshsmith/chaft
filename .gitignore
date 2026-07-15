@@ -1,6 +1,8 @@
 target/
 build/
 .cache/
+__pycache__/
+*.py[cod]
 .DS_Store
 docs/
 design/
