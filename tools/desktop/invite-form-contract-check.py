@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_QML = REPO_ROOT / "apps/desktop-qt/qml/Chaft/App.qml"
+MAIN_CPP = REPO_ROOT / "apps/desktop-qt/src/main.cpp"
 ENTRY_QML = (
     REPO_ROOT
     / "apps/desktop-qt/qml/Chaft/features/onboarding/WorkspaceEntryDialog.qml"
@@ -92,6 +93,22 @@ def function_body(source: str, name: str) -> str:
     return balanced_block(source, opening_brace)
 
 
+def cpp_void_function_body(source: str, name: str) -> str:
+    match = re.search(rf"\bvoid\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"missing C++ function {name}()")
+    opening_brace = source.find("{", match.start())
+    return balanced_block(source, opening_brace)
+
+
+def cpp_bool_function_body(source: str, name: str) -> str:
+    match = re.search(rf"\bbool\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"missing C++ function {name}()")
+    opening_brace = source.find("{", match.start())
+    return balanced_block(source, opening_brace)
+
+
 def object_block(source: str, object_type: str, object_id: str) -> str:
     for match in re.finditer(rf"\b{re.escape(object_type)}\s*\{{", source):
         opening_brace = source.find("{", match.start())
@@ -105,6 +122,7 @@ class InviteFormContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = read(APP_QML)
+        cls.main_cpp = read(MAIN_CPP)
         cls.entry = read(ENTRY_QML)
         cls.invite = read(INVITE_QML)
         cls.review = read(REVIEW_QML)
@@ -220,6 +238,223 @@ class InviteFormContracts(unittest.TestCase):
             complete_create,
         )
         self.assertIn("selected === true", complete_create)
+
+    def test_joiner_name_waits_for_membership_and_profile_confirmation(self) -> None:
+        apply_name = function_body(self.app, "applyPendingEntryDisplayName")
+        update_call = apply_name.index(
+            "chaftController.updateDeviceProfile(displayName)"
+        )
+        self.assertLess(apply_name.index("localDeviceMembershipReady()"), update_call)
+        self.assertLess(
+            apply_name.index("pendingEntryDisplayNameUpdateInFlight"), update_call
+        )
+        self.assertIn("pendingEntryDisplayNameConfirmed()", apply_name)
+        self.assertNotIn(
+            'pendingEntryDisplayName = ""',
+            apply_name[update_call:],
+            "accepting the async write must not clear the pending joiner name",
+        )
+
+        completion = function_body(
+            self.app, "handleDeviceProfileUpdateFinished"
+        )
+        confirmation = completion.index("pendingEntryDisplayNameConfirmed()")
+        clear = completion.index("clearPendingEntryDisplayName()", confirmation)
+        self.assertLess(confirmation, clear)
+        self.assertIn("schedulePendingEntryDisplayNameRetry()", completion)
+        self.assertIn("function onDeviceProfileUpdateFinished(", self.app)
+
+        confirmation = function_body(self.app, "pendingEntryDisplayNameConfirmed")
+        self.assertIn("localDeviceDisplayName()", confirmation)
+        self.assertIn("localLinkedPersonDisplayName()", confirmation)
+
+    def test_joiner_name_lifecycle_is_durable_and_never_rewrites_after_success(
+        self,
+    ) -> None:
+        restore = function_body(
+            self.app, "pendingEntryDisplayNameRequestForCurrentWorkspace"
+        )
+        self.assertIn('status !== "profile_pending"', restore)
+        self.assertIn('status !== "profile_written"', restore)
+        self.assertIn('writeSucceeded: status === "profile_written"', restore)
+
+        persist = function_body(self.app, "persistPendingEntryDisplayNameState")
+        self.assertIn('row.sourceType = "profile_finalization"', persist)
+        self.assertIn('kind: "chaft.pending-profile.v1"', persist)
+        self.assertNotIn("workspaceKey", persist)
+        self.assertNotIn("keyTransferJson", persist)
+
+        complete_import = function_body(
+            self.app, "handleWorkspaceCredentialImportFinished"
+        )
+        self.assertIn(
+            'persistPendingEntryDisplayNameState("profile_pending")',
+            complete_import,
+        )
+
+        completion = function_body(self.app, "handleDeviceProfileUpdateFinished")
+        self.assertIn(
+            'persistPendingEntryDisplayNameState("profile_written")', completion
+        )
+        self.assertIn("schedulePendingEntryDisplayNameReconciliation()", completion)
+        self.assertNotIn(
+            "updateDeviceProfile(",
+            completion,
+            "a successful append may only reconcile; it must never append again",
+        )
+
+        reconcile = function_body(self.app, "reconcilePendingEntryDisplayName")
+        self.assertIn("reconcileRuntimeSnapshotIfIdle()", reconcile)
+        self.assertNotIn("updateDeviceProfile(", reconcile)
+
+        request_rows = function_body(self.app, "pendingAccessRequestRows")
+        for lifecycle_status in ("profile_pending", "profile_written"):
+            self.assertIn(f'persistedStatus === "{lifecycle_status}"', request_rows)
+        self.assertIn("continue", request_rows)
+
+        signature = "QStringList pendingJoinResponseRequestIds("
+        function_start = self.main_cpp.index(signature)
+        function_suffix = self.main_cpp.index(") const {", function_start)
+        opening_brace = self.main_cpp.index("{", function_suffix)
+        response_poll = balanced_block(self.main_cpp, opening_brace)
+        for lifecycle_status in ("profile_pending", "profile_written"):
+            self.assertIn(
+                f'status == QStringLiteral("{lifecycle_status}")', response_poll
+            )
+
+    def test_message_refresh_does_not_depend_on_a_receiver_action(self) -> None:
+        auto_sync = function_body(self.app, "syncSelectedPeerIfReady")
+        reconcile_due = auto_sync.index("hostedRuntimeReconcileDue")
+        network_endpoint = auto_sync.index("preferredSyncPeerEndpoint()")
+        self.assertLess(reconcile_due, network_endpoint)
+
+        hosted_timer = object_block(self.app, "Timer", "hostedRuntimeReconcileTimer")
+        self.assertIn("reconcileHostedRuntimeIfReady()", hosted_timer)
+        self.assertNotIn("syncWorkspace", hosted_timer)
+
+        reconcile_start = self.main_cpp.index("void runRuntimeSnapshotReconcile(")
+        reconcile_opening = self.main_cpp.index("{", reconcile_start)
+        reconcile = balanced_block(self.main_cpp, reconcile_opening)
+        self.assertIn("m_runtimeWriteGeneration != runtimeWriteGeneration", reconcile)
+        self.assertIn("m_workspaceSnapshotRevision !=", reconcile)
+        self.assertNotIn("m_lastAppliedRuntimeWriteGeneration =", reconcile)
+
+        invoke_start = self.main_cpp.index("Q_INVOKABLE bool reconcileRuntimeSnapshotIfIdle()")
+        invoke_opening = self.main_cpp.index("{", invoke_start)
+        invoke = balanced_block(self.main_cpp, invoke_opening)
+        self.assertNotIn("++m_runtimeWriteGeneration", invoke)
+
+    def test_profile_completion_is_emitted_after_the_confirming_snapshot(self) -> None:
+        self.assertIn("void deviceProfileUpdateFinished(", self.main_cpp)
+        update = cpp_void_function_body(self.main_cpp, "runDeviceProfileUpdate")
+        applied = update.rfind("guard->applyRuntimeSnapshot(snapshotValue, false)")
+        completed = update.rfind("emit guard->deviceProfileUpdateFinished(")
+        self.assertGreater(applied, -1)
+        self.assertGreater(
+            completed,
+            applied,
+            "the success completion must follow publication of the confirming snapshot",
+        )
+        self.assertIn(
+            "guard->queueRuntimeSnapshotRefreshIfCurrent(",
+            update,
+            "a profile write whose snapshot failed must queue confirmation",
+        )
+        self.assertIn("workspaceStateMayHaveChanged", update)
+        self.assertIn("deviceProfileAlreadyCurrent", update)
+        self.assertIn("personProfileAlreadyCurrent", update)
+        self.assertIn("if (!deviceProfileAlreadyCurrent)", update)
+        self.assertIn("if (!personProfileAlreadyCurrent)", update)
+        self.assertIn(
+            "runtimeSnapshotHasDisplayNamePair(", update
+        )
+        self.assertIn(
+            "workspaceId, displayName, profileComplete", update
+        )
+        self.assertGreaterEqual(
+            update.count("latestRuntimeSnapshotValue("),
+            2,
+            "profile writes need authoritative snapshots before and after missing sub-writes",
+        )
+
+        workspace_operation_start = self.main_cpp.index(
+            "bool workspaceOperationInFlight() const"
+        )
+        workspace_operation_opening = self.main_cpp.index(
+            "{", workspace_operation_start
+        )
+        workspace_operation = balanced_block(
+            self.main_cpp, workspace_operation_opening
+        )
+        self.assertIn("m_deviceProfileUpdateInFlight", workspace_operation)
+        self.assertIn("finishDeviceProfileUpdate(operationId)", update)
+
+    def test_workspace_transfer_actions_observe_the_composite_barrier(self) -> None:
+        for function_name in (
+            "publishWorkspace",
+            "backupWorkspaceIfIdle",
+            "backupConfiguredPeersIfIdle",
+            "publishEventWithTrustSnapshot",
+            "retryBlobTransfers",
+            "startBackupWorkspace",
+        ):
+            function = cpp_bool_function_body(self.main_cpp, function_name)
+            self.assertIn("workspaceOperationInFlight()", function)
+            self.assertNotIn("syncInFlight()", function)
+
+        for function_name in (
+            "connectPeerEndpointFromField",
+            "syncWorkspaceFromPreferredPeer",
+            "publishWorkspaceToPreferredPeer",
+            "backupWorkspaceToPreferredPeer",
+            "pullWorkspaceFromPreferredPeer",
+            "retryBlobTransfersWithPreferredPeers",
+            "repairHistoryFromPeer",
+            "publishEventWithTrustSnapshotToPreferredPeer",
+        ):
+            function = function_body(self.app, function_name)
+            self.assertIn("workspaceOperationInFlight", function)
+
+    def test_pending_joiner_name_retries_after_workspace_operations_settle(self) -> None:
+        sync_handler = re.search(
+            r"function\s+onSyncInFlightChanged\s*\(\)\s*\{[\s\S]*?\n\s*\}",
+            self.app,
+        )
+        self.assertIsNotNone(sync_handler)
+        self.assertIn(
+            "root.applyPendingEntryDisplayName()", sync_handler.group(0)
+        )
+
+        timeline_handler = re.search(
+            r"function\s+onTimelineLoadInFlightChanged\s*\(\)\s*\{[\s\S]*?\n\s*\}",
+            self.app,
+        )
+        self.assertIsNotNone(timeline_handler)
+        self.assertIn(
+            "root.applyPendingEntryDisplayName()", timeline_handler.group(0)
+        )
+
+    def test_read_markers_wait_for_reconciliation_and_profile_writes(self) -> None:
+        mark_read = function_body(self.app, "markSelectedChannelRead")
+        dispatch = mark_read.index("chaftController.markChannelRead(channelId)")
+        self.assertLess(mark_read.index("workspaceOperationInFlight"), dispatch)
+        self.assertLess(
+            mark_read.index("pendingEntryDisplayNameUpdateInFlight"), dispatch
+        )
+        self.assertLess(mark_read.index("timelineView.followLatest"), dispatch)
+        self.assertIn("markReadDebounce.restart()", mark_read[:dispatch])
+
+        for handler_name in (
+            "onSyncInFlightChanged",
+            "onTimelineLoadInFlightChanged",
+            "onDeviceProfileUpdateFinished",
+        ):
+            handler = re.search(
+                rf"function\s+{handler_name}\s*\([^)]*\)\s*\{{[\s\S]*?\n\s*\}}",
+                self.app,
+            )
+            self.assertIsNotNone(handler)
+            self.assertIn("root.scheduleMarkSelectedChannelRead()", handler.group(0))
 
     def test_workspace_creation_cannot_discard_a_received_approval(self) -> None:
         open_approval = function_body(self.app, "openReceivedApprovalInvite")

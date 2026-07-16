@@ -39,13 +39,14 @@ help:
 		'  make clippy           cargo clippy --workspace --all-targets -- -D warnings' \
 		'  make test             cargo test --workspace --all-targets' \
 		'  make test-app         Test chaft-app and chaft-ffi packages' \
-		'  make test-invite-flow Test the one-invite, three-device secure flow' \
+		'  make test-invite-flow Test the two-claim, three-device delivery flow' \
 		'  make bench-check      Compile hot-path benchmarks without running them' \
 		'  make rust-gates       Run tools/ci/rust-gates.sh' \
 		'' \
 		'Desktop/QML:' \
 		'  make desktop-preflight  Run desktop preflight' \
 		'  make qml-lint           Run QML lint' \
+		'  make invite-form-contracts Run invite and entry-flow contracts' \
 		'  make style-lint         Run desktop style lint' \
 		'  make theme-contrast     Run theme contrast check' \
 		'  make desktop-checks     Run QML lint, style lint, and theme contrast' \
@@ -53,6 +54,7 @@ help:
 		'Desktop build/run:' \
 		'  make desktop-build             Build desktop app with PROFILE' \
 		'  make desktop-smoke             Run desktop smoke with PROFILE' \
+		'  make desktop-live-sync-smoke   Verify delayed desktop message sync' \
 		'  make desktop-empty-smoke       Run empty workspace desktop smoke with PROFILE' \
 		'  make desktop-launch            Build and launch normal desktop runtime' \
 		'  make desktop-launch-fresh      Recreate normal desktop runtime before launch' \
@@ -102,7 +104,9 @@ test-app:
 
 test-invite-flow:
 	$(CARGO) test -p chaft-runtime bounded_invite_admits_two_devices_and_replays_an_older_claim $(ARGS)
+	$(CARGO) test -p chaft-runtime --test invite_form_regressions $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defaults $(ARGS)
+	$(CARGO) test -p chaft-ffi runtime_two_claim_invite_delivers_post_join_message_to_both_invitees $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_claimable_workspace_invite_ffi_round_trips_over_direct_transport $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_claimable_workspace_invite_ffi_round_trips_over_iroh_transport $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_pull_join_responses_for_requests_iroh_ffi_filters_before_remote_limit $(ARGS)
@@ -113,12 +117,15 @@ bench-check:
 rust-gates:
 	tools/ci/rust-gates.sh $(ARGS)
 
-.PHONY: desktop-preflight qml-lint style-lint theme-contrast desktop-checks
+.PHONY: desktop-preflight qml-lint invite-form-contracts style-lint theme-contrast desktop-checks
 desktop-preflight:
 	tools/desktop/preflight.sh
 
 qml-lint:
 	tools/desktop/qml-lint.sh
+
+invite-form-contracts:
+	$(PYTHON) tools/desktop/invite-form-contract-check.py
 
 style-lint:
 	$(PYTHON) tools/desktop/style-lint.py
@@ -128,15 +135,19 @@ theme-contrast:
 
 desktop-checks:
 	$(MAKE) qml-lint
+	$(MAKE) invite-form-contracts
 	$(MAKE) style-lint
 	$(MAKE) theme-contrast
 
-.PHONY: desktop-build desktop-smoke desktop-empty-smoke desktop-launch desktop-launch-fresh desktop-launch-detached dev-users desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
+.PHONY: desktop-build desktop-smoke desktop-live-sync-smoke desktop-empty-smoke desktop-launch desktop-launch-fresh desktop-launch-detached dev-users desktop-launch-smoke desktop-launch-smoke-fresh desktop-package desktop-package-smoke
 desktop-build:
 	tools/desktop/build.sh $(PROFILE)
 
 desktop-smoke:
 	tools/desktop/smoke.sh $(PROFILE)
+
+desktop-live-sync-smoke:
+	tools/desktop/live-sync-smoke.sh $(PROFILE)
 
 desktop-empty-smoke:
 	tools/desktop/empty-workspace-smoke.sh $(PROFILE)

@@ -47,6 +47,7 @@ run_step "QML style lint" python3 "$script_dir/style-lint.py"
 run_step "invite and form contracts" python3 "$script_dir/invite-form-contract-check.py"
 run_step "theme contrast check" python3 "$script_dir/theme-contrast-check.py"
 run_step "desktop debug smoke" "$script_dir/smoke.sh" debug
+run_step "desktop delayed live-sync smoke" "$script_dir/live-sync-smoke.sh" debug
 
 if [ "$platform" = "Linux" ] && [ "${CHAFT_DESKTOP_SKIP_SCREENSHOT:-0}" != "1" ]; then
   run_step "desktop screenshot baseline" "$script_dir/screenshot-smoke.sh" debug

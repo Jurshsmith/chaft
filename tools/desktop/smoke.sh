@@ -143,6 +143,7 @@ CHAFT_VISUAL_SMOKE_DIR="$smoke_dir/visual-workspace" \
 
 runtime_dir="$(json_field "$manifest_json" runtimeDir)"
 workspace_id="$(json_field "$manifest_json" workspaceId)"
+expected_channel_id="$(json_field "$manifest_json" channels.general)"
 expected_text="$(json_field "$manifest_json" desktopExpectedText)"
 
 case "$(uname -s)" in
@@ -229,6 +230,7 @@ run_desktop_with_watchdog \
   CHAFT_WORKSPACE_ID="$workspace_id" \
   CHAFT_DESKTOP_SMOKE=1 \
   CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
+  CHAFT_DESKTOP_SMOKE_EXPECT_CHANNEL_ID="$expected_channel_id" \
   CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE="${CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE:-1}" \
   CHAFT_DESKTOP_SMOKE_EXPECT_ROUTE="${CHAFT_DESKTOP_SMOKE_EXPECT_ROUTE:-iroh-direct}" \
   CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK=1 \
