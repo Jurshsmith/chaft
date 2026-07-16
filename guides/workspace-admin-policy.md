@@ -37,10 +37,12 @@ and preventing accidental ownerless workspaces.
 
 Until that exists, use this operational model:
 
-- keep the root owner recovery kit private and available,
+- protect and back up the root owner's actual device identity/runtime,
 - add another trusted owner when a second long-lived admin device is needed,
 - demote or remove non-root privileged devices through People & Access,
-- avoid treating a recovery kit as an invite or ownership-transfer package.
+- keep decryption key kits private, but do not treat one as root-owner recovery,
+  an invite, or an ownership-transfer package. The current kit contains content
+  keys, not the root signing identity or authorization.
 
 ## Backend Enforcement
 

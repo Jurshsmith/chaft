@@ -42,25 +42,35 @@ individual gate that failed and attach the narrower output to the report.
 - `make desktop-empty-smoke` covers the no-workspace first-run state and
   pending access-request empty states.
 - `make screenshot-smoke` covers the deterministic visual workspace and focused
-  desktop states for join, request, approval, recovery, setup, and member-role
-  surfaces.
+  desktop states for join, request, approval, key-kit import, setup, and
+  member-role surfaces.
 
 Passing automated gates is not a substitute for real-device QA. The manual pass
 still needs evidence for file pickers, clipboard behavior, OS save dialogs,
 network reachability, app restarts, and user handoff mistakes.
 
-## Create and Recover
+## Create and Import Decryption Keys
 
 1. Launch device A with no workspace.
 2. Create a workspace with `Invite only`.
-3. Save the recovery kit with the suggested `.chaftrecovery` filename.
-4. Copy the recovery kit text and verify it is not empty.
+3. Save the decryption key kit with the suggested `.chaftrecovery` filename.
+4. Copy the kit text and verify it is not empty.
 5. Quit and relaunch device A without `--fresh`; verify the workspace returns.
-6. Launch a fresh runtime and restore from the recovery kit.
-7. Verify wrong passphrase fails without creating a partial workspace.
+6. Launch a fresh runtime on device B and import the decryption key kit.
+7. Verify device B keeps its fresh device identity and cannot show workspace
+   rooms or timeline content, send, or administer before authorization.
+8. Authorize device B through the normal invite flow and synchronize the
+   membership/private-room grant events.
+9. Make matching encrypted history available and verify the kit decrypts
+   workspace and private-room history encrypted with keys included in the kit.
+10. Verify device B can show and send content only after its authorization
+    event is present.
+11. Verify a wrong passphrase fails without installing partial key material.
 
-Pass criteria: the recovery kit can restore access, wrong passphrases are clear,
-and first-run state only appears when no workspace exists.
+Pass criteria: the kit imports matching decryption keys without replacing the
+device identity or granting membership/ownership, authorization succeeds only
+through an invite, wrong passphrases are clear, and first-run state only appears
+when no workspace exists.
 
 ## Invite and Join
 

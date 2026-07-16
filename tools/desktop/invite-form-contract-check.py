@@ -279,7 +279,7 @@ class InviteFormContracts(unittest.TestCase):
         identity_contract = re.compile(
             r"readonly\s+property\s+bool\s+joinIdentityVisible\s*:"
             r"(?=[\s\S]{0,400}!root\.createMode)"
-            r"(?=[\s\S]{0,400}!root\.restoreMode)"
+            r"(?=[\s\S]{0,400}!root\.credentialIsRecoveryBundle)"
             r"(?=[\s\S]{0,400}root\.credentialSummaryVisible)"
             r"(?=[\s\S]{0,400}!root\.receivedApprovalCredential)",
         )
@@ -287,7 +287,7 @@ class InviteFormContracts(unittest.TestCase):
             self.entry,
             identity_contract,
             "joiner identity must only appear after a recognized credential and must "
-            "stay hidden for Create, Restore, and received approvals",
+            "stay hidden for Create, parsed key kits, and received approvals",
         )
 
         field = object_block(self.entry, "LabeledField", "displayNameField")
@@ -697,7 +697,8 @@ class InviteFormContracts(unittest.TestCase):
             submit_join,
             r"var\s+passphrase\s*=\s*workspaceEntryDialog\.recoveryPassphraseText\.trim\(",
         )
-        self.assertIn("hasPassphrase = passphrase.trim().length > 0", submit_join)
+        self.assertIn("var isRecoveryRestore = recoveryBundle !== null", submit_join)
+        self.assertNotIn("restoreMode ? chaftController.importRecoveryBundle", submit_join)
         self.assertIn(
             "chaftController.importRecoveryBundle(credentialJson, passphrase)", submit_join
         )

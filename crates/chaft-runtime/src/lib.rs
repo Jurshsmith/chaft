@@ -8488,7 +8488,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_recovery_bundle_imports_workspace_and_private_channel_keys() {
+    fn workspace_recovery_bundle_imports_keys_but_not_device_authorization() {
         let alice_dir = tempfile::tempdir().unwrap();
         let bob_dir = tempfile::tempdir().unwrap();
         let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
@@ -8502,23 +8502,9 @@ mod tests {
         let private_channel_id = ChannelId(private_channel.channel_id);
 
         alice
-            .invite_member(
-                workspace_id.clone(),
-                bob.device_id().clone(),
-                WorkspaceRole::Member,
-            )
-            .unwrap();
-        alice
-            .add_channel_member(
-                workspace_id.clone(),
-                private_channel_id.clone(),
-                bob.device_id().clone(),
-            )
-            .unwrap();
-        alice
             .send_message(
                 workspace_id.clone(),
-                public_channel_id,
+                public_channel_id.clone(),
                 "recover public note",
             )
             .unwrap();
@@ -8540,8 +8526,11 @@ mod tests {
         assert_eq!(bundle.kdf.time_cost, RECOVERY_BUNDLE_ARGON2_TIME_COST);
         assert_eq!(bundle.kdf.parallelism, RECOVERY_BUNDLE_ARGON2_PARALLELISM);
         assert_eq!(bundle.kdf.output_len, RECOVERY_BUNDLE_KDF_OUTPUT_LEN);
+        let exporter_device_id = bundle.exporter_device_id.clone();
 
-        for event in alice.workspace_events(&workspace_id).unwrap() {
+        let events_before_authorization = alice.workspace_events(&workspace_id).unwrap();
+        let event_count_before_authorization = events_before_authorization.len();
+        for event in events_before_authorization {
             bob.store.append_event(&event).unwrap();
         }
         assert!(
@@ -8552,6 +8541,52 @@ mod tests {
         let imported = bob
             .import_workspace_recovery_bundle(bundle, "correct horse battery staple")
             .unwrap();
+        let decrypted_before_authorization = bob
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        assert!(decrypted_before_authorization.channels.is_empty());
+        assert!(decrypted_before_authorization.timeline.is_empty());
+        let unauthorized_send = bob
+            .send_message(
+                workspace_id.clone(),
+                public_channel_id,
+                "the key kit does not authorize this device",
+            )
+            .unwrap_err();
+        assert!(
+            unauthorized_send
+                .to_string()
+                .contains("not a workspace member")
+        );
+        assert_eq!(
+            bob.workspace_events(&workspace_id).unwrap().len(),
+            event_count_before_authorization
+        );
+        assert_ne!(imported.importer_device_id, exporter_device_id);
+        assert_eq!(imported.importer_device_id, bob.device_id().0);
+
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(
+                workspace_id.clone(),
+                private_channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        for event in alice
+            .workspace_events(&workspace_id)
+            .unwrap()
+            .into_iter()
+            .skip(event_count_before_authorization)
+        {
+            bob.store.append_event(&event).unwrap();
+        }
         let decrypted = bob.decrypted_workspace_snapshot(workspace_id).unwrap();
 
         assert_eq!(imported.imported_channel_count, 1);

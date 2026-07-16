@@ -37,19 +37,24 @@ the release evidence for the build under test.
 | `make desktop-empty-smoke` |  |  |  |
 | `make screenshot-smoke` |  |  |  |
 
-## Create and Recover
+## Create and Import Decryption Keys
 
 | Check | Result | Evidence / notes |
 | --- | --- | --- |
 | Fresh launch shows empty workspace state |  |  |
 | Create workspace with invite-only access |  |  |
-| Save `.chaftrecovery` recovery kit |  |  |
-| Copy recovery kit text |  |  |
-| Recovery creation requires matching passphrase confirmation |  |  |
-| Passphrase whitespace is preserved consistently during create and restore |  |  |
+| Save `.chaftrecovery` decryption key kit |  |  |
+| Copy decryption key kit text |  |  |
+| Kit creation requires matching passphrase confirmation |  |  |
+| New kit creation requires at least 12 passphrase characters |  |  |
+| Passphrase whitespace is preserved consistently during create and import |  |  |
 | Relaunch without `--fresh` restores workspace |  |  |
-| Restore into fresh runtime from recovery kit |  |  |
-| Wrong passphrase fails without partial workspace |  |  |
+| Import kit into fresh runtime without changing its identity |  |  |
+| Kit import does not grant membership, administration, or root ownership |  |  |
+| Normal invite authorizes the fresh device after kit import |  |  |
+| Before authorization, a fresh device cannot show workspace rooms or timeline content |  |  |
+| Authorized device decrypts matching history encrypted with keys included in the kit |  |  |
+| Wrong passphrase fails without partial key installation |  |  |
 
 ## Invite and Join
 
@@ -125,7 +130,7 @@ the release evidence for the build under test.
 | Save-over-existing credential behavior is understandable |  |  |
 | Credential text survives copy/paste through a plain text editor |  |  |
 | Clicking outside credential/security dialogs does not discard drafts |  |  |
-| Create, Join, and Restore keep independent field state |  |  |
+| Create, Join, and Key kit modes retain the shared credential safely when its parsed type switches modes |  |  |
 
 ## Final Decision
 

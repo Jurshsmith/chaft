@@ -11,9 +11,9 @@ A fresh Chaft runtime starts with no joined workspace. This is expected. The
 first screen lets you:
 
 - join a workspace from an access file, invite, request card, access request,
-  older JSON export, or recovery kit,
+  or older JSON export,
 - create a new workspace,
-- restore access from a recovery kit,
+- import a decryption key kit to unlock matching history,
 - or return later if you do not have credentials yet.
 
 The seeded `Chaft Visual Smoke` workspace is only for deterministic visual
@@ -30,19 +30,28 @@ the default user state.
 
 2. Choose `Create workspace` from the first-run screen.
 3. Enter the workspace name, default channel name, and access policy.
-4. Save or copy the recovery export when prompted.
-5. Keep the recovery passphrase separate from the exported file.
+4. Save a decryption key kit in durable private storage when prompted. Copying
+   it to the clipboard alone does not complete the safety checkpoint.
+5. Use a long, unique passphrase and keep it separate from the exported file.
 
-The recovery export is the owner device's safety path back into the workspace.
-Treat it as sensitive access material. A recovery kit restores workspace and
-private-room keys; it is not an invitation for an arbitrary new member. A device
-using a recovery kit still needs workspace history from a reachable peer, and
-the visible workspace state is limited by the membership recorded in that
-history.
+The user-facing decryption key kit uses the existing `.chaftrecovery` file
+format and recovery-bundle APIs. It contains the manual workspace key ring and
+the private-room key rings available on the exporting device. It does not
+contain the device signing identity, workspace membership authorization,
+OpenMLS private group state, or root ownership.
+
+Treat the kit as sensitive decryption material, not as a complete account or
+workspace recovery mechanism. The kit supplies decryption keys, but a fresh
+device must also be authorized before Chaft can show, send, or administer
+workspace content. Once authorized, matching ciphertext can be decrypted when
+history is available locally or from a reachable peer. Save a fresh kit after
+key rotation or gaining access to another private room so it contains the latest
+available key rings.
 
 ## Share Workspace Access
 
-Do not share the recovery kit with teammates. To add another person or device:
+Do not share a decryption key kit with teammates. To authorize another person
+or device:
 
 1. Open the workspace, then open `Setup`.
 2. In People & Access, choose a role and expiry, then select `Single-use` or
@@ -81,20 +90,32 @@ Another device cannot import the response.
 3. Paste or open one of the supported credential types:
    - workspace access file,
    - signed invite or invite package,
-   - workspace card or request handoff,
-   - passphrase-protected recovery kit.
+   - workspace card or request handoff.
 4. Confirm the display name teammates will see. Chaft asks once and preserves it
    through approval; existing profiles appear as `Joining as <name>`.
 5. Provide a teammate address only when the credential does not include one.
 6. Choose `Join workspace`. Chaft completes delivery automatically when the
    inviter is reachable and offers manual transfer only as a fallback.
 
-If the credential is a recovery bundle, the app asks for the recovery
-passphrase. Recovery also needs reachable workspace history; when no peer is
-reachable, Chaft stages the restore and asks for a peer endpoint. If the
-credential is a workspace card, the app prepares an access request instead of
-joining immediately. A secure invite prepares a cryptographic claim; it never
-imports a key directly from the invite file.
+If the credential is a workspace card, the app prepares an access request
+instead of joining immediately. A secure invite prepares a cryptographic claim;
+it never imports a key directly from the invite file.
+
+## Import a Decryption Key Kit
+
+1. Choose `Key kit` from the first-run or workspace-entry screen.
+2. Open or paste the passphrase-protected `.chaftrecovery` file.
+3. Enter the exact passphrase used when the kit was saved.
+4. Provide a teammate address when matching encrypted history is not already
+   available locally.
+5. Choose `Import keys`.
+
+The underlying credential remains a recovery bundle for schema/API
+compatibility. Import installs only its contained key rings. Matching history
+must already exist locally or come from a reachable peer, and a fresh device
+must be authorized before Chaft can show it. Import does not replace the fresh
+device identity, authorize that device, or transfer root ownership; use the
+normal invite flow when authorization is needed.
 
 ## Credential Files
 
@@ -104,11 +125,13 @@ Chaft saves user-facing handoff material with explicit extensions:
 - access requests: `Chaft - <workspace> - Access Request - <person> - <date>.chaftrequest`,
 - workspace request cards: `Chaft - <workspace> - Request Card - <date>.chaftworkspace`,
 - workspace access files: `Chaft - <workspace> - Access File - <date>.chaftaccess`,
-- recovery kits: `Chaft - <workspace> - Recovery Kit.chaftrecovery`.
+- decryption key kits: `Chaft - <workspace> - Decryption Key Kit.chaftrecovery`.
 
-The open/import flows also accept older JSON exports. Treat recovery kits as
-private restore material, not invitations; store the kit privately, keep its
-passphrase separate from the file, and never send the kit as an invite.
+The `.chaftrecovery` extension and recovery-bundle schema/API names remain
+unchanged for compatibility. The open/import flows also accept older JSON
+exports. Treat decryption key kits as private key material, not invitations;
+store the kit privately, keep its passphrase separate from the file, and never
+send the kit as an invite.
 Legacy workspace access files still grant workspace access and should only go
 to the intended teammate or device. Current secure invite files do not contain
 the workspace key, but must still be shared privately because their remaining
@@ -199,20 +222,25 @@ When someone should no longer read future messages:
 1. Remove the member from the workspace or private channel.
 2. Rotate workspace or private-channel access when prompted.
 3. Verify the removed device no longer appears as active in member/access views.
-4. Keep old recovery material private; issue new invite material only to current
-   members.
+4. Keep old decryption key material private and save a fresh kit after rotation;
+   issue new invite material only to current members.
 
 Removal stops future authorization. Rotation protects future content keys.
 Already-synced historical content remains a separate product/security concern.
 
 ## Troubleshooting
 
-- Wrong recovery passphrase: retry with the original passphrase used when the
-  recovery bundle was exported.
+- Wrong kit passphrase: retry with the exact passphrase used when the
+  decryption key kit was exported.
+- Imported keys but cannot send: the current device is not authorized by the
+  workspace history. Ask an owner or admin for an invite.
+- Recent content remains locked: import a newer decryption key kit created
+  after the relevant key or private-room access change.
 - Unreachable peer: copy or save the join request or approval and send it out
   of band, or retry when the admin endpoint is reachable.
 - Expired or revoked invite: ask an admin for a fresh invite.
 - Unknown credential file: verify that the file is a Chaft access file, invite
-  package, workspace card, join request, recovery kit, or older JSON export.
+  package, workspace card, join request, decryption key kit, or older JSON
+  export.
 - No workspaces on launch: this is the expected first-run state. Create or join
   a workspace to enter the app.
