@@ -1,6 +1,6 @@
-use std::sync::Mutex;
+use std::{fs, path::Path, sync::Mutex};
 
-use chaft_core::{WorkspaceInviteStatus, authorize_event_with_history};
+use chaft_core::{WorkspaceInviteStatus, WorkspaceJoinRequestStatus, authorize_event_with_history};
 use chaft_crypto::{ContentKey, SealedPayload, open_aes_256_gcm_siv, seal_aes_256_gcm_siv};
 use chaft_identity::{
     InvitationCapability, verify_detached_signature, verify_device_detached_signature,
@@ -39,12 +39,16 @@ const RESPONSE_KEY_CONTEXT: &str = "Chaft workspace invite response key v1";
 const RESPONSE_IDENTITY_KEY_CONTEXT: &str = "Chaft workspace invite response identity key v1";
 const CAPABILITY_SECRET_BYTES: usize = 32;
 const INVITE_CLAIM_RECEIPT_MAX_BYTES: usize = 8 * 1024;
+const INVITE_PROFILE_FINALIZATION_KIND: &str = "chaft.workspace-invite-profile-finalization.v1";
+const INVITE_PROFILE_FINALIZATION_SCHEMA_VERSION: u32 = 1;
+const INVITE_PROFILE_FINALIZATION_MAX_BYTES: usize = 8 * 1024;
 const INVITE_RESPONSE_RECEIPT_KIND: &str = "chaft.workspace-invite-response-receipt.v1";
 const INVITE_RESPONSE_RECEIPT_SCHEMA_VERSION: u32 = 1;
 const INVITE_RESPONSE_RECEIPT_MAX_BYTES: usize = 64 * 1024;
 
 static INVITE_RESPONSE_RECEIPT_LOCK: Mutex<()> = Mutex::new(());
 static INVITE_CLAIM_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static INVITE_PROFILE_FINALIZATION_LOCK: Mutex<()> = Mutex::new(());
 const INVITE_CLAIM_HISTORY_RETRY_LIMIT: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +200,36 @@ struct WorkspaceInviteClaimReceipt {
     request_id: String,
     expected_responder_device_id: String,
     capability_public_key: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    profile_pending: bool,
+    #[serde(default)]
+    profile_finalized: bool,
+    #[serde(default)]
+    profile_event_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingWorkspaceInviteProfileFinalization {
+    kind: String,
+    schema_version: u32,
+    workspace_id: String,
+    invite_id: String,
+    request_id: String,
+}
+
+#[derive(Debug)]
+struct StoredWorkspaceInviteClaimReceipt {
+    receipt: WorkspaceInviteClaimReceipt,
+    path: std::path::PathBuf,
+}
+
+#[derive(Debug)]
+struct CanonicalWorkspaceInviteClaim {
+    display_name: String,
+    member_event_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,10 +439,14 @@ impl LocalRuntime {
             request_id: claim.payload.request_id.clone(),
             expected_responder_device_id,
             capability_public_key,
+            display_name: claim.payload.display_name.clone(),
+            profile_pending: false,
+            profile_finalized: false,
+            profile_event_ids: Vec::new(),
         };
-        write_secret_file(
+        self.write_workspace_invite_claim_receipt(
             &self.workspace_invite_claim_receipt_path(&receipt.invite_id, &receipt.request_id),
-            &serde_json::to_vec(&receipt)?,
+            &receipt,
         )?;
         Ok(claim)
     }
@@ -725,7 +763,24 @@ impl LocalRuntime {
         if workspace_key.workspace_id != response.payload.workspace_id {
             return Err(RuntimeError::InvalidWorkspaceInviteResponse);
         }
+        // Persist recovery intent before the key write. A process crash after
+        // the key becomes durable must never leave the joiner's profile with no
+        // discoverable finalization work. Finalization independently requires
+        // the workspace key, so a failed key import cannot create profile data.
+        self.mark_workspace_invite_profile_pending(
+            &response.payload.workspace_id,
+            &response.payload.invite_id,
+            &response.payload.request_id,
+        )?;
         let imported = self.import_workspace_key(workspace_key)?;
+        // Manual/history-first transfers can already have the signed membership
+        // chain locally when the sealed key response arrives. Finalize now in
+        // that case; a normal response-first join simply keeps its pending
+        // marker until the first history pull. Any generated events are part of
+        // the local store and the next sync's initial publish sends them.
+        let _ = self.finalize_pending_workspace_invite_profile(&WorkspaceId(
+            response.payload.workspace_id.clone(),
+        ))?;
         Ok(ImportedWorkspaceInviteResponse {
             workspace_id: imported.workspace_id,
             invite_id: response.payload.invite_id,
@@ -935,6 +990,415 @@ impl LocalRuntime {
         .map_err(|_| RuntimeError::InvalidWorkspaceInviteResponse)
     }
 
+    fn mark_workspace_invite_profile_pending(
+        &self,
+        workspace_id: &str,
+        invite_id: &str,
+        request_id: &str,
+    ) -> Result<(), RuntimeError> {
+        let _profile_guard = INVITE_PROFILE_FINALIZATION_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (mut receipt, receipt_path) =
+            self.workspace_invite_claim_receipt_with_path(invite_id, request_id)?;
+        if receipt.workspace_id != workspace_id
+            || receipt.invite_id != invite_id
+            || receipt.request_id != request_id
+        {
+            return Err(RuntimeError::InvalidWorkspaceInviteResponse);
+        }
+
+        let marker_path =
+            self.workspace_invite_profile_finalization_path(workspace_id, invite_id, request_id);
+        if receipt.profile_finalized {
+            remove_local_marker_file(&marker_path)?;
+            return Ok(());
+        }
+
+        // Markers are per claim. A stale claim from a removed membership must
+        // never prevent a later re-invite from recording its own pending work.
+        // The marker is written first so a crash cannot leave a pending receipt
+        // that later pulls have no deterministic way to discover.
+        self.write_workspace_invite_profile_finalization(
+            &marker_path,
+            &PendingWorkspaceInviteProfileFinalization {
+                kind: INVITE_PROFILE_FINALIZATION_KIND.to_owned(),
+                schema_version: INVITE_PROFILE_FINALIZATION_SCHEMA_VERSION,
+                workspace_id: workspace_id.to_owned(),
+                invite_id: invite_id.to_owned(),
+                request_id: request_id.to_owned(),
+            },
+        )?;
+        receipt.profile_pending = true;
+        self.write_workspace_invite_claim_receipt(&receipt_path, &receipt)
+    }
+
+    pub(crate) fn finalize_pending_workspace_invite_profile(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<String>, RuntimeError> {
+        let _profile_guard = INVITE_PROFILE_FINALIZATION_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.load_workspace_key(workspace_id)?.is_none() {
+            // Response-first and failed-import states may have durable pending
+            // intent before the workspace key exists. History alone must never
+            // be enough to materialize the joiner's identity.
+            return Ok(Vec::new());
+        }
+        let context = match self.workspace_write_context(workspace_id) {
+            Ok(context) => context,
+            Err(RuntimeError::WorkspaceHasNoEvents { .. }) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let local_device_id = self.identity.device_id();
+        let Some(active_member_event_id) =
+            self.active_invite_membership_event_id(&context, local_device_id)
+        else {
+            // The response can be imported before its membership history arrives.
+            // Keep the durable marker so a later pull can finish the identity.
+            return Ok(Vec::new());
+        };
+        let Some((mut stored_receipt, canonical_claim)) =
+            self.active_invite_profile_claim(workspace_id, &context, &active_member_event_id)?
+        else {
+            return Ok(Vec::new());
+        };
+
+        // Existing explicit profile data wins over the invite-time default. This
+        // keeps finalization idempotent and avoids reverting a user edit that won
+        // a race with the pull.
+        let linked_person_profile_name = context
+            .state
+            .person_device_links
+            .get(local_device_id)
+            .and_then(|link| context.state.person_profiles.get(&link.person_id))
+            .map(|profile| profile.display_name.trim())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        let effective_display_name = context
+            .state
+            .profiles
+            .get(local_device_id)
+            .map(|profile| profile.display_name.trim())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .or(linked_person_profile_name)
+            .unwrap_or(canonical_claim.display_name);
+
+        let mut event_ids = Vec::new();
+        let device_profile_missing = context
+            .state
+            .profiles
+            .get(local_device_id)
+            .is_none_or(|profile| profile.display_name.trim().is_empty());
+        if device_profile_missing {
+            let updated =
+                self.update_device_profile(workspace_id.clone(), &effective_display_name)?;
+            event_ids.push(updated.event_id);
+        }
+
+        let refreshed = self.workspace_write_context(workspace_id)?;
+        match refreshed.state.person_device_links.get(local_device_id) {
+            Some(link)
+                if refreshed
+                    .state
+                    .person_profiles
+                    .get(&link.person_id)
+                    .is_none_or(|profile| profile.display_name.trim().is_empty()) =>
+            {
+                let updated = self.update_person_profile(
+                    workspace_id.clone(),
+                    link.person_id.clone(),
+                    &effective_display_name,
+                )?;
+                if let Some(link_event_id) = updated.link_event_id {
+                    event_ids.push(link_event_id);
+                }
+                event_ids.push(updated.profile_event_id);
+            }
+            Some(_) => {}
+            None => {
+                let updated = self
+                    .update_local_person_profile(workspace_id.clone(), &effective_display_name)?;
+                if let Some(link_event_id) = updated.link_event_id {
+                    event_ids.push(link_event_id);
+                }
+                event_ids.push(updated.profile_event_id);
+            }
+        }
+
+        stored_receipt.receipt.profile_pending = false;
+        stored_receipt.receipt.profile_finalized = true;
+        stored_receipt
+            .receipt
+            .profile_event_ids
+            .clone_from(&event_ids);
+        self.write_workspace_invite_claim_receipt(&stored_receipt.path, &stored_receipt.receipt)?;
+        self.remove_workspace_invite_profile_markers(
+            &workspace_id.0,
+            &stored_receipt.receipt.invite_id,
+            &stored_receipt.receipt.request_id,
+        )?;
+        Ok(event_ids)
+    }
+
+    fn active_invite_profile_claim(
+        &self,
+        workspace_id: &WorkspaceId,
+        context: &WorkspaceWriteContext,
+        active_member_event_id: &str,
+    ) -> Result<
+        Option<(
+            StoredWorkspaceInviteClaimReceipt,
+            CanonicalWorkspaceInviteClaim,
+        )>,
+        RuntimeError,
+    > {
+        let Some((invite_id, request_id)) = self.active_invite_claim_coordinates(
+            context,
+            active_member_event_id,
+            self.identity.device_id(),
+        ) else {
+            return Ok(None);
+        };
+        let Some(stored) =
+            self.workspace_invite_claim_receipt_stored_optional(&invite_id, &request_id)?
+        else {
+            return Ok(None);
+        };
+        let receipt = &stored.receipt;
+        if receipt.workspace_id != workspace_id.0
+            || receipt.invite_id != invite_id
+            || receipt.request_id != request_id
+            || receipt.profile_finalized
+        {
+            return Ok(None);
+        }
+        let Some(canonical) = self.canonical_invite_claim(receipt, context)? else {
+            return Ok(None);
+        };
+        if canonical.member_event_id != active_member_event_id {
+            return Ok(None);
+        }
+        Ok(Some((stored, canonical)))
+    }
+
+    fn active_invite_claim_coordinates(
+        &self,
+        context: &WorkspaceWriteContext,
+        active_member_event_id: &str,
+        local_device_id: &DeviceId,
+    ) -> Option<(String, String)> {
+        let member_event = context
+            .events
+            .iter()
+            .find(|signed| signed.event_id.0 == active_member_event_id)?;
+        let EventBody::MemberInvited {
+            invitee_device_id, ..
+        } = &member_event.event.body
+        else {
+            return None;
+        };
+        if invitee_device_id != local_device_id {
+            return None;
+        }
+        let [request_event_id] = member_event.event.parents.as_slice() else {
+            return None;
+        };
+        let request_event = context
+            .events
+            .iter()
+            .find(|signed| signed.event_id == *request_event_id)?;
+        let EventBody::WorkspaceJoinRequestRecorded {
+            request_id,
+            requester_device_id,
+            source_type,
+            source_invite_id,
+            ..
+        } = &request_event.event.body
+        else {
+            return None;
+        };
+        if requester_device_id != local_device_id
+            || source_type != "invite_claim"
+            || source_invite_id.is_empty()
+            || request_id.is_empty()
+        {
+            return None;
+        }
+        Some((source_invite_id.clone(), request_id.clone()))
+    }
+
+    fn canonical_invite_claim(
+        &self,
+        receipt: &WorkspaceInviteClaimReceipt,
+        context: &WorkspaceWriteContext,
+    ) -> Result<Option<CanonicalWorkspaceInviteClaim>, RuntimeError> {
+        let local_device_id = self.identity.device_id();
+        let request_events = context
+            .events
+            .iter()
+            .filter(|signed| {
+                matches!(
+                    &signed.event.body,
+                    EventBody::WorkspaceJoinRequestRecorded { request_id, .. }
+                        if request_id == &receipt.request_id
+                )
+            })
+            .collect::<Vec<_>>();
+        let [request_event] = request_events.as_slice() else {
+            // Duplicate request IDs make the materialized projection mutable;
+            // never derive identity from whichever duplicate happened to win.
+            return Ok(None);
+        };
+        let EventBody::WorkspaceJoinRequestRecorded {
+            requester_device_id,
+            display_name,
+            source_type,
+            source_invite_id,
+            source_approval_policy,
+            ..
+        } = &request_event.event.body
+        else {
+            unreachable!("filtered to workspace join request events")
+        };
+        let expected_responder = DeviceId(receipt.expected_responder_device_id.clone());
+        let canonical_display_name = display_name.trim();
+        if requester_device_id != local_device_id
+            || request_event.event.author_device_id != expected_responder
+            || source_type != "invite_claim"
+            || source_invite_id != &receipt.invite_id
+            || source_approval_policy != "preapproved"
+            || canonical_display_name.is_empty()
+        {
+            return Ok(None);
+        }
+        validate_metadata_field_size(
+            "display name",
+            canonical_display_name,
+            DEVICE_DISPLAY_NAME_MAX_BYTES,
+        )?;
+        let receipt_display_name = receipt.display_name.trim();
+        if !receipt_display_name.is_empty() && receipt_display_name != canonical_display_name {
+            // Modern receipts remember the locally signed claim name. The
+            // inviter's canonical record must agree exactly after normalization.
+            return Ok(None);
+        }
+
+        let capability_events = context
+            .events
+            .iter()
+            .filter(|signed| {
+                matches!(
+                    &signed.event.body,
+                    EventBody::WorkspaceInviteCapabilityCreated { invite_id, .. }
+                        if invite_id == &receipt.invite_id
+                )
+            })
+            .collect::<Vec<_>>();
+        let [capability_event] = capability_events.as_slice() else {
+            return Ok(None);
+        };
+        let EventBody::WorkspaceInviteCapabilityCreated {
+            capability_public_key,
+            ..
+        } = &capability_event.event.body
+        else {
+            unreachable!("filtered to workspace invite capability events")
+        };
+        if capability_event.event.author_device_id != expected_responder
+            || capability_public_key != &receipt.capability_public_key
+        {
+            return Ok(None);
+        }
+
+        let member_events = context
+            .events
+            .iter()
+            .filter(|signed| {
+                matches!(
+                    &signed.event.body,
+                    EventBody::MemberInvited { invitee_device_id, .. }
+                        if invitee_device_id == local_device_id
+                            && signed.event.parents.as_slice()
+                                == std::slice::from_ref(&request_event.event_id)
+                )
+            })
+            .collect::<Vec<_>>();
+        let [member_event] = member_events.as_slice() else {
+            return Ok(None);
+        };
+        if member_event.event.author_device_id != expected_responder {
+            return Ok(None);
+        }
+
+        let claim_events = context
+            .events
+            .iter()
+            .filter(|signed| {
+                matches!(
+                    &signed.event.body,
+                    EventBody::WorkspaceInviteClaimed { request_id, .. }
+                        if request_id == &receipt.request_id
+                )
+            })
+            .collect::<Vec<_>>();
+        let [claim_event] = claim_events.as_slice() else {
+            return Ok(None);
+        };
+        let EventBody::WorkspaceInviteClaimed {
+            invite_id,
+            invitee_device_id,
+            request_id,
+        } = &claim_event.event.body
+        else {
+            unreachable!("filtered to workspace invite claim events")
+        };
+        if invite_id != &receipt.invite_id
+            || invitee_device_id != local_device_id
+            || request_id != &receipt.request_id
+            || claim_event.event.author_device_id != expected_responder
+            || claim_event.event.parents.as_slice() != std::slice::from_ref(&member_event.event_id)
+        {
+            return Ok(None);
+        }
+
+        let Some(request) = context.state.join_requests.get(&receipt.request_id) else {
+            return Ok(None);
+        };
+        if request.requested_event_id != request_event.event_id
+            || request.requester_device_id != *local_device_id
+            || request.requested_by_device_id != expected_responder
+            || request.display_name.trim() != canonical_display_name
+            || request.source_type != "invite_claim"
+            || request.source_invite_id != receipt.invite_id
+            || request.source_approval_policy != "preapproved"
+            || request.status != WorkspaceJoinRequestStatus::Approved
+            || request.resolved_event_id.as_ref() != Some(&member_event.event_id)
+            || request.resolved_by_device_id.as_ref() != Some(&expected_responder)
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(CanonicalWorkspaceInviteClaim {
+            display_name: canonical_display_name.to_owned(),
+            member_event_id: member_event.event_id.0.clone(),
+        }))
+    }
+
+    fn active_invite_membership_event_id(
+        &self,
+        context: &WorkspaceWriteContext,
+        local_device_id: &DeviceId,
+    ) -> Option<String> {
+        context
+            .state
+            .members
+            .get(local_device_id)
+            .map(|member| member.membership_event_id.0.clone())
+    }
+
     fn invite_response_secret(&self) -> StaticSecret {
         StaticSecret::from(blake3::derive_key(
             RESPONSE_IDENTITY_KEY_CONTEXT,
@@ -966,6 +1430,31 @@ impl LocalRuntime {
             .join(format!("{file_id}.json"))
     }
 
+    fn workspace_invite_profile_finalization_path(
+        &self,
+        workspace_id: &str,
+        invite_id: &str,
+        request_id: &str,
+    ) -> std::path::PathBuf {
+        let file_id =
+            blake3::hash(format!("{workspace_id}\0{invite_id}\0{request_id}").as_bytes()).to_hex();
+        self.paths
+            .data_dir
+            .join("invite-profile-finalization")
+            .join(format!("{file_id}.json"))
+    }
+
+    fn legacy_workspace_invite_profile_finalization_path(
+        &self,
+        workspace_id: &str,
+    ) -> std::path::PathBuf {
+        let file_id = blake3::hash(workspace_id.as_bytes()).to_hex();
+        self.paths
+            .data_dir
+            .join("invite-profile-finalization")
+            .join(format!("{file_id}.json"))
+    }
+
     fn legacy_workspace_invite_claim_receipt_path(&self, invite_id: &str) -> std::path::PathBuf {
         let file_id = blake3::hash(invite_id.as_bytes()).to_hex();
         self.paths
@@ -979,20 +1468,131 @@ impl LocalRuntime {
         invite_id: &str,
         request_id: &str,
     ) -> Result<WorkspaceInviteClaimReceipt, RuntimeError> {
-        let bytes = match read_local_metadata_file_with_limit(
-            &self.workspace_invite_claim_receipt_path(invite_id, request_id),
+        self.workspace_invite_claim_receipt_with_path(invite_id, request_id)
+            .map(|(receipt, _)| receipt)
+    }
+
+    fn workspace_invite_claim_receipt_with_path(
+        &self,
+        invite_id: &str,
+        request_id: &str,
+    ) -> Result<(WorkspaceInviteClaimReceipt, std::path::PathBuf), RuntimeError> {
+        self.workspace_invite_claim_receipt_stored(invite_id, request_id)
+            .map(|stored| (stored.receipt, stored.path))
+    }
+
+    fn workspace_invite_claim_receipt_stored(
+        &self,
+        invite_id: &str,
+        request_id: &str,
+    ) -> Result<StoredWorkspaceInviteClaimReceipt, RuntimeError> {
+        self.workspace_invite_claim_receipt_stored_optional(invite_id, request_id)?
+            .ok_or(RuntimeError::InvalidWorkspaceInviteResponse)
+    }
+
+    fn workspace_invite_claim_receipt_stored_optional(
+        &self,
+        invite_id: &str,
+        request_id: &str,
+    ) -> Result<Option<StoredWorkspaceInviteClaimReceipt>, RuntimeError> {
+        let receipt_path = self.workspace_invite_claim_receipt_path(invite_id, request_id);
+        let legacy_path = self.legacy_workspace_invite_claim_receipt_path(invite_id);
+        let (bytes, path) = match read_local_metadata_file_with_limit(
+            &receipt_path,
             INVITE_CLAIM_RECEIPT_MAX_BYTES,
             "workspace invite claim receipt",
         )? {
-            Some(bytes) => Some(bytes),
-            None => read_local_metadata_file_with_limit(
-                &self.legacy_workspace_invite_claim_receipt_path(invite_id),
+            Some(bytes) => (bytes, receipt_path),
+            None => match read_local_metadata_file_with_limit(
+                &legacy_path,
                 INVITE_CLAIM_RECEIPT_MAX_BYTES,
                 "workspace invite claim receipt",
-            )?,
+            )? {
+                Some(bytes) => (bytes, legacy_path),
+                None => return Ok(None),
+            },
+        };
+        self.parse_workspace_invite_claim_receipt(&bytes, path)
+            .map(Some)
+    }
+
+    fn parse_workspace_invite_claim_receipt(
+        &self,
+        bytes: &[u8],
+        path: std::path::PathBuf,
+    ) -> Result<StoredWorkspaceInviteClaimReceipt, RuntimeError> {
+        let receipt = serde_json::from_slice(bytes)
+            .map_err(|_| RuntimeError::InvalidWorkspaceInviteResponse)?;
+        Ok(StoredWorkspaceInviteClaimReceipt { receipt, path })
+    }
+
+    fn write_workspace_invite_claim_receipt(
+        &self,
+        path: &Path,
+        receipt: &WorkspaceInviteClaimReceipt,
+    ) -> Result<(), RuntimeError> {
+        let bytes = serde_json::to_vec(receipt)?;
+        if bytes.len().saturating_add(1) > INVITE_CLAIM_RECEIPT_MAX_BYTES {
+            return Err(RuntimeError::MetadataFieldTooLarge {
+                field: "workspace invite claim receipt",
+                actual_bytes: bytes.len().saturating_add(1),
+                max_bytes: INVITE_CLAIM_RECEIPT_MAX_BYTES,
+            });
         }
-        .ok_or(RuntimeError::InvalidWorkspaceInviteResponse)?;
-        serde_json::from_slice(&bytes).map_err(|_| RuntimeError::InvalidWorkspaceInviteResponse)
+        write_secret_file(path, &bytes)
+    }
+
+    fn remove_workspace_invite_profile_markers(
+        &self,
+        workspace_id: &str,
+        invite_id: &str,
+        request_id: &str,
+    ) -> Result<(), RuntimeError> {
+        remove_local_marker_file(&self.workspace_invite_profile_finalization_path(
+            workspace_id,
+            invite_id,
+            request_id,
+        ))?;
+        // The old implementation keyed one marker by workspace. Only remove it
+        // when its embedded coordinates match the claim we just finalized.
+        let legacy_path = self.legacy_workspace_invite_profile_finalization_path(workspace_id);
+        if let Some(bytes) = read_local_metadata_file_with_limit(
+            &legacy_path,
+            INVITE_PROFILE_FINALIZATION_MAX_BYTES,
+            "workspace invite profile finalization",
+        )? && let Ok(marker) =
+            serde_json::from_slice::<PendingWorkspaceInviteProfileFinalization>(&bytes)
+            && marker.workspace_id == workspace_id
+            && marker.invite_id == invite_id
+            && marker.request_id == request_id
+        {
+            remove_local_marker_file(&legacy_path)?;
+        }
+        Ok(())
+    }
+
+    fn write_workspace_invite_profile_finalization(
+        &self,
+        path: &Path,
+        marker: &PendingWorkspaceInviteProfileFinalization,
+    ) -> Result<(), RuntimeError> {
+        let bytes = serde_json::to_vec(marker)?;
+        if bytes.len().saturating_add(1) > INVITE_PROFILE_FINALIZATION_MAX_BYTES {
+            return Err(RuntimeError::MetadataFieldTooLarge {
+                field: "workspace invite profile finalization",
+                actual_bytes: bytes.len().saturating_add(1),
+                max_bytes: INVITE_PROFILE_FINALIZATION_MAX_BYTES,
+            });
+        }
+        write_secret_file(path, &bytes)
+    }
+}
+
+fn remove_local_marker_file(path: &Path) -> Result<(), RuntimeError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1177,6 +1777,198 @@ mod tests {
 
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn failed_key_import_keeps_pending_intent_but_history_alone_cannot_finalize_profile() {
+        let owner_dir = tempdir().unwrap();
+        let joiner_dir = tempdir().unwrap();
+        let owner = LocalRuntime::open(owner_dir.path(), None).unwrap();
+        let joiner = LocalRuntime::open(joiner_dir.path(), None).unwrap();
+        let created = owner
+            .create_workspace("Failed key import", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let invite = owner
+            .create_workspace_invite(
+                workspace_id.clone(),
+                "Failed key import".to_owned(),
+                WorkspaceRole::Member,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap();
+        let expires_at = invite.artifact.expires_at.clone();
+        let claim = joiner
+            .prepare_workspace_invite_claim(
+                invite.artifact,
+                "Pending Joiner".to_owned(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap();
+        let retained_claim = claim.clone();
+        owner.claim_workspace_invite(claim).unwrap();
+        for event in owner.workspace_write_context(&workspace_id).unwrap().events {
+            joiner.store.append_event(&event).unwrap();
+        }
+
+        let invalid_response = owner
+            .seal_workspace_invite_response(
+                &retained_claim,
+                WorkspaceRole::Member,
+                &expires_at,
+                WorkspaceKeyExport {
+                    schema_version: crate::CONTENT_KEY_EXPORT_SCHEMA_VERSION,
+                    workspace_id: workspace_id.0.clone(),
+                    epoch: 1,
+                    key_id: "invalid-key-id".to_owned(),
+                    exporter_device_id: owner.identity.device_id().0.clone(),
+                    aes_256_gcm_siv_key: vec![0; 32],
+                    previous_keys: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            joiner.import_workspace_invite_response(invalid_response),
+            Err(RuntimeError::InvalidWorkspaceKey)
+        ));
+
+        let receipt = joiner
+            .workspace_invite_claim_receipt(
+                &retained_claim.payload.invite_id,
+                &retained_claim.payload.request_id,
+            )
+            .unwrap();
+        assert!(receipt.profile_pending);
+        assert!(!receipt.profile_finalized);
+        assert!(
+            joiner
+                .workspace_invite_profile_finalization_path(
+                    &workspace_id.0,
+                    &retained_claim.payload.invite_id,
+                    &retained_claim.payload.request_id,
+                )
+                .is_file()
+        );
+        assert!(joiner.load_workspace_key(&workspace_id).unwrap().is_none());
+        assert!(
+            joiner
+                .finalize_pending_workspace_invite_profile(&workspace_id)
+                .unwrap()
+                .is_empty()
+        );
+        let snapshot = joiner.workspace_snapshot(workspace_id).unwrap();
+        assert!(snapshot.profiles.is_empty());
+        assert!(snapshot.person_profiles.is_empty());
+        assert!(snapshot.person_device_links.is_empty());
+    }
+
+    #[test]
+    fn pending_invite_profile_repairs_blank_existing_device_and_person_profiles() {
+        let owner_dir = tempdir().unwrap();
+        let joiner_dir = tempdir().unwrap();
+        let owner = LocalRuntime::open(owner_dir.path(), None).unwrap();
+        let joiner = LocalRuntime::open(joiner_dir.path(), None).unwrap();
+        let created = owner.create_workspace("Blank profiles", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let invite = owner
+            .create_workspace_invite(
+                workspace_id.clone(),
+                "Blank profile repair".to_owned(),
+                WorkspaceRole::Member,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap();
+        let claim = joiner
+            .prepare_workspace_invite_claim(
+                invite.artifact,
+                "Canonical Invite Name".to_owned(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap();
+        let claimed = owner.claim_workspace_invite(claim).unwrap();
+        joiner
+            .import_workspace_invite_response(claimed.response)
+            .unwrap();
+        for event in owner.workspace_write_context(&workspace_id).unwrap().events {
+            joiner.store.append_event(&event).unwrap();
+        }
+
+        let person_id = chaft_types::PersonId::new();
+        joiner
+            .update_person_profile(workspace_id.clone(), person_id.clone(), "Temporary Name")
+            .unwrap();
+        let context = joiner.workspace_write_context(&workspace_id).unwrap();
+        let mut blank_device = SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            joiner.identity.device_id().clone(),
+            EventBody::DeviceProfileUpdated {
+                display_name: "   ".to_owned(),
+            },
+        );
+        blank_device.parents = context.head_event_ids;
+        let blank_device = joiner
+            .sign_authorize_and_append_with_history(blank_device, &context.events)
+            .unwrap();
+        let mut history = context.events;
+        history.push(blank_device.clone());
+        let mut blank_person = SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            joiner.identity.device_id().clone(),
+            EventBody::PersonProfileUpdated {
+                person_id: person_id.clone(),
+                display_name: "\t".to_owned(),
+            },
+        );
+        blank_person.parents = vec![blank_device.event_id];
+        joiner
+            .sign_authorize_and_append_with_history(blank_person, &history)
+            .unwrap();
+
+        let before = joiner.workspace_write_context(&workspace_id).unwrap();
+        assert!(
+            before
+                .state
+                .profiles
+                .get(joiner.identity.device_id())
+                .is_some_and(|profile| profile.display_name.trim().is_empty())
+        );
+        assert!(
+            before
+                .state
+                .person_profiles
+                .get(&person_id)
+                .is_some_and(|profile| profile.display_name.trim().is_empty())
+        );
+
+        let repaired = joiner
+            .finalize_pending_workspace_invite_profile(&workspace_id)
+            .unwrap();
+        assert_eq!(repaired.len(), 2);
+        let after = joiner.workspace_write_context(&workspace_id).unwrap();
+        assert_eq!(
+            after
+                .state
+                .profiles
+                .get(joiner.identity.device_id())
+                .map(|profile| profile.display_name.as_str()),
+            Some("Canonical Invite Name")
+        );
+        assert_eq!(
+            after
+                .state
+                .person_profiles
+                .get(&person_id)
+                .map(|profile| profile.display_name.as_str()),
+            Some("Canonical Invite Name")
+        );
+    }
 
     #[test]
     fn claimable_invite_grants_membership_only_after_a_signed_claim() {

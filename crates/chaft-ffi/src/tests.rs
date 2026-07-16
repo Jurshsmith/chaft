@@ -1247,6 +1247,285 @@ fn runtime_claimable_workspace_invite_ffi_round_trips_device_bound_access() {
 }
 
 #[test]
+fn runtime_two_claim_invite_delivers_post_join_message_to_both_invitees_direct() {
+    runtime_two_claim_invite_delivers_post_join_message_to_both_invitees(false);
+}
+
+#[test]
+fn runtime_two_claim_invite_delivers_post_join_message_to_both_invitees_iroh() {
+    runtime_two_claim_invite_delivers_post_join_message_to_both_invitees(true);
+}
+
+fn runtime_two_claim_invite_delivers_post_join_message_to_both_invitees(use_iroh: bool) {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let first_invitee_dir = tempfile::tempdir().unwrap();
+    let second_invitee_dir = tempfile::tempdir().unwrap();
+    let owner_dir_c = CString::new(owner_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let first_invitee_dir_c =
+        CString::new(first_invitee_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let second_invitee_dir_c =
+        CString::new(second_invitee_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Three-device FFI Workspace").unwrap();
+    let channel_name = CString::new("general").unwrap();
+
+    let created_json = unsafe {
+        take_ffi_string(chaft_runtime_create_workspace_result_json(
+            owner_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        ))
+    };
+    let created = serde_json::from_str::<Value>(&created_json).unwrap();
+    assert_eq!(created["ok"], true);
+    let workspace_id = created["value"]["workspaceId"].as_str().unwrap().to_owned();
+    let channel_id = created["value"]["channelId"].as_str().unwrap().to_owned();
+    let workspace_id_c = CString::new(workspace_id.clone()).unwrap();
+    let channel_id_c = CString::new(channel_id.clone()).unwrap();
+    let invite_label = CString::new("Development teammates").unwrap();
+    let role = CString::new("member").unwrap();
+    let empty = CString::new("").unwrap();
+    let sync_expectation = CString::new("history_after_claim").unwrap();
+
+    let invite_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_create_workspace_invite_with_max_claims_result_json(
+                owner_dir_c.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                invite_label.as_ptr(),
+                role.as_ptr(),
+                2,
+                empty.as_ptr(),
+                empty.as_ptr(),
+                sync_expectation.as_ptr(),
+            ),
+        )
+    };
+    let invite = serde_json::from_str::<Value>(&invite_json).unwrap();
+    assert_eq!(invite["ok"], true);
+    assert_eq!(invite["value"]["artifact"]["maxClaims"], 2);
+    let artifact_text = serde_json::to_string(&invite["value"]["artifact"]).unwrap();
+
+    let invitees = [
+        (&first_invitee_dir_c, "Second device"),
+        (&second_invitee_dir_c, "Third device"),
+    ];
+    let mut invitee_device_ids = Vec::new();
+    for &(invitee_dir, display_name) in &invitees {
+        let artifact_c = CString::new(artifact_text.clone()).unwrap();
+        let display_name_c = CString::new(display_name).unwrap();
+        let claim_json = unsafe {
+            take_ffi_string(chaft_runtime_prepare_workspace_invite_claim_result_json(
+                invitee_dir.as_ptr(),
+                std::ptr::null(),
+                artifact_c.as_ptr(),
+                display_name_c.as_ptr(),
+                empty.as_ptr(),
+                empty.as_ptr(),
+            ))
+        };
+        let claim = serde_json::from_str::<Value>(&claim_json).unwrap();
+        assert_eq!(claim["ok"], true);
+        assert_eq!(claim["value"]["kind"], "chaft.workspace-invite-claim.v1");
+        invitee_device_ids.push(claim["value"]["deviceId"].as_str().unwrap().to_owned());
+
+        let claim_c = CString::new(serde_json::to_string(&claim["value"]).unwrap()).unwrap();
+        let approved_json = unsafe {
+            take_ffi_string(chaft_runtime_claim_workspace_invite_result_json(
+                owner_dir_c.as_ptr(),
+                std::ptr::null(),
+                claim_c.as_ptr(),
+            ))
+        };
+        let approved = serde_json::from_str::<Value>(&approved_json).unwrap();
+        assert_eq!(approved["ok"], true);
+        assert_eq!(approved["value"]["workspaceId"], workspace_id);
+
+        let response_c =
+            CString::new(serde_json::to_string(&approved["value"]["response"]).unwrap()).unwrap();
+        let imported_json = unsafe {
+            take_ffi_string(chaft_runtime_import_workspace_invite_response_result_json(
+                invitee_dir.as_ptr(),
+                std::ptr::null(),
+                response_c.as_ptr(),
+            ))
+        };
+        let imported = serde_json::from_str::<Value>(&imported_json).unwrap();
+        assert_eq!(imported["ok"], true);
+        assert_eq!(imported["value"]["workspaceId"], workspace_id);
+    }
+
+    let message_text = "post-join message for every invited device";
+    let message_text_c = CString::new(message_text).unwrap();
+    let sent_json = unsafe {
+        take_ffi_string(chaft_runtime_send_message_result_json(
+            owner_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            channel_id_c.as_ptr(),
+            message_text_c.as_ptr(),
+        ))
+    };
+    let sent = serde_json::from_str::<Value>(&sent_json).unwrap();
+    assert_eq!(sent["ok"], true);
+    let message_id = sent["value"]["messageId"].as_str().unwrap().to_owned();
+
+    let listen = CString::new("127.0.0.1:0").unwrap();
+    let peer_json = unsafe {
+        if use_iroh {
+            take_ffi_string(chaft_runtime_start_iroh_peer_result_json(
+                owner_dir_c.as_ptr(),
+                std::ptr::null(),
+            ))
+        } else {
+            take_ffi_string(chaft_runtime_start_direct_peer_result_json(
+                owner_dir_c.as_ptr(),
+                std::ptr::null(),
+                listen.as_ptr(),
+            ))
+        }
+    };
+    let peer = serde_json::from_str::<Value>(&peer_json).unwrap();
+    assert_eq!(peer["ok"], true);
+    let peer_id = peer["value"]["peerId"].as_str().unwrap().to_owned();
+    let peer_endpoint = peer["value"]["endpoint"].as_str().unwrap().to_owned();
+    assert_eq!(peer_endpoint.starts_with("iroh://"), use_iroh);
+    let peer_endpoint_c = CString::new(peer_endpoint).unwrap();
+
+    for (index, &(invitee_dir, display_name)) in invitees.iter().enumerate() {
+        let synced_json = unsafe {
+            take_ffi_string(chaft_runtime_sync_workspace_direct_result_json(
+                invitee_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                peer_endpoint_c.as_ptr(),
+            ))
+        };
+        let synced = serde_json::from_str::<Value>(&synced_json).unwrap();
+        assert_eq!(synced["ok"], true);
+        assert!(
+            synced["value"]["pulled"]["fetchedEventCount"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(
+            synced["value"]["pulled"]["inviteProfileEventCount"], 3,
+            "each FFI call reopens the runtime, so this also covers restart-before-pull durability"
+        );
+        assert_eq!(
+            synced["value"]["pulled"]["inviteProfileEventIds"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let snapshot_json = unsafe {
+            take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+                invitee_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+            ))
+        };
+        let snapshot = serde_json::from_str::<Value>(&snapshot_json).unwrap();
+        assert_eq!(snapshot["ok"], true);
+        assert!(
+            snapshot["value"]["profiles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|profile| {
+                    profile["deviceId"].as_str() == Some(invitee_device_ids[index].as_str())
+                        && profile["displayName"].as_str() == Some(display_name)
+                })
+        );
+        assert!(
+            snapshot["value"]["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|member| {
+                    member["deviceId"].as_str() == Some(invitee_device_ids[index].as_str())
+                        && member["displayName"].as_str() == Some(display_name)
+                })
+        );
+        assert!(
+            snapshot["value"]["timeline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| {
+                    item["messageId"].as_str() == Some(message_id.as_str())
+                        && item["channelId"].as_str() == Some(channel_id.as_str())
+                        && item["body"].as_str() == Some(message_text)
+                })
+        );
+    }
+
+    let named_message = "message from the named second device";
+    let named_message_c = CString::new(named_message).unwrap();
+    let sent_json = unsafe {
+        take_ffi_string(chaft_runtime_send_message_result_json(
+            first_invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            channel_id_c.as_ptr(),
+            named_message_c.as_ptr(),
+        ))
+    };
+    let sent = serde_json::from_str::<Value>(&sent_json).unwrap();
+    assert_eq!(sent["ok"], true);
+    let named_message_id = sent["value"]["messageId"].as_str().unwrap().to_owned();
+
+    for invitee_dir in [&first_invitee_dir_c, &second_invitee_dir_c] {
+        let synced_json = unsafe {
+            take_ffi_string(chaft_runtime_sync_workspace_direct_result_json(
+                invitee_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                peer_endpoint_c.as_ptr(),
+            ))
+        };
+        let synced = serde_json::from_str::<Value>(&synced_json).unwrap();
+        assert_eq!(synced["ok"], true);
+        assert_eq!(
+            synced["value"]["pulled"]["inviteProfileEventCount"], 0,
+            "profile finalization must be idempotent"
+        );
+    }
+
+    let third_snapshot_json = unsafe {
+        take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
+            second_invitee_dir_c.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+        ))
+    };
+    let third_snapshot = serde_json::from_str::<Value>(&third_snapshot_json).unwrap();
+    assert_eq!(third_snapshot["ok"], true);
+    let named_timeline_item = third_snapshot["value"]["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["messageId"].as_str() == Some(named_message_id.as_str()))
+        .expect("third device receives the second device's message");
+    assert_eq!(named_timeline_item["body"], named_message);
+    assert_eq!(named_timeline_item["authorDeviceId"], invitee_device_ids[0]);
+    assert_eq!(named_timeline_item["authorDisplayName"], "Second device");
+
+    let peer_id_c = CString::new(peer_id).unwrap();
+    let stopped_json = unsafe {
+        take_ffi_string(chaft_runtime_stop_direct_peer_result_json(
+            peer_id_c.as_ptr(),
+        ))
+    };
+    let stopped = serde_json::from_str::<Value>(&stopped_json).unwrap();
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
 fn snapshot_from_events_returns_result_envelope() {
     let (workspace_id, events) = sample_events();
     let workspace_id = CString::new(workspace_id.0).unwrap();
@@ -1971,6 +2250,8 @@ fn direct_result_ffi_samples_arrays_without_changing_counts() {
         ignored_event_ids: sample_strings("evt_ignored", requested_event_count),
         applied_event_count: requested_event_count,
         applied_event_ids: sample_strings("evt_applied", requested_event_count),
+        invite_profile_event_count: requested_event_count,
+        invite_profile_event_ids: sample_strings("evt_invite_profile", requested_event_count),
         openmls_catchup: PulledOpenMlsCatchup {
             event_count: openmls_event_count,
             workspace_joined_event_id: Some("evt_workspace_joined".to_owned()),
@@ -2104,6 +2385,14 @@ fn direct_result_ffi_samples_arrays_without_changing_counts() {
     assert_eq!(sampled.pulled.applied_event_count, requested_event_count);
     assert_eq!(
         sampled.pulled.applied_event_ids.len(),
+        MAX_RESULT_EVENT_ID_SAMPLE_ROWS
+    );
+    assert_eq!(
+        sampled.pulled.invite_profile_event_count,
+        requested_event_count
+    );
+    assert_eq!(
+        sampled.pulled.invite_profile_event_ids.len(),
         MAX_RESULT_EVENT_ID_SAMPLE_ROWS
     );
     assert_eq!(sampled.pulled.gap_count, gap_count);

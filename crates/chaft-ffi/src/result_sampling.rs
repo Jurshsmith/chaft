@@ -256,6 +256,9 @@ pub(crate) fn sample_pulled_workspace_report(mut report: PulledWorkspace) -> Pul
     report
         .applied_event_ids
         .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
+    report
+        .invite_profile_event_ids
+        .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
     report.gaps.truncate(MAX_RESULT_GAP_SAMPLE_ROWS);
     sample_pulled_openmls_catchup_report(&mut report.openmls_catchup);
     if let Some(response) = &mut report.compromise_response {

@@ -427,12 +427,16 @@ impl LocalRuntime {
         validate_peer_address(peer)?;
         let report =
             pull_workspace_from_peer(transport, peer, &self.store, workspace_id.clone()).await?;
+        let invite_profile_event_ids =
+            self.finalize_pending_workspace_invite_profile(&workspace_id)?;
         let openmls_catchup = self.apply_local_openmls_catchup(&workspace_id)?;
         let compromise_response = self.automatic_compromise_response_if_needed(&workspace_id)?;
         let _ = self.reindex_workspace_search_if_key_available(&workspace_id);
         let mut pulled = Self::pulled_workspace_from_report(workspace_id, report);
+        pulled.invite_profile_event_ids = invite_profile_event_ids;
         pulled.openmls_catchup = openmls_catchup;
         pulled.compromise_response = compromise_response;
+        pulled.refresh_counts();
         Ok(pulled)
     }
 
@@ -458,10 +462,13 @@ impl LocalRuntime {
             remote_event_ids,
         )
         .await?;
+        let invite_profile_event_ids =
+            self.finalize_pending_workspace_invite_profile(&workspace_id)?;
         let openmls_catchup = self.apply_local_openmls_catchup(&workspace_id)?;
         let compromise_response = self.automatic_compromise_response_if_needed(&workspace_id)?;
         let _ = self.reindex_workspace_search_if_key_available(&workspace_id);
         let mut pulled = Self::pulled_workspace_from_report(workspace_id.clone(), report);
+        pulled.invite_profile_event_ids = invite_profile_event_ids;
         pulled.openmls_catchup = openmls_catchup;
         pulled.compromise_response = compromise_response;
         let events = self.materialized_workspace_events(&workspace_id)?;
@@ -594,6 +601,8 @@ impl LocalRuntime {
                 .into_iter()
                 .map(|event_id| event_id.0)
                 .collect(),
+            invite_profile_event_count: 0,
+            invite_profile_event_ids: Vec::new(),
             openmls_catchup: PulledOpenMlsCatchup::default(),
             compromise_response: None,
             gap_count: 0,

@@ -26,6 +26,10 @@ pub struct PulledWorkspace {
     #[serde(default)]
     pub applied_event_count: usize,
     pub applied_event_ids: Vec<String>,
+    #[serde(default)]
+    pub invite_profile_event_count: usize,
+    #[serde(default)]
+    pub invite_profile_event_ids: Vec<String>,
     pub openmls_catchup: PulledOpenMlsCatchup,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compromise_response: Option<WorkspaceCompromiseResponse>,
@@ -92,7 +96,8 @@ impl PulledOpenMlsChannelCatchup {
 
 impl PulledWorkspace {
     pub(crate) fn has_local_generated_events(&self) -> bool {
-        self.openmls_catchup.has_provisioned_events()
+        !self.invite_profile_event_ids.is_empty()
+            || self.openmls_catchup.has_provisioned_events()
             || self
                 .compromise_response
                 .as_ref()
@@ -106,6 +111,7 @@ impl PulledWorkspace {
         self.missing_blob_count = self.missing_blob_hashes.len();
         self.ignored_event_count = self.ignored_event_ids.len();
         self.applied_event_count = self.applied_event_ids.len();
+        self.invite_profile_event_count = self.invite_profile_event_ids.len();
         self.gap_count = self.gaps.len();
     }
 }
