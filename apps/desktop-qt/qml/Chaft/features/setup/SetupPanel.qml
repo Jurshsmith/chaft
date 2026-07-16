@@ -333,7 +333,7 @@ ScrollView {
             return "Discovery is not live yet. Use access requests or direct invites."
         case "invite_only":
         default:
-            return "Invite only is on. Create an invite and choose how many devices can use it."
+            return "Invite only is on. Create an invite and set its join limit."
         }
     }
 
@@ -424,31 +424,31 @@ ScrollView {
 
     function workspaceInviteClaimAvailabilityLabel(invite) {
         if (!setupScroll.app) {
-            return "1 device remaining"
+            return "1 join remaining"
         }
         var maximum = setupScroll.workspaceInviteMaxClaims(invite)
         if (setupScroll.workspaceInviteStatus(invite) === "invited") {
             var remaining = setupScroll.app.inviteRemainingClaims(invite)
             if (remaining === 0) {
-                return "No uses remaining"
+                return "No joins remaining"
             }
             return maximum === 1
-                ? "1 device remaining"
-                : remaining + " of " + maximum + " devices remaining"
+                ? "1 join remaining"
+                : remaining + " of " + maximum + " joins remaining"
         }
         var used = setupScroll.app.inviteClaimCount(invite)
         if (used === 0) {
             return "Not used"
         }
         return maximum === 1
-            ? "Used by 1 device"
-            : "Used by " + used + " of " + maximum + " devices"
+            ? "1 join used"
+            : used + " of " + maximum + " joins used"
     }
 
     function invitePackageClaimLimitLabel() {
         var invite = setupScroll.invitePackageObject()
         var maximum = setupScroll.workspaceInviteMaxClaims(invite)
-        return maximum === 1 ? "1 device" : maximum + " devices"
+        return maximum === 1 ? "1 join" : maximum + " joins"
     }
 
     function invitePackageId() {
@@ -528,11 +528,11 @@ ScrollView {
                 && String(invite.kind || "") === "chaft.workspace-invite.v2") {
             var maximum = setupScroll.workspaceInviteMaxClaims(invite)
             if (maximum === 1) {
-                return "Send this invite privately. One device can use it to join with "
+                return "Send this invite privately. It allows one device to join with "
                     + setupScroll.invitePackageRoleLabel() + " access."
             }
-            return "Share this invite privately. Up to " + maximum
-                + " devices can use it to join with "
+            return "Share this invite privately. It allows up to " + maximum
+                + " devices to join with "
                 + setupScroll.invitePackageRoleLabel() + " access."
         }
         if (setupScroll.invitePackageRequiresApproval()) {
@@ -1036,8 +1036,8 @@ ScrollView {
             }
             var maximum = setupScroll.workspaceInviteMaxClaims(invite)
             return maximum === 1
-                ? "Single-device invite"
-                : maximum + "-device invite"
+                ? "Single-use invite"
+                : maximum + "-join invite"
         }
         var name = String((invite
             && (invite.inviteeDisplayName || invite.displayName)) || "").trim()
@@ -1119,7 +1119,7 @@ ScrollView {
                 return maximum === 1
                     ? "This invite has been used and cannot be used again."
                     : "All " + maximum
-                        + " uses are complete. This invite cannot be used again."
+                        + " joins are used. This invite cannot be used again."
             }
             return "They have opened Chaft and received updates at least once."
         }

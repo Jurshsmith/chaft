@@ -16,6 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_QML = REPO_ROOT / "apps/desktop-qt/qml/Chaft/App.qml"
 MAIN_CPP = REPO_ROOT / "apps/desktop-qt/src/main.cpp"
+TYPES_RS = REPO_ROOT / "crates/chaft-types/src/lib.rs"
 ENTRY_QML = (
     REPO_ROOT
     / "apps/desktop-qt/qml/Chaft/features/onboarding/WorkspaceEntryDialog.qml"
@@ -31,6 +32,7 @@ SETUP_QML = REPO_ROOT / "apps/desktop-qt/qml/Chaft/features/setup/SetupPanel.qml
 FIELD_QML = (
     REPO_ROOT / "apps/desktop-qt/qml/Chaft/components/controls/LabeledField.qml"
 )
+CHECKBOX_QML = REPO_ROOT / "apps/desktop-qt/qml/ChaftStyle/CheckBox.qml"
 
 
 def read(path: Path) -> str:
@@ -123,11 +125,13 @@ class InviteFormContracts(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = read(APP_QML)
         cls.main_cpp = read(MAIN_CPP)
+        cls.types_rs = read(TYPES_RS)
         cls.entry = read(ENTRY_QML)
         cls.invite = read(INVITE_QML)
         cls.review = read(REVIEW_QML)
         cls.setup = read(SETUP_QML)
         cls.field = read(FIELD_QML)
+        cls.checkbox = read(CHECKBOX_QML)
 
     def test_inviter_enters_an_invite_label_not_the_joiners_name(self) -> None:
         self.assertIn('label: "Invite label (optional)"', self.invite)
@@ -135,6 +139,137 @@ class InviteFormContracts(unittest.TestCase):
         self.assertIn("Each joiner chooses their own name.", self.invite)
         self.assertNotIn('label: "Name or label (optional)"', self.invite)
         self.assertNotIn('placeholderText: "e.g. Sam Rivera"', self.invite)
+
+    def test_desktop_and_runtime_share_the_100_join_invite_limit(self) -> None:
+        rust_limit = re.search(
+            r"\bWORKSPACE_INVITE_MAX_CLAIMS\s*:\s*u32\s*=\s*(\d+)",
+            self.types_rs,
+        )
+        cpp_limit = re.search(
+            r"\bkMaxWorkspaceInviteClaims\s*=\s*(\d+)", self.main_cpp
+        )
+        self.assertIsNotNone(rust_limit)
+        self.assertIsNotNone(cpp_limit)
+        self.assertEqual(int(rust_limit.group(1)), 100)
+        self.assertEqual(
+            int(cpp_limit.group(1)),
+            int(rust_limit.group(1)),
+            "desktop validation must not drift from the signed invite limit",
+        )
+        self.assertIn(
+            "an invite can allow between 1 and 100 joins",
+            self.main_cpp,
+        )
+
+    def test_invite_type_control_supports_bounded_group_reuse(self) -> None:
+        for visible_copy in (
+            'text: "Single-use"',
+            'text: "Group"',
+            'text: "Maximum joins"',
+            "Each device uses one join.",
+        ):
+            self.assertIn(visible_copy, self.invite)
+
+        self.assertIn('property string inviteMode: "single"', self.invite)
+        self.assertIn(
+            'readonly property bool groupInvite: root.inviteMode === "group"',
+            self.invite,
+        )
+        self.assertIn('root.inviteMode = "single"', self.invite)
+        self.assertIn('root.inviteMode = "group"', self.invite)
+        self.assertIn("id: inviteTypeButtonGroup", self.invite)
+        self.assertEqual(
+            self.invite.count("ButtonGroup.group: inviteTypeButtonGroup"),
+            2,
+        )
+        self.assertIn("Keys.onRightPressed", self.invite)
+        self.assertIn("Keys.onLeftPressed", self.invite)
+        self.assertRegex(
+            self.invite,
+            r"Keys\.onRightPressed\s*:\s*\{"
+            r"(?=[\s\S]{0,180}root\.inviteMode\s*=\s*\"group\")"
+            r"(?=[\s\S]{0,180}highRiskConfirmation\.checked\s*=\s*false)",
+        )
+        self.assertRegex(
+            self.invite,
+            r"Keys\.onLeftPressed\s*:\s*\{"
+            r"(?=[\s\S]{0,180}root\.inviteMode\s*=\s*\"single\")"
+            r"(?=[\s\S]{0,180}highRiskConfirmation\.checked\s*=\s*false)",
+        )
+
+        for preset in (5, 10, 25, 50, 100):
+            self.assertIn(
+                f'{{ label: "{preset}", value: {preset} }}',
+                self.invite,
+            )
+        self.assertIn('{ label: "Custom", value: 0 }', self.invite)
+
+        group_limit = object_block(self.invite, "ComboBox", "groupClaimLimitBox")
+        self.assertIn("model: root.groupClaimLimitOptions", group_limit)
+        self.assertIn("currentIndex: 1", group_limit)
+
+        custom_limit = object_block(
+            self.invite, "TextField", "customClaimLimitField"
+        )
+        self.assertIn("visible: root.customClaimLimit", custom_limit)
+        self.assertIn("validator: IntValidator", custom_limit)
+        self.assertIn("bottom: 2", custom_limit)
+        self.assertIn("top: 100", custom_limit)
+        self.assertIn("root.customClaimLimitValid", custom_limit)
+
+        selected_limit_match = re.search(
+            r"readonly\s+property\s+int\s+selectedMaxClaims\s*:\s*\{",
+            self.invite,
+        )
+        self.assertIsNotNone(selected_limit_match)
+        selected_limit = balanced_block(
+            self.invite,
+            self.invite.find("{", selected_limit_match.start()),
+        )
+        self.assertIn("if (!root.groupInvite)", selected_limit)
+        self.assertRegex(selected_limit, r"\breturn\s+1\b")
+        self.assertIn("root.customClaimLimitValid", selected_limit)
+        self.assertIn("Number(customClaimLimitField.text)", selected_limit)
+        self.assertIn("groupClaimLimitBox.currentValue", selected_limit)
+
+        self.assertRegex(
+            self.invite,
+            r"ColumnLayout\s*\{"
+            r"(?=[\s\S]{0,240}visible\s*:\s*root\.groupInvite)"
+            r"(?=[\s\S]{0,400}text\s*:\s*\"Maximum joins\")",
+        )
+        self.assertIn("&& root.customClaimLimitValid", self.invite)
+        self.assertIn("readonly property bool formEditable:", self.invite)
+        self.assertGreaterEqual(
+            self.invite.count("enabled: root.formEditable"),
+            7,
+            "all invite inputs and the risk acknowledgement must freeze during creation",
+        )
+        self.assertIn("readonly property bool reusableNeverExpires:", self.invite)
+        self.assertIn("readonly property bool expandedCapacityInvite:", self.invite)
+        self.assertIn(
+            "Anyone with it can use a remaining join until you revoke it.",
+            self.invite,
+        )
+        self.assertIn(
+            "Invite limits above 20 require every workspace device to be updated first.",
+            self.invite,
+        )
+
+    def test_admin_invite_risk_acknowledgement_wraps_without_eliding(self) -> None:
+        acknowledgement = object_block(
+            self.invite, "CheckBox", "highRiskConfirmation"
+        )
+        self.assertIn("wrapText: true", acknowledgement)
+        self.assertIn("property bool wrapText: false", self.checkbox)
+        self.assertIn(
+            "wrapMode: control.wrapText ? Text.WordWrap : Text.NoWrap",
+            self.checkbox,
+        )
+        self.assertIn(
+            "elide: control.wrapText ? Text.ElideNone : Text.ElideRight",
+            self.checkbox,
+        )
 
     def test_joiner_identity_is_contextual(self) -> None:
         identity_contract = re.compile(

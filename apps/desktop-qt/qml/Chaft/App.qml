@@ -4961,19 +4961,19 @@ ApplicationWindow {
 
     function inviteClaimLimitLabel(invite) {
         var maximum = root.inviteMaxClaims(invite)
-        return maximum === 1 ? "1 device" : maximum + " devices"
+        return maximum === 1 ? "1 join" : maximum + " joins"
     }
 
     function inviteClaimAvailabilityLabel(invite) {
         var maximum = root.inviteMaxClaims(invite)
         var remaining = root.inviteRemainingClaims(invite)
         if (remaining === 0) {
-            return "No uses remaining"
+            return "No joins remaining"
         }
         if (maximum === 1) {
-            return "1 device remaining"
+            return "1 join remaining"
         }
-        return remaining + " of " + maximum + " devices remaining"
+        return remaining + " of " + maximum + " joins remaining"
     }
 
     function inviteClaimUsageLabel(invite) {
@@ -4983,9 +4983,9 @@ ApplicationWindow {
             return "Not used"
         }
         if (maximum === 1) {
-            return "Used by 1 device"
+            return "1 join used"
         }
-        return "Used by " + used + " of " + maximum + " devices"
+        return used + " of " + maximum + " joins used"
     }
 
     function inviteApprovalLabel(policy) {
@@ -5555,10 +5555,10 @@ ApplicationWindow {
                 rows.push(row)
             }
             var inviteDeviceLimit = root.inviteMaxClaims(parsed)
-            row = root.credentialSummaryRow("Device limit",
+            row = root.credentialSummaryRow("Maximum joins",
                 inviteDeviceLimit === 1
-                    ? "1 device"
-                    : inviteDeviceLimit + " devices")
+                    ? "1 join"
+                    : inviteDeviceLimit + " joins")
             if (row !== null) {
                 rows.push(row)
             }

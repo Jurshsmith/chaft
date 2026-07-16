@@ -5,6 +5,8 @@ import Chaft
 T.CheckBox {
     id: control
 
+    property bool wrapText: false
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
@@ -44,6 +46,7 @@ T.CheckBox {
         font: control.font
         color: control.enabled ? Tokens.textStrong : Tokens.textMuted
         verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+        wrapMode: control.wrapText ? Text.WordWrap : Text.NoWrap
+        elide: control.wrapText ? Text.ElideNone : Text.ElideRight
     }
 }
