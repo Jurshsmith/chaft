@@ -7633,22 +7633,103 @@ mod tests {
     }
 
     #[test]
-    fn capability_invite_claim_limit_is_bounded() {
+    fn capability_invite_claim_limit_accepts_100_and_rejects_101() {
+        assert_eq!(WORKSPACE_INVITE_MAX_CLAIMS, 100);
+
         let workspace_id = WorkspaceId::new();
         let owner = DeviceId("dev_owner".to_owned());
         let root = workspace_root(&workspace_id, &owner);
-        let invite = capability_invite(
+        let accepted = capability_invite(
+            &workspace_id,
+            &owner,
+            "inv_maximum",
+            Some(WORKSPACE_INVITE_MAX_CLAIMS),
+        );
+        let rejected = capability_invite(
             &workspace_id,
             &owner,
             "inv_too_many",
             Some(WORKSPACE_INVITE_MAX_CLAIMS + 1),
         );
 
+        authorize_event_with_history(std::slice::from_ref(&root), &accepted).unwrap();
         assert_item_count_too_large(
-            authorize_event_with_history(&[root], &invite).unwrap_err(),
+            authorize_event_with_history(&[root], &rejected).unwrap_err(),
             "invite claims",
             (WORKSPACE_INVITE_MAX_CLAIMS + 1) as usize,
             WORKSPACE_INVITE_MAX_CLAIMS as usize,
+        );
+    }
+
+    #[test]
+    fn maximum_capacity_invite_stays_open_until_the_100th_claim() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = capability_invite(
+            &workspace_id,
+            &owner,
+            "inv_maximum",
+            Some(WORKSPACE_INVITE_MAX_CLAIMS),
+        );
+        let mut history = vec![root, invite];
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state.apply_batch(&history).unwrap();
+
+        for index in 0..WORKSPACE_INVITE_MAX_CLAIMS {
+            let invitee_device_id = DeviceId(format!("dev_invitee_{index:03}"));
+            let member = signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::MemberInvited {
+                    invitee_device_id: invitee_device_id.clone(),
+                    role: WorkspaceRole::Member,
+                },
+            ));
+            authorize_event_with_history(&history, &member).unwrap();
+            state.apply(&member).unwrap();
+            history.push(member);
+
+            let claim = capability_invite_claim(
+                &workspace_id,
+                &owner,
+                "inv_maximum",
+                &invitee_device_id.0,
+                &format!("req_invitee_{index:03}"),
+            );
+            authorize_event_with_history(&history, &claim).unwrap();
+            state.apply(&claim).unwrap();
+            history.push(claim);
+
+            let projected = state.invites.get("inv_maximum").unwrap();
+            assert_eq!(projected.claim_count, index + 1);
+            assert_eq!(
+                projected.status,
+                if index + 1 == WORKSPACE_INVITE_MAX_CLAIMS {
+                    WorkspaceInviteStatus::Accepted
+                } else {
+                    WorkspaceInviteStatus::Invited
+                }
+            );
+        }
+
+        assert_eq!(
+            state.members.len(),
+            WORKSPACE_INVITE_MAX_CLAIMS as usize + 1
+        );
+        let overflow = capability_invite_claim(
+            &workspace_id,
+            &owner,
+            "inv_maximum",
+            "dev_invitee_overflow",
+            "req_invitee_overflow",
+        );
+        assert_eq!(
+            authorize_event_with_history(&history, &overflow),
+            Err(AuthorizationError::InviteExhausted {
+                invite_id: "inv_maximum".to_owned(),
+            })
         );
     }
 

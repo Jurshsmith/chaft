@@ -39,7 +39,7 @@ help:
 		'  make clippy           cargo clippy --workspace --all-targets -- -D warnings' \
 		'  make test             cargo test --workspace --all-targets' \
 		'  make test-app         Test chaft-app and chaft-ffi packages' \
-		'  make test-invite-flow Test the two-claim, three-device delivery flow' \
+		'  make test-invite-flow Test reusable invite capacity and delivery' \
 		'  make bench-check      Compile hot-path benchmarks without running them' \
 		'  make rust-gates       Run tools/ci/rust-gates.sh' \
 		'' \
@@ -103,6 +103,7 @@ test-app:
 	$(CARGO) test -p chaft-app -p chaft-ffi $(ARGS)
 
 test-invite-flow:
+	$(CARGO) test -p chaft-core maximum_capacity_invite_stays_open_until_the_100th_claim $(ARGS)
 	$(CARGO) test -p chaft-runtime bounded_invite_admits_two_devices_and_replays_an_older_claim $(ARGS)
 	$(CARGO) test -p chaft-runtime --test invite_form_regressions $(ARGS)
 	$(CARGO) test -p chaft-ffi runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defaults $(ARGS)

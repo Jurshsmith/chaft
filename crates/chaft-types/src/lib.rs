@@ -30,7 +30,7 @@ pub const WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES: usize = 64;
 pub const WORKSPACE_INVITE_CAPABILITY_PUBLIC_KEY_MAX_BYTES: usize = 64;
-pub const WORKSPACE_INVITE_MAX_CLAIMS: u32 = 20;
+pub const WORKSPACE_INVITE_MAX_CLAIMS: u32 = 100;
 pub const WORKSPACE_ACCESS_POLICY_MAX_BYTES: usize = 32;
 pub const WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES: usize = 128;
 pub const WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES: usize = 512;
@@ -1013,6 +1013,9 @@ mod tests {
 
     #[test]
     fn capability_invite_json_keeps_legacy_presence_while_defaulting_effective_limit() {
+        assert_eq!(WORKSPACE_INVITE_MAX_CLAIMS, 100);
+        assert_eq!(default_workspace_invite_max_claims(), 1);
+
         let legacy = serde_json::json!({
             "kind": "workspace_invite_capability_created",
             "invite_id": "inv_legacy",

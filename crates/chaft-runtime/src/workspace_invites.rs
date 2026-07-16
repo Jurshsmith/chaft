@@ -2650,23 +2650,59 @@ mod tests {
     }
 
     #[test]
-    fn workspace_invite_claim_limit_is_bounded_and_zero_normalizes_to_one() {
+    fn workspace_invite_claim_limit_accepts_100_rejects_101_and_defaults_to_one() {
+        assert_eq!(WORKSPACE_INVITE_MAX_CLAIMS, 100);
+
         let admin_dir = tempdir().unwrap();
         let admin = LocalRuntime::open(admin_dir.path(), None).unwrap();
         let created = admin.create_workspace("Invite limits", "general").unwrap();
         let workspace_id = WorkspaceId(created.workspace_id);
 
-        assert!(matches!(
-            admin.create_workspace_invite_with_max_claims(
+        let defaulted = admin
+            .create_workspace_invite(
                 workspace_id.clone(),
                 String::new(),
                 WorkspaceRole::Member,
-                WORKSPACE_INVITE_MAX_CLAIMS + 1,
                 String::new(),
                 String::new(),
                 String::new(),
-            ),
-            Err(RuntimeError::MetadataFieldTooLarge { .. })
+            )
+            .unwrap();
+        assert_eq!(defaulted.artifact.max_claims, Some(1));
+
+        let maximum = admin
+            .create_workspace_invite_with_max_claims(
+                workspace_id.clone(),
+                String::new(),
+                WorkspaceRole::Member,
+                WORKSPACE_INVITE_MAX_CLAIMS,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            maximum.artifact.max_claims,
+            Some(WORKSPACE_INVITE_MAX_CLAIMS)
+        );
+
+        let excessive = admin.create_workspace_invite_with_max_claims(
+            workspace_id.clone(),
+            String::new(),
+            WorkspaceRole::Member,
+            WORKSPACE_INVITE_MAX_CLAIMS + 1,
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+        assert!(matches!(
+            excessive,
+            Err(RuntimeError::MetadataFieldTooLarge {
+                field: "workspace invite claims",
+                actual_bytes,
+                max_bytes,
+            }) if actual_bytes == (WORKSPACE_INVITE_MAX_CLAIMS + 1) as usize
+                && max_bytes == WORKSPACE_INVITE_MAX_CLAIMS as usize
         ));
         let normalized = admin
             .create_workspace_invite_with_max_claims(

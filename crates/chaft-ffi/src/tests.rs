@@ -1031,6 +1031,8 @@ fn runtime_identity_passphrase_ffi_cache_unlocks_without_environment() {
 
 #[test]
 fn runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defaults() {
+    assert_eq!(chaft_types::WORKSPACE_INVITE_MAX_CLAIMS, 100);
+
     let admin_dir = tempfile::tempdir().unwrap();
     let admin_dir_c = CString::new(admin_dir.path().to_string_lossy().as_bytes()).unwrap();
     let workspace_name = CString::new("Bounded FFI Workspace").unwrap();
@@ -1059,7 +1061,7 @@ fn runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defa
                 workspace_id_c.as_ptr(),
                 invite_label.as_ptr(),
                 role.as_ptr(),
-                2,
+                chaft_types::WORKSPACE_INVITE_MAX_CLAIMS,
                 empty.as_ptr(),
                 empty.as_ptr(),
                 empty.as_ptr(),
@@ -1068,7 +1070,10 @@ fn runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defa
     };
     let bounded = serde_json::from_str::<Value>(&bounded_json).unwrap();
     assert_eq!(bounded["ok"], true);
-    assert_eq!(bounded["value"]["artifact"]["maxClaims"], 2);
+    assert_eq!(
+        bounded["value"]["artifact"]["maxClaims"],
+        chaft_types::WORKSPACE_INVITE_MAX_CLAIMS
+    );
     let bounded_invite_id = bounded["value"]["inviteId"].as_str().unwrap();
 
     let snapshot_json = unsafe {
@@ -1086,9 +1091,15 @@ fn runtime_bounded_workspace_invite_ffi_exposes_capacity_and_preserves_safe_defa
         .iter()
         .find(|invite| invite["inviteId"].as_str() == Some(bounded_invite_id))
         .unwrap();
-    assert_eq!(bounded_snapshot["maxClaims"], 2);
+    assert_eq!(
+        bounded_snapshot["maxClaims"],
+        chaft_types::WORKSPACE_INVITE_MAX_CLAIMS
+    );
     assert_eq!(bounded_snapshot["claimCount"], 0);
-    assert_eq!(bounded_snapshot["remainingClaims"], 2);
+    assert_eq!(
+        bounded_snapshot["remainingClaims"],
+        chaft_types::WORKSPACE_INVITE_MAX_CLAIMS
+    );
     assert_eq!(bounded_snapshot["claimable"], true);
 
     let one_use_json = unsafe {

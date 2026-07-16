@@ -1141,7 +1141,7 @@ constexpr qsizetype kMaxPendingJoinRequestKeyBytes = 160;
 constexpr qsizetype kMaxPendingJoinRequestArtifactBytes = 8192;
 constexpr qsizetype kMaxWorkspaceInviteArtifactKeyBytes = 128;
 constexpr qsizetype kMaxWorkspaceInviteArtifactBytes = 8192;
-constexpr int kMaxWorkspaceInviteClaims = 20;
+constexpr int kMaxWorkspaceInviteClaims = 100;
 constexpr qint64 kMaxWorkspaceInviteArtifactStoreBytes = 512LL * 1024;
 constexpr int kWorkspaceInviteArtifactStoreSchemaVersion = 1;
 constexpr std::size_t kMaxJoinRequestInboxEntries = 100;
@@ -4502,7 +4502,7 @@ public:
     }
     if (maxClaims < 1 || maxClaims > kMaxWorkspaceInviteClaims) {
       setSyncStatus(
-          QStringLiteral("an invite can be used by between 1 and 20 devices"));
+          QStringLiteral("an invite can allow between 1 and 100 joins"));
       return false;
     }
 
