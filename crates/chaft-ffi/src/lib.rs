@@ -2519,6 +2519,31 @@ pub unsafe extern "C" fn chaft_runtime_start_iroh_peer_result_json(
     into_c_string(&result)
 }
 
+/// Starts a background native Iroh peer with explicit public-service policy.
+///
+/// This variant avoids changing process environment variables after other
+/// runtime workers have started.
+///
+/// # Safety
+///
+/// `data_dir` must be a valid pointer to a NUL-terminated UTF-8 string.
+/// `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_start_iroh_peer_with_policy_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    allow_public_relays: bool,
+    allow_public_discovery: bool,
+) -> *mut c_char {
+    let result = runtime_start_iroh_peer_with_policy_result(
+        data_dir,
+        identity_file,
+        allow_public_relays,
+        allow_public_discovery,
+    );
+    into_c_string(&result)
+}
+
 /// Lists incoming join requests received by runtime-hosted peers.
 ///
 /// The returned string is a JSON result envelope. Passing `max_entries` as `0`

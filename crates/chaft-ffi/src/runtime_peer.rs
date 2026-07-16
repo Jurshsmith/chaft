@@ -129,6 +129,30 @@ pub(crate) fn runtime_start_iroh_peer_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
 ) -> FfiResult<HostedPeer> {
+    runtime_start_iroh_peer_with_config_result(
+        data_dir,
+        identity_file,
+        IrohTransportConfig::from_environment(),
+    )
+}
+
+pub(crate) fn runtime_start_iroh_peer_with_policy_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    allow_public_relays: bool,
+    allow_public_discovery: bool,
+) -> FfiResult<HostedPeer> {
+    let mut config = IrohTransportConfig::from_environment();
+    config.allow_public_relays = allow_public_relays;
+    config.allow_public_discovery = allow_public_discovery;
+    runtime_start_iroh_peer_with_config_result(data_dir, identity_file, config)
+}
+
+fn runtime_start_iroh_peer_with_config_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    config: IrohTransportConfig,
+) -> FfiResult<HostedPeer> {
     result_envelope(|| {
         let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
         let iroh_secret_key = runtime.iroh_endpoint_secret_key_bytes();
@@ -168,7 +192,7 @@ pub(crate) fn runtime_start_iroh_peer_result(
                 );
                 let server = match IrohSyncPeer::bind_with_secret_key_bytes(
                     sync_store,
-                    IrohTransportConfig::from_environment(),
+                    config,
                     iroh_secret_key,
                 )
                 .await
