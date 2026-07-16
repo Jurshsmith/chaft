@@ -15,6 +15,7 @@ ColumnLayout {
     property bool messageDeleted: false
     readonly property bool hasReplies: replyCount > 0
     signal replyRequested
+    signal replySelected(string messageId)
 
     Layout.fillWidth: true
     visible: hasReplies
@@ -29,7 +30,7 @@ ColumnLayout {
             return displayName;
         }
         var deviceId = String(authorDeviceId || "");
-        return deviceId.length > 0 ? "Unnamed person " + root.shortDeviceId(deviceId) : "";
+        return deviceId.length > 0 ? "Unnamed teammate" : "";
     }
 
     function shortDeviceId(deviceId) {
@@ -100,18 +101,32 @@ ColumnLayout {
 
         delegate: Rectangle {
             id: replyRow
+            objectName: "threadReplyRow"
             required property var modelData
             readonly property string authorText: root.authorLabel(modelData.authorDisplayName, modelData.authorDeviceId)
             readonly property string bodyText: root.compactInlineText(modelData.body, "message")
+            readonly property string replyMessageId: String(modelData.messageId || "")
 
             width: ListView.view.width
             height: 58
             radius: Tokens.radiusSm
-            color: Tokens.surfaceBase
-            border.color: Tokens.borderSubtle
+            color: replyRow.activeFocus || replyMouse.containsMouse
+                ? Tokens.surfaceRaised
+                : Tokens.surfaceBase
+            border.color: replyRow.activeFocus ? Tokens.accent : Tokens.borderSubtle
+            border.width: replyRow.activeFocus ? 2 : 1
+            activeFocusOnTab: replyMessageId.length > 0
 
-            Accessible.role: Accessible.ListItem
+            Accessible.role: Accessible.Button
             Accessible.name: authorText + ": " + bodyText
+            Accessible.description: "Go to this reply"
+            Accessible.onPressAction: replyRow.activate()
+
+            function activate() {
+                if (replyRow.replyMessageId.length > 0) {
+                    root.replySelected(replyRow.replyMessageId)
+                }
+            }
 
             RowLayout {
                 anchors.fill: parent
@@ -121,6 +136,7 @@ ColumnLayout {
                 AvatarMark {
                     Layout.preferredWidth: 32
                     Layout.preferredHeight: 32
+                    Accessible.ignored: true
                     avatarId: String(replyRow.modelData.authorAvatarId || "")
                     workspaceId: root.workspaceId
                     identityId: String(replyRow.modelData.authorDeviceId || "")
@@ -147,6 +163,24 @@ ColumnLayout {
                         font.pixelSize: Tokens.fontSizeSm
                         elide: Text.ElideRight
                     }
+                }
+            }
+
+            MouseArea {
+                id: replyMouse
+                anchors.fill: parent
+                scrollGestureEnabled: false
+                enabled: replyRow.replyMessageId.length > 0
+                hoverEnabled: true
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: replyRow.activate()
+            }
+
+            Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        || event.key === Qt.Key_Space) {
+                    replyRow.activate()
+                    event.accepted = true
                 }
             }
         }

@@ -57,6 +57,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/components/AvatarPicker.qml
         qml/Chaft/components/AttachmentRow.qml
         qml/Chaft/components/BackupPeerStatusRow.qml
+        qml/Chaft/components/BrandMark.qml
         qml/Chaft/components/KeyPackageRow.qml
         qml/Chaft/components/MemberRow.qml
         qml/Chaft/components/OnboardingActionCard.qml
@@ -131,6 +132,18 @@ qt_add_resources(ChaftDesktop "chaft_desktop_fonts"
         fonts/OFL-JetBrainsMono.txt
 )
 
+qt_add_resources(ChaftDesktop "chaft_desktop_branding"
+    PREFIX "/branding"
+    BASE resources/branding
+    FILES
+        resources/branding/chaft-avatar-dark.png
+        resources/branding/chaft-avatar-light.png
+        resources/branding/chaft-mark-frame-horizontal.png
+        resources/branding/chaft-mark-frame.png
+        resources/branding/chaft-mark.png
+        resources/branding/chaft-wordmark.png
+)
+
 if(APPLE)
     # Qt 6.8 on GitHub macOS runners can scan the source qml/ path as a
     # generated QML module under Chaft. Provide the expected empty module path.
@@ -139,6 +152,25 @@ if(APPLE)
 endif()
 
 target_link_libraries(ChaftDesktop PRIVATE Qt6::Network Qt6::Qml Qt6::Quick Qt6::Widgets)
+
+if(BUILD_TESTING)
+    find_program(QMLTESTRUNNER_EXECUTABLE
+        NAMES qmltestrunner
+    )
+    if(QMLTESTRUNNER_EXECUTABLE)
+        add_test(
+            NAME ChaftTimelineMessageUx
+            COMMAND "${QMLTESTRUNNER_EXECUTABLE}"
+                -input "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+                -import "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+        )
+        set_tests_properties(ChaftTimelineMessageUx PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+    else()
+        message(WARNING "qmltestrunner was not found; desktop QML tests are unavailable")
+    endif()
+endif()
 
 install(TARGETS ChaftDesktop
     BUNDLE DESTINATION .

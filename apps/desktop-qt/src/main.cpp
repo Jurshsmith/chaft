@@ -313,6 +313,8 @@ using RuntimeRepairWorkspaceStorageMetadataResultJsonFn =
 using RuntimeStartDirectPeerResultJsonFn = char *(*)(const char *, const char *,
                                                      const char *);
 using RuntimeStartIrohPeerResultJsonFn = char *(*)(const char *, const char *);
+using RuntimeStartIrohPeerWithPolicyResultJsonFn =
+    char *(*)(const char *, const char *, bool, bool);
 using RuntimeListJoinRequestInboxResultJsonFn = char *(*)(const char *,
                                                           std::size_t);
 using RuntimeListJoinRequestInboxForWorkspaceResultJsonFn =
@@ -1212,6 +1214,8 @@ constexpr qsizetype kMaxThemeIdBytes = 64;
 constexpr qsizetype kMaxComposerDrafts = 12;
 constexpr qsizetype kMaxComposerDraftKeyBytes = 320;
 constexpr qsizetype kMaxComposerDraftBytes = 4096;
+constexpr qsizetype kMaxKeyKitReminders = 128;
+constexpr qsizetype kMinDecryptionKeyKitPassphraseCharacters = 12;
 constexpr qsizetype kMaxPendingJoinRequests = 5;
 constexpr qsizetype kMaxPendingJoinRequestKeyBytes = 160;
 constexpr qsizetype kMaxPendingJoinRequestArtifactBytes = 8192;
@@ -2360,12 +2364,19 @@ bool developmentLoopbackFallbackEnabled() {
       qEnvironmentVariable("CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK"));
 }
 
+bool desktopPublicIrohRelayPolicyExplicitlyConfigured = false;
+bool desktopPublicIrohDiscoveryPolicyExplicitlyConfigured = false;
+
 void applyDesktopReachabilityDefaults() {
+  desktopPublicIrohRelayPolicyExplicitlyConfigured =
+      !qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_RELAYS");
+  desktopPublicIrohDiscoveryPolicyExplicitlyConfigured =
+      !qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY");
   if (qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_RELAYS")) {
-    qputenv("CHAFT_IROH_ALLOW_PUBLIC_RELAYS", "1");
+    qputenv("CHAFT_IROH_ALLOW_PUBLIC_RELAYS", "0");
   }
   if (qEnvironmentVariableIsEmpty("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY")) {
-    qputenv("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY", "1");
+    qputenv("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY", "0");
   }
 }
 
@@ -2402,7 +2413,7 @@ bool loadNotificationSoundEnabled(const QString &runtimeDir) {
 bool loadNotificationPreviewEnabled(const QString &runtimeDir) {
   return loadDesktopConfig(runtimeDir)
       .value(QStringLiteral("notificationPreviewEnabled"))
-      .toBool(true);
+      .toBool(false);
 }
 
 bool loadExternalLinkConfirmationEnabled(const QString &runtimeDir) {
@@ -2462,6 +2473,31 @@ QVariantMap loadComposerDrafts(const QString &runtimeDir) {
                                      .value(QStringLiteral("composerDrafts"))
                                      .toObject()
                                      .toVariantMap());
+}
+
+QVariantMap sanitizedKeyKitReminders(const QVariantMap &reminders) {
+  QVariantMap sanitized;
+  for (auto it = reminders.constBegin(); it != reminders.constEnd(); ++it) {
+    if (sanitized.size() >= kMaxKeyKitReminders) {
+      break;
+    }
+    const auto workspaceId = it.key().trimmed();
+    if (workspaceId.isEmpty() ||
+        workspaceId.toUtf8().size() > kMaxWorkspaceIdBytes ||
+        !it.value().toBool()) {
+      continue;
+    }
+    sanitized.insert(workspaceId, true);
+  }
+  return sanitized;
+}
+
+QVariantMap loadKeyKitReminders(const QString &runtimeDir) {
+  return sanitizedKeyKitReminders(
+      loadDesktopConfig(runtimeDir)
+          .value(QStringLiteral("keyKitReminders"))
+          .toObject()
+          .toVariantMap());
 }
 
 QString sanitizedPendingJoinRequestText(const QVariantMap &request,
@@ -3111,7 +3147,7 @@ QString keyTransferStatusLabel(const QByteArray &bytes) {
       object.contains(QStringLiteral("exporterDeviceId")) &&
       object.contains(QStringLiteral("kdf")) &&
       object.contains(QStringLiteral("sealedPayload"))) {
-    return QStringLiteral("recovery kit");
+    return QStringLiteral("decryption key kit");
   }
   return QStringLiteral("credentials");
 }
@@ -3248,6 +3284,7 @@ bool saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
                        bool externalLinkConfirmationEnabled,
                        const QVariantMap &mutedChannels,
                        const QVariantMap &composerDrafts,
+                       const QVariantMap &keyKitReminders,
                        const QVariantMap &pendingJoinRequests,
                        const QVariantMap &windowGeometry) {
   const auto configPath = desktopConfigPath(runtimeDir);
@@ -3311,7 +3348,7 @@ bool saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
     config.insert(QStringLiteral("notificationSoundEnabled"),
                   notificationSoundEnabled);
   }
-  if (!notificationPreviewEnabled) {
+  if (notificationPreviewEnabled) {
     config.insert(QStringLiteral("notificationPreviewEnabled"),
                   notificationPreviewEnabled);
   }
@@ -3328,6 +3365,12 @@ bool saveDesktopConfig(const QString &runtimeDir, const QString &workspaceId,
   if (!sanitizedDrafts.isEmpty()) {
     config.insert(QStringLiteral("composerDrafts"),
                   QJsonObject::fromVariantMap(sanitizedDrafts));
+  }
+  const auto sanitizedReminders =
+      sanitizedKeyKitReminders(keyKitReminders);
+  if (!sanitizedReminders.isEmpty()) {
+    config.insert(QStringLiteral("keyKitReminders"),
+                  QJsonObject::fromVariantMap(sanitizedReminders));
   }
   const auto sanitizedRequests =
       sanitizedPendingJoinRequests(pendingJoinRequests);
@@ -3424,6 +3467,8 @@ class ChaftController : public QObject {
                  mutedChannelsChanged)
   Q_PROPERTY(QVariantMap composerDrafts READ composerDrafts WRITE
                  setComposerDrafts NOTIFY composerDraftsChanged)
+  Q_PROPERTY(QVariantMap keyKitReminders READ keyKitReminders WRITE
+                 setKeyKitReminders NOTIFY keyKitRemindersChanged)
   Q_PROPERTY(QVariantMap pendingJoinRequests READ pendingJoinRequests WRITE
                  setPendingJoinRequests NOTIFY pendingJoinRequestsChanged)
   Q_PROPERTY(QVariantMap windowGeometry READ windowGeometry WRITE
@@ -3529,6 +3574,7 @@ public:
         loadExternalLinkConfirmationEnabled(m_runtimeDir);
     m_mutedChannels = loadMutedChannels(m_runtimeDir);
     m_composerDrafts = loadComposerDrafts(m_runtimeDir);
+    m_keyKitReminders = loadKeyKitReminders(m_runtimeDir);
     m_pendingJoinRequests = loadPendingJoinRequests(m_runtimeDir);
     const auto loadedWorkspaceInviteArtifacts =
         loadWorkspaceInviteArtifacts(m_runtimeDir);
@@ -3625,6 +3671,7 @@ public:
   }
   QVariantMap mutedChannels() const { return m_mutedChannels; }
   QVariantMap composerDrafts() const { return m_composerDrafts; }
+  QVariantMap keyKitReminders() const { return m_keyKitReminders; }
   QVariantMap pendingJoinRequests() const { return m_pendingJoinRequests; }
   QVariantMap windowGeometry() const { return m_windowGeometry; }
   QString lastCreatedChannelId() const { return m_lastCreatedChannelId; }
@@ -5111,6 +5158,31 @@ public:
     m_composerDrafts = sanitized;
     persistDesktopConfig();
     emit composerDraftsChanged();
+  }
+
+  void setKeyKitReminders(const QVariantMap &keyKitReminders) {
+    (void)storeKeyKitReminders(keyKitReminders);
+  }
+
+  Q_INVOKABLE bool
+  storeKeyKitReminders(const QVariantMap &keyKitReminders) {
+    const auto sanitized = sanitizedKeyKitReminders(keyKitReminders);
+    if (m_keyKitReminders == sanitized) {
+      if (persistDesktopConfig()) {
+        return true;
+      }
+      setSyncStatus(QStringLiteral("could not save the key kit reminder"));
+      return false;
+    }
+    const auto previous = m_keyKitReminders;
+    m_keyKitReminders = sanitized;
+    if (!persistDesktopConfig()) {
+      m_keyKitReminders = previous;
+      setSyncStatus(QStringLiteral("could not save the key kit reminder"));
+      return false;
+    }
+    emit keyKitRemindersChanged();
+    return true;
   }
 
   void setPendingJoinRequests(const QVariantMap &pendingJoinRequests) {
@@ -7124,25 +7196,30 @@ public:
       return false;
     }
     if (passphrase.trimmed().isEmpty()) {
-      setSyncStatus(QStringLiteral("recovery passphrase required"));
+      setSyncStatus(QStringLiteral("key kit passphrase required"));
+      return false;
+    }
+    if (passphrase.size() < kMinDecryptionKeyKitPassphraseCharacters) {
+      setSyncStatus(
+          QStringLiteral("key kit passphrase must use at least 12 characters"));
       return false;
     }
     QString metadataError;
     if (!validateMetadataTextForWrite(passphrase, kMaxPassphraseBytes,
-                                      QStringLiteral("recovery passphrase"),
+                                      QStringLiteral("key kit passphrase"),
                                       QStringLiteral("16 KB"),
                                       &metadataError)) {
       setSyncStatus(metadataError);
       return false;
     }
     if (m_exportRecoveryBundleJson == nullptr) {
-      setSyncStatus(QStringLiteral("recovery kit export unavailable"));
+      setSyncStatus(QStringLiteral("decryption key kit export unavailable"));
       return false;
     }
 
-    setSyncStatus(QStringLiteral("creating recovery kit..."));
+    setSyncStatus(QStringLiteral("creating decryption key kit..."));
     runRecoveryBundleExport(passphrase,
-                            QStringLiteral("recovery kit ready"));
+                            QStringLiteral("decryption key kit ready"));
     return true;
   }
 
@@ -7152,7 +7229,7 @@ public:
       return false;
     }
     if (m_rawEventStoreMode) {
-      setSyncStatus(QStringLiteral("open a workspace to restore access"));
+      setSyncStatus(QStringLiteral("open a workspace to import keys"));
       return false;
     }
     if (workspaceOperationInFlight()) {
@@ -7161,31 +7238,31 @@ public:
     }
     const auto normalizedBundleJson = bundleJson.trimmed();
     if (normalizedBundleJson.isEmpty()) {
-      setSyncStatus(QStringLiteral("recovery kit required"));
+      setSyncStatus(QStringLiteral("decryption key kit required"));
       return false;
     }
     QString jsonError;
     if (!validateJsonTextForImport(normalizedBundleJson,
                                    kMaxRecoveryBundleJsonBytes,
-                                   QStringLiteral("recovery kit"),
+                                   QStringLiteral("decryption key kit"),
                                    QStringLiteral("4 MB"), &jsonError)) {
       setSyncStatus(jsonError);
       return false;
     }
     if (passphrase.trimmed().isEmpty()) {
-      setSyncStatus(QStringLiteral("recovery passphrase required"));
+      setSyncStatus(QStringLiteral("key kit passphrase required"));
       return false;
     }
     QString metadataError;
     if (!validateMetadataTextForWrite(passphrase, kMaxPassphraseBytes,
-                                      QStringLiteral("recovery passphrase"),
+                                      QStringLiteral("key kit passphrase"),
                                       QStringLiteral("16 KB"),
                                       &metadataError)) {
       setSyncStatus(metadataError);
       return false;
     }
     if (m_importRecoveryBundleJson == nullptr) {
-      setSyncStatus(QStringLiteral("recovery kit import unavailable"));
+      setSyncStatus(QStringLiteral("decryption key kit import unavailable"));
       return false;
     }
 
@@ -7193,7 +7270,7 @@ public:
     const auto previousWorkspaceId = m_workspaceId;
     const auto generation = ++m_runtimeWriteGeneration;
     setLastRecoveryImportedChannelCount(0);
-    setSyncStatus(QStringLiteral("importing recovery kit..."));
+    setSyncStatus(QStringLiteral("importing decryption key kit..."));
     runRecoveryBundleImport(normalizedBundleJson, passphrase,
                             previousWorkspaceId, hadRuntimeWorkspace,
                             generation);
@@ -7293,10 +7370,15 @@ public:
       return;
     }
     m_backgroundReachabilityRetryScheduled = false;
-    if (m_startIrohPeerJson != nullptr) {
+    if (m_startIrohPeerJson != nullptr ||
+        m_startIrohPeerWithPolicyJson != nullptr) {
       m_backgroundReachabilityFallbackPending = true;
       setSyncStatus(QStringLiteral("connecting to peers..."));
-      runIrohPeerStart();
+      runIrohPeerStart(
+          parseEnabledFlag(
+              qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_RELAYS")),
+          parseEnabledFlag(
+              qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY")));
       return;
     }
     if (developmentLoopbackFallbackEnabled() &&
@@ -7385,15 +7467,30 @@ public:
       queueJoinRequestInboxRefresh(false);
       return true;
     }
-    if (m_startIrohPeerJson == nullptr) {
+    if (m_startIrohPeerWithPolicyJson == nullptr) {
       setSyncStatus(QStringLiteral("relay address unavailable"));
+      return false;
+    }
+    const auto allowPublicRelays =
+        desktopPublicIrohRelayPolicyExplicitlyConfigured
+            ? parseEnabledFlag(
+                  qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_RELAYS"))
+            : true;
+    const auto allowPublicDiscovery =
+        desktopPublicIrohDiscoveryPolicyExplicitlyConfigured
+            ? parseEnabledFlag(
+                  qEnvironmentVariable("CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY"))
+            : true;
+    if (!allowPublicRelays) {
+      setSyncStatus(
+          QStringLiteral("public relay is disabled by desktop policy"));
       return false;
     }
 
     m_backgroundReachabilityStoppedByUser = false;
     m_backgroundReachabilityFallbackPending = false;
     setSyncStatus(QStringLiteral("creating relay address..."));
-    runIrohPeerStart();
+    runIrohPeerStart(allowPublicRelays, allowPublicDiscovery, true);
     return true;
   }
 
@@ -7849,6 +7946,7 @@ signals:
   void externalLinkSettingsChanged();
   void mutedChannelsChanged();
   void composerDraftsChanged();
+  void keyKitRemindersChanged();
   void pendingJoinRequestsChanged();
   void windowGeometryChanged();
   void lastCreatedChannelChanged();
@@ -7879,6 +7977,18 @@ signals:
                                          const QString &message);
   void workspaceCreateFinished(const QString &workspaceId, bool success,
                                bool selected, const QString &message);
+  void messageSendFinished(const QString &workspaceId,
+                           const QString &channelId,
+                           const QString &replyToMessageId, bool success,
+                           const QString &message);
+  void messageEditFinished(const QString &workspaceId,
+                           const QString &messageId, bool success,
+                           const QString &message);
+  void attachmentSendFinished(const QString &workspaceId,
+                              const QString &channelId,
+                              const QString &replyToMessageId,
+                              const QString &filePath, bool success,
+                              const QString &message);
   void deviceProfileUpdateFinished(const QString &workspaceId,
                                    const QString &displayName, bool success,
                                    const QString &message);
@@ -8368,6 +8478,10 @@ private:
               m_library.resolve("chaft_runtime_start_direct_peer_result_json"));
       m_startIrohPeerJson = reinterpret_cast<RuntimeStartIrohPeerResultJsonFn>(
           m_library.resolve("chaft_runtime_start_iroh_peer_result_json"));
+      m_startIrohPeerWithPolicyJson =
+          reinterpret_cast<RuntimeStartIrohPeerWithPolicyResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_start_iroh_peer_with_policy_result_json"));
       m_listJoinRequestInboxJson =
           reinterpret_cast<RuntimeListJoinRequestInboxResultJsonFn>(
               m_library.resolve(
@@ -9687,7 +9801,7 @@ private:
         m_inspectorPinned, m_reducedMotionEnabled, m_notificationsEnabled,
         m_notificationSoundEnabled, m_notificationPreviewEnabled,
         m_externalLinkConfirmationEnabled, m_mutedChannels, m_composerDrafts,
-        m_pendingJoinRequests, m_windowGeometry);
+        m_keyKitReminders, m_pendingJoinRequests, m_windowGeometry);
   }
 
   bool backupPeerInCooldown(const QString &peerEndpoint,
@@ -11739,23 +11853,39 @@ private:
     thread->start();
   }
 
-  void runIrohPeerStart() {
+  void runIrohPeerStart(bool allowPublicRelays = false,
+                        bool allowPublicDiscovery = false,
+                        bool requireExplicitPolicy = false) {
+    if (requireExplicitPolicy && m_startIrohPeerWithPolicyJson == nullptr) {
+      setSyncStatus(QStringLiteral("relay policy control unavailable"));
+      return;
+    }
     setPeerHostingInFlight(true);
     const QPointer<ChaftController> guard(this);
     const auto startFn = m_startIrohPeerJson;
+    const auto startWithPolicyFn = m_startIrohPeerWithPolicyJson;
     const auto stopFn = m_stopDirectPeerJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
-    auto *thread = QThread::create([guard, startFn, stopFn, freeString,
-                                    runtimeDir, identityFile]() {
+    auto *thread = QThread::create([guard, startFn, startWithPolicyFn, stopFn,
+                                    freeString, runtimeDir, identityFile,
+                                    allowPublicRelays, allowPublicDiscovery]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       QString error;
       const auto json = takeWorkerFfiString(
-          startFn(runtimeDirBytes.constData(),
-                  identityFileBytes.isEmpty() ? nullptr
-                                              : identityFileBytes.constData()),
+          startWithPolicyFn != nullptr
+              ? startWithPolicyFn(
+                    runtimeDirBytes.constData(),
+                    identityFileBytes.isEmpty()
+                        ? nullptr
+                        : identityFileBytes.constData(),
+                    allowPublicRelays, allowPublicDiscovery)
+              : startFn(runtimeDirBytes.constData(),
+                        identityFileBytes.isEmpty()
+                            ? nullptr
+                            : identityFileBytes.constData()),
           freeString, &error);
       const auto value = resultValueFromWorkerJson(json, &error);
       const auto peerId = value.value(QStringLiteral("peerId")).toString();
@@ -12569,7 +12699,8 @@ private:
             const auto importSucceeded =
                 !value.isEmpty() && !importedWorkspaceId.isEmpty();
             const auto importMessage = importSucceeded
-                                           ? QStringLiteral("recovery kit imported")
+                                           ? QStringLiteral(
+                                                 "decryption key kit imported")
                                            : (!error.isEmpty()
                                                   ? error
                                                   : QStringLiteral(
@@ -12609,7 +12740,7 @@ private:
             if (guard->m_workspaceId != previousWorkspaceId) {
               guard->setLastRecoveryImportedChannelCount(importedChannelCount);
               guard->setSyncStatus(
-                  QStringLiteral("recovery kit imported after workspace "
+                  QStringLiteral("decryption key kit imported after workspace "
                                  "switch"));
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
               emit guard->workspaceCredentialImportFinished(
@@ -12634,7 +12765,8 @@ private:
             }
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setLastRecoveryImportedChannelCount(importedChannelCount);
-            guard->setSyncStatus(QStringLiteral("recovery kit imported"));
+            guard->setSyncStatus(
+                QStringLiteral("decryption key kit imported"));
             emit guard->workspaceCredentialImportFinished(
                 QStringLiteral("recovery"), importedWorkspaceId, true,
                 importMessage);
@@ -16088,33 +16220,62 @@ private:
           QMetaObject::invokeMethod(
               guard.data(),
               [guard, value, snapshotValue, error, snapshotError, workspaceId,
-               generation]() {
+               channelId, replyToMessageId, generation]() {
                 if (guard.isNull()) {
                   return;
                 }
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                               workspaceId);
+                  const auto message =
+                      value.isEmpty()
+                          ? (error.trimmed().isEmpty()
+                                 ? QStringLiteral("message was not sent")
+                                 : error)
+                          : QStringLiteral(
+                                "message saved; refreshing the conversation");
+                  emit guard->messageSendFinished(
+                      workspaceId, channelId, replyToMessageId,
+                      !value.isEmpty(), message);
                   return;
                 }
                 if (value.isEmpty()) {
-                  guard->setSyncStatus(error);
+                  const auto message =
+                      error.trimmed().isEmpty()
+                          ? QStringLiteral("message was not sent")
+                          : error;
+                  guard->setSyncStatus(message);
+                  emit guard->messageSendFinished(
+                      workspaceId, channelId, replyToMessageId, false, message);
                   return;
                 }
                 if (snapshotValue.isEmpty()) {
-                  guard->setSyncStatus(snapshotError);
+                  const auto message =
+                      snapshotError.trimmed().isEmpty()
+                          ? QStringLiteral(
+                                "message saved, but the conversation could not "
+                                "refresh yet")
+                          : snapshotError;
+                  guard->setSyncStatus(message);
+                  emit guard->messageSendFinished(
+                      workspaceId, channelId, replyToMessageId, true, message);
                   return;
                 }
                 if (guard->m_workspaceId != workspaceId) {
-                  guard->setSyncStatus(
-                      QStringLiteral("message sent after switching workspaces"));
+                  const auto message =
+                      QStringLiteral("message sent after switching workspaces");
+                  guard->setSyncStatus(message);
                   guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                  emit guard->messageSendFinished(
+                      workspaceId, channelId, replyToMessageId, true, message);
                   return;
                 }
 
                 guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
                 guard->setSyncStatus(QStringLiteral("message sent"));
+                emit guard->messageSendFinished(
+                    workspaceId, channelId, replyToMessageId, true, QString());
               },
               Qt::QueuedConnection);
         });
@@ -16166,33 +16327,61 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, snapshotValue, error, snapshotError, workspaceId,
-           generation]() {
+           messageId, generation]() {
             if (guard.isNull()) {
               return;
             }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                           workspaceId);
+              const auto message =
+                  value.isEmpty()
+                      ? (error.trimmed().isEmpty()
+                             ? QStringLiteral("message was not updated")
+                             : error)
+                      : QStringLiteral(
+                            "message updated; refreshing the conversation");
+              emit guard->messageEditFinished(workspaceId, messageId,
+                                              !value.isEmpty(), message);
               return;
             }
             if (value.isEmpty()) {
-              guard->setSyncStatus(error);
+              const auto message =
+                  error.trimmed().isEmpty()
+                      ? QStringLiteral("message was not updated")
+                      : error;
+              guard->setSyncStatus(message);
+              emit guard->messageEditFinished(workspaceId, messageId, false,
+                                              message);
               return;
             }
             if (snapshotValue.isEmpty()) {
-              guard->setSyncStatus(snapshotError);
+              const auto message =
+                  snapshotError.trimmed().isEmpty()
+                      ? QStringLiteral(
+                            "message updated, but the conversation could not "
+                            "refresh yet")
+                      : snapshotError;
+              guard->setSyncStatus(message);
+              emit guard->messageEditFinished(workspaceId, messageId, true,
+                                              message);
               return;
             }
             if (guard->m_workspaceId != workspaceId) {
-              guard->setSyncStatus(
-                  QStringLiteral("message edited after switching workspaces"));
+              const auto message =
+                  QStringLiteral("message edited after switching workspaces");
+              guard->setSyncStatus(message);
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              emit guard->messageEditFinished(workspaceId, messageId, true,
+                                              message);
               return;
             }
 
             guard->applyRuntimeSnapshot(snapshotValue, false);
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setSyncStatus(QStringLiteral("message edited"));
+            emit guard->messageEditFinished(workspaceId, messageId, true,
+                                            QString());
           },
           Qt::QueuedConnection);
     });
@@ -16495,7 +16684,8 @@ private:
           QMetaObject::invokeMethod(
               guard.data(),
               [guard, value, snapshotValue, error, snapshotError, workspaceId,
-               generation, operationId]() {
+               channelId, replyToMessageId, filePath, generation,
+               operationId]() {
                 if (guard.isNull()) {
                   return;
                 }
@@ -16508,26 +16698,59 @@ private:
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                               workspaceId);
+                  const auto message =
+                      value.isEmpty()
+                          ? (error.trimmed().isEmpty()
+                                 ? QStringLiteral("file was not sent")
+                                 : error)
+                          : QStringLiteral(
+                                "file sent; refreshing the conversation");
+                  emit guard->attachmentSendFinished(
+                      workspaceId, channelId, replyToMessageId, filePath,
+                      !value.isEmpty(), message);
                   return;
                 }
                 if (value.isEmpty()) {
-                  guard->setSyncStatus(error);
+                  const auto message =
+                      error.trimmed().isEmpty()
+                          ? QStringLiteral("file was not sent")
+                          : error;
+                  guard->setSyncStatus(message);
+                  emit guard->attachmentSendFinished(
+                      workspaceId, channelId, replyToMessageId, filePath, false,
+                      message);
                   return;
                 }
                 if (snapshotValue.isEmpty()) {
-                  guard->setSyncStatus(snapshotError);
+                  const auto message =
+                      snapshotError.trimmed().isEmpty()
+                          ? QStringLiteral(
+                                "file sent, but the conversation could not "
+                                "refresh yet")
+                          : snapshotError;
+                  guard->setSyncStatus(message);
+                  emit guard->attachmentSendFinished(
+                      workspaceId, channelId, replyToMessageId, filePath, true,
+                      message);
                   return;
                 }
                 if (guard->m_workspaceId != workspaceId) {
-                  guard->setSyncStatus(
-                      QStringLiteral("attachment sent after switching workspaces"));
+                  const auto message = QStringLiteral(
+                      "attachment sent after switching workspaces");
+                  guard->setSyncStatus(message);
                   guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                  emit guard->attachmentSendFinished(
+                      workspaceId, channelId, replyToMessageId, filePath, true,
+                      message);
                   return;
                 }
 
                 guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
                 guard->setSyncStatus(QStringLiteral("attachment sent"));
+                emit guard->attachmentSendFinished(
+                    workspaceId, channelId, replyToMessageId, filePath, true,
+                    QString());
               },
               Qt::QueuedConnection);
         });
@@ -17383,6 +17606,8 @@ private:
       m_repairWorkspaceStorageMetadataJson = nullptr;
   RuntimeStartDirectPeerResultJsonFn m_startDirectPeerJson = nullptr;
   RuntimeStartIrohPeerResultJsonFn m_startIrohPeerJson = nullptr;
+  RuntimeStartIrohPeerWithPolicyResultJsonFn m_startIrohPeerWithPolicyJson =
+      nullptr;
   RuntimeListJoinRequestInboxResultJsonFn m_listJoinRequestInboxJson = nullptr;
   RuntimeListJoinRequestInboxForWorkspaceResultJsonFn
       m_listJoinRequestInboxForWorkspaceJson = nullptr;
@@ -17445,10 +17670,11 @@ private:
   bool m_reducedMotionEnabled = false;
   bool m_notificationsEnabled = true;
   bool m_notificationSoundEnabled = true;
-  bool m_notificationPreviewEnabled = true;
+  bool m_notificationPreviewEnabled = false;
   bool m_externalLinkConfirmationEnabled = true;
   QVariantMap m_mutedChannels;
   QVariantMap m_composerDrafts;
+  QVariantMap m_keyKitReminders;
   QVariantMap m_pendingJoinRequests;
   QVariantMap m_workspaceInviteArtifacts;
   bool m_workspaceInviteArtifactStoreCanBeRewritten = true;
@@ -18142,6 +18368,7 @@ int main(int argc, char *argv[]) {
   }
 
   QApplication app(argc, argv);
+  app.setWindowIcon(QIcon(QStringLiteral(":/branding/chaft-mark.png")));
   std::unique_ptr<QLockFile> runtimeLock;
   const auto runtimeDir = defaultRuntimeDir();
   if (!runtimeDir.isEmpty()) {

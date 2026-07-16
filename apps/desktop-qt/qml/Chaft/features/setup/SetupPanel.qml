@@ -56,6 +56,7 @@ ScrollView {
     property string profileDraftAvatarId: ""
     property string profileSavedAvatarId: ""
     readonly property string standardAccessUpdateProtocol: "openmls/key-package"
+    readonly property int decryptionKitPassphraseMinimumLength: 12
 
     onAdvancedAccessToolsOpenChanged: {
         if (!setupScroll.advancedAccessToolsOpen) {
@@ -108,11 +109,16 @@ ScrollView {
             return false
         }
         if (chaftController.keyTransferJson.length > 0
-                && setupScroll.keyTransferIsRecoveryBundle()) {
-            setupScroll.app.openSaveKeyTransferDialog("recovery kit")
+                && setupScroll.keyTransferIsCurrentWorkspaceRecoveryBundle()) {
+            setupScroll.app.openSaveKeyTransferDialog("decryption key kit")
             return true
         }
         if (addDeviceRecoveryPassphraseField.text.trim().length === 0) {
+            addDeviceRecoveryPassphraseField.forceFieldFocus()
+            return false
+        }
+        if (addDeviceRecoveryPassphraseField.text.length
+                < setupScroll.decryptionKitPassphraseMinimumLength) {
             addDeviceRecoveryPassphraseField.forceFieldFocus()
             return false
         }
@@ -707,13 +713,36 @@ ScrollView {
     }
 
     function keyTransferIsRecoveryBundle() {
+        return setupScroll.keyTransferRecoveryBundleObject() !== null
+    }
+
+    function keyTransferRecoveryBundleObject() {
         var parsed = setupScroll.keyTransferObject()
-        return parsed !== null
-            && parsed.schemaVersion !== undefined
-            && parsed.workspaceId !== undefined
-            && parsed.exporterDeviceId !== undefined
-            && parsed.kdf !== undefined
-            && parsed.sealedPayload !== undefined
+        if (parsed === null) {
+            return null
+        }
+        if (parsed.recoveryBundle !== undefined
+                && parsed.recoveryBundle !== null
+                && typeof parsed.recoveryBundle === "object"
+                && !Array.isArray(parsed.recoveryBundle)) {
+            return parsed.recoveryBundle
+        }
+        return parsed.schemaVersion !== undefined
+                && parsed.workspaceId !== undefined
+                && parsed.exporterDeviceId !== undefined
+                && parsed.kdf !== undefined
+                && parsed.sealedPayload !== undefined
+            ? parsed
+            : null
+    }
+
+    function keyTransferIsCurrentWorkspaceRecoveryBundle() {
+        var bundle = setupScroll.keyTransferRecoveryBundleObject()
+        return bundle !== null
+            && setupScroll.app !== null
+            && String(bundle.workspaceId || "").trim().length > 0
+            && String(bundle.workspaceId || "").trim()
+                === setupScroll.app.currentWorkspaceId()
     }
 
     function keyTransferCopyLabel() {
@@ -733,12 +762,18 @@ ScrollView {
             return "request link"
         }
         if (setupScroll.keyTransferIsRecoveryBundle()) {
-            return "recovery kit"
+            return "decryption key kit"
         }
         if (setupScroll.keyTransferIsAccessFile()) {
             return "access file"
         }
         return "support detail"
+    }
+
+    function keyTransferDisplayLabel() {
+        return setupScroll.keyTransferIsRecoveryBundle()
+            ? "decryption key kit"
+            : setupScroll.keyTransferCopyLabel()
     }
 
     function joinRequestObjectFromText(text) {
@@ -2295,7 +2330,7 @@ ScrollView {
                 return
             }
             if (state === "setup-add-device") {
-                addDeviceRecoveryPassphraseField.text = "visual smoke recovery kit"
+                addDeviceRecoveryPassphraseField.text = "visual smoke key kit"
                 addDeviceRecoveryPassphraseConfirmationField.text =
                     addDeviceRecoveryPassphraseField.text
                 setupScroll.startAddAnotherDeviceFlow()
@@ -2402,9 +2437,13 @@ ScrollView {
                 setupScroll.autoLoadedKeyTransferText = ""
             }
             if (setupScroll.addAnotherDeviceOpenSaveWhenReady
+                    && setupScroll.keyTransferIsCurrentWorkspaceRecoveryBundle()) {
+                setupScroll.addAnotherDeviceOpenSaveWhenReady = false
+                setupScroll.app.openSaveKeyTransferDialog(
+                    "decryption key kit")
+            } else if (setupScroll.addAnotherDeviceOpenSaveWhenReady
                     && setupScroll.keyTransferIsRecoveryBundle()) {
                 setupScroll.addAnotherDeviceOpenSaveWhenReady = false
-                setupScroll.app.openSaveKeyTransferDialog("recovery kit")
             }
             if (setupScroll.keyTransferIsInvitePackage()) {
                 setupScroll.peopleAccessTab = "invites"
@@ -2759,11 +2798,16 @@ ScrollView {
                     enabled: chaftController.runtimeUnlockClearable
                         && !chaftController.keyTransferInFlight
                         && !chaftController.workspaceOperationInFlight
-                    onClicked: chaftController.clearRuntimeUnlock()
+                        && setupScroll.app
+                        && !setupScroll.app.composerContextBusy
+                    onClicked: setupScroll.app.lockWorkspace()
                     ToolTip.visible: hovered
-                    ToolTip.text: chaftController.runtimeUnlockClearable
-                        ? "Forget the saved workspace passphrase"
-                        : "Passphrase is provided by environment"
+                    ToolTip.text: !chaftController.runtimeUnlockClearable
+                        ? "Passphrase is provided by environment"
+                        : (setupScroll.app
+                            && setupScroll.app.composerContextBusy
+                            ? "Finish the current message operation first"
+                            : "Forget the saved workspace passphrase")
                 }
 
                 Button {
@@ -2797,7 +2841,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Add another device"
+                            text: "Use history on another device"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeXs
                             font.weight: Font.DemiBold
@@ -2806,7 +2850,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Use a recovery kit to restore this workspace on another device. The new device appears separately until Chaft can safely link it."
+                            text: "A decryption key kit supplies saved content keys, but it does not add a member or transfer ownership. A fresh device needs an invite before Chaft can show, send, or administer workspace content."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -2814,12 +2858,12 @@ ScrollView {
 
                         Button {
                             Layout.fillWidth: true
-                            text: "Create recovery kit"
+                            text: "Create key kit"
                             enabled: app.runtimeWorkReady
                                 && !chaftController.keyTransferInFlight
-                            Accessible.name: "Create recovery kit for another device"
+                            Accessible.name: "Create decryption key kit"
                             ToolTip.visible: hovered && !enabled
-                            ToolTip.text: "Unlock this workspace before creating a recovery kit."
+                            ToolTip.text: "Unlock this workspace before creating a decryption key kit."
                             onClicked: setupScroll.startAddAnotherDeviceFlow()
                         }
                     }
@@ -2956,6 +3000,15 @@ ScrollView {
                     checked: chaftController.notificationPreviewEnabled
                     onToggled: chaftController.notificationPreviewEnabled = checked
                     Accessible.name: "Notification preview text"
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Off by default so message content does not appear "
+                        + "on a locked screen."
+                    color: Tokens.textMuted
+                    font.pixelSize: Tokens.fontSizeXs
+                    wrapMode: Text.WordWrap
                 }
 
                 Text {
@@ -4661,7 +4714,7 @@ ScrollView {
                 Layout.fillWidth: true
                 visible: setupScroll.category === "devices"
                 title: setupScroll.addAnotherDeviceGuideVisible
-                    ? "Access & Recovery"
+                    ? "Decryption key transfer"
                     : ""
                 collapsible: false
 
@@ -4677,7 +4730,7 @@ ScrollView {
                     border.color: Tokens.borderSubtle
 
                     Accessible.role: Accessible.Pane
-                    Accessible.name: "Add another device"
+                    Accessible.name: "Create decryption key kit"
 
                     ColumnLayout {
                         id: addAnotherDeviceRecoveryLayout
@@ -4689,7 +4742,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Add another device"
+                            text: "Create decryption key kit"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
                             font.weight: Font.DemiBold
@@ -4698,7 +4751,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Create a recovery kit here, then open it in Chaft on the new device."
+                            text: "Open this kit on another device to import the workspace and private-room keys included when the kit is saved."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -4706,7 +4759,7 @@ ScrollView {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Store the kit privately and keep its passphrase separate."
+                            text: "The kit does not copy your identity, restore membership, or transfer ownership. Unless already authorized, the other device needs an invite before workspace content appears."
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -4731,7 +4784,7 @@ ScrollView {
 
                                 Repeater {
                                     model: [
-                                        "1. Save the recovery kit file.",
+                                        "1. Save the decryption key kit file.",
                                         "2. Open the kit in Chaft on the new device.",
                                         "3. Keep the kit private and never share it as an invite."
                                     ]
@@ -4753,13 +4806,17 @@ ScrollView {
                             id: addDeviceRecoveryPassphraseField
                             Layout.fillWidth: true
                             visible: !(chaftController.keyTransferJson.length > 0
-                                && setupScroll.keyTransferIsRecoveryBundle())
+                                && setupScroll.keyTransferIsCurrentWorkspaceRecoveryBundle())
                             label: "Kit passphrase"
                             placeholderText: "Choose a passphrase"
                             echoMode: TextInput.Password
                             requiredField: true
                             maximumLength: 1024
-                            supportText: "Keep this passphrase separate from the recovery kit."
+                            errorText: text.length > 0
+                                && text.length < setupScroll.decryptionKitPassphraseMinimumLength
+                                    ? "Use at least 12 characters."
+                                    : ""
+                            supportText: "Use a long, unique passphrase and store it separately from the kit."
                             onAccepted: setupScroll.createAddAnotherDeviceRecoveryKit()
                         }
 
@@ -4783,11 +4840,11 @@ ScrollView {
                         Text {
                             Layout.fillWidth: true
                             text: chaftController.keyTransferInFlight
-                                ? "Creating recovery kit..."
+                                ? "Creating decryption key kit..."
                                 : (chaftController.keyTransferJson.length > 0
-                                    && setupScroll.keyTransferIsRecoveryBundle()
-                                    ? "Recovery kit ready. Save it somewhere only you can access."
-                                    : "Choose a passphrase only you know.")
+                                    && setupScroll.keyTransferIsCurrentWorkspaceRecoveryBundle()
+                                    ? "Key kit ready. Save a new one after key rotation or gaining access to another private room."
+                                    : "The kit contains a point-in-time set of workspace and private-room decryption keys.")
                             color: Tokens.textMuted
                             font.pixelSize: Tokens.fontSizeXs
                             wrapMode: Text.WordWrap
@@ -4799,13 +4856,15 @@ ScrollView {
 
                             Button {
                                 Layout.fillWidth: true
-                                text: "Save recovery kit"
+                                text: "Save decryption key kit"
                                 enabled: app && app.runtimeWorkReady
                                     && !setupScroll.hasUnreturnedInviteResponse()
                                     && !chaftController.keyTransferInFlight
                                     && ((chaftController.keyTransferJson.length > 0
-                                            && setupScroll.keyTransferIsRecoveryBundle())
+                                            && setupScroll.keyTransferIsCurrentWorkspaceRecoveryBundle())
                                         || (addDeviceRecoveryPassphraseField.text.trim().length > 0
+                                            && addDeviceRecoveryPassphraseField.text.length
+                                                >= setupScroll.decryptionKitPassphraseMinimumLength
                                             && addDeviceRecoveryPassphraseConfirmationField.text
                                                 === addDeviceRecoveryPassphraseField.text))
                                 onClicked: setupScroll.createAddAnotherDeviceRecoveryKit()
@@ -5024,7 +5083,7 @@ ScrollView {
                     visible: !setupScroll.addAnotherDeviceGuideVisible
                         && setupScroll.advancedAccessToolsOpen
                     Layout.preferredHeight: 72
-                    placeholderText: "Invite, recovery kit, or access file"
+                    placeholderText: "Invite, decryption key kit, or access file"
                     Accessible.name: "Paste support item"
                     color: Tokens.textStrong
                     placeholderTextColor: Tokens.textMuted
@@ -5044,14 +5103,14 @@ ScrollView {
 
                     Button {
                         Layout.fillWidth: true
-                        text: "Copy " + setupScroll.keyTransferCopyLabel()
+                        text: "Copy " + setupScroll.keyTransferDisplayLabel()
                         onClicked: app.copyKeyTransferArtifact(
-                            setupScroll.keyTransferCopyLabel())
+                            setupScroll.keyTransferDisplayLabel())
                     }
 
                     Button {
                         Layout.fillWidth: true
-                        text: "Save " + setupScroll.keyTransferCopyLabel()
+                        text: "Save " + setupScroll.keyTransferDisplayLabel()
                         onClicked: app.openSaveKeyTransferDialog(
                             setupScroll.keyTransferCopyLabel())
                     }
@@ -5080,10 +5139,10 @@ ScrollView {
                     Layout.fillWidth: true
                     visible: !setupScroll.addAnotherDeviceGuideVisible
                         && setupScroll.advancedAccessToolsOpen
-                    label: "Recovery passphrase"
+                    label: "Kit passphrase"
                     echoMode: TextInput.Password
                     maximumLength: 1024
-                    supportText: "Used to save or restore a recovery kit."
+                    supportText: "For a new kit, use at least 12 characters and store the passphrase separately."
                 }
 
                 LabeledField {
@@ -5098,7 +5157,7 @@ ScrollView {
                         && text !== recoveryPassphraseField.text
                             ? "Passphrases do not match."
                             : ""
-                    supportText: "Required only when creating a recovery kit."
+                    supportText: "Required only when creating a decryption key kit."
                 }
 
                 RowLayout {
@@ -5137,8 +5196,10 @@ ScrollView {
                     Button {
                         Layout.fillWidth: true
                         visible: chaftController.hasRuntimeWorkspace
-                        text: "Save recovery kit"
+                        text: "Save decryption key kit"
                         enabled: recoveryPassphraseField.text.trim().length > 0
+                            && recoveryPassphraseField.text.length
+                                >= setupScroll.decryptionKitPassphraseMinimumLength
                             && recoveryPassphraseConfirmationField.text
                                 === recoveryPassphraseField.text
                             && app.runtimeWorkReady
@@ -5155,7 +5216,7 @@ ScrollView {
 
                     Button {
                         Layout.fillWidth: true
-                        text: "Restore recovery kit"
+                        text: "Import decryption keys"
                         enabled: workspaceKeyField.text.trim().length > 0
                             && recoveryPassphraseField.text.trim().length > 0
                             && app.runtimeAccessReady
@@ -5170,6 +5231,18 @@ ScrollView {
                             }
                         }
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: !setupScroll.addAnotherDeviceGuideVisible
+                        && setupScroll.advancedAccessToolsOpen
+                    text: "A decryption key kit imports only the keys it contains. It does not authorize this device, restore membership, or transfer ownership; without authorization, workspace content stays hidden."
+                    color: Tokens.warningText
+                    font.pixelSize: Tokens.fontSizeXs
+                    wrapMode: Text.WordWrap
+                    Accessible.role: Accessible.AlertMessage
+                    Accessible.name: text
                 }
 
                 Button {

@@ -24,6 +24,8 @@ ListView {
     property real preservedContentHeight: 0
     property real preservedContentY: 0
     property var quickReactions: ["👍", "🚀", "👀", "✅"]
+    property var expandedMessageIds: ({})
+    readonly property real readingWidth: Math.min(920, Math.max(0, root.width - 36))
     property var reactionChoices: [
         { emoji: "👍", label: "Thumbs up", keywords: "yes agree approve like" },
         { emoji: "👎", label: "Thumbs down", keywords: "no disagree dislike" },
@@ -63,6 +65,7 @@ ListView {
     signal reactionRequested(string messageId, string reaction)
     signal reactionRemoveRequested(string messageId, string reaction)
     signal replyRequested(var item)
+    signal replyParentRequested(string messageId)
     signal threadRequested(var item)
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId)
@@ -78,7 +81,7 @@ ListView {
             return displayName
         }
         var deviceId = String(authorDeviceId || "")
-        return deviceId.length > 0 ? "Unnamed person " + root.shortDeviceId(deviceId) : ""
+        return deviceId.length > 0 ? "Unnamed teammate" : ""
     }
 
     function shortDeviceId(deviceId) {
@@ -164,6 +167,41 @@ ListView {
         return text.length > 96 ? text.slice(0, 93) + "..." : text
     }
 
+    function messageCanUseMarkdown(value) {
+        // QTextDocument can fetch resources referenced by Markdown images or raw
+        // HTML. Render messages containing either resource-bearing entry point
+        // as plain text; safe Markdown still retains headings, emphasis, lists,
+        // code, quotes, and normal links without rewriting message content.
+        var source = String(value === undefined || value === null ? "" : value)
+        var hasMarkdownImage = source.indexOf("![") !== -1
+        var hasRawHtmlTag = /<\/?[A-Za-z][^>]*>/.test(source)
+        return !hasMarkdownImage && !hasRawHtmlTag
+    }
+
+    function accessibleMessageLabel(item) {
+        var source = item || {}
+        var exception = root.exceptionLabel(String(source.kind || ""))
+        if (exception.length > 0) {
+            return exception
+        }
+        var author = root.authorLabel(source.authorDisplayName, source.authorDeviceId)
+        return author.length > 0 ? "Message from " + author : "Message"
+    }
+
+    function setMessageExpanded(itemKey, expanded) {
+        var key = String(itemKey || "")
+        if (key.length === 0) {
+            return
+        }
+        var next = Object.assign({}, root.expandedMessageIds || {})
+        if (expanded) {
+            next[key] = true
+        } else {
+            delete next[key]
+        }
+        root.expandedMessageIds = next
+    }
+
     function replyPreviewLabel(replyPreview) {
         var preview = replyPreview || {}
         var author = root.authorLabel(preview.authorDisplayName, preview.authorDeviceId)
@@ -242,7 +280,7 @@ ListView {
     function quickReactionEntries(myReactions) {
         var entries = []
         var existing = root.localReactionSet(myReactions)
-        for (var i = 0; i < root.quickReactions.length; i += 1) {
+        for (var i = 0; i < root.quickReactions.length && entries.length < 2; i += 1) {
             var reaction = String(root.quickReactions[i] || "").trim()
             if (reaction.length > 0
                     && !Object.prototype.hasOwnProperty.call(existing, reaction)) {
@@ -434,51 +472,76 @@ ListView {
         root.updateFollowLatestFromPosition()
     }
 
-    Text {
+    Column {
         anchors.centerIn: parent
         visible: root.timelineModel.length === 0
-        text: root.emptyText
-        color: Tokens.textMuted
-        font.pixelSize: Tokens.fontSizeMd
+        width: Math.min(420, Math.max(0, root.width - 48))
+        spacing: Tokens.space2
+
+        Text {
+            width: parent.width
+            text: root.emptyText
+            color: Tokens.textStrong
+            font.pixelSize: Tokens.fontSizeLg
+            font.weight: Font.DemiBold
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+        }
+
+        Text {
+            width: parent.width
+            text: root.emptyText.indexOf("No matching") === 0
+                ? "Try another search or clear the current terms."
+                : "Send the first message to start the conversation."
+            color: Tokens.textMuted
+            font.pixelSize: Tokens.fontSizeSm
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+        }
     }
 
-    Rectangle {
+    Button {
         id: latestJump
+        objectName: "jumpToLatestButton"
         visible: root.showJumpToLatest
         z: 20
         x: Math.max(18, root.width - width - 22)
         y: root.contentY + root.height - height - 18
         width: Math.max(132, latestJumpLabel.implicitWidth + 32)
         height: 34
-        radius: Tokens.radiusMd
-        color: latestJumpMouse.containsMouse ? Tokens.secureSurface : Tokens.surfaceRaised
-        border.color: Tokens.accent
-        border.width: 1
+        text: "Jump to latest"
+        activeFocusOnTab: visible
 
-        Text {
+        Accessible.name: text
+        Accessible.description: "Scroll to newest messages"
+
+        background: Rectangle {
+            radius: Tokens.radiusMd
+            color: latestJump.hovered || latestJump.activeFocus
+                ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.14)
+                : Tokens.surfaceRaised
+            border.color: Tokens.accent
+            border.width: latestJump.activeFocus ? 2 : 1
+        }
+
+        contentItem: Text {
             id: latestJumpLabel
-            anchors.centerIn: parent
-            text: "Jump to latest"
+            text: latestJump.text
             color: Tokens.accent
             font.pixelSize: Tokens.fontSizeSm
             font.weight: Font.DemiBold
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
 
-        MouseArea {
-            id: latestJumpMouse
-            anchors.fill: parent
-            scrollGestureEnabled: false
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.scrollToLatest()
-        }
-
-        ToolTip.visible: latestJumpMouse.containsMouse
+        onClicked: root.scrollToLatest()
+        ToolTip.visible: hovered
         ToolTip.text: "Scroll to newest messages"
     }
 
     delegate: Rectangle {
         id: row
+        objectName: "timelineMessageRow"
         required property int index
         required property var modelData
         width: root.width
@@ -501,22 +564,34 @@ ListView {
         readonly property int dayOffset: row.dayBoundary ? 28 : 0
         readonly property int unreadOffset: (row.unreadDividerBefore ? 32 : 0) + row.dayOffset
         readonly property int bodyLineLimit: row.warningRow ? 1 : 8
-        readonly property real bodyMaxHeight: Math.ceil(14 * 1.35 * row.bodyLineLimit)
+        readonly property real bodyCollapsedMaxHeight: Math.ceil(
+            Tokens.fontSizeMd * 1.35 * row.bodyLineLimit
+        )
+        readonly property bool bodyExpanded: root.expandedMessageIds[row.rowItemKey] === true
+        readonly property bool bodyOverflowing: !row.warningRow
+            && bodyText.contentHeight > row.bodyCollapsedMaxHeight + 1
         readonly property real contentAreaHeight: Math.max(
             row.warningRow ? 52 : (row.grouped ? 40 : 68),
             contentColumn.implicitHeight + 24
         )
+        activeFocusOnTab: !row.pendingDelete
         visible: !row.pendingDelete
         color: row.warningRow
             ? Tokens.warningSurface
             : row.selectedRow
-                ? Tokens.secureSurface
+                ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.12)
                 : row.rowHovered
-                    ? Qt.rgba(Tokens.surfaceRaised.r, Tokens.surfaceRaised.g, Tokens.surfaceRaised.b, 0.8)
-                    : (row.index % 2 === 0 ? Tokens.surfaceBase : Tokens.surfaceRaised)
-        border.color: row.selectedRow ? Tokens.secure : "transparent"
-        border.width: row.selectedRow ? 1 : 0
+                    ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.06)
+                    : Tokens.surfaceBase
+        border.color: row.selectedRow || row.activeFocus ? Tokens.accent : "transparent"
+        border.width: row.activeFocus ? 2 : (row.selectedRow ? 1 : 0)
         height: row.pendingDelete ? 0 : row.unreadOffset + row.contentAreaHeight
+
+        Accessible.role: Accessible.ListItem
+        Accessible.name: root.accessibleMessageLabel(row.modelData)
+        Accessible.description: row.warningRow
+            ? "Timeline warning"
+            : "Press Enter to open message actions. Message text is selectable."
 
         HoverHandler {
             id: rowHover
@@ -543,6 +618,24 @@ ListView {
             }
         }
 
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                    || event.key === Qt.Key_Space) {
+                root.itemSelected(row.modelData)
+                event.accepted = true
+            } else if (event.key === Qt.Key_R && event.modifiers === Qt.NoModifier
+                    && root.actionsEnabled && row.rowMessageId.length > 0
+                    && !row.messageDeleted && !row.warningRow) {
+                root.replyRequested(row.modelData)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Menu
+                    || (event.key === Qt.Key_F10
+                        && (event.modifiers & Qt.ShiftModifier))) {
+                rowMenu.popup()
+                event.accepted = true
+            }
+        }
+
         Item {
             visible: row.dayBoundary
             anchors.top: parent.top
@@ -551,11 +644,9 @@ ListView {
             height: 28
 
             RowLayout {
-                anchors.left: parent.left
-                anchors.right: parent.right
+                width: root.readingWidth
+                anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: 18
-                anchors.rightMargin: 18
                 spacing: 8
 
                 Rectangle {
@@ -589,11 +680,9 @@ ListView {
             height: 32
 
             RowLayout {
-                anchors.left: parent.left
-                anchors.right: parent.right
+                width: root.readingWidth
+                anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: 18
-                anchors.rightMargin: 18
                 spacing: 8
 
                 Rectangle {
@@ -631,11 +720,9 @@ ListView {
         RowLayout {
             id: contentRow
             anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
+            anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: row.unreadOffset + 12
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
+            width: root.readingWidth
             height: Math.max(36, contentColumn.implicitHeight)
             spacing: 12
 
@@ -647,6 +734,7 @@ ListView {
                 TimelineAuthorMark {
                     anchors.fill: parent
                     visible: !row.grouped
+                    Accessible.ignored: true
                     warning: row.warningRow
                     encrypted: row.modelData.encrypted
                     authorDeviceId: String(row.modelData.authorDeviceId || "")
@@ -684,39 +772,106 @@ ListView {
                     timeLabel: root.timeLabel(row.modelData.physicalMs)
                 }
 
-                TimelineReplyPreview {
+                Item {
+                    id: parentReplyPreview
+                    objectName: "replyParentPreview"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 28
-                    label: row.modelData.replyPreview ? root.replyPreviewLabel(row.modelData.replyPreview) : ""
-                    avatarId: row.modelData.replyPreview
-                        ? String(row.modelData.replyPreview.authorAvatarId || "")
+                    Layout.preferredHeight: visible ? 28 : 0
+                    readonly property var preview: row.modelData.replyPreview || null
+                    readonly property string parentMessageId: parentReplyPreview.preview
+                        ? String(parentReplyPreview.preview.messageId || "")
                         : ""
-                    authorDeviceId: row.modelData.replyPreview
-                        ? String(row.modelData.replyPreview.authorDeviceId || "")
+                    readonly property string previewLabel: parentReplyPreview.preview
+                        ? root.replyPreviewLabel(parentReplyPreview.preview)
                         : ""
-                    authorDisplayName: row.modelData.replyPreview
-                        ? String(row.modelData.replyPreview.authorDisplayName || "")
-                        : ""
-                    workspaceId: root.workspaceId
+                    visible: parentReplyPreview.previewLabel.length > 0
+                    activeFocusOnTab: visible && parentMessageId.length > 0
+
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Go to replied message"
+                    Accessible.description: previewLabel
+                    Accessible.onPressAction: parentReplyPreview.activate()
+
+                    function activate() {
+                        if (parentReplyPreview.parentMessageId.length > 0) {
+                            root.replyParentRequested(parentReplyPreview.parentMessageId)
+                        }
+                    }
+
+                    TimelineReplyPreview {
+                        anchors.fill: parent
+                        Accessible.ignored: true
+                        label: parentReplyPreview.previewLabel
+                        avatarId: parentReplyPreview.preview
+                            ? String(parentReplyPreview.preview.authorAvatarId || "")
+                            : ""
+                        authorDeviceId: parentReplyPreview.preview
+                            ? String(parentReplyPreview.preview.authorDeviceId || "")
+                            : ""
+                        authorDisplayName: parentReplyPreview.preview
+                            ? String(parentReplyPreview.preview.authorDisplayName || "")
+                            : ""
+                        workspaceId: root.workspaceId
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Tokens.radiusSm
+                        color: "transparent"
+                        border.color: parentReplyPreview.activeFocus ? Tokens.accent : "transparent"
+                        border.width: parentReplyPreview.activeFocus ? 2 : 0
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        scrollGestureEnabled: false
+                        enabled: parentReplyPreview.parentMessageId.length > 0
+                        hoverEnabled: true
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: parentReplyPreview.activate()
+                    }
+
+                    Keys.onPressed: function (event) {
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                || event.key === Qt.Key_Space) {
+                            parentReplyPreview.activate()
+                            event.accepted = true
+                        }
+                    }
                 }
 
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    Text {
+                    TextEdit {
                         id: bodyText
+                        objectName: "timelineMessageBody"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(bodyText.implicitHeight, row.bodyMaxHeight)
-                        Layout.maximumHeight: row.bodyMaxHeight
-                        text: row.modelData.body
-                        textFormat: Text.MarkdownText
+                        Layout.preferredHeight: row.bodyExpanded
+                            ? bodyText.contentHeight
+                            : Math.min(bodyText.contentHeight, row.bodyCollapsedMaxHeight)
+                        text: String(row.modelData.body || "")
+                        textFormat: row.warningRow
+                                || !root.messageCanUseMarkdown(row.modelData.body)
+                            ? TextEdit.PlainText
+                            : TextEdit.MarkdownText
                         color: row.warningRow ? Tokens.warningText : Tokens.textStrong
-                        linkColor: Tokens.accent
                         font.pixelSize: Tokens.fontSizeMd
-                        wrapMode: Text.Wrap
-                        maximumLineCount: row.bodyLineLimit
-                        elide: Text.ElideRight
+                        wrapMode: TextEdit.Wrap
+                        readOnly: true
+                        selectByMouse: true
+                        selectByKeyboard: true
+                        persistentSelection: true
+                        activeFocusOnTab: text.length > 0
+                        cursorVisible: false
+                        clip: !row.bodyExpanded
+
+                        Accessible.role: Accessible.EditableText
+                        Accessible.name: "Message text"
+                        Accessible.description: "Read-only text. Select and copy as needed."
+                        Accessible.readOnly: true
+
                         onLinkActivated: function(link) {
                             root.externalLinkRequested(link)
                         }
@@ -743,6 +898,23 @@ ListView {
                         addressAvailable: root.historyRepairHasAddress
                         busy: root.historyRepairBusy
                         onRepairRequested: root.historyRepairRequested(row.rowEventId)
+                    }
+                }
+
+                TimelineActionChip {
+                    id: bodyExpansionAction
+                    objectName: "messageExpansionButton"
+                    Layout.preferredWidth: 90
+                    Layout.preferredHeight: 24
+                    visible: row.bodyOverflowing || row.bodyExpanded
+                    label: row.bodyExpanded ? "Show less" : "Show more"
+                    tooltip: row.bodyExpanded
+                        ? "Collapse message"
+                        : "Read full message"
+                    minimumWidth: 90
+                    onActivated: {
+                        root.followLatest = false
+                        root.setMessageExpanded(row.rowItemKey, !row.bodyExpanded)
                     }
                 }
 
@@ -824,8 +996,7 @@ ListView {
 
         Rectangle {
             id: hoverActions
-            anchors.right: parent.right
-            anchors.rightMargin: 18
+            anchors.right: contentRow.right
             y: row.unreadOffset + 6
             width: hoverActionsRow.implicitWidth + 12
             height: 30
@@ -834,7 +1005,8 @@ ListView {
             border.width: 1
             border.color: Tokens.borderSubtle
             readonly property bool shown: !row.warningRow && root.actionsEnabled && !row.pendingDelete
-                && (row.rowHovered || row.selectedRow || reactionPicker.visible || rowMenu.visible)
+                && (row.rowHovered || row.activeFocus
+                    || reactionPicker.visible || rowMenu.visible)
             opacity: shown ? 1 : 0
             visible: opacity > 0.01
 
@@ -930,7 +1102,7 @@ ListView {
             }
 
             MenuItem {
-                text: "Share message support info"
+                text: "Share message diagnostics"
                 enabled: root.actionsEnabled && row.rowEventId.length > 0
                 onTriggered: root.proofPublishRequested(row.rowEventId)
             }

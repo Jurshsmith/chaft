@@ -57,7 +57,10 @@ can hold private context, local notes, and secrets without becoming part of Git.
   local OpenMLS self-update groups, and a combined operator-triggered policy
   that rotates both when mixed key state exists.
   Workspace recovery bundles can wrap manual workspace/private-channel key
-  rings with a passphrase for explicit device transfer. A conservative
+  rings with a passphrase for explicit device transfer. The desktop presents
+  these as decryption key kits because they do not carry device identity,
+  membership authorization, OpenMLS private group state, or root ownership.
+  A conservative
   compromise-signal report can now flag invalid self-contained signatures and
   tell operators when local secret rotation is the recommended response. The
   explicit response policy rotates local secret state once for unhandled
@@ -155,12 +158,13 @@ For deterministic visual regression data, opt into the seeded smoke workspace:
 tools/desktop/launch.sh debug --smoke-workspace --fresh
 ```
 
-Desktop onboarding supports creating more than one workspace and joining more
-than one workspace from exported credentials. The join form accepts Chaft access
-files (`.chaftaccess`), invite packages, request cards, access requests, older
-JSON exports, or passphrase-protected recovery kits.
-After creating a workspace, the app prompts for a recovery export so the
-credentials can be saved or copied before inviting other devices. Setup can
+Desktop onboarding supports creating more than one workspace, joining from
+exported access credentials, and separately importing passphrase-protected
+decryption key kits using the existing `.chaftrecovery` format. Access inputs
+include Chaft access files (`.chaftaccess`), invite packages, request cards,
+access requests, and older JSON exports. A key kit imports only the key rings
+available when it was saved; it does not replace the local device identity,
+authorize that device, or transfer ownership. Setup can
 create a single-use invite or a reusable group invite for up to 100 joins
 without collecting device IDs first. Group invites offer presets for 5, 10, 25,
 50, or 100 joins plus a custom maximum from 2 through 100; single-use remains
@@ -630,15 +634,19 @@ workspace/hash/temp-path samples while preserving full reference/removal totals;
 prune also clears stale blob-store temp files from older process IDs without
 touching current-process staging files.
 The desktop starts background native Iroh reachability automatically over the
-same runtime `events.db` and encrypted `blobs/` cache. Production desktop
-launches enable Iroh's encrypted public relay and endpoint-ID discovery path by
-default, wait until a relay connection is actually ready, and retry transient
-startup failures with bounded exponential backoff. The Iroh endpoint secret is
+same runtime `events.db` and encrypted `blobs/` cache. Public relay and
+endpoint-ID discovery are default-deny. Background startup can use direct
+reachability without silently opting the device into public services. The
+advanced **Use public relay** action explicitly enables encrypted relay traffic
+and, when allowed, reachability discovery for that hosted peer through explicit
+runtime policy; it does not mutate the process environment after workers start.
+An operator can lock either service independently through the environment. The
+Iroh endpoint secret is
 domain-separated from the device signing key but deterministically derived from
-it, so the public endpoint ID survives restart without adding another plaintext
-secret file. Relay and discovery services route encrypted peer traffic and
-publish reachability metadata; they do not receive workspace keys or become
-workspace authorities.
+it, so the endpoint ID survives restart without adding another plaintext secret
+file. Relay and discovery services route encrypted peer traffic and publish
+reachability metadata; they do not receive workspace keys or become workspace
+authorities.
 
 Loopback direct-TCP fallback is never enabled by the production desktop. The
 development launcher passes `--local-development-networking`, which disables
@@ -647,7 +655,11 @@ public relay/discovery traffic and enables
 advanced Host controls remain diagnostics and explicit overrides rather than an
 onboarding requirement. Set `CHAFT_DESKTOP_BACKGROUND_REACHABILITY=0` to disable
 automatic hosting; set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=0` and
-`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=0` to enforce a local-network-only policy.
+`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=0` to lock a local-network-only policy.
+Set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=1` before launch to allow relay traffic and
+set `CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=1` independently to allow endpoint-ID
+discovery. **Use public relay** is unavailable when relay policy is explicitly
+disabled; an explicitly disabled discovery policy remains disabled.
 Other profiles or replica nodes can use the active endpoint for pull, push, or
 sync. After reachability starts, the desktop publishes that endpoint as a signed
 workspace hint with a short expiry, refreshes it while hosting, and publishes an
@@ -663,9 +675,9 @@ joins do not freeze the shell.
 Peer fields accept bare `host:port`, `direct+tcp://host:port`, native
 `iroh://<endpoint-id>?addr=<host:port>`, relay-bearing native Iroh endpoints,
 and discovery-backed `iroh://<endpoint-id>` forms through the policy-aware Iroh
-adapter. The production desktop enables public relay/discovery policy unless an
-operator explicitly sets the corresponding allow flag to `0`; CLI, raw FFI,
-and headless node processes keep both off unless their flags are set to `1`.
+adapter. The production desktop, CLI, raw FFI, and headless node keep public
+relay/discovery policy off unless their flags are set to `1` or the desktop user
+explicitly chooses **Use public relay** for that hosted peer.
 `CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE=1` disables the direct TCP bridge for
 policy tests. Those Iroh policy flags ignore raw values above 16 bytes before
 matching `1`, `true`, `yes`, or `on`. Signed peer endpoint
@@ -674,10 +686,10 @@ hints use the same 2 KiB endpoint cap, a 2304-byte endpoint-ID cap, and a
 128 bytes, and the CLI/FFI publish endpoints reject unsupported routes or
 endpoint/transport mismatches before opening the runtime, so replicated
 discovery metadata stays bounded.
-Live reconciliation is enabled by default and periodically syncs the selected
-peer endpoint while suppressing overlapping workers. The advanced `Live
-updates` toggle can pause it for diagnostics. If the endpoint field is empty,
-live sync falls back to
+Automatic synchronization is enabled by default and periodically syncs the
+selected peer endpoint while suppressing overlapping workers. The advanced
+`Auto-sync` toggle can pause it for diagnostics. If the endpoint field is empty,
+automatic sync falls back to
 the newest non-expired signed peer endpoint hint in the workspace snapshot,
 preferring member-hosted peers before backup peers. Snapshot JSON caps replicated
 endpoint hints to the newest 32 member-hosted rows plus newest 32 backup rows so
@@ -899,9 +911,10 @@ owned by the local device are styled and removed as local reactions.
 Device/profile, invite, backup, key-package, OpenMLS, key-transfer, and manual
 rekey controls live behind the scrollable Setup panel so daily channel
 navigation stays visible on normal desktop window heights.
-The Setup panel also has an Appearance section with a 24-theme catalog: the
-default is the dark `midnight-relay`, the original hybrid palette remains
-available as `chaft-classic`, and picking a swatch applies live through QML
+The Setup panel also has an Appearance section with a 26-theme catalog: new
+installs default to the logo-derived dark `chaft-signal` palette, system light
+mode defaults to `chaft-canvas`, the original hybrid palette remains available
+as `chaft-classic`, and picking a swatch applies live through QML
 token bindings, persists only the bounded `desktop.json` theme ID, and never
 writes to the runtime event log.
 Its `Follow system` toggle tracks the OS dark/light scheme live with separate

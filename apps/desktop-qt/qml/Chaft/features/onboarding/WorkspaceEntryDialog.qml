@@ -39,7 +39,7 @@ Dialog {
     readonly property var credentialSummary: root.app
         ? root.app.credentialImportSummary(
             credentialsArea.text,
-            root.restoreMode,
+            root.keyKitMode,
             peerEndpointField.text,
             recoveryPassphraseField.text)
         : ({ title: "", message: "", rows: [], canImport: false, warning: false })
@@ -49,10 +49,15 @@ Dialog {
         ? root.app.parsedCredentialObject(credentialsArea.text)
         : null
     readonly property string credentialKind: String((root.credentialObject && root.credentialObject.kind) || "")
+    readonly property var recoveryBundle: root.app
+        ? root.app.credentialRecoveryBundleObject(root.credentialObject)
+        : null
+    readonly property bool credentialIsRecoveryBundle:
+        root.recoveryBundle !== null
+    readonly property bool keyKitMode: !root.createMode
+        && (root.restoreMode || root.credentialIsRecoveryBundle)
     readonly property bool restoreCredentialSelected: root.credentialSummaryVisible
-        && (root.restoreMode
-            || root.credentialKind === "chaft.recovery-bundle.v1"
-            || String(root.credentialSummary.title || "") === "Recovery kit found")
+        && root.credentialIsRecoveryBundle
     readonly property var workspaceInvite: root.credentialKind === "chaft.workspace-invite.v1"
         ? root.credentialObject
         : null
@@ -102,7 +107,7 @@ Dialog {
     readonly property bool receivedApprovalCredential:
         root.credentialApprovalContext.recognized === true
     readonly property bool joinIdentityVisible: !root.createMode
-        && !root.restoreMode
+        && !root.credentialIsRecoveryBundle
         && root.credentialSummaryVisible
         && (!root.receivedApprovalCredential
             || !root.receivedApprovalDisplayNamePreserved)
@@ -234,9 +239,27 @@ Dialog {
         }
     }
 
+    function synchronizeCredentialMode() {
+        if (!root.visible || root.createMode || !root.credentialSummaryVisible) {
+            return
+        }
+        var nextIntent = root.credentialIsRecoveryBundle ? "restore" : "join"
+        if (root.app.workspaceEntryIntent !== nextIntent) {
+            root.app.workspaceEntryIntent = nextIntent
+        }
+    }
+
     function chooseEntryMode(mode, intent) {
         if (root.handoffOperationPending) {
             return
+        }
+        if (intent === "join" && root.credentialIsRecoveryBundle) {
+            credentialsArea.text = ""
+            recoveryPassphraseField.text = ""
+        } else if (intent === "restore" && root.credentialSummaryVisible
+                   && !root.credentialIsRecoveryBundle) {
+            credentialsArea.text = ""
+            recoveryPassphraseField.text = ""
         }
         root.joinRequestPrepared = false
         root.joinRequestPreparedRequestId = ""
@@ -255,7 +278,7 @@ Dialog {
 
     function selectedCredentialTitle() {
         if (root.restoreMode || root.restoreCredentialSelected) {
-            return "Recovery kit selected"
+            return "Decryption key kit selected"
         }
         if (root.workspaceCard !== null) {
             return "Request link selected"
@@ -277,7 +300,7 @@ Dialog {
 
     function selectedCredentialReplacementText() {
         if (root.restoreMode || root.restoreCredentialSelected) {
-            return "Open another recovery kit or drop one here to replace it."
+            return "Open another decryption key kit or drop one here to replace it."
         }
         if (root.workspaceCard !== null) {
             return "Open another request link or drop one here to replace it."
@@ -379,7 +402,7 @@ Dialog {
             ? root.app.credentialImportFailureSummary(source, status)
             : ({
                 title: "Couldn't open this item",
-                message: "Check the invite, request link, recovery kit, or access file and try again.",
+                message: "Check the invite, request link, decryption key kit, or access file and try again.",
                 detail: String(status || "")
             })
         root.credentialImportFailureTitle = String(summary.title || "")
@@ -401,7 +424,7 @@ Dialog {
 
     function retryCredentialImportInput() {
         root.clearCredentialImportFailure()
-        if (root.restoreMode) {
+        if (root.credentialIsRecoveryBundle) {
             recoveryPassphraseField.text = ""
             recoveryPassphraseField.forceFieldFocus()
             return
@@ -956,7 +979,7 @@ Dialog {
 
                 Text {
                     anchors.centerIn: parent
-                    text: root.createMode ? "#" : (root.restoreMode ? "↺" : "⇄")
+                    text: root.createMode ? "#" : (root.restoreCredentialSelected ? "↺" : "⇄")
                     color: Tokens.accent
                     font.pixelSize: Tokens.fontSizeLg
                     font.weight: Font.Bold
@@ -971,7 +994,9 @@ Dialog {
                     Layout.fillWidth: true
                     text: root.createMode
                         ? "Create a workspace"
-                        : (root.restoreMode ? "Restore a workspace" : "Join a workspace")
+                        : (root.restoreCredentialSelected || root.restoreMode
+                            ? "Import a decryption key kit"
+                            : "Join a workspace")
                     color: Tokens.textStrong
                     font.pixelSize: Tokens.fontSizeXl
                     font.weight: Font.Bold
@@ -982,8 +1007,8 @@ Dialog {
                     Layout.fillWidth: true
                         text: root.createMode
                             ? "Start a private workspace for your team here."
-                            : (root.restoreMode
-                                ? "Restore access with a saved recovery kit."
+                            : (root.restoreCredentialSelected || root.restoreMode
+                                ? "Import saved keys to decrypt matching history available to this device."
                                 : "Open an invite, request link, or access file.")
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeSm
@@ -1015,14 +1040,14 @@ Dialog {
 
                 EntryModeSegment {
                     label: "Join"
-                    active: !root.createMode && !root.restoreMode
+                    active: !root.createMode && !root.keyKitMode
                     enabled: !root.handoffOperationPending
                     onChosen: root.chooseEntryMode("join", "join")
                 }
 
                 EntryModeSegment {
-                    label: "Restore"
-                    active: root.restoreMode
+                    label: "Key kit"
+                    active: root.keyKitMode
                     enabled: !root.handoffOperationPending
                     onChosen: root.chooseEntryMode("join", "restore")
                 }
@@ -1111,7 +1136,7 @@ Dialog {
                     Text {
                         Layout.fillWidth: true
                         text: root.restoreMode
-                            ? "Recovery kit"
+                            ? "Decryption key kit"
                                 : (root.workspaceCard !== null
                                 ? "Request link"
                                 : "Invite or request link")
@@ -1122,11 +1147,14 @@ Dialog {
                     }
 
                     Button {
-                        text: root.restoreMode ? "Open recovery kit" : "Open invite or access file"
+                        text: root.restoreMode || root.restoreCredentialSelected
+                            ? "Open key kit"
+                            : "Open invite or access file"
                         enabled: root.app.runtimeAccessReady
                         Accessible.name: text
                         Accessible.description: root.restoreMode
-                            ? "Choose a recovery kit file"
+                                || root.restoreCredentialSelected
+                            ? "Choose a decryption key kit file"
                             : "Choose an invite, request link, or access file"
                         onClicked: root.app.openWorkspaceCredentialFile()
                     }
@@ -1144,10 +1172,12 @@ Dialog {
                         anchors.fill: parent
                         visible: !root.credentialTextSummaryVisible
                         placeholderText: root.restoreMode
-                            ? "Paste a recovery kit"
+                                || root.restoreCredentialSelected
+                            ? "Paste a decryption key kit"
                             : "Paste an invite or request link"
                         Accessible.name: root.restoreMode
-                            ? "Recovery kit"
+                                || root.restoreCredentialSelected
+                            ? "Decryption key kit"
                             : "Workspace invite or request link"
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
@@ -1232,7 +1262,7 @@ Dialog {
                             anchors.centerIn: parent
                             width: parent.width - Tokens.space4 * 2
                             text: root.restoreMode
-                                ? "Drop recovery kit"
+                                ? "Drop decryption key kit"
                                 : "Drop invite, request link, or access file"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
@@ -1315,12 +1345,23 @@ Dialog {
                     id: recoveryPassphraseField
                     Layout.fillWidth: true
                     visible: root.restoreCredentialSelected
-                    label: "Recovery passphrase"
+                    label: "Kit passphrase"
                     placeholderText: root.restoreCredentialSelected
                         ? "Passphrase used when this kit was saved"
-                        : "Optional for invites; required for recovery kits"
+                        : "Optional for invites; required for decryption key kits"
                     echoMode: TextInput.Password
                     onAccepted: root.app.submitWorkspaceJoin()
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.restoreCredentialSelected
+                    text: "This imports only the saved decryption keys. If this device is not already authorized, it needs an invite before Chaft can show or send workspace content."
+                    color: Tokens.warningText
+                    font.pixelSize: Tokens.fontSizeXs
+                    wrapMode: Text.WordWrap
+                    Accessible.role: Accessible.AlertMessage
+                    Accessible.name: text
                 }
 
                 LabeledField {
@@ -1336,7 +1377,7 @@ Dialog {
                     Layout.fillWidth: true
                     visible: root.peerEndpointInputVisible
                     text: root.restoreCredentialSelected
-                        ? "History loads from the recovery kit when included; otherwise Chaft waits for a reachable teammate."
+                        ? "Matching history must already be on this device or come from a reachable teammate. Use a newer kit if recent content remains locked."
                         : "Invites let you join; Chaft loads history when a teammate is reachable."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
@@ -1362,7 +1403,7 @@ Dialog {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "After restore"
+                            text: "After importing keys"
                             color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
                             font.weight: Font.DemiBold
@@ -1372,16 +1413,16 @@ Dialog {
                         Repeater {
                                 model: [
                                     {
-                                        label: "Access",
-                                        value: "Workspace access is restored here."
+                                        label: "Keys",
+                                        value: "Only keys included when the kit was saved are imported."
                                     },
                                 {
                                     label: "History",
-                                    value: "Loads locally, then fetches from a reachable teammate."
+                                    value: "Readable when matching encrypted history is available."
                                 },
                                 {
-                                    label: "Private rooms",
-                                    value: "Only rooms included in the kit unlock here."
+                                    label: "Membership",
+                                    value: "Not restored. An unauthorized device needs an invite before content appears."
                                 }
                             ]
 
@@ -1893,7 +1934,9 @@ Dialog {
                     EntryPrimaryButton {
                         visible: !root.requestAccessContext
                         text: root.credentialImportPending
-                            ? (root.restoreMode ? "Restoring..." : "Joining...")
+                            ? (root.keyKitMode
+                                ? "Importing keys..."
+                                : "Joining...")
                             : (root.joinRequestPrepared
                                 ? (root.joinRequestPreparedAction === "sending"
                                     ? (root.secureInviteClaim ? "Joining..." : "Sending...")
@@ -1910,7 +1953,9 @@ Dialog {
                                                     ? "Join workspace"
                                                     : "Send request")
                                                 : "Transfer manually")))))
-                                : (root.restoreMode ? "Restore workspace" : "Join workspace"))
+                                : (root.keyKitMode
+                                    ? "Import keys"
+                                    : "Join workspace"))
                         enabled: root.joinRequestPrepared
                             ? (root.joinRequestPreparedAction !== "sending"
                                 && root.app.runtimeAccessReady
@@ -1999,7 +2044,7 @@ Dialog {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "You can start chatting now, then invite teammates or save a private recovery kit."
+                    text: "You can start chatting now, then invite teammates or save a private decryption key kit."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap
@@ -2070,6 +2115,7 @@ Dialog {
     }
 
     onCredentialSummaryVisibleChanged: {
+        root.synchronizeCredentialMode()
         if (root.credentialSummaryVisible
                 && root.joinIdentityVisible
                 && !root.displayNameReady) {
@@ -2081,6 +2127,7 @@ Dialog {
             })
         }
     }
+    onCredentialIsRecoveryBundleChanged: root.synchronizeCredentialMode()
 
     onClosed: root.resetForm()
 }

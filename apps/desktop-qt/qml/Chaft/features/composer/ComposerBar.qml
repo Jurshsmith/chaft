@@ -14,6 +14,7 @@ Rectangle {
     property string replyWorkspaceId: ""
     property string replyIdentityId: ""
     property string replyDisplayName: ""
+    property bool operationPending: false
     signal sendRequested(string text)
     signal attachRequested(string text)
     signal saveEditRequested(string text)
@@ -47,7 +48,8 @@ Rectangle {
     }
 
     function submitDraft() {
-        if (!root.enabled || messageField.text.trim().length === 0) {
+        if (!root.enabled || root.operationPending
+                || messageField.text.trim().length === 0) {
             return false
         }
         if (root.editMode) {
@@ -59,7 +61,7 @@ Rectangle {
     }
 
     function attachDraft() {
-        if (!root.enabled || root.editMode) {
+        if (!root.enabled || root.editMode || root.operationPending) {
             return false
         }
         root.attachRequested(messageField.text)
@@ -67,7 +69,7 @@ Rectangle {
     }
 
     function cancelEdit() {
-        if (!root.editMode) {
+        if (!root.editMode || root.operationPending) {
             return false
         }
         root.cancelEditRequested()
@@ -183,25 +185,41 @@ Rectangle {
                     visible: root.editMode
                     text: "Cancel"
                     implicitWidth: 76
+                    enabled: !root.operationPending
                     Layout.alignment: Qt.AlignBottom
                     onClicked: root.cancelEdit()
                 }
 
                 Button {
+                    id: attachButton
                     visible: !root.editMode
-                    text: "File"
-                    implicitWidth: 64
-                    enabled: root.enabled
+                    text: "Attach"
+                    implicitWidth: 72
+                    enabled: root.enabled && !root.operationPending
                     Layout.alignment: Qt.AlignBottom
+                    Accessible.name: "Attach file"
+                    Accessible.description: "Choose a file to attach to this draft"
                     onClicked: root.attachDraft()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Attach a file"
                 }
 
                 Button {
-                    text: root.editMode ? "Save" : "Send"
-                    implicitWidth: 78
-                    enabled: root.enabled && messageField.text.trim().length > 0
+                    id: submitButton
+                    text: root.operationPending
+                        ? (root.editMode ? "Saving..." : "Sending...")
+                        : (root.editMode ? "Save" : "Send")
+                    implicitWidth: root.operationPending ? 92 : 78
+                    enabled: root.enabled && !root.operationPending
+                        && messageField.text.trim().length > 0
                     Layout.alignment: Qt.AlignBottom
+                    Accessible.name: root.editMode ? "Save edited message" : "Send message"
+                    Accessible.description: root.editMode
+                        ? "Save changes to this message"
+                        : "Send this message"
                     onClicked: root.submitDraft()
+                    ToolTip.visible: hovered
+                    ToolTip.text: root.editMode ? "Save message" : "Send message"
                 }
             }
         }

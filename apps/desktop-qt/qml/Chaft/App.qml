@@ -69,7 +69,9 @@ ApplicationWindow {
     property string selectedChannelId: ""
     property string searchQuery: ""
     readonly property string trimmedSearchQuery: searchQuery.trim()
-    readonly property bool searchHasTerms: chaftController.searchQueryHasTerms(trimmedSearchQuery)
+    readonly property bool searchHasTerms: trimmedSearchQuery.length > 0
+    readonly property bool indexedSearchHasTerms:
+        chaftController.searchQueryHasTerms(trimmedSearchQuery)
     readonly property string normalizedSearchQuery: searchHasTerms ? trimmedSearchQuery.toLowerCase() : ""
     readonly property var selectedChannel: root.channelById(root.selectedChannelId)
     readonly property string selectedChannelKey: String(selectedChannel.channelId || "")
@@ -77,7 +79,7 @@ ApplicationWindow {
     readonly property bool selectedChannelTimelineReady: timelineChannelId.length > 0
         && timelineChannelId === selectedChannelKey
     readonly property bool channelSearchReady: root.runtimeWorkReady
-        && normalizedSearchQuery.length > 0
+        && root.indexedSearchHasTerms
         && chaftController.channelSearchQuery === root.trimmedSearchQuery
     readonly property var filteredChannels: root.filteredChannelRows()
     readonly property var filteredRoomChannels: root.filteredChannels.filter(function(channel) {
@@ -90,8 +92,12 @@ ApplicationWindow {
         return root.channelIsDirectMessage(channel)
     })
     readonly property bool runtimeSearchReady: root.runtimeWorkReady
-        && normalizedSearchQuery.length > 0
+        && root.indexedSearchHasTerms
         && chaftController.messageSearchQuery === root.trimmedSearchQuery
+    readonly property bool searchResultsLoading: root.searchHasTerms
+        && root.runtimeWorkReady
+        && root.indexedSearchHasTerms
+        && (!root.runtimeSearchReady || !root.channelSearchReady)
     readonly property var channelTimeline: timeline.filter(function(item) {
         return root.timelineItemInSelectedChannel(item)
     })
@@ -104,6 +110,7 @@ ApplicationWindow {
     readonly property var decoratedLocalSearchTimeline: root.timelineWithUnreadDivider(localSearchTimeline)
     readonly property var selectedTimeline: runtimeSearchReady ? runtimeSearchTimeline : decoratedLocalSearchTimeline
     property string inspectorItemKey: ""
+    property var inspectorSelectedItemSnapshot: ({})
     readonly property var inspectorItem: root.currentInspectorItem()
     readonly property bool selectedChannelDirectMessage: root.channelIsDirectMessage(root.selectedChannel)
     readonly property string selectedChannelDisplayName: root.channelDisplayName(root.selectedChannel)
@@ -153,9 +160,28 @@ ApplicationWindow {
     property var replyTarget: ({})
     readonly property string replyTargetMessageId: String(replyTarget.messageId || "")
     property var composerDrafts: ({})
+    property string pendingComposerOperationKind: ""
+    property string pendingComposerOperationWorkspaceId: ""
+    property string pendingComposerOperationChannelId: ""
+    property string pendingComposerOperationReplyToMessageId: ""
+    property string pendingComposerOperationMessageId: ""
+    property string pendingComposerOperationText: ""
+    property string pendingComposerOperationFilePath: ""
+    property bool suppressComposerDraftSave: false
+    readonly property bool composerOperationPending:
+        pendingComposerOperationKind.length > 0
+    readonly property bool composerContextBusy:
+        composerOperationPending || editingMessageId.length > 0
     property string pendingDraftRestoreWorkspaceId: ""
     property string mainDestination: "conversation"
     property string settingsCategory: "profile"
+    readonly property bool compactAppChrome: root.width < 1200
+    readonly property bool pinnedInspectorAvailable: root.width >= 1280
+    readonly property int workspaceRailWidth: compactAppChrome ? 64 : 72
+    readonly property int navigationSidebarWidth: compactAppChrome ? 228 : 268
+    readonly property int inspectorPanelWidth: root.width >= 1500
+        ? 312
+        : (root.width >= 1200 ? 280 : 248)
     readonly property bool conversationDestination: mainDestination === "conversation"
     readonly property bool settingsDestination: mainDestination === "settings"
     readonly property bool peopleAccessDestination: mainDestination === "peopleAccess"
@@ -302,17 +328,15 @@ ApplicationWindow {
             return "Loading messages"
         }
         if (chaftController.peerHosting) {
-            return "Reachable"
+            return "Listening"
+        }
+        if (root.preferredSyncPeerEndpoint().length === 0) {
+            return "Local only"
         }
         if (root.autoSyncEnabled) {
-            return "Live updates"
+            return "Updates on"
         }
-        if (root.queuedPublishableEventCount > 0) {
-            return root.queuedPublishableEventCount === 1
-                ? "1 waiting to share"
-                : String(root.queuedPublishableEventCount) + " waiting to share"
-        }
-        return "Not sharing"
+        return "Updates paused"
     }
 
     readonly property color syncPillTone: {
@@ -322,13 +346,23 @@ ApplicationWindow {
         if (root.workspaceOperationInFlight) {
             return Tokens.textMuted
         }
-        if (chaftController.peerHosting || root.autoSyncEnabled) {
-            return Tokens.success
-        }
-        if (root.queuedPublishableEventCount > 0) {
-            return Tokens.secure
+        if (chaftController.peerHosting) {
+            return Tokens.textMuted
         }
         return Tokens.textMuted
+    }
+
+    function syncDrawerSummaryText() {
+        if (chaftController.syncInFlight) {
+            return "Checking for newer messages..."
+        }
+        if (root.preferredSyncPeerEndpoint().length === 0) {
+            return "Messages stay on this device until you add a teammate address."
+        }
+        if (root.autoSyncEnabled) {
+            return "Chaft checks the saved teammate address automatically."
+        }
+        return "A teammate address is saved. Update whenever you are ready."
     }
 
     readonly property bool macosShortcuts: Qt.platform.os === "osx"
@@ -401,7 +435,7 @@ ApplicationWindow {
         },
         {
             id: "toggle-live-sync",
-            label: "Toggle live updates",
+            label: "Toggle automatic updates",
             shortcut: "",
             enabled: function () {
                 return root.runtimeWorkReady
@@ -463,8 +497,9 @@ ApplicationWindow {
                     && chaftController.runtimeUnlockClearable
                     && !chaftController.keyTransferInFlight
                     && !root.workspaceOperationInFlight
+                    && !root.composerContextBusy
             },
-            run: function () { chaftController.clearRuntimeUnlock() }
+            run: function () { root.lockWorkspace() }
         },
         {
             id: "reindex-search",
@@ -823,6 +858,11 @@ ApplicationWindow {
                 chaftController.rotateWorkspaceManualKeys()
             } else if (id.indexOf("rotate-channel-key:") === 0) {
                 chaftController.rotateChannelKey(id.slice("rotate-channel-key:".length))
+            } else if (id === "invite-without-post-create-key-kit") {
+                postCreateExportDialog.explicitlyDeferred = true
+                root.setKeyKitReminder(postCreateExportDialog.workspaceId, false)
+                postCreateExportDialog.close()
+                root.openPeopleAccess(true)
             }
         }
     }
@@ -1071,6 +1111,10 @@ ApplicationWindow {
                 && !chaftController.hasRuntimeWorkspace) {
             return false
         }
+        if (root.conversationDestination
+                && root.composerContextChangeBlocked()) {
+            return false
+        }
         root.saveCurrentDraft()
         root.settingsCategory = root.normalizedSettingsCategory(
             categoryId || root.settingsCategory)
@@ -1080,6 +1124,10 @@ ApplicationWindow {
 
     function openPeopleAccess(focusInvite) {
         if (!chaftController.hasRuntimeWorkspace) {
+            return false
+        }
+        if (root.conversationDestination
+                && root.composerContextChangeBlocked()) {
             return false
         }
         root.saveCurrentDraft()
@@ -1370,7 +1418,9 @@ ApplicationWindow {
                 || Boolean(status.lastPartial || false)
                 || root.backupPeerSuspectScore(status) > 0)
             ? Tokens.warningText
-            : Tokens.success
+            : (String(status.lastSuccessAt || "").length > 0
+                ? Tokens.success
+                : Tokens.textMuted)
     }
 
     function normalizedPeerEndpointHints() {
@@ -1723,15 +1773,15 @@ ApplicationWindow {
     function endpointRouteLabel(endpoint) {
         switch (root.endpointRouteKind(endpoint)) {
         case "direct-tcp":
-            return "Direct connection"
+            return "Direct address"
         case "iroh-direct":
-            return "Direct connection"
+            return "Direct address"
         case "iroh-relay":
-            return "Relay connection"
+            return "Relay address"
         case "iroh-discovery":
-            return "Finding teammate"
+            return "Discovery address"
         case "custom":
-            return "Custom connection"
+            return "Custom address"
         default:
             return "Not sharing"
         }
@@ -1779,8 +1829,8 @@ ApplicationWindow {
         var endpoint = root.preferredSyncPeerEndpoint()
         if (endpoint.length === 0) {
             return (root.queuedPublishableEventCount > 0 || root.queuedBackupEventCount > 0)
-                ? "Changes waiting"
-                : "Not sharing"
+                ? "Local history"
+                : "Local only"
         }
         return root.endpointIsBackupPeer(endpoint)
             ? "Backup address"
@@ -1798,8 +1848,6 @@ ApplicationWindow {
     function activePeerRouteIsWarning() {
         return chaftController.runtimeLocked
             || chaftController.runtimeUnlockRequired
-            || (root.preferredSyncPeerEndpoint().length === 0
-                && (root.queuedPublishableEventCount > 0 || root.queuedBackupEventCount > 0))
     }
 
     function shortDeviceId(deviceId) {
@@ -1831,7 +1879,7 @@ ApplicationWindow {
         if (displayName.length > 0) {
             parts.push(displayName)
         } else if (device.length > 0) {
-            parts.push("Unnamed person")
+            parts.push("Unnamed teammate")
         }
         if (device.length > 0) {
             parts.push("Support code " + device)
@@ -2122,7 +2170,7 @@ ApplicationWindow {
             displayLabel: !hasDisplayName
                 ? root.unnamedPersonLabel(normalizedDeviceId)
                 : displayName,
-            grantDisplayLabel: !hasDisplayName ? "Unnamed person" : displayName,
+            grantDisplayLabel: !hasDisplayName ? "Unnamed teammate" : displayName,
             supportLabel: !hasDisplayName && normalizedDeviceId.length > 0
                 ? "Support code " + root.shortDeviceId(normalizedDeviceId)
                 : "",
@@ -2204,7 +2252,7 @@ ApplicationWindow {
             for (var k = 0; k < rows.length; k += 1) {
                 if (String(rows[k].supportLabel || "").length > 0) {
                     unnamedIndex += 1
-                    rows[k].grantDisplayLabel = "Unnamed person " + String(unnamedIndex)
+                    rows[k].grantDisplayLabel = "Unnamed teammate " + String(unnamedIndex)
                 }
             }
         }
@@ -2841,7 +2889,7 @@ ApplicationWindow {
         }
         if (normalized.indexOf("synced") !== -1 || normalized.indexOf("published") !== -1
                 || normalized.indexOf("backed up") !== -1 || normalized.indexOf("complete") !== -1
-                || normalized.indexOf("verified") !== -1 || normalized.indexOf("hosting") !== -1) {
+                || normalized.indexOf("verified") !== -1) {
             return Tokens.success
         }
         return Tokens.textMuted
@@ -3629,6 +3677,165 @@ ApplicationWindow {
         root.saveDraftForKey(root.composerDraftKey(workspaceId, channelId), "")
     }
 
+    function beginComposerOperation(kind, workspaceId, channelId,
+                                    replyToMessageId, messageId, text,
+                                    filePath) {
+        if (root.composerOperationPending) {
+            return false
+        }
+        root.pendingComposerOperationKind = String(kind || "")
+        root.pendingComposerOperationWorkspaceId = String(workspaceId || "")
+        root.pendingComposerOperationChannelId = String(channelId || "")
+        root.pendingComposerOperationReplyToMessageId =
+            String(replyToMessageId || "")
+        root.pendingComposerOperationMessageId = String(messageId || "")
+        root.pendingComposerOperationText = String(text || "")
+        root.pendingComposerOperationFilePath = String(filePath || "")
+        return root.composerOperationPending
+    }
+
+    function clearPendingComposerOperation() {
+        root.pendingComposerOperationKind = ""
+        root.pendingComposerOperationWorkspaceId = ""
+        root.pendingComposerOperationChannelId = ""
+        root.pendingComposerOperationReplyToMessageId = ""
+        root.pendingComposerOperationMessageId = ""
+        root.pendingComposerOperationText = ""
+        root.pendingComposerOperationFilePath = ""
+    }
+
+    function pendingComposerContextMatches(kind, workspaceId, channelId,
+                                           replyToMessageId, messageId,
+                                           filePath) {
+        if (root.pendingComposerOperationKind !== String(kind || "")
+                || root.pendingComposerOperationWorkspaceId
+                    !== String(workspaceId || "")) {
+            return false
+        }
+        if (channelId !== undefined
+                && root.pendingComposerOperationChannelId
+                    !== String(channelId || "")) {
+            return false
+        }
+        if (replyToMessageId !== undefined
+                && root.pendingComposerOperationReplyToMessageId
+                    !== String(replyToMessageId || "")) {
+            return false
+        }
+        if (messageId !== undefined
+                && root.pendingComposerOperationMessageId
+                    !== String(messageId || "")) {
+            return false
+        }
+        return filePath === undefined
+            || root.pendingComposerOperationFilePath === String(filePath || "")
+    }
+
+    function completePendingMessageSend(workspaceId, channelId,
+                                        replyToMessageId, success, message) {
+        if (!root.pendingComposerContextMatches(
+                    "message", workspaceId, channelId, replyToMessageId,
+                    undefined, undefined)) {
+            return
+        }
+        var sentText = root.pendingComposerOperationText
+        var draftKey = root.composerDraftKey(workspaceId, channelId)
+        var storedDraft = String(root.composerDrafts[draftKey] || "")
+        var selectedContext = root.currentWorkspaceId() === String(workspaceId || "")
+            && root.selectedChannelKey === String(channelId || "")
+            && root.editingMessageId.length === 0
+        var visibleDraftUnchanged = selectedContext
+            && composer.draftText() === sentText
+        if (success) {
+            if (storedDraft === sentText) {
+                root.clearDraftForWorkspaceChannel(workspaceId, channelId)
+            }
+            if (visibleDraftUnchanged) {
+                composer.clearDraft()
+                if (root.replyTargetMessageId
+                        === String(replyToMessageId || "")) {
+                    root.cancelReplyMessage()
+                }
+            }
+        } else {
+            toastHost.show(
+                "error",
+                String(message || "Message was not sent.")
+                    + " Your draft is still here.",
+                "",
+                "",
+                8000)
+        }
+        root.clearPendingComposerOperation()
+    }
+
+    function completePendingMessageEdit(workspaceId, messageId, success,
+                                        message) {
+        if (!root.pendingComposerContextMatches(
+                    "edit", workspaceId, undefined, undefined, messageId,
+                    undefined)) {
+            return
+        }
+        var editedText = root.pendingComposerOperationText
+        var visibleEditUnchanged =
+            root.currentWorkspaceId() === String(workspaceId || "")
+            && root.editingMessageId === String(messageId || "")
+            && composer.draftText() === editedText
+        root.clearPendingComposerOperation()
+        if (success) {
+            if (visibleEditUnchanged) {
+                root.cancelEditMessage()
+            }
+        } else {
+            toastHost.show(
+                "error",
+                String(message || "Message was not updated.")
+                    + " Your edit is still here.",
+                "",
+                "",
+                8000)
+        }
+    }
+
+    function completePendingAttachmentSend(workspaceId, channelId,
+                                           replyToMessageId, filePath,
+                                           success, message) {
+        if (!root.pendingComposerContextMatches(
+                    "attachment", workspaceId, channelId, replyToMessageId,
+                    undefined, filePath)) {
+            return
+        }
+        var sentText = root.pendingComposerOperationText
+        var draftKey = root.composerDraftKey(workspaceId, channelId)
+        var storedDraft = String(root.composerDrafts[draftKey] || "")
+        var selectedContext = root.currentWorkspaceId() === String(workspaceId || "")
+            && root.selectedChannelKey === String(channelId || "")
+            && root.editingMessageId.length === 0
+        var visibleDraftUnchanged = selectedContext
+            && composer.draftText() === sentText
+        if (success) {
+            if (storedDraft === sentText) {
+                root.clearDraftForWorkspaceChannel(workspaceId, channelId)
+            }
+            if (visibleDraftUnchanged) {
+                composer.clearDraft()
+                if (root.replyTargetMessageId
+                        === String(replyToMessageId || "")) {
+                    root.cancelReplyMessage()
+                }
+            }
+        } else {
+            toastHost.show(
+                "error",
+                String(message || "File was not sent.")
+                    + " Your message is still here; attach the file again to retry.",
+                "",
+                "",
+                9000)
+        }
+        root.clearPendingComposerOperation()
+    }
+
     function queueCountLabel(value, singular, plural) {
         return String(value) + " " + (value === 1 ? singular : plural)
     }
@@ -3644,9 +3851,9 @@ ApplicationWindow {
             return "History needs update"
         }
         if (root.queuedPublishableEventCount > 0 || root.queuedBackupEventCount > 0) {
-            return "Changes ready to share"
+            return "Local history available"
         }
-        return "All caught up"
+        return "No eligible local events"
     }
 
     function publishQueueDetailText() {
@@ -3656,10 +3863,16 @@ ApplicationWindow {
 
         var parts = []
         if (root.queuedPublishableEventCount > 0) {
-            parts.push(root.queueCountLabel(root.queuedPublishableEventCount, "update to share", "updates to share"))
+            parts.push(root.queueCountLabel(
+                root.queuedPublishableEventCount,
+                "local event available to peers",
+                "local events available to peers"))
         }
         if (root.queuedBackupEventCount > 0) {
-            parts.push(root.queueCountLabel(root.queuedBackupEventCount, "backup update", "backup updates"))
+            parts.push(root.queueCountLabel(
+                root.queuedBackupEventCount,
+                "backup-eligible event",
+                "backup-eligible events"))
         }
         if (root.queuedMissingBlobCount > 0) {
             parts.push(root.queueCountLabel(root.queuedMissingBlobCount, "file to retry", "files to retry"))
@@ -3667,7 +3880,7 @@ ApplicationWindow {
         if (root.queuedSkippedGapCount > 0) {
             parts.push(root.queueCountLabel(root.queuedSkippedGapCount, "history item to fetch", "history items to fetch"))
         }
-        return parts.length > 0 ? parts.join(" | ") : "Nothing waiting"
+        return parts.length > 0 ? parts.join(" | ") : "No publishable local events"
     }
 
     function storageHealthStatusText() {
@@ -3846,19 +4059,108 @@ ApplicationWindow {
                     return root.selectedTimeline[i]
                 }
             }
+            if (root.timelineItemKey(root.inspectorSelectedItemSnapshot) === key) {
+                return root.inspectorSelectedItemSnapshot
+            }
         }
-        return root.selectedTimeline.length > 0 ? root.selectedTimeline[root.selectedTimeline.length - 1] : ({})
+        return ({})
     }
 
     function selectInspectorItem(item) {
         var key = root.timelineItemKey(item)
-        if (root.runtimeSearchReady) {
-            var itemChannelId = String((item && item.channelId) || "")
-            if (root.hasChannelId(itemChannelId) && itemChannelId !== String(root.selectedChannel.channelId || "")) {
-                root.selectChannelId(itemChannelId, false)
+        if (key.length === 0) {
+            return false
+        }
+        var itemChannelId = String((item && item.channelId) || "")
+        if (root.hasChannelId(itemChannelId)
+                && itemChannelId
+                    !== String(root.selectedChannel.channelId || "")) {
+            if (!root.selectChannelId(itemChannelId, false)) {
+                return false
             }
         }
+        root.inspectorSelectedItemSnapshot = item
         root.inspectorItemKey = key
+        return true
+    }
+
+    function timelineMessageItemById(messageId) {
+        var targetId = String(messageId || "")
+        var collections = [
+            root.selectedTimeline || [],
+            root.channelTimeline || [],
+            root.timeline || []
+        ]
+        for (var collectionIndex = 0;
+                collectionIndex < collections.length;
+                collectionIndex += 1) {
+            var items = collections[collectionIndex]
+            for (var itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+                var item = items[itemIndex] || {}
+                if (String(item.messageId || "") === targetId) {
+                    return item
+                }
+            }
+        }
+        return null
+    }
+
+    function positionTimelineMessageById(messageId) {
+        var targetId = String(messageId || "")
+        for (var i = 0; i < root.selectedTimeline.length; i += 1) {
+            if (String((root.selectedTimeline[i] || {}).messageId || "")
+                    === targetId) {
+                timelineView.positionViewAtIndex(i, ListView.Center)
+                timelineView.forceActiveFocus()
+                return true
+            }
+        }
+        return false
+    }
+
+    function selectedTimelineContainsMessageId(messageId) {
+        var targetId = String(messageId || "")
+        for (var i = 0; i < root.selectedTimeline.length; i += 1) {
+            if (String((root.selectedTimeline[i] || {}).messageId || "")
+                    === targetId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function openTimelineMessageById(messageId) {
+        var targetId = String(messageId || "")
+        if (targetId.length === 0) {
+            return false
+        }
+        var item = root.timelineMessageItemById(targetId)
+        if (item !== null) {
+            var visibleInCurrentTimeline =
+                root.selectedTimelineContainsMessageId(targetId)
+            if (!root.selectInspectorItem(item)) {
+                return false
+            }
+            // Keep direct search-result navigation in its result context. A
+            // related message that does not match the query must leave search
+            // so the loaded room timeline can reveal it.
+            if (root.searchHasTerms && !visibleInCurrentTimeline) {
+                searchField.text = ""
+                root.searchQuery = ""
+            }
+            Qt.callLater(function() {
+                root.positionTimelineMessageById(targetId)
+            })
+            return true
+        }
+        toastHost.show(
+            "info",
+            "That message is outside the loaded history. Load earlier messages "
+                + "or search for it to open it.",
+            "",
+            "",
+            6000)
+        return false
     }
 
     function countMissingHistoryGaps(items) {
@@ -4293,6 +4595,28 @@ ApplicationWindow {
         }
         var suffix = count > 0 && Boolean(chaftController.messageSearchHasMoreHits) ? "+" : ""
         return String(count) + suffix
+    }
+
+    function searchStatusText() {
+        if (!root.searchHasTerms) {
+            return ""
+        }
+        if (!root.runtimeWorkReady) {
+            return "Unlock the workspace to search its history."
+        }
+        if (!root.indexedSearchHasTerms) {
+            return "Showing loaded matches in this room. Workspace search needs letters or numbers."
+        }
+        if (root.searchResultsLoading) {
+            return "Showing loaded matches while workspace search runs..."
+        }
+        var messageCount = root.messageSearchHitCountLabel()
+        var conversationCount =
+            (chaftController.channelSearchResults || []).length
+        return "Workspace: " + messageCount
+            + (messageCount === "1" ? " message" : " messages")
+            + " · " + String(conversationCount)
+            + (conversationCount === 1 ? " conversation" : " conversations")
     }
 
     function localDeviceDisplayName() {
@@ -4820,10 +5144,7 @@ ApplicationWindow {
     }
 
     function unnamedPersonLabel(deviceId) {
-        var normalizedDeviceId = String(deviceId || "").trim()
-        return normalizedDeviceId.length > 0
-            ? "Unnamed person " + root.shortDeviceId(normalizedDeviceId)
-            : "Unnamed person"
+        return "Unnamed teammate"
     }
 
     function memberInitial(member) {
@@ -4889,7 +5210,7 @@ ApplicationWindow {
     function roleDescription(role) {
         switch (root.normalizedRole(role)) {
         case "owner":
-            return "Owners can manage the workspace, invites, access, and recovery-critical settings."
+            return "Owners can manage the workspace, invites, access, and security-critical settings."
         case "admin":
             return "Admins can invite people, manage access, and help keep the workspace reachable."
         case "guest":
@@ -5262,9 +5583,13 @@ ApplicationWindow {
     }
 
     function openWorkspaceEntry(mode, intent) {
+        if (root.composerContextChangeBlocked()) {
+            return false
+        }
         root.workspaceEntryMode = mode === "create" ? "create" : "join"
         root.workspaceEntryIntent = String(intent || root.workspaceEntryMode)
         workspaceEntryDialog.open()
+        return true
     }
 
     function openReceivedApprovalInvite(forceOpen) {
@@ -5279,6 +5604,16 @@ ApplicationWindow {
             toastHost.show(
                 "success",
                 "Workspace access received. Finish creating the workspace; Chaft will keep it ready to open.",
+                "Open when ready",
+                "open-received-approval",
+                9000)
+            return false
+        }
+        if (root.composerContextBusy) {
+            toastHost.show(
+                "success",
+                "Workspace access received. Finish the current message "
+                    + "operation, then open it from the notification.",
                 "Open when ready",
                 "open-received-approval",
                 9000)
@@ -5342,12 +5677,16 @@ ApplicationWindow {
     }
 
     function openAddWorkspaceChooser() {
+        if (root.composerContextChangeBlocked()) {
+            return false
+        }
         addWorkspacePopup.open()
+        return true
     }
 
     function chooseWorkspaceEntry(mode, intent) {
         addWorkspacePopup.close()
-        root.openWorkspaceEntry(mode, intent)
+        return root.openWorkspaceEntry(mode, intent)
     }
 
     function chooseDemoWorkspace() {
@@ -5583,7 +5922,7 @@ ApplicationWindow {
         if (parsed === null) {
             return ({
                 title: "This does not look like a Chaft file",
-                message: "Open or paste an invite, request link, recovery kit, or access file.",
+                message: "Open or paste an invite, request link, decryption key kit, or access file.",
                 rows: [],
                 canImport: false,
                 warning: true
@@ -5630,7 +5969,7 @@ ApplicationWindow {
         }
 
         if (kind === "chaft.workspace-join-request.v1") {
-            row = root.credentialSummaryRow("From", parsed.displayName || "Unnamed person")
+            row = root.credentialSummaryRow("From", parsed.displayName || "Unnamed teammate")
             if (row !== null) {
                 rows.push(row)
             }
@@ -5707,7 +6046,7 @@ ApplicationWindow {
                     ? "Invite expired"
                     : (approvalBlocksJoin
                         ? "Invite needs approval"
-                        : (restoreMode ? "Invite file" : "Invite ready")),
+                        : "Invite ready"),
                 message: inviteExpired
                     ? "Ask a workspace admin for a new invite."
                     : root.inviteSyncExpectationMessage(parsed, peerEndpoint),
@@ -5799,10 +6138,10 @@ ApplicationWindow {
                 rows.push(row)
             }
             return ({
-                title: "Recovery kit found",
+                title: "Decryption key kit found",
                 message: String(passphrase || "").trim().length > 0
-                    ? "This kit can restore workspace access on this device. History may still need a reachable teammate."
-                    : "Enter the passphrase used when this kit was saved. Keep the kit private; it is not an invite.",
+                    ? "This imports local decryption keys. If this device is not already authorized, an invite is required before Chaft can show or send workspace content."
+                    : "Enter the passphrase used when this kit was saved. Keep the kit private; it is not an invite or an access approval.",
                 rows: rows,
                 canImport: String(passphrase || "").trim().length > 0,
                 warning: String(passphrase || "").trim().length === 0
@@ -5834,7 +6173,7 @@ ApplicationWindow {
 
         return ({
             title: "Unknown Chaft file",
-            message: "This file is valid, but it is not an invite, request link, recovery kit, or access file.",
+            message: "This file is valid, but it is not an invite, request link, decryption key kit, or access file.",
             rows: [],
             canImport: false,
             warning: true
@@ -5859,15 +6198,15 @@ ApplicationWindow {
             || normalized.indexOf("passphrase") >= 0
         if (recovery && passphraseLike) {
             return ({
-                title: "Couldn't restore workspace",
-                message: "The passphrase may be wrong. Re-enter it, or ask an admin for a new invite or newer recovery kit.",
+                title: "Couldn't import key kit",
+                message: "The passphrase may be wrong. Re-enter it, or open a newer decryption key kit.",
                 detail: detail
             })
         }
         if (recovery) {
             return ({
-                title: "Couldn't restore workspace",
-                message: "Open the recovery kit again, or ask an admin for a new invite if this kit no longer works.",
+                title: "Couldn't import key kit",
+                message: "Open the decryption key kit again. If access is also missing, ask an admin for a new invite.",
                 detail: detail
             })
         }
@@ -6027,6 +6366,11 @@ ApplicationWindow {
         if (!root.runtimeAccessReady) {
             return false
         }
+        if (root.composerContextBusy) {
+            workspaceEntryDialog.createOperationError =
+                "Finish the current message operation before changing workspaces."
+            return false
+        }
         if (workspaceEntryDialog.createOperationPending) {
             return false
         }
@@ -6091,6 +6435,7 @@ ApplicationWindow {
             root.pendingEntryDisplayNameWorkspaceId = createdWorkspaceId
             root.persistPendingEntryDisplayNameState("profile_pending")
         }
+        root.setKeyKitReminder(createdWorkspaceId, true)
         root.pendingPostCreateExport = true
         root.pendingPostCreateWorkspaceId = createdWorkspaceId
         workspaceEntryDialog.createOperationError = ""
@@ -6105,18 +6450,9 @@ ApplicationWindow {
 
         if (selected === true) {
             root.applyPendingEntryDisplayName()
-            if (root.runtimeWorkReady
-                    && root.currentWorkspaceId() === createdWorkspaceId) {
-                root.pendingPostCreateExport = false
-                root.pendingPostCreateWorkspaceId = ""
-                toastHost.show(
-                    "success",
-                    String(root.workspaceSnapshot.name || "Workspace")
-                        + " created.",
-                    "Invite people",
-                    "invite-after-create",
-                    8000)
-            }
+            Qt.callLater(function() {
+                root.openPostCreateCheckpointIfReady()
+            })
             return
         }
         toastHost.show(
@@ -6127,14 +6463,79 @@ ApplicationWindow {
             6500)
     }
 
+    function keyKitReminderPending(workspaceId) {
+        var normalizedWorkspaceId = String(workspaceId || "").trim()
+        var reminders = chaftController.keyKitReminders || ({})
+        return normalizedWorkspaceId.length > 0
+            && reminders[normalizedWorkspaceId] === true
+    }
+
+    function setKeyKitReminder(workspaceId, pending) {
+        var normalizedWorkspaceId = String(workspaceId || "").trim()
+        if (normalizedWorkspaceId.length === 0) {
+            return false
+        }
+        var existing = chaftController.keyKitReminders || ({})
+        var reminders = ({})
+        for (var key in existing) {
+            if (Object.prototype.hasOwnProperty.call(existing, key)
+                    && existing[key] === true) {
+                reminders[key] = true
+            }
+        }
+        if (pending) {
+            reminders[normalizedWorkspaceId] = true
+        } else {
+            delete reminders[normalizedWorkspaceId]
+        }
+        return chaftController.storeKeyKitReminders(reminders)
+    }
+
+    function openPostCreateCheckpointIfReady() {
+        var workspaceId = root.currentWorkspaceId()
+        var immediateReminder = root.pendingPostCreateExport
+            && workspaceId.length > 0
+            && workspaceId === root.pendingPostCreateWorkspaceId
+        if ((!immediateReminder
+                && !root.keyKitReminderPending(workspaceId))
+                || !root.runtimeWorkReady
+                || workspaceId.length === 0
+                || root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight
+                || postCreateExportDialog.visible) {
+            return false
+        }
+        if (immediateReminder) {
+            root.pendingPostCreateExport = false
+            root.pendingPostCreateWorkspaceId = ""
+        }
+        postCreateExportDialog.workspaceId = workspaceId
+        postCreateExportDialog.openedForNewWorkspace = true
+        postCreateExportDialog.keyKitBackedUp = false
+        postCreateExportDialog.explicitlyDeferred = false
+        postCreateExportDialog.recoverySetupOpen = true
+        postCreateExportDialog.open()
+        return true
+    }
+
     function submitWorkspaceJoin() {
+        var credentials = workspaceEntryDialog.credentialsText.trim()
+        var parsedCredential = root.parsedCredentialObject(credentials)
+        var recoveryBundle = root.credentialRecoveryBundleObject(
+            parsedCredential)
+        var isRecoveryRestore = recoveryBundle !== null
         if (!root.runtimeAccessReady) {
             workspaceEntryDialog.showCredentialImportFailure(
-                workspaceEntryDialog.restoreMode ? "recovery" : "access",
+                isRecoveryRestore ? "recovery" : "access",
                 "Workspace access is not ready yet.")
             return false
         }
-        var credentials = workspaceEntryDialog.credentialsText.trim()
+        if (root.composerContextBusy) {
+            workspaceEntryDialog.showCredentialImportFailure(
+                isRecoveryRestore ? "recovery" : "access",
+                "Finish the current message operation before changing workspaces.")
+            return false
+        }
         if (credentials.length === 0) {
             return false
         }
@@ -6161,11 +6562,6 @@ ApplicationWindow {
         // Whitespace-only input is blank, but leading and trailing whitespace
         // in a real passphrase is significant and must reach crypto unchanged.
         var passphrase = workspaceEntryDialog.recoveryPassphraseText
-        var hasPassphrase = passphrase.trim().length > 0
-        var parsedCredential = root.parsedCredentialObject(credentials)
-        var isRecoveryRestore = parsedCredential !== null
-            && root.credentialRecoveryBundleObject(parsedCredential) !== null
-            && hasPassphrase
         var credentialJson = root.credentialJsonForImport(credentials, passphrase)
         var credentialKind = parsedCredential === null
             ? ""
@@ -6177,13 +6573,13 @@ ApplicationWindow {
         var pendingRequest = approvalContext.recognized === true
             ? root.pendingAccessRequestRowByRequestId(responseRequestId)
             : ({})
-        // Restore uses the identity carried by the recovery data. The hidden
-        // join-name field must never overwrite it with a name from whichever
-        // workspace happened to be selected before the restore.
-        var entryDisplayName = workspaceEntryDialog.restoreMode
+        // A decryption key kit does not carry device identity. Keep the
+        // current local identity and do not overwrite its profile with a name
+        // copied from whichever workspace was selected before the import.
+        var entryDisplayName = isRecoveryRestore
             ? ""
             : workspaceEntryDialog.displayNameText.trim()
-        var entryAvatarId = workspaceEntryDialog.restoreMode
+        var entryAvatarId = isRecoveryRestore
             ? ""
             : workspaceEntryDialog.avatarIdText.trim()
         var requestedDisplayName = String(
@@ -6201,7 +6597,7 @@ ApplicationWindow {
         if (AvatarCatalog.isValid(requestedAvatarId)) {
             entryAvatarId = requestedAvatarId
         }
-        if (!workspaceEntryDialog.restoreMode && entryDisplayName.length > 0) {
+        if (!isRecoveryRestore && entryDisplayName.length > 0) {
             var entryDisplayNameError =
                 chaftController.deviceDisplayNameValidationError(entryDisplayName)
             if (entryDisplayNameError.length > 0) {
@@ -6220,8 +6616,7 @@ ApplicationWindow {
         }
         var accepted = credentialKind === "chaft.workspace-invite-response.v1"
             ? chaftController.importWorkspaceInviteResponse(JSON.stringify(parsedCredential))
-            : (hasPassphrase
-                    && !root.credentialUsesWorkspaceKey(credentials)
+            : (isRecoveryRestore
                 ? chaftController.importRecoveryBundle(credentialJson, passphrase)
                 : chaftController.importWorkspaceKey(credentialJson))
         if (accepted) {
@@ -6267,6 +6662,37 @@ ApplicationWindow {
         return root.channels.length > 0 ? 0 : -1
     }
 
+    function composerContextChangeBlocked() {
+        if (root.composerOperationPending) {
+            toastHost.show(
+                "info",
+                "Wait for the current message operation to finish before "
+                    + "leaving this conversation.",
+                "",
+                "",
+                4000)
+            return true
+        }
+        if (root.editingMessageId.length > 0) {
+            toastHost.show(
+                "info",
+                "Save or cancel the message edit before leaving this conversation.",
+                "",
+                "",
+                4000)
+            return true
+        }
+        return false
+    }
+
+    function lockWorkspace() {
+        if (root.composerContextChangeBlocked()) {
+            return false
+        }
+        chaftController.clearRuntimeUnlock()
+        return true
+    }
+
     function selectChannelAtIndex(channelIndex, focusDraft) {
         if (root.channels.length === 0) {
             return false
@@ -6281,6 +6707,10 @@ ApplicationWindow {
                 && !(normalizedChannelId.length > 0
                     && root.channelCount > root.channels.length
                     && chaftController.hasRuntimeWorkspace)) {
+            return false
+        }
+        if (root.selectedChannelId !== normalizedChannelId
+                && root.composerContextChangeBlocked()) {
             return false
         }
         root.saveCurrentDraft()
@@ -6329,6 +6759,11 @@ ApplicationWindow {
         if (normalizedWorkspaceId.length === 0) {
             return false
         }
+        if (normalizedWorkspaceId
+                !== String(chaftController.selectedWorkspaceId || "")
+                && root.composerContextChangeBlocked()) {
+            return false
+        }
         root.saveCurrentDraft()
         root.mainDestination = "conversation"
         if (root.editingMessageId.length > 0) {
@@ -6373,9 +6808,8 @@ ApplicationWindow {
 
     function activateSearchResult() {
         if (root.normalizedSearchQuery.length > 0 && root.runtimeSearchReady && root.runtimeSearchTimeline.length > 0) {
-            root.selectInspectorItem(root.runtimeSearchTimeline[0])
-            root.focusComposer()
-            return true
+            return root.openTimelineMessageById(
+                root.runtimeSearchTimeline[0].messageId)
         }
         if (root.normalizedSearchQuery.length > 0 && root.filteredChannels.length > 0) {
             root.selectChannelId(root.filteredChannels[0].channelId, false)
@@ -6447,12 +6881,32 @@ ApplicationWindow {
     function beginEditMessage(messageId, body) {
         var normalizedMessageId = String(messageId || "")
         if (normalizedMessageId.length === 0) {
-            return
+            return false
+        }
+        if (root.composerOperationPending) {
+            toastHost.show(
+                "info",
+                "Wait for the current message operation to finish.",
+                "",
+                "",
+                4000)
+            return false
+        }
+        if (root.editingMessageId.length > 0
+                && root.editingMessageId !== normalizedMessageId) {
+            toastHost.show(
+                "info",
+                "Save or cancel the current edit before editing another message.",
+                "",
+                "",
+                4000)
+            return false
         }
         root.saveCurrentDraft()
         root.cancelReplyMessage()
         root.editingMessageId = normalizedMessageId
         composer.setDraft(String(body || ""))
+        return true
     }
 
     function cancelEditMessage() {
@@ -6466,8 +6920,23 @@ ApplicationWindow {
         if (messageId.length === 0 || channelId !== String(root.selectedChannel.channelId || "")) {
             return false
         }
+        if (root.composerOperationPending) {
+            toastHost.show(
+                "info",
+                "Wait for the current message operation to finish.",
+                "",
+                "",
+                4000)
+            return false
+        }
         if (root.editingMessageId.length > 0) {
-            root.cancelEditMessage()
+            toastHost.show(
+                "info",
+                "Save or cancel the current edit before replying.",
+                "",
+                "",
+                4000)
+            return false
         }
         root.replyTarget = item
         root.focusComposer()
@@ -6582,7 +7051,7 @@ ApplicationWindow {
             return "request card"
         }
         if (root.keyTransferIsRecoveryBundle()) {
-            return "recovery kit"
+            return "decryption key kit"
         }
         if (root.keyTransferIsAccessFile()) {
             return "access file"
@@ -6736,7 +7205,8 @@ ApplicationWindow {
                 || normalized.indexOf("request link") >= 0) {
             return ".chaftworkspace"
         }
-        if (normalized.indexOf("recovery") >= 0) {
+        if (normalized.indexOf("recovery") >= 0
+                || normalized.indexOf("key kit") >= 0) {
             return ".chaftrecovery"
         }
         if (normalized.indexOf("access file") >= 0
@@ -6767,7 +7237,7 @@ ApplicationWindow {
             return [ "Chaft request cards (*.chaftworkspace)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftrecovery") {
-            return [ "Chaft recovery kits (*.chaftrecovery)", olderSupportFilter, "All files (*)" ]
+            return [ "Chaft decryption key kits (*.chaftrecovery)", olderSupportFilter, "All files (*)" ]
         }
         if (extension === ".chaftaccess") {
             return [ "Chaft access files (*.chaftaccess)", olderSupportFilter, "All files (*)" ]
@@ -6780,7 +7250,7 @@ ApplicationWindow {
         var olderSupportFilter = "Older support files (*.json)"
         if (restoreMode) {
             return [
-                "Chaft recovery kits (*.chaftrecovery)",
+                "Chaft decryption key kits (*.chaftrecovery)",
                 allChaft,
                 olderSupportFilter,
                 "All files (*)"
@@ -6791,7 +7261,7 @@ ApplicationWindow {
             "Chaft invites (*.chaftinvite)",
             "Chaft request cards (*.chaftworkspace)",
             "Chaft access requests (*.chaftrequest)",
-            "Chaft recovery kits (*.chaftrecovery)",
+            "Chaft decryption key kits (*.chaftrecovery)",
             "Chaft access files (*.chaftaccess)",
             olderSupportFilter,
             "All files (*)"
@@ -6870,7 +7340,7 @@ ApplicationWindow {
         } else if (extension === ".chaftworkspace") {
             parts.push("Request Card")
         } else if (extension === ".chaftrecovery") {
-            parts.push("Recovery Kit")
+            parts.push("Decryption Key Kit")
         } else if (extension === ".chaftaccess") {
             parts.push("Access File")
         } else {
@@ -7694,8 +8164,8 @@ ApplicationWindow {
         root.pendingJoinAwaitingReachablePeer = true
         if (notify !== false) {
             var toastMessage = root.pendingJoinAwaitingSource === "recovery"
-                ? "Workspace access restored. " + root.recoveryPrivateRoomRestoreText()
-                    + " History may still need a reachable teammate."
+                ? "Decryption keys imported. " + root.recoveryPrivateRoomRestoreText()
+                    + " Membership and missing history may still require an invite or reachable teammate."
                 : "Workspace joined. Waiting for a reachable teammate to fetch history."
             toastHost.show(
                 "info",
@@ -7733,19 +8203,19 @@ ApplicationWindow {
 
     function firstSyncWaitingTitleText() {
         return root.pendingJoinAwaitingSource === "recovery"
-            ? "Workspace access restored"
-            : "Waiting for workspace history"
+            ? "Keys imported"
+            : "History not here yet"
     }
 
     function recoveryPrivateRoomRestoreText() {
         var count = Number(root.pendingJoinRecoveryPrivateRoomCount)
         if (count > 0) {
-            return String(count) + " private "
+            return "Keys imported for " + String(count) + " private "
                 + (count === 1 ? "room" : "rooms")
-                + " restored from the kit."
+                + "."
         }
         if (count === 0) {
-            return "No private-room access was in this kit."
+            return "No private-room keys were included in this key kit."
         }
         return "Private rooms may need a reachable teammate."
     }
@@ -7754,13 +8224,13 @@ ApplicationWindow {
         if (root.pendingJoinAwaitingSource === "recovery") {
             return root.preferredSyncPeerEndpoint().length > 0
                 ? root.recoveryPrivateRoomRestoreText()
-                    + " Fetch history when that teammate is reachable."
+                    + " Fetch history from a teammate who has access."
                 : root.recoveryPrivateRoomRestoreText()
-                    + " History and any missing private rooms load once a teammate is reachable."
+                    + " Add a teammate address to fetch history."
         }
         return root.preferredSyncPeerEndpoint().length > 0
-            ? "A teammate address is saved. Fetch history when that teammate is reachable."
-            : "Ask a teammate to open Chaft, share their address, then fetch history."
+            ? "Your teammate address is saved. Fetch when they are online."
+            : "Add an address from a teammate who has this workspace history."
     }
 
     function firstSyncWaitingActionLabel() {
@@ -7996,6 +8466,11 @@ ApplicationWindow {
             root.scheduleControllerIdleWork()
         }
     }
+    onInspectorItemKeyChanged: {
+        if (root.inspectorItemKey.length === 0) {
+            root.inspectorSelectedItemSnapshot = ({})
+        }
+    }
     onChannelsChanged: {
         root.applyPendingSmokeArchivedChannelSelection()
         root.applyPendingSmokePrivateChannelDetailsSelection()
@@ -8014,6 +8489,7 @@ ApplicationWindow {
         Qt.callLater(function() {
             root.updateUnreadNotificationBaseline()
             root.unreadNotificationsReady = true
+            root.openPostCreateCheckpointIfReady()
         })
     }
     onAutoSyncEnabledChanged: {
@@ -8048,7 +8524,7 @@ ApplicationWindow {
         var pendingJoinPullStarted = root.pullPendingJoinPeerIfReady()
         root.scheduleControllerIdleWork()
         root.scheduleMarkSelectedChannelRead()
-        if (root.searchHasTerms) {
+        if (root.indexedSearchHasTerms) {
             searchDebounce.restart()
         }
         if (root.autoSyncEnabled && !pendingJoinPullStarted
@@ -8058,17 +8534,20 @@ ApplicationWindow {
         if (root.autoBackupEnabled) {
             root.backupConfiguredPeerIfReady()
         }
+        Qt.callLater(function() {
+            root.openPostCreateCheckpointIfReady()
+        })
     }
 
     Timer {
         id: searchDebounce
-        interval: 120
+        interval: 250
         repeat: false
         onTriggered: {
             if (!root.runtimeWorkReady) {
                 return
             }
-            if (root.searchHasTerms) {
+            if (root.indexedSearchHasTerms) {
                 chaftController.searchWorkspaceMessages(root.searchQuery)
                 chaftController.searchWorkspaceChannels(root.searchQuery)
             } else {
@@ -8260,20 +8739,24 @@ ApplicationWindow {
                 smokeMemberRolesScrollTimer.restart()
             }
             root.applyPendingSmokeSetupRoomAccessSelection()
-            if (root.pendingPostCreateExport
-                    && root.runtimeWorkReady
-                    && root.currentWorkspaceId().length > 0
-                    && root.currentWorkspaceId()
-                        === root.pendingPostCreateWorkspaceId) {
-                root.pendingPostCreateExport = false
-                root.pendingPostCreateWorkspaceId = ""
-                toastHost.show(
-                    "success",
-                    String(root.workspaceSnapshot.name || "Workspace") + " created.",
-                    "Invite people",
-                    "invite-after-create",
-                    8000)
-            }
+            root.openPostCreateCheckpointIfReady()
+        }
+        function onMessageSendFinished(workspaceId, channelId,
+                                       replyToMessageId, success, message) {
+            root.completePendingMessageSend(
+                workspaceId, channelId, replyToMessageId, success, message)
+        }
+        function onMessageEditFinished(workspaceId, messageId, success,
+                                       message) {
+            root.completePendingMessageEdit(
+                workspaceId, messageId, success, message)
+        }
+        function onAttachmentSendFinished(workspaceId, channelId,
+                                          replyToMessageId, filePath,
+                                          success, message) {
+            root.completePendingAttachmentSend(
+                workspaceId, channelId, replyToMessageId, filePath,
+                success, message)
         }
         function onSelectedWorkspaceChanged() {
             root.hostedRuntimeReconcileDue = true
@@ -8286,6 +8769,7 @@ ApplicationWindow {
                 root.restorePendingEntryDisplayNameFromRequests()
                 root.applyPendingEntryDisplayName()
                 root.scheduleControllerIdleWork()
+                root.openPostCreateCheckpointIfReady()
             })
         }
         function onBackupPeerEndpointsChanged() {
@@ -8303,10 +8787,9 @@ ApplicationWindow {
         }
         function onKeyTransferJsonChanged() {
             if (postCreateExportDialog.openRecoverySaveWhenReady
-                    && chaftController.keyTransferJson.length > 0
-                    && root.keyTransferIsRecoveryBundle()) {
+                    && postCreateExportDialog.keyKitReady) {
                 postCreateExportDialog.openRecoverySaveWhenReady = false
-                root.openSaveKeyTransferDialog("recovery kit")
+                root.openSaveKeyTransferDialog("decryption key kit")
             }
             if (chaftController.keyTransferFromJoinResponseInbox
                     && (root.keyTransferIsInvitePackage()
@@ -8330,6 +8813,9 @@ ApplicationWindow {
                 root.applyPendingEntryDisplayName()
                 root.scheduleMarkSelectedChannelRead()
                 root.scheduleControllerIdleWork()
+                Qt.callLater(function() {
+                    root.openPostCreateCheckpointIfReady()
+                })
                 pendingJoinPullCompletionTimer.restart()
                 pendingPrivateRoomHistoryRepairCompletionTimer.restart()
             }
@@ -8366,6 +8852,9 @@ ApplicationWindow {
             root.handleDeviceProfileUpdateFinished(
                 workspaceId, displayName, success, message)
             root.scheduleMarkSelectedChannelRead()
+            Qt.callLater(function() {
+                root.openPostCreateCheckpointIfReady()
+            })
         }
         function onWorkspaceCreateFinished(workspaceId, success, selected,
                                            message) {
@@ -8440,12 +8929,14 @@ ApplicationWindow {
                 root.runtimeUnlockDismissed = false
             }
             if (!chaftController.runtimeUnlocked) {
+                root.saveCurrentDraft()
                 root.inspectorItemKey = ""
                 root.replyTarget = ({})
                 root.editingMessageId = ""
                 root.searchQuery = ""
-                root.clearPersistedDrafts()
+                root.suppressComposerDraftSave = true
                 composer.clearDraft()
+                root.suppressComposerDraftSave = false
                 attachmentDialog.pendingText = ""
                 attachmentDialog.pendingWorkspaceId = ""
                 attachmentDialog.pendingChannelId = ""
@@ -8474,16 +8965,25 @@ ApplicationWindow {
 
     Dialog {
         id: postCreateExportDialog
+        property string workspaceId: ""
         property bool advancedOpen: false
         property bool openRecoverySaveWhenReady: false
         property bool recoverySetupOpen: false
+        property bool openedForNewWorkspace: false
+        property bool keyKitBackedUp: false
+        property bool explicitlyDeferred: false
+        readonly property bool keyKitReady:
+            chaftController.keyTransferJson.length > 0
+            && root.keyTransferIsRecoveryBundle()
+            && root.credentialWorkspaceId(chaftController.keyTransferJson)
+                === postCreateExportDialog.workspaceId
 
         modal: true
         width: Math.min(root.width - 48, 560)
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
-        closePolicy: Popup.CloseOnEscape
-        title: "Workspace created"
+        closePolicy: Popup.NoAutoClose
+        title: "Save current decryption keys"
 
         ColumnLayout {
             anchors.fill: parent
@@ -8491,7 +8991,12 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                text: (root.workspaceSnapshot.name || "Your workspace") + " is ready."
+                text: (root.workspaceSnapshot.name || "Your workspace")
+                    + " is ready. Save a private decryption key kit before "
+                    + "inviting people. Back up this device's runtime separately. "
+                    + "For admin continuity, authorize and promote another trusted "
+                    + "owner. This kit imports saved keys, but cannot authorize a "
+                    + "replacement device or restore identity, membership, or owner role."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeSm
                 wrapMode: Text.WordWrap
@@ -8535,10 +9040,9 @@ ApplicationWindow {
 
                     Text {
                         Layout.fillWidth: true
-                        text: chaftController.keyTransferJson.length > 0
-                            && root.keyTransferIsRecoveryBundle()
-                            ? "Recovery kit ready. Store the file privately, keep its passphrase separate, and do not send it as an invite."
-                            : "Recovery kit can wait. Save one when you can store it privately and keep the passphrase separate."
+                        text: postCreateExportDialog.keyKitReady
+                            ? "Decryption key kit ready. Store it privately, keep its passphrase separate, and never send it as an invite."
+                            : "Save a new key kit after major access or key changes so it contains the latest decryption keys."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeSm
                         wrapMode: Text.WordWrap
@@ -8546,43 +9050,19 @@ ApplicationWindow {
                 }
             }
 
-            Button {
-                id: postCreateStartButton
-                Layout.fillWidth: true
-                text: "Open workspace"
-                onClicked: postCreateExportDialog.close()
-
-                background: Rectangle {
-                    radius: Tokens.radiusSm
-                    color: postCreateStartButton.down
-                        ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.38)
-                        : Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b,
-                                  postCreateStartButton.enabled ? 0.24 : 0.1)
-                    border.width: postCreateStartButton.visualFocus ? 2 : 1
-                    border.color: postCreateStartButton.enabled ? Tokens.accent : Tokens.borderSubtle
-                }
-
-                contentItem: Text {
-                    text: postCreateStartButton.text
-                    color: postCreateStartButton.enabled ? Tokens.textStrong : Tokens.textMuted
-                    font.pixelSize: Tokens.fontSizeSm
-                    font.weight: Font.Medium
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
-
             LabeledField {
                 id: postCreateRecoveryPassphraseField
                 Layout.fillWidth: true
                 visible: postCreateExportDialog.recoverySetupOpen
-                    && !(chaftController.keyTransferJson.length > 0
-                        && root.keyTransferIsRecoveryBundle())
-                label: "Recovery passphrase"
-                placeholderText: "Choose a passphrase for your recovery kit"
+                    && !postCreateExportDialog.keyKitReady
+                label: "Key kit passphrase"
+                placeholderText: "Use a long, unique passphrase"
                 echoMode: TextInput.Password
                 requiredField: true
-                supportText: "Keep this passphrase separate from the recovery kit."
+                errorText: text.length > 0 && text.length < 12
+                    ? "Use at least 12 characters."
+                    : ""
+                supportText: "Keep this passphrase separate from the key kit."
                 onAccepted: {
                     if (text.trim().length > 0) {
                         postCreateRecoveryPassphraseConfirmationField.forceFieldFocus()
@@ -8604,8 +9084,11 @@ ApplicationWindow {
                     : ""
                 onAccepted: {
                     if (postCreateRecoveryPassphraseField.text.trim().length > 0
+                            && postCreateRecoveryPassphraseField.text.length >= 12
                             && text === postCreateRecoveryPassphraseField.text
-                            && root.runtimeWorkReady) {
+                            && root.runtimeWorkReady
+                            && !root.workspaceOperationInFlight
+                            && !root.pendingEntryDisplayNameUpdateInFlight) {
                         postCreateExportDialog.openRecoverySaveWhenReady =
                             chaftController.exportRecoveryBundle(
                                 postCreateRecoveryPassphraseField.text)
@@ -8618,25 +9101,26 @@ ApplicationWindow {
                 spacing: Tokens.space2
 
                 Button {
+                    id: postCreateKeyKitButton
                     Layout.fillWidth: true
-                    text: chaftController.keyTransferJson.length > 0
-                        && root.keyTransferIsRecoveryBundle()
-                        ? "Save recovery kit"
+                    text: postCreateExportDialog.keyKitReady
+                        ? "Save decryption key kit"
                         : (postCreateExportDialog.recoverySetupOpen
-                            ? "Create recovery kit"
-                            : "Recovery kit")
+                            ? "Create decryption key kit"
+                            : "Decryption key kit")
                     enabled: root.runtimeWorkReady
                         && !chaftController.keyTransferInFlight
-                        && ((chaftController.keyTransferJson.length > 0
-                                && root.keyTransferIsRecoveryBundle())
+                        && !root.workspaceOperationInFlight
+                        && !root.pendingEntryDisplayNameUpdateInFlight
+                        && (postCreateExportDialog.keyKitReady
                             || !postCreateExportDialog.recoverySetupOpen
                             || (postCreateRecoveryPassphraseField.text.trim().length > 0
+                                && postCreateRecoveryPassphraseField.text.length >= 12
                                 && postCreateRecoveryPassphraseConfirmationField.text
                                     === postCreateRecoveryPassphraseField.text))
                     onClicked: {
-                        if (chaftController.keyTransferJson.length > 0
-                                && root.keyTransferIsRecoveryBundle()) {
-                            root.openSaveKeyTransferDialog("recovery kit")
+                        if (postCreateExportDialog.keyKitReady) {
+                            root.openSaveKeyTransferDialog("decryption key kit")
                             return
                         }
                         if (!postCreateExportDialog.recoverySetupOpen) {
@@ -8650,13 +9134,47 @@ ApplicationWindow {
                             chaftController.exportRecoveryBundle(
                                 postCreateRecoveryPassphraseField.text)
                     }
+
+                    background: Rectangle {
+                        radius: Tokens.radiusSm
+                        color: postCreateKeyKitButton.down
+                            ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.38)
+                            : Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b,
+                                      postCreateKeyKitButton.enabled ? 0.24 : 0.1)
+                        border.width: postCreateKeyKitButton.visualFocus ? 2 : 1
+                        border.color: postCreateKeyKitButton.enabled
+                            ? Tokens.accent
+                            : Tokens.borderSubtle
+                    }
+
+                    contentItem: Text {
+                        text: postCreateKeyKitButton.text
+                        color: postCreateKeyKitButton.enabled
+                            ? Tokens.textStrong
+                            : Tokens.textMuted
+                        font.pixelSize: Tokens.fontSizeSm
+                        font.weight: Font.Medium
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                 }
 
                 Button {
                     Layout.fillWidth: true
                     text: "Invite people"
                     enabled: root.runtimeWorkReady
+                        && !chaftController.keyTransferInFlight
+                        && !postCreateExportDialog.openRecoverySaveWhenReady
                     onClicked: {
+                        if (!postCreateExportDialog.keyKitBackedUp) {
+                            confirmDialog.ask(
+                                "Invite without saving keys?",
+                                "A decryption key kit has not been saved in durable private storage. Save it first, or confirm that you want to invite people now.",
+                                "Invite anyway",
+                                "invite-without-post-create-key-kit",
+                                false)
+                            return
+                        }
                         postCreateExportDialog.close()
                         root.openPeopleAccess(true)
                     }
@@ -8666,9 +9184,9 @@ ApplicationWindow {
             Text {
                 Layout.fillWidth: true
                 visible: postCreateExportDialog.recoverySetupOpen
-                    || (chaftController.keyTransferJson.length > 0
-                        && root.keyTransferIsRecoveryBundle())
-                text: "Store recovery kits privately and keep the passphrase separate."
+                    || postCreateExportDialog.keyKitReady
+                text: "This kit is a point-in-time copy of decryption keys. "
+                    + "It does not restore identity or workspace authorization."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeXs
                 wrapMode: Text.WordWrap
@@ -8676,7 +9194,7 @@ ApplicationWindow {
 
             Button {
                 Layout.fillWidth: true
-                visible: chaftController.keyTransferJson.length > 0
+                visible: postCreateExportDialog.keyKitReady
                 text: postCreateExportDialog.advancedOpen ? "Hide advanced" : "Advanced"
                 onClicked: postCreateExportDialog.advancedOpen = !postCreateExportDialog.advancedOpen
             }
@@ -8684,11 +9202,11 @@ ApplicationWindow {
             TextArea {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 132
-                visible: chaftController.keyTransferJson.length > 0
+                visible: postCreateExportDialog.keyKitReady
                     && postCreateExportDialog.advancedOpen
                 readOnly: true
                 text: chaftController.keyTransferJson
-                Accessible.name: "Recovery kit"
+                Accessible.name: "Decryption key kit"
                 color: Tokens.textStrong
                 wrapMode: TextEdit.WrapAnywhere
                 background: Rectangle {
@@ -8699,35 +9217,105 @@ ApplicationWindow {
 
             RowLayout {
                 Layout.fillWidth: true
-                visible: chaftController.keyTransferJson.length > 0
+                visible: postCreateExportDialog.keyKitReady
                     && postCreateExportDialog.advancedOpen
                 spacing: Tokens.space2
 
                 Button {
                     Layout.fillWidth: true
                     text: "Copy " + root.keyTransferLabel()
-                    enabled: chaftController.keyTransferJson.length > 0
-                    onClicked: root.copyTextToClipboard(
-                        chaftController.keyTransferJson,
-                        root.keyTransferLabel())
+                    enabled: postCreateExportDialog.keyKitReady
+                    onClicked: {
+                        if (root.copyTextToClipboard(
+                                chaftController.keyTransferJson,
+                                root.keyTransferLabel())) {
+                            toastHost.show(
+                                "info",
+                                "Copied. Save it in durable private storage before marking it complete.",
+                                "",
+                                "",
+                                6000)
+                        }
+                    }
                 }
 
                 Button {
                     Layout.fillWidth: true
                     text: "Save " + root.keyTransferLabel()
-                    enabled: chaftController.keyTransferJson.length > 0
+                    enabled: postCreateExportDialog.keyKitReady
                     onClicked: root.openSaveKeyTransferDialog(root.keyTransferLabel())
+                }
+            }
+
+            Button {
+                id: postCreateStartButton
+                Layout.fillWidth: true
+                text: postCreateExportDialog.keyKitBackedUp
+                    ? "Open workspace"
+                    : "Not now"
+                enabled: !chaftController.keyTransferInFlight
+                    && !postCreateExportDialog.openRecoverySaveWhenReady
+                onClicked: {
+                    if (!postCreateExportDialog.keyKitBackedUp) {
+                        postCreateExportDialog.explicitlyDeferred = true
+                        root.setKeyKitReminder(
+                            postCreateExportDialog.workspaceId, false)
+                    }
+                    postCreateExportDialog.close()
                 }
             }
         }
 
-        onOpened: postCreateStartButton.forceActiveFocus()
+        Connections {
+            target: root
+            function onKeyTransferFileSaveFinished(success, label,
+                                                   artifactKind,
+                                                   operationToken) {
+                if (postCreateExportDialog.visible && success
+                        && String(label || "").toLowerCase()
+                            .indexOf("key kit") >= 0) {
+                    postCreateExportDialog.keyKitBackedUp = true
+                    root.setKeyKitReminder(
+                        postCreateExportDialog.workspaceId, false)
+                }
+            }
+        }
+
+        onOpened: {
+            Qt.callLater(function() {
+                if (postCreateExportDialog.keyKitReady
+                        && postCreateKeyKitButton.enabled) {
+                    postCreateKeyKitButton.forceActiveFocus()
+                } else if (postCreateRecoveryPassphraseField.visible) {
+                    postCreateRecoveryPassphraseField.forceFieldFocus()
+                } else {
+                    postCreateKeyKitButton.forceActiveFocus()
+                }
+            })
+        }
         onClosed: {
+            var shouldRemind = postCreateExportDialog.openedForNewWorkspace
+                && !postCreateExportDialog.keyKitBackedUp
+                && postCreateExportDialog.explicitlyDeferred
             postCreateRecoveryPassphraseField.text = ""
             postCreateRecoveryPassphraseConfirmationField.text = ""
             postCreateExportDialog.advancedOpen = false
             postCreateExportDialog.openRecoverySaveWhenReady = false
             postCreateExportDialog.recoverySetupOpen = false
+            postCreateExportDialog.openedForNewWorkspace = false
+            postCreateExportDialog.keyKitBackedUp = false
+            postCreateExportDialog.explicitlyDeferred = false
+            postCreateExportDialog.workspaceId = ""
+            if (shouldRemind) {
+                toastHost.show(
+                    "warning",
+                    "No decryption key kit was saved. Create one later from "
+                        + "Settings. Back up this device's runtime; for admin "
+                        + "continuity, promote another trusted owner.",
+                    "",
+                    "",
+                    9000)
+            }
         }
     }
 
@@ -8819,9 +9407,10 @@ ApplicationWindow {
         title: "Attach file"
         fileMode: FileDialog.OpenFile
         onAccepted: {
-            var filePath = root.localPathFromUrl(selectedFile)
+            var filePath = root.localPathFromUrl(selectedFile).trim()
             var sent = false
-            if (pendingWorkspaceId === root.currentWorkspaceId()) {
+            if (!root.composerOperationPending
+                    && pendingWorkspaceId === root.currentWorkspaceId()) {
                 sent = pendingReplyToMessageId.length > 0
                     ? chaftController.sendAttachmentReply(
                         pendingChannelId,
@@ -8833,14 +9422,14 @@ ApplicationWindow {
                     : chaftController.sendAttachment(pendingChannelId, pendingText, filePath, "")
             }
             if (sent) {
-                root.clearDraftForWorkspaceChannel(pendingWorkspaceId, pendingChannelId)
-                if (pendingWorkspaceId === root.currentWorkspaceId()
-                        && pendingChannelId === root.selectedChannel.channelId) {
-                    composer.clearDraft()
-                    if (pendingReplyToMessageId === root.replyTargetMessageId) {
-                        root.cancelReplyMessage()
-                    }
-                }
+                root.beginComposerOperation(
+                    "attachment",
+                    pendingWorkspaceId,
+                    pendingChannelId,
+                    pendingReplyToMessageId,
+                    "",
+                    pendingText,
+                    filePath)
             }
             pendingText = ""
             pendingWorkspaceId = ""
@@ -8857,11 +9446,12 @@ ApplicationWindow {
 
     FileDialog {
         id: workspaceCredentialDialog
-        title: workspaceEntryDialog.restoreMode
-            ? "Open recovery kit"
-            : "Open invite, request link, recovery kit, or access file"
+        title: workspaceEntryDialog.keyKitMode
+            ? "Open decryption key kit"
+            : "Open invite, request link, decryption key kit, or access file"
         fileMode: FileDialog.OpenFile
-        nameFilters: root.workspaceCredentialNameFilters(workspaceEntryDialog.restoreMode)
+        nameFilters: root.workspaceCredentialNameFilters(
+            workspaceEntryDialog.keyKitMode)
         onAccepted: {
             root.loadWorkspaceCredentialUrl(selectedFile)
         }
@@ -8972,7 +9562,7 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 72
+            Layout.preferredWidth: root.workspaceRailWidth
             color: Tokens.rail
 
             Flickable {
@@ -8996,6 +9586,11 @@ ApplicationWindow {
                     x: Math.round((workspaceRailFlick.width - width) / 2)
                     width: 40
                     spacing: 10
+
+                    BrandMark {
+                        width: 40
+                        height: 40
+                    }
 
                     Repeater {
                         model: root.workspaceRailItems
@@ -9028,8 +9623,8 @@ ApplicationWindow {
                 height: 40
                 text: "+"
                 Accessible.name: "Add workspace"
-                Accessible.description: "Join, create, or restore a workspace"
-                enabled: root.runtimeAccessReady
+                Accessible.description: "Join, create, or import a decryption key kit"
+                enabled: root.runtimeAccessReady && !root.composerContextBusy
                 onClicked: root.openAddWorkspaceChooser()
                 ToolTip.visible: hovered
                 ToolTip.text: "Add workspace"
@@ -9083,8 +9678,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         visible: false
                         text: chaftController.hasRuntimeWorkspace
-                            ? "Join with an invite, request link, or access file; create another workspace; or restore from a recovery kit."
-                            : "Open an invite, request link, or access file; create a workspace; restore from a recovery kit; or explore a demo."
+                            ? "Join with an invite, request link, or access file; create another workspace; or import a decryption key kit."
+                            : "Open an invite, request link, or access file; create a workspace; import a decryption key kit; or explore a demo."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeXs
                         wrapMode: Text.WordWrap
@@ -9147,6 +9742,7 @@ ApplicationWindow {
                         id: addWorkspaceCreateButton
                         Layout.fillWidth: true
                         text: "Create workspace"
+                        variant: "primary"
                         Accessible.name: text
                         Accessible.description: "Start a new workspace"
                         onClicked: root.chooseWorkspaceEntry("create")
@@ -9154,10 +9750,10 @@ ApplicationWindow {
                         background: Rectangle {
                             radius: Tokens.radiusSm
                             color: addWorkspaceCreateButton.hovered
-                                ? Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.06)
-                                : Tokens.surfaceBase
+                                ? Qt.lighter(Tokens.accent, 1.06)
+                                : Tokens.accent
                             border.width: addWorkspaceCreateButton.visualFocus ? 2 : 1
-                            border.color: addWorkspaceCreateButton.visualFocus ? Tokens.accent : Tokens.borderSubtle
+                            border.color: Tokens.accent
                         }
 
                         contentItem: RowLayout {
@@ -9165,7 +9761,7 @@ ApplicationWindow {
 
                             Text {
                                 text: "#"
-                                color: Tokens.accent
+                                color: Tokens.onAccent
                                 font.pixelSize: Tokens.fontSizeMd
                                 font.weight: Font.Bold
                             }
@@ -9177,7 +9773,7 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     text: addWorkspaceCreateButton.text
-                                    color: Tokens.textStrong
+                                    color: Tokens.onAccent
                                     font.pixelSize: Tokens.fontSizeSm
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
@@ -9199,9 +9795,10 @@ ApplicationWindow {
                     Button {
                         id: addWorkspaceRestoreButton
                         Layout.fillWidth: true
-                        text: "Restore workspace"
+                        text: "Import key kit"
+                        variant: "quiet"
                         Accessible.name: text
-                        Accessible.description: "Use a saved recovery kit"
+                        Accessible.description: "Import saved decryption keys"
                         onClicked: root.chooseWorkspaceEntry("join", "restore")
 
                         background: Rectangle {
@@ -9239,7 +9836,7 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     visible: false
-                                    text: "Restore access with a saved recovery kit"
+                                    text: "Import keys; an unauthorized device still needs an invite"
                                     color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
                                     wrapMode: Text.WordWrap
@@ -9253,6 +9850,7 @@ ApplicationWindow {
                         id: addWorkspaceDemoButton
                         Layout.fillWidth: true
                         text: "Explore demo workspace"
+                        variant: "quiet"
                         visible: !chaftController.hasRuntimeWorkspace
                         enabled: !chaftController.hasRuntimeWorkspace
                         Accessible.name: text
@@ -9310,7 +9908,7 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 268
+            Layout.preferredWidth: root.navigationSidebarWidth
             color: Tokens.sidebar
 
             ColumnLayout {
@@ -9366,6 +9964,33 @@ ApplicationWindow {
                     background: Rectangle {
                         radius: Tokens.radiusMd
                         color: Tokens.sidebarInput
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.searchHasTerms
+                    spacing: Tokens.space2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.searchStatusText()
+                        color: Tokens.sidebarTextMuted
+                        font.pixelSize: Tokens.fontSizeXs
+                        elide: Text.ElideRight
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: text
+                    }
+
+                    Button {
+                        text: "Clear"
+                        Layout.preferredWidth: 58
+                        Accessible.name: "Clear search"
+                        onClicked: {
+                            searchField.text = ""
+                            root.searchQuery = ""
+                            searchField.forceActiveFocus()
+                        }
                     }
                 }
 
@@ -9626,15 +10251,19 @@ ApplicationWindow {
                             Layout.preferredWidth: Math.max(22, accessRequestBadgeText.implicitWidth + 10)
                             Layout.preferredHeight: 20
                             radius: Tokens.radiusSm
-                            color: Tokens.warningSurface
+                            color: Qt.rgba(
+                                Tokens.accent.r,
+                                Tokens.accent.g,
+                                Tokens.accent.b,
+                                0.14)
                             border.width: 1
-                            border.color: Tokens.warning
+                            border.color: Tokens.accent
 
                             Text {
                                 id: accessRequestBadgeText
                                 anchors.centerIn: parent
                                 text: root.accessRequestBadgeLabel(root.waitingAccessRequestCount)
-                                color: Tokens.warningText
+                                color: Tokens.accent
                                 font.pixelSize: Tokens.fontSizeXs
                                 font.weight: Font.DemiBold
                             }
@@ -9678,7 +10307,12 @@ ApplicationWindow {
                     visible: root.demoTourActive
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 34 : 0
-                    color: Tokens.secureSurface
+                    color: Qt.rgba(
+                        Tokens.accent.r,
+                        Tokens.accent.g,
+                        Tokens.accent.b,
+                        0.08)
+                    border.color: Tokens.accent
 
                     RowLayout {
                         anchors.fill: parent
@@ -9689,7 +10323,7 @@ ApplicationWindow {
                         Text {
                             Layout.fillWidth: true
                             text: "Demo workspace preview - nothing here is saved or shared."
-                            color: Tokens.secure
+                            color: Tokens.textStrong
                             font.pixelSize: Tokens.fontSizeSm
                             font.weight: Font.Medium
                             elide: Text.ElideRight
@@ -9756,28 +10390,37 @@ ApplicationWindow {
                             }
 
                             Button {
-                                id: channelMuteButton
-                                visible: root.runtimeWorkReady
-                                    && root.selectedChannelKey.length > 0
-                                text: root.selectedChannelMuted ? "Unmute" : "Mute"
-                                Layout.preferredWidth: 74
-                                Accessible.name: root.selectedMuteAccessibleName()
-                                onClicked: root.toggleSelectedChannelMuted()
-                                ToolTip.visible: hovered
-                                ToolTip.text: root.selectedMuteTooltip()
-                            }
-
-                            Button {
                                 id: channelDetailsButton
                                 visible: root.runtimeWorkReady
                                     && root.selectedChannelKey.length > 0
-                                    && !root.selectedChannelDirectMessage
-                                text: "Edit"
-                                Layout.preferredWidth: 54
-                                Accessible.name: "Edit room details"
-                                onClicked: channelDetailsPopup.open()
+                                text: root.selectedChannelDirectMessage ? "Chat" : "Room"
+                                Layout.preferredWidth: 64
+                                Accessible.name: root.selectedChannelDirectMessage
+                                    ? "Conversation actions"
+                                    : "Room actions"
+                                onClicked: channelHeaderActionsMenu.open()
                                 ToolTip.visible: hovered
-                                ToolTip.text: "Edit room name and topic"
+                                ToolTip.text: root.selectedChannelDirectMessage
+                                    ? "Conversation actions"
+                                    : "Room actions"
+
+                                Menu {
+                                    id: channelHeaderActionsMenu
+                                    y: channelDetailsButton.height
+
+                                    MenuItem {
+                                        visible: !root.selectedChannelDirectMessage
+                                        text: "Edit room"
+                                        onTriggered: Qt.callLater(function() {
+                                            channelDetailsPopup.open()
+                                        })
+                                    }
+
+                                    MenuItem {
+                                        text: root.selectedChannelMuted ? "Unmute" : "Mute"
+                                        onTriggered: root.toggleSelectedChannelMuted()
+                                    }
+                                }
                             }
 
                             Rectangle {
@@ -10482,11 +11125,20 @@ ApplicationWindow {
                                 width: Math.max(0, syncControlsContainer.width - 36)
                                 spacing: 8
 
+                                Text {
+                                    width: syncControlsFlow.width
+                                    height: implicitHeight
+                                    text: root.syncDrawerSummaryText()
+                                    color: Tokens.textMuted
+                                    font.pixelSize: Tokens.fontSizeSm
+                                    wrapMode: Text.WordWrap
+                                }
+
                                 Button {
                                     visible: root.syncAdvancedToolsOpen
                                     enabled: !chaftController.peerHostingInFlight
                                         && (chaftController.peerHosting || root.runtimeWorkReady)
-                                    text: chaftController.peerHosting ? "Stop" : "Make reachable"
+                                    text: chaftController.peerHosting ? "Stop" : "Host direct address"
                                     onClicked: {
                                         if (chaftController.peerHosting) {
                                             chaftController.stopLocalPeer()
@@ -10500,19 +11152,20 @@ ApplicationWindow {
                                     }
                                     ToolTip.visible: hovered
                                     ToolTip.text: chaftController.peerHosting
-                                        ? "Stop making history available"
-                                        : "Let a teammate fetch history from here"
+                                        ? "Stop hosting this address"
+                                        : "Start a local listener. The default loopback address works only on this device; enter a LAN address to share with another device."
                                 }
 
                                 Button {
                                     visible: root.syncAdvancedToolsOpen
                                         && !chaftController.peerHosting
-                                    text: "Use relay"
+                                    text: "Use public relay"
                                     enabled: root.runtimeWorkReady
                                         && !chaftController.peerHostingInFlight
                                     onClicked: chaftController.startLocalIrohPeer()
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "Use a relay when direct connection is unavailable"
+                                    ToolTip.text: "Use encrypted public relay for this hosted address. "
+                                        + "Discovery remains subject to operator policy."
                                 }
 
                                 Button {
@@ -10540,7 +11193,7 @@ ApplicationWindow {
                                     color: Tokens.textStrong
                                     placeholderTextColor: Tokens.textMuted
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "Leave blank unless someone helping you asks for a specific address"
+                                    ToolTip.text: "Blank uses 127.0.0.1:0 (this device only). Enter a LAN listen address to host for another device."
                                     background: Rectangle {
                                         radius: Tokens.radiusMd
                                         color: Tokens.surfaceRaised
@@ -10551,7 +11204,8 @@ ApplicationWindow {
                                 Text {
                                     width: 132
                                     height: 30
-                                    visible: chaftController.peerHosting
+                                    visible: root.syncAdvancedToolsOpen
+                                        && chaftController.peerHosting
                                     text: chaftController.hostedPeerEndpoint
                                     color: Tokens.textMuted
                                     font.family: Tokens.fontMono
@@ -10560,7 +11214,8 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    visible: chaftController.peerHosting
+                                    visible: root.syncAdvancedToolsOpen
+                                        && chaftController.peerHosting
                                         && chaftController.hostedPeerEndpoint.length > 0
                                     text: "Copy"
                                     width: 58
@@ -10571,10 +11226,13 @@ ApplicationWindow {
                                 }
 
                                 StatusChip {
+                                    visible: root.publishQueueIssueCount > 0
+                                        || root.publishQueueError.length > 0
+                                        || root.syncAdvancedToolsOpen
                                     text: root.publishQueueStatusText()
                                     description: root.publishQueueDetailText()
                                     warning: root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0
-                                    secure: !(root.publishQueueIssueCount > 0 || root.publishQueueError.length > 0)
+                                    secure: false
                                     maxWidth: 260
                                 }
 
@@ -10595,6 +11253,7 @@ ApplicationWindow {
                                 }
 
                                 Text {
+                                    visible: root.syncAdvancedToolsOpen
                                     width: 116
                                     height: 30
                                     text: "Teammate address"
@@ -10631,7 +11290,7 @@ ApplicationWindow {
                                 }
 
                                 Button {
-                                    text: "Save"
+                                    text: "Save address"
                                     enabled: root.peerEndpointFormIsValid()
                                         && root.peerEndpointFormValue()
                                             !== String(chaftController.defaultPeerEndpoint || "").trim()
@@ -10665,9 +11324,15 @@ ApplicationWindow {
                                     enabled: root.autoSyncEnabled
                                         || (root.runtimeWorkReady
                                             && root.peerEndpointFormIsValid())
-                                    text: "Live updates"
+                                    text: "Automatic updates"
                                     checked: root.autoSyncEnabled
                                     onToggled: root.autoSyncEnabled = checked
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: root.peerEndpointFormIsValid()
+                                        ? "Periodically update from the saved teammate address"
+                                        : root.autoSyncEnabled
+                                            ? "Turn off automatic updates or enter a valid teammate address"
+                                            : "Enter a valid teammate address before enabling automatic updates"
                                 }
 
                                 Button {
@@ -10675,8 +11340,8 @@ ApplicationWindow {
                                         && !root.workspaceOperationInFlight
                                         && root.peerEndpointFormIsValid()
                                     text: chaftController.syncInFlight
-                                        ? "Connecting..."
-                                        : "Connect"
+                                        ? "Updating..."
+                                        : "Update now"
                                     onClicked: root.connectPeerEndpointFromField()
                                 }
 
@@ -10738,7 +11403,7 @@ ApplicationWindow {
                                 Button {
                                     text: root.syncAdvancedToolsOpen
                                         ? "Hide options"
-                                        : "More sync options"
+                                        : "More options"
                                     checkable: true
                                     checked: root.syncAdvancedToolsOpen
                                     onToggled: {
@@ -10759,9 +11424,9 @@ ApplicationWindow {
                         visible: root.joinWaitingForPeerBannerVisible
                         implicitHeight: firstSyncWaitingRow.implicitHeight + Tokens.space3 * 2
                         radius: Tokens.radiusSm
-                        color: Tokens.warningSurface
+                        color: Tokens.surfaceRaised
                         border.width: 1
-                        border.color: Tokens.warning
+                        border.color: Tokens.borderSubtle
 
                         RowLayout {
                             id: firstSyncWaitingRow
@@ -10771,23 +11436,6 @@ ApplicationWindow {
                             anchors.margins: Tokens.space3
                             spacing: Tokens.space3
 
-                            Rectangle {
-                                Layout.preferredWidth: 36
-                                Layout.preferredHeight: 36
-                                radius: Tokens.radiusSm
-                                color: Qt.rgba(Tokens.warning.r, Tokens.warning.g, Tokens.warning.b, 0.18)
-                                border.width: 1
-                                border.color: Tokens.warning
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "..."
-                                    color: Tokens.warningText
-                                    font.pixelSize: Tokens.fontSizeSm
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
@@ -10795,7 +11443,7 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     text: root.firstSyncWaitingTitleText()
-                                    color: Tokens.warningText
+                                    color: Tokens.textStrong
                                     font.pixelSize: Tokens.fontSizeSm
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
@@ -10804,7 +11452,7 @@ ApplicationWindow {
                                 Text {
                                     Layout.fillWidth: true
                                     text: root.firstSyncWaitingDetailText()
-                                    color: Tokens.warningText
+                                    color: Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
                                     wrapMode: Text.WordWrap
                                 }
@@ -10813,6 +11461,7 @@ ApplicationWindow {
                             Button {
                                 text: root.firstSyncWaitingActionLabel()
                                 Layout.preferredWidth: 112
+                                variant: "primary"
                                 enabled: root.runtimeWorkReady
                                     && (root.preferredSyncPeerEndpoint().length === 0
                                         || !root.workspaceOperationInFlight)
@@ -10820,18 +11469,27 @@ ApplicationWindow {
                             }
 
                             Button {
-                                text: "Copy note"
-                                Layout.preferredWidth: 96
-                                enabled: root.runtimeAccessReady
-                                Accessible.name: "Copy workspace history note"
-                                onClicked: root.copyFirstSyncWaitingHelpNote()
-                            }
+                                id: firstSyncWaitingMoreButton
+                                text: "More"
+                                Layout.preferredWidth: 72
+                                Accessible.name: "More history options"
+                                onClicked: firstSyncWaitingMenu.open()
 
-                            Button {
-                                text: "Hide"
-                                Layout.preferredWidth: 82
-                                Accessible.name: "Hide workspace history reminder"
-                                onClicked: root.confirmHideFirstSyncWaiting()
+                                Menu {
+                                    id: firstSyncWaitingMenu
+                                    y: firstSyncWaitingMoreButton.height
+
+                                    MenuItem {
+                                        text: "Copy help note"
+                                        enabled: root.runtimeAccessReady
+                                        onTriggered: root.copyFirstSyncWaitingHelpNote()
+                                    }
+
+                                    MenuItem {
+                                        text: "Hide reminder"
+                                        onTriggered: root.confirmHideFirstSyncWaiting()
+                                    }
+                                }
                             }
                         }
                     }
@@ -10864,6 +11522,7 @@ ApplicationWindow {
                     workspaceId: root.currentWorkspaceId()
                     emptyText: root.selectedTimelineEmptyText()
                     actionsEnabled: root.runtimeWorkReady
+                        && !root.composerOperationPending
                     historyRepairEnabled: root.runtimeWorkReady
                         && !root.workspaceOperationInFlight
                         && root.preferredSyncPeerEndpoint().length > 0
@@ -10885,6 +11544,9 @@ ApplicationWindow {
                     }
                     onReplyRequested: function(item) {
                         root.beginReplyMessage(item)
+                    }
+                    onReplyParentRequested: function(messageId) {
+                        root.openTimelineMessageById(messageId)
                     }
                     onThreadRequested: function(item) {
                         root.selectInspectorItem(item)
@@ -10930,25 +11592,42 @@ ApplicationWindow {
                     replyWorkspaceId: root.currentWorkspaceId()
                     replyIdentityId: String(root.replyTarget.authorDeviceId || "")
                     replyDisplayName: root.itemAuthorLabel(root.replyTarget)
+                    operationPending: root.composerOperationPending
                     enabled: root.runtimeWorkReady && root.selectedChannelKey.length > 0
                     onDraftChanged: function(text) {
-                        root.saveSelectedDraftText(text)
+                        if (!root.suppressComposerDraftSave) {
+                            root.saveSelectedDraftText(text)
+                        }
                     }
                     onSendRequested: function(text) {
+                        if (root.composerOperationPending) {
+                            return
+                        }
+                        var workspaceId = root.currentWorkspaceId()
+                        var channelId = root.selectedChannelKey
+                        var replyToMessageId = root.replyTargetMessageId
                         var sent = root.replyTargetMessageId.length > 0
                             ? chaftController.sendMessageReply(
-                                root.selectedChannelKey,
-                                root.replyTargetMessageId,
+                                channelId,
+                                replyToMessageId,
                                 text
                             )
-                            : chaftController.sendMessage(root.selectedChannelKey, text)
+                            : chaftController.sendMessage(channelId, text)
                         if (sent) {
-                            root.clearDraftForChannel(root.selectedChannelKey)
-                            composer.clearDraft()
-                            root.cancelReplyMessage()
+                            root.beginComposerOperation(
+                                "message",
+                                workspaceId,
+                                channelId,
+                                replyToMessageId,
+                                "",
+                                text,
+                                "")
                         }
                     }
                     onAttachRequested: function(text) {
+                        if (root.composerOperationPending) {
+                            return
+                        }
                         attachmentDialog.pendingText = text
                         attachmentDialog.pendingWorkspaceId = root.currentWorkspaceId()
                         attachmentDialog.pendingChannelId = root.selectedChannelKey
@@ -10956,8 +11635,20 @@ ApplicationWindow {
                         attachmentDialog.open()
                     }
                     onSaveEditRequested: function(text) {
-                        if (chaftController.editMessage(root.editingMessageId, text)) {
-                            root.cancelEditMessage()
+                        if (root.composerOperationPending) {
+                            return
+                        }
+                        var workspaceId = root.currentWorkspaceId()
+                        var messageId = root.editingMessageId
+                        if (chaftController.editMessage(messageId, text)) {
+                            root.beginComposerOperation(
+                                "edit",
+                                workspaceId,
+                                "",
+                                "",
+                                messageId,
+                                text,
+                                "")
                         }
                     }
                     onCancelEditRequested: root.cancelEditMessage()
@@ -10986,11 +11677,12 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 300
-            visible: root.width >= 1400
-                && root.conversationDestination
+            Layout.preferredWidth: root.inspectorPanelWidth
+            Layout.minimumWidth: visible ? root.inspectorPanelWidth : 0
+            visible: root.conversationDestination
                 && root.hasWorkspaceContent
-                && (chaftController.inspectorPinned || root.inspectorItemKey.length > 0)
+                && ((root.pinnedInspectorAvailable && chaftController.inspectorPinned)
+                    || root.inspectorItemKey.length > 0)
             color: Tokens.surfaceRaised
             border.color: Tokens.borderSubtle
 
@@ -11062,6 +11754,7 @@ ApplicationWindow {
                                 }
 
                                 Button {
+                                    visible: root.pinnedInspectorAvailable
                                     text: chaftController.inspectorPinned ? "Unpin" : "Pin"
                                     Layout.preferredWidth: 64
                                     Accessible.name: chaftController.inspectorPinned
@@ -11072,6 +11765,14 @@ ApplicationWindow {
                                     ToolTip.text: chaftController.inspectorPinned
                                         ? "Inspector stays open; unpin to open only on selection"
                                         : "Keep the inspector open even with nothing selected"
+                                }
+
+                                Button {
+                                    visible: root.inspectorItemKey.length > 0
+                                    text: "Close"
+                                    Layout.preferredWidth: 64
+                                    Accessible.name: "Close message details"
+                                    onClicked: root.inspectorItemKey = ""
                                 }
                             }
 
@@ -11131,6 +11832,7 @@ ApplicationWindow {
 
                         GridLayout {
                             Layout.fillWidth: true
+                            visible: root.inspectorItemKey.length === 0
                             columns: 2
                             columnSpacing: 8
                             rowSpacing: 8
@@ -11148,7 +11850,7 @@ ApplicationWindow {
                                     spacing: 2
 
                                     Text {
-                                        text: "Messages"
+                                        text: "Loaded messages"
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
                                     }
@@ -11229,7 +11931,7 @@ ApplicationWindow {
                                     spacing: 2
 
                                     Text {
-                                        text: "Files"
+                                        text: "Recent files"
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
                                     }
@@ -11620,14 +12322,18 @@ ApplicationWindow {
                                 Layout.preferredWidth: Math.max(58, messageModeText.implicitWidth + 16)
                                 Layout.preferredHeight: 22
                                 radius: Tokens.radiusSm
-                                color: root.inspectorItemIsSelected ? Tokens.secureSurface : Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
+                                color: root.inspectorItemIsSelected
+                                    ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.16)
+                                    : Tokens.surfaceBase
+                                border.color: root.inspectorItemIsSelected
+                                    ? Tokens.accent
+                                    : Tokens.borderSubtle
 
                                 Text {
                                     id: messageModeText
                                     anchors.centerIn: parent
                                     text: root.inspectorItemIsSelected ? "Selected" : "Latest"
-                                    color: root.inspectorItemIsSelected ? Tokens.secure : Tokens.textMuted
+                                    color: root.inspectorItemIsSelected ? Tokens.accent : Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
                                 }
@@ -11723,6 +12429,7 @@ ApplicationWindow {
                                     Button {
                                         text: root.inspectorItem.bodyTruncated ? "Copy preview" : "Copy text"
                                         Layout.fillWidth: true
+                                        Layout.columnSpan: 2
                                         enabled: root.inspectorBodyCopyText().length > 0
                                         onClicked: root.copyInspectorBody()
                                     }
@@ -11730,6 +12437,7 @@ ApplicationWindow {
                                     Button {
                                         text: "Copy support ID"
                                         Layout.fillWidth: true
+                                        visible: root.inspectorDetailsOpen
                                         enabled: String(root.inspectorItem.eventId || "").length > 0
                                         onClicked: root.copyInspectorEventId()
                                     }
@@ -11737,18 +12445,21 @@ ApplicationWindow {
                                     Button {
                                         text: "Copy message support ID"
                                         Layout.fillWidth: true
-                                        visible: String(root.inspectorItem.messageId || "").length > 0
+                                        visible: root.inspectorDetailsOpen
+                                            && String(root.inspectorItem.messageId || "").length > 0
                                         enabled: String(root.inspectorItem.messageId || "").length > 0
                                         onClicked: root.copyInspectorMessageId()
                                     }
                                 }
 
                                 Button {
-                                    text: root.inspectorDetailsOpen ? "Hide details" : "Details"
-                                    Layout.preferredWidth: 104
+                                    text: root.inspectorDetailsOpen
+                                        ? "Hide support details"
+                                        : "Support details"
+                                    Layout.preferredWidth: 142
                                     onClicked: root.inspectorDetailsOpen = !root.inspectorDetailsOpen
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "Support details and counts"
+                                    ToolTip.text: "Technical message identifiers and counts"
                                 }
 
                                 GridLayout {
@@ -11862,6 +12573,9 @@ ApplicationWindow {
                             messageId: String(root.inspectorItem.messageId || "")
                             messageDeleted: Boolean(root.inspectorItem.deleted)
                             onReplyRequested: root.beginReplyMessage(root.inspectorItem)
+                            onReplySelected: function(messageId) {
+                                root.openTimelineMessageById(messageId)
+                            }
                         }
 
                         Rectangle {
@@ -11905,14 +12619,18 @@ ApplicationWindow {
                                 Layout.preferredWidth: Math.max(50, backupAutoText.implicitWidth + 16)
                                 Layout.preferredHeight: 22
                                 radius: Tokens.radiusSm
-                                color: root.autoBackupEnabled ? Tokens.secureSurface : Tokens.surfaceBase
-                                border.color: Tokens.borderSubtle
+                                color: root.autoBackupEnabled
+                                    ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.14)
+                                    : Tokens.surfaceBase
+                                border.color: root.autoBackupEnabled
+                                    ? Tokens.accent
+                                    : Tokens.borderSubtle
 
                                 Text {
                                     id: backupAutoText
                                     anchors.centerIn: parent
                                     text: root.autoBackupEnabled ? "Auto" : "Manual"
-                                    color: root.autoBackupEnabled ? Tokens.secure : Tokens.textMuted
+                                    color: root.autoBackupEnabled ? Tokens.accent : Tokens.textMuted
                                     font.pixelSize: Tokens.fontSizeXs
                                     font.weight: Font.DemiBold
                                 }
@@ -11972,9 +12690,9 @@ ApplicationWindow {
 
                                     Text {
                                         text: chaftController.peerHosting
-                                            ? "Sharing"
+                                            ? "Sharing address"
                                             : (chaftController.peerHostingInFlight ? "Updating" : "Not sharing")
-                                        color: chaftController.peerHosting ? Tokens.success : Tokens.textStrong
+                                        color: Tokens.textStrong
                                         font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }
@@ -11985,7 +12703,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 50
                                 radius: Tokens.radiusSm
-                                color: root.queuedPublishableEventCount > 0 ? Tokens.secureSurface : Tokens.surfaceBase
+                                color: Tokens.surfaceBase
                                 border.color: Tokens.borderSubtle
 
                                 ColumnLayout {
@@ -11994,14 +12712,14 @@ ApplicationWindow {
                                     spacing: 1
 
                                     Text {
-                                        text: "To share"
+                                        text: "Local events"
                                         color: Tokens.textMuted
                                         font.pixelSize: Tokens.fontSizeXs
                                     }
 
                                     Text {
                                         text: String(root.queuedPublishableEventCount)
-                                        color: root.queuedPublishableEventCount > 0 ? Tokens.secure : Tokens.textStrong
+                                        color: Tokens.textStrong
                                         font.pixelSize: Tokens.fontSizeLg
                                         font.weight: Font.DemiBold
                                     }

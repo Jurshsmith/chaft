@@ -19,20 +19,35 @@ Rectangle {
     readonly property bool plaintext: kind === "message" && !encrypted && !messageDeleted
     readonly property string explainerTitle: locked ? "Message locked here" : "Development message"
     readonly property string explainerText: locked
-        ? "This message is locked here. Ask an admin to add you again, import a recovery kit, or fetch history from a teammate who can read it."
+        ? "This device cannot decrypt this message. If it is authorized, import a current decryption key kit and fetch matching history. Otherwise ask an admin for an invite first."
         : "This message is readable but did not use Chaft's normal secure path. This should only appear for development or imported test data."
+
+    function activate() {
+        root.activated(root.explainerTitle, root.explainerText)
+    }
 
     implicitWidth: 74
     implicitHeight: 22
     visible: !warningRow && (locked || plaintext)
+    activeFocusOnTab: visible
     radius: Tokens.radiusSm
     color: locked ? Tokens.secureSurface : Tokens.warningSurface
+    border.color: activeFocus ? Tokens.accent : "transparent"
+    border.width: activeFocus ? 2 : 0
 
     Accessible.role: Accessible.Button
     Accessible.name: locked
-        ? "Locked message. Ask an admin for access or restore from a recovery kit."
+        ? "Locked message. If this device is authorized, import a current key kit; otherwise ask an admin for an invite."
         : "Plaintext development message"
-    Accessible.onPressAction: root.activated(root.explainerTitle, root.explainerText)
+    Accessible.onPressAction: root.activate()
+
+    Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                || event.key === Qt.Key_Space) {
+            root.activate()
+            event.accepted = true
+        }
+    }
 
     Text {
         anchors.centerIn: parent
@@ -47,9 +62,9 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: root.activated(root.explainerTitle, root.explainerText)
+        onClicked: root.activate()
     }
 
-    ToolTip.visible: visible && badgeMouse.containsMouse
+    ToolTip.visible: visible && (badgeMouse.containsMouse || root.activeFocus)
     ToolTip.text: root.explainerText
 }

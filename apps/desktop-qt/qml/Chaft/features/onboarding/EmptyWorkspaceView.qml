@@ -9,6 +9,7 @@ import Chaft
 Item {
     id: root
     property var app
+    property bool appearanceOptionsOpen: false
 
     readonly property bool rawStoreMode: chaftController.rawEventStoreMode
     // Idle prompts from the controller restate what the cards already say;
@@ -23,28 +24,37 @@ Item {
     ]
     readonly property string meaningfulStatus: {
         var status = String(chaftController.syncStatus || "").trim();
-        if (status.length === 0 || root.idleStatuses.indexOf(status.toLowerCase()) !== -1) {
+        var normalized = status.toLowerCase();
+        if (status.length === 0
+                || root.idleStatuses.indexOf(normalized) !== -1
+                || normalized.indexOf("sharing address ") === 0) {
             return "";
         }
         return status;
     }
     readonly property var pendingAccessRequests: root.app ? root.app.pendingAccessRequests : []
-    readonly property var curatedThemeIds: ["midnight-relay", "synthwave-84", "terminal-phosphor", "paper-atelier", "sakura-morning"]
+    readonly property var curatedThemeIds: [
+        "chaft-signal",
+        "chaft-canvas",
+        "midnight-relay",
+        "terminal-phosphor",
+        "sakura-morning"
+    ]
     readonly property var onboardingSteps: [
         {
             step: "1",
             title: "Create",
-            caption: "Start a private workspace for your team"
+            caption: "Name a private workspace"
         },
         {
             step: "2",
-            title: "Invite people",
-            caption: "Choose how many devices each invite can admit"
+            title: "Invite",
+            caption: "Share a one-use or multi-use invite"
         },
         {
             step: "3",
             title: "Stay reachable",
-            caption: "Keep Chaft open while teammates catch up"
+            caption: "Keep Chaft open while teammates sync"
         }
     ]
 
@@ -71,11 +81,17 @@ Item {
             width: Math.min(720, Math.max(300, contentFlick.width - 96))
             spacing: Tokens.space4
 
+            BrandMark {
+                Layout.preferredWidth: 72
+                Layout.preferredHeight: 72
+                Layout.bottomMargin: Tokens.space1
+            }
+
             Text {
                 Layout.fillWidth: true
                 text: root.rawStoreMode
                     ? "Viewing read-only history"
-                    : "Create, join, or restore\na workspace."
+                    : "Start with a workspace."
                 color: Tokens.textStrong
                 font.pixelSize: Tokens.fontSizeDisplay
                 font.weight: Font.Bold
@@ -86,7 +102,9 @@ Item {
             Text {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 560
-                text: root.rawStoreMode ? "Read-only history view. " + "Choose a workspace folder to unlock the full app." : "Chaft keeps conversations private and updates when teammates are reachable. No server account required."
+                text: root.rawStoreMode
+                    ? "Choose a workspace folder to unlock the full app."
+                    : "Create a private space or join one with an invite. Conversations sync directly when teammates are online."
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeMd
                 lineHeight: 1.25
@@ -382,77 +400,61 @@ Item {
                 }
             }
 
-            GridLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Tokens.space3
                 visible: !root.rawStoreMode
-                columns: root.width > 700 ? 3 : (root.width > 520 ? 2 : 1)
-                columnSpacing: Tokens.space3
-                rowSpacing: Tokens.space3
+                spacing: Tokens.space3
 
                 OnboardingActionCard {
                     Layout.fillWidth: true
                     primary: true
                     glyph: "#"
                     title: "Create workspace"
-                    body: "Start a private space, then invite teammates any time."
+                    body: "Create a private space and invite your team."
                     actionable: root.app.runtimeAccessReady
                     onActivated: root.app.openWorkspaceEntry("create")
                 }
 
-                OnboardingActionCard {
+                RowLayout {
                     Layout.fillWidth: true
-                    glyph: "⇄"
-                    title: "Join workspace"
-                    body: "Have an invite, request link, or access file? Open it here to join or request access."
-                    actionable: root.app.runtimeAccessReady
-                    onActivated: root.app.openWorkspaceEntry("join")
+                    spacing: Tokens.space2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Already have a workspace?"
+                        color: Tokens.textMuted
+                        font.pixelSize: Tokens.fontSizeSm
+                        elide: Text.ElideRight
+                    }
+
+                    Button {
+                        text: "Join workspace"
+                        enabled: root.app.runtimeAccessReady
+                        Accessible.description: "Use an invite, request link, or access file"
+                        onClicked: root.app.openWorkspaceEntry("join")
+                    }
                 }
 
-                OnboardingActionCard {
+                Flow {
                     Layout.fillWidth: true
-                    glyph: "↺"
-                    title: "Restore workspace"
-                    body: "Have a recovery kit? Restore access, then fetch history when a teammate is reachable."
-                    actionable: root.app.runtimeAccessReady
-                    onActivated: root.app.openWorkspaceEntry("join", "restore")
-                }
-            }
+                    spacing: Tokens.space1
 
-            Text {
-                visible: !root.rawStoreMode
-                text: "Explore demo workspace"
-                color: Tokens.accent
-                font.pixelSize: Tokens.fontSizeSm
-                font.underline: demoLinkMouse.containsMouse
-                activeFocusOnTab: true
+                    Button {
+                        flat: true
+                        text: "Import key kit"
+                        enabled: root.app.runtimeAccessReady
+                        Accessible.name: "Import decryption key kit"
+                        Accessible.description: "Import saved decryption keys. A fresh device still needs an invite."
+                        onClicked: root.app.openWorkspaceEntry("join", "restore")
+                    }
 
-                Accessible.role: Accessible.Button
-                Accessible.name: "Explore demo workspace"
-                Accessible.description: "Open a read-only sample workspace to explore the interface"
-                Accessible.onPressAction: root.app.startDemoTour()
-
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: -2
-                    radius: Tokens.radiusXs
-                    color: "transparent"
-                    border.color: Tokens.accent
-                    border.width: parent.activeFocus ? 2 : 0
-                }
-
-                MouseArea {
-                    id: demoLinkMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.app.startDemoTour()
-                }
-
-                Keys.onPressed: function (event) {
-                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-                        root.app.startDemoTour();
-                        event.accepted = true;
+                    Button {
+                        flat: true
+                        text: "Explore demo"
+                        Accessible.name: "Explore demo workspace"
+                        Accessible.description: "Open a read-only sample workspace"
+                        onClicked: root.app.startDemoTour()
                     }
                 }
             }
@@ -522,15 +524,20 @@ Item {
                 visible: !root.rawStoreMode
                 spacing: Tokens.space2
 
-                Text {
-                    text: "Make it yours with 24 themes in Appearance."
-                    color: Tokens.textMuted
-                    font.pixelSize: Tokens.fontSizeXs
-                    font.weight: Font.DemiBold
+                Button {
+                    flat: true
+                    text: root.appearanceOptionsOpen
+                        ? "Hide theme previews"
+                        : "Preview themes"
+                    Accessible.description: root.appearanceOptionsOpen
+                        ? "Collapse theme choices"
+                        : "Show a few theme choices"
+                    onClicked: root.appearanceOptionsOpen = !root.appearanceOptionsOpen
                 }
 
                 Flow {
                     Layout.fillWidth: true
+                    visible: root.appearanceOptionsOpen
                     spacing: Tokens.space2
 
                     Repeater {
@@ -547,6 +554,15 @@ Item {
                             }
                         }
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.appearanceOptionsOpen
+                    text: String(Themes.catalog.length) + " themes are available in Appearance."
+                    color: Tokens.textMuted
+                    font.pixelSize: Tokens.fontSizeXs
+                    wrapMode: Text.WordWrap
                 }
             }
 
