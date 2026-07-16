@@ -18,14 +18,14 @@ Dialog {
     readonly property var groupClaimLimitOptions: [
         { label: "5", value: 5 },
         { label: "10", value: 10 },
+        { label: "20", value: 20 },
         { label: "25", value: 25 },
-        { label: "50", value: 50 },
-        { label: "100", value: 100 },
         { label: "Custom", value: 0 }
     ]
+    property int selectedGroupClaimLimit: 10
     readonly property bool groupInvite: root.inviteMode === "group"
     readonly property bool customClaimLimit: root.groupInvite
-        && Number(groupClaimLimitBox.currentValue) === 0
+        && root.selectedGroupClaimLimit === 0
     readonly property bool customClaimLimitValid: !root.customClaimLimit
         || customClaimLimitField.acceptableInput
     readonly property int selectedMaxClaims: {
@@ -37,7 +37,7 @@ Dialog {
                 ? Number(customClaimLimitField.text)
                 : 0
         }
-        return Number(groupClaimLimitBox.currentValue || 10)
+        return root.selectedGroupClaimLimit || 10
     }
     readonly property bool secureRouteReady: root.app
         && root.app.preferredInvitePeerEndpoint().length > 0
@@ -79,9 +79,24 @@ Dialog {
         roleBox.currentIndex = 0
         expiryBox.currentIndex = 1
         root.inviteMode = "single"
-        groupClaimLimitBox.currentIndex = 1
+        root.selectedGroupClaimLimit = 10
         customClaimLimitField.text = ""
         highRiskConfirmation.checked = false
+    }
+
+    function selectGroupClaimLimit(value) {
+        var nextValue = Number(value)
+        if (nextValue !== 0 && nextValue !== 5 && nextValue !== 10
+                && nextValue !== 20 && nextValue !== 25) {
+            return
+        }
+        root.selectedGroupClaimLimit = nextValue
+        highRiskConfirmation.checked = false
+        if (nextValue === 0) {
+            Qt.callLater(function() {
+                customClaimLimitField.forceActiveFocus()
+            })
+        }
     }
 
     function maximumJoinsHelperText() {
@@ -143,7 +158,7 @@ Dialog {
         if (String(chaftController.smokeUiState || "")
                 === "setup-invite-dialog") {
             root.inviteMode = "group"
-            groupClaimLimitBox.currentIndex = 4
+            root.selectedGroupClaimLimit = 25
             expiryBox.currentIndex = 3
             for (var index = 0; index < root.roleOptions.length; index += 1) {
                 if (String(root.roleOptions[index].role || "") === "admin") {
@@ -355,46 +370,63 @@ Dialog {
             }
 
             RowLayout {
+                id: groupClaimLimitChoices
+
                 Layout.fillWidth: true
-                spacing: Tokens.space2
+                spacing: Tokens.space1
 
-                ComboBox {
-                    id: groupClaimLimitBox
-                    Layout.fillWidth: true
+                Repeater {
+                    id: groupClaimLimitRepeater
+
                     model: root.groupClaimLimitOptions
-                    textRole: "label"
-                    valueRole: "value"
-                    currentIndex: 1
-                    enabled: root.formEditable
-                    Accessible.name: "Maximum joins"
-                    onActivated: {
-                        highRiskConfirmation.checked = false
-                        if (Number(currentValue) === 0) {
-                            Qt.callLater(function() {
-                                customClaimLimitField.forceActiveFocus()
-                            })
-                        }
-                    }
-                }
 
-                TextField {
-                    id: customClaimLimitField
-                    Layout.preferredWidth: 120
-                    visible: root.customClaimLimit
-                    placeholderText: "2–100"
-                    maximumLength: 3
-                    inputMethodHints: Qt.ImhDigitsOnly
-                    enabled: root.formEditable
-                    validator: IntValidator {
-                        bottom: 2
-                        top: 100
+                    delegate: Button {
+                        id: claimLimitButton
+
+                        required property var modelData
+                        required property int index
+                        readonly property int claimLimitValue:
+                            Number(claimLimitButton.modelData.value || 0)
+
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: claimLimitButton.claimLimitValue === 0
+                            ? 92
+                            : 56
+                        text: String(claimLimitButton.modelData.label || "")
+                        checkable: true
+                        checked: root.selectedGroupClaimLimit
+                            === claimLimitButton.claimLimitValue
+                        enabled: root.formEditable
+                        activeFocusOnTab: true
+                        Accessible.name: claimLimitButton.claimLimitValue === 0
+                            ? "Custom maximum joins"
+                            : claimLimitButton.text + " maximum joins"
+                        Accessible.description: checked
+                            ? "Selected"
+                            : "Choose this join limit"
+                        onClicked: root.selectGroupClaimLimit(
+                            claimLimitButton.claimLimitValue)
                     }
-                    Accessible.name: "Custom maximum joins"
-                    Accessible.description: root.customClaimLimitValid
-                        ? "Maximum number of devices that can join"
-                        : "Enter a whole number from 2 to 100"
-                    onTextEdited: highRiskConfirmation.checked = false
                 }
+            }
+
+            TextField {
+                id: customClaimLimitField
+                Layout.fillWidth: true
+                visible: root.customClaimLimit
+                placeholderText: "Enter a custom limit from 2 to 100"
+                maximumLength: 3
+                inputMethodHints: Qt.ImhDigitsOnly
+                enabled: root.formEditable
+                validator: IntValidator {
+                    bottom: 2
+                    top: 100
+                }
+                Accessible.name: "Custom maximum joins"
+                Accessible.description: root.customClaimLimitValid
+                    ? "Maximum number of devices that can join"
+                    : "Enter a whole number from 2 to 100"
+                onTextEdited: highRiskConfirmation.checked = false
             }
 
             Text {

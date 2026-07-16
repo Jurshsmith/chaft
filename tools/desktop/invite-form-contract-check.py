@@ -197,16 +197,20 @@ class InviteFormContracts(unittest.TestCase):
             r"(?=[\s\S]{0,180}highRiskConfirmation\.checked\s*=\s*false)",
         )
 
-        for preset in (5, 10, 25, 50, 100):
+        for preset in (5, 10, 20, 25):
             self.assertIn(
                 f'{{ label: "{preset}", value: {preset} }}',
                 self.invite,
             )
         self.assertIn('{ label: "Custom", value: 0 }', self.invite)
 
-        group_limit = object_block(self.invite, "ComboBox", "groupClaimLimitBox")
-        self.assertIn("model: root.groupClaimLimitOptions", group_limit)
-        self.assertIn("currentIndex: 1", group_limit)
+        group_limits = object_block(
+            self.invite, "RowLayout", "groupClaimLimitChoices"
+        )
+        self.assertIn("model: root.groupClaimLimitOptions", group_limits)
+        self.assertIn("delegate: Button", group_limits)
+        self.assertIn("checked: root.selectedGroupClaimLimit", group_limits)
+        self.assertIn("root.selectGroupClaimLimit(", group_limits)
 
         custom_limit = object_block(
             self.invite, "TextField", "customClaimLimitField"
@@ -230,7 +234,7 @@ class InviteFormContracts(unittest.TestCase):
         self.assertRegex(selected_limit, r"\breturn\s+1\b")
         self.assertIn("root.customClaimLimitValid", selected_limit)
         self.assertIn("Number(customClaimLimitField.text)", selected_limit)
-        self.assertIn("groupClaimLimitBox.currentValue", selected_limit)
+        self.assertIn("root.selectedGroupClaimLimit", selected_limit)
 
         self.assertRegex(
             self.invite,
