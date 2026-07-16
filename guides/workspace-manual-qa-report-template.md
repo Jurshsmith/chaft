@@ -11,9 +11,13 @@ the release evidence for the build under test.
 - Build/profile:
 - Device A OS/version:
 - Device B OS/version:
+- Device C OS/version:
+- Device D OS/version:
 - Network shape:
 - Runtime A path:
 - Runtime B path:
+- Runtime C path:
+- Runtime D path:
 - Notes/log bundle path:
 
 ## Summary
@@ -52,14 +56,18 @@ the release evidence for the build under test.
 | Check | Result | Evidence / notes |
 | --- | --- | --- |
 | Device A exposes or enters reachable peer endpoint |  |  |
-| Device A creates a one-device `.chaftinvite` with an internal label |  |  |
+| Device A creates a `Single-use` `.chaftinvite` with an internal label |  |  |
 | Invite label never appears as Device B's member name |  |  |
 | Device B chooses its display name exactly once |  |  |
 | Device B imports invite without re-entering its name after approval |  |  |
-| Device A message syncs to Device B |  |  |
-| Device B reply syncs to Device A |  |  |
-| Restart keeps decrypted history readable on both devices |  |  |
-| Multi-use invite records different joiner names without relabeling the invite |  |  |
+| Device A creates a `Group` invite with a preset maximum |  |  |
+| Device A creates a `Group` invite with a valid custom maximum from 2 through 100 |  |  |
+| The same group invite artifact admits fresh devices C and D |  |  |
+| Group invite records different joiner names without relabeling the invite |  |  |
+| Group invite reports no joins remaining after reaching its maximum |  |  |
+| Device A message syncs to devices B, C, and D |  |  |
+| Replies from devices B, C, and D sync to Device A |  |  |
+| Restart keeps decrypted history readable on all four devices |  |  |
 
 ## Request Access
 

@@ -161,13 +161,21 @@ files (`.chaftaccess`), invite packages, request cards, access requests, older
 JSON exports, or passphrase-protected recovery kits.
 After creating a workspace, the app prompts for a recovery export so the
 credentials can be saved or copied before inviting other devices. Setup can
-create a signed invite for 1, 2, 5, 10, or 20 device uses without collecting
-device IDs first; one device remains the safe default. An optional invite label
-is internal metadata, while every recipient chooses the display name teammates
-will see. The invite contains no workspace key. Each recipient joins with their
-local device identity, and Chaft returns a signed, device-bound encrypted access
-response after the inviter processes the request. Legacy access files remain
-readable for compatibility.
+create a single-use invite or a reusable group invite for up to 100 joins
+without collecting device IDs first. Group invites offer presets for 5, 10, 25,
+50, or 100 joins plus a custom maximum from 2 through 100; single-use remains
+the safe default. Generate one group invite, then copy or save that same
+artifact and send it privately to each intended joiner. Every successful device
+consumes one join and chooses the display name teammates will see. An optional
+invite label remains internal metadata. The invite contains no workspace key.
+Each recipient joins with their local device identity, and Chaft returns a
+signed, device-bound encrypted access response after the inviter processes the
+request. Legacy access files remain readable for compatibility.
+
+Invite capacities above 20 are a protocol upgrade boundary. Before creating
+one, update every device that participates in the workspace to a build that
+supports 100-join invites. During a mixed-version rollout, keep group invites
+at 20 joins or fewer so older clients continue accepting workspace history.
 Admin/member roles, member removal, and private-channel grants are available
 from Setup and the pinned details panel once a workspace is selected.
 

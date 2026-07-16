@@ -11,9 +11,10 @@ device details, logs, screenshots, pass/fail status, and follow-up issue IDs.
 
 ## Test Setup
 
-- Use two physical devices when possible.
-- If physical devices are not available, use two isolated runtime directories
-  and two identity files.
+- Use two physical devices when possible, and four for the complete reusable
+  group-invite scenario.
+- If physical devices are not available, use one isolated runtime directory and
+  identity file per simulated device.
 - Keep logs, exported credential files, and exact runtime paths for each run.
 - Start with fresh runtimes for baseline runs, then repeat without `--fresh` to
   verify persistence.
@@ -64,14 +65,22 @@ and first-run state only appears when no workspace exists.
 ## Invite and Join
 
 1. On device A, publish or enter a reachable peer endpoint.
-2. Create an invite package for device B.
+2. Create a `Single-use` invite package for device B.
 3. Save the invite package with the suggested `.chaftinvite` filename.
 4. Import the invite on device B.
-5. Send a message from device A and sync to device B.
-6. Send a reply from device B and sync to device A.
-7. Restart both devices and verify the timeline remains readable.
+5. Create a `Group` invite with `Maximum joins` set to 2. Verify both a preset
+   and a valid custom value can be selected before creation.
+6. Copy or save the group invite once, then open that exact artifact on fresh
+   devices C and D. Give each device a different display name and join from both.
+7. Verify the invite list reports no joins remaining after the second group
+   join.
+8. Send a message from device A and sync to devices B, C, and D.
+9. Send replies from devices B, C, and D and sync to device A.
+10. Restart all four devices and verify the timeline remains readable.
 
-Pass criteria: both devices can join, sync, restart, and keep decrypted history.
+Pass criteria: single-use and group invites enforce their limits; one shared
+group artifact admits the configured number of distinct devices; and all joined
+devices can sync, restart, and keep decrypted history.
 
 ## Request Access
 

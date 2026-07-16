@@ -45,17 +45,26 @@ history.
 Do not share the recovery kit with teammates. To add another person or device:
 
 1. Open the workspace, then open `Setup`.
-2. In People & Access, choose a role, expiry, and how many devices may use the
-   invite. The default is one device. An optional invite label is only for your
-   invite list; each person chooses their own display name.
-3. Save or copy the generated `.chaftinvite` file or invite link.
-4. Send it privately only to the intended teammate or group.
+2. In People & Access, choose a role and expiry, then select `Single-use` or
+   `Group`. For a group invite, choose a preset or enter a custom
+   `Maximum joins` value from 2 through 100. Single-use remains the default. An
+   optional invite label is only for your invite list; each person chooses
+   their own display name.
+3. Save or copy the generated `.chaftinvite` file or invite link once.
+4. Send that same artifact privately to each intended joiner. You do not need
+   to generate a separate invite for every person.
 
 The invite contains a bounded capability, workspace metadata, and the admin's
 signed routing details. It does not contain the workspace key and does not need
-recipient device IDs in advance. Treat it as a bearer credential until it
-expires, is revoked, or reaches its device limit: anyone who receives it can use
-one of the remaining uses.
+recipient device IDs in advance. Each successful device consumes one join from
+the shared limit. Treat the artifact as a bearer credential until it expires,
+is revoked, or reaches its maximum: anyone who receives it can consume one of
+the remaining joins.
+
+Capacities above 20 require every workspace device to run a build that supports
+100-join invites. Older builds enforce the previous 20-join protocol bound and
+can reject higher-capacity invite events. Keep the maximum at 20 or fewer until
+all participating devices have been updated.
 
 The recipient opens the invite in `Join workspace`, confirms the display name
 teammates will see, and chooses `Join workspace`. Their device signs the request
@@ -138,10 +147,12 @@ Admins and owners can invite normal members. Owners control admin-level access.
 1. Open the workspace.
 2. Open `Setup`.
 3. Go to the people/access area.
-4. Choose the role, expiry, and how many devices may use the invite. Optionally
-   add an internal invite label; this does not name any recipient.
+4. Choose the role and expiry. Select `Single-use`, or select `Group` and
+   set `Maximum joins` from 2 through 100 using a preset or custom value.
+   Optionally add an internal invite label; this does not name any recipient.
 5. Copy the invite or save it as a file for offline transfer.
-6. Send the invite package to the invitee through a trusted channel.
+6. For a group invite, send the same invite artifact to every intended joiner
+   through trusted channels. Each joining device consumes one join.
 
 The invitee chooses their own display name in the `Join workspace` flow. Chaft
 binds the resulting membership and encrypted access response to that device.
