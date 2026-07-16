@@ -34,6 +34,7 @@
 #include <QSaveFile>
 #include <QScreen>
 #include <QSharedPointer>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QSystemTrayIcon>
@@ -461,6 +462,22 @@ int openMlsCatchupEventCountFromJson(const QJsonObject &openMlsCatchup) {
   return eventCount;
 }
 
+int openMlsCatchupLocalGeneratedCountFromJson(
+    const QJsonObject &openMlsCatchup) {
+  auto eventCount =
+      openMlsCatchup.value(QStringLiteral("workspaceProvisionedEventIds"))
+          .toArray()
+          .size();
+  for (const auto &channelGroup :
+       openMlsCatchup.value(QStringLiteral("channelGroups")).toArray()) {
+    eventCount += channelGroup.toObject()
+                      .value(QStringLiteral("provisionedEventIds"))
+                      .toArray()
+                      .size();
+  }
+  return eventCount;
+}
+
 QString compromiseSkippedReasonLabel(const QString &reason) {
   if (reason == QStringLiteral("remote_signals_require_review")) {
     return QStringLiteral("ask another admin to review");
@@ -521,6 +538,25 @@ QString compromiseResponseSummaryText(const QJsonValue &responseValue) {
   }
 
   return QStringLiteral("security reviewed %1 issue(s)").arg(signalCount);
+}
+
+int compromiseResponseLocalGeneratedCount(const QJsonValue &responseValue) {
+  if (!responseValue.isObject()) {
+    return 0;
+  }
+
+  const auto response = responseValue.toObject();
+  const auto rotation = response.value(QStringLiteral("rotation")).toObject();
+  const auto rotatedEventCount =
+      jsonCountOrArraySize(rotation, QStringLiteral("rotatedEventCount"),
+                           QStringLiteral("rotatedEventIds"));
+  if (rotatedEventCount > 0) {
+    return rotatedEventCount;
+  }
+  return response.value(QStringLiteral("rotatedLocalSecretState"))
+                 .toBool(false)
+             ? 1
+             : 0;
 }
 
 QString compromiseReportSummaryText(const QJsonObject &report) {
@@ -612,6 +648,134 @@ QJsonObject latestRuntimeSnapshotValue(
   }
 
   return resultValueFromJson(json, errorMessage);
+}
+
+QJsonObject latestRuntimeSnapshotValuePreservingTimeline(
+    RuntimeSnapshotResultJsonFn snapshotFn,
+    RuntimeSnapshotLatestResultJsonFn snapshotLatestFn,
+    RuntimeChannelSnapshotLatestResultJsonFn channelSnapshotLatestFn,
+    FreeStringFn freeString, const QByteArray &runtimeDirBytes,
+    const QByteArray &identityFileBytes, const QByteArray &workspaceIdBytes,
+    const QByteArray &timelineChannelIdBytes, std::size_t timelineLimit,
+    QString *errorMessage) {
+  if (timelineChannelIdBytes.isEmpty()) {
+    return latestRuntimeSnapshotValue(
+        snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
+        identityFileBytes, workspaceIdBytes, timelineLimit, errorMessage);
+  }
+
+  QString channelError;
+  if (freeString != nullptr && channelSnapshotLatestFn != nullptr) {
+    char *raw = channelSnapshotLatestFn(
+        runtimeDirBytes.constData(),
+        identityFileBytes.isEmpty() ? nullptr : identityFileBytes.constData(),
+        workspaceIdBytes.constData(), timelineChannelIdBytes.constData(),
+        timelineLimit);
+    QString readError;
+    const auto json = takeFfiString(raw, freeString, &readError);
+    if (!readError.isEmpty()) {
+      channelError = readError;
+    } else if (json.isEmpty()) {
+      channelError = QStringLiteral("local service returned no data");
+    } else {
+      auto value = resultValueFromJson(json, &channelError);
+      if (!value.isEmpty() &&
+          value.value(QStringLiteral("timelineChannelId"))
+                  .toString()
+                  .toUtf8() == timelineChannelIdBytes) {
+        return value;
+      }
+      if (!value.isEmpty()) {
+        channelError = QStringLiteral("room history snapshot was stale");
+      }
+    }
+  } else {
+    channelError = QStringLiteral("room history unavailable");
+  }
+
+  QString fallbackError;
+  auto fallback = latestRuntimeSnapshotValue(
+      snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
+      identityFileBytes, workspaceIdBytes, timelineLimit, &fallbackError);
+  if (!fallback.isEmpty()) {
+    // A workspace-wide snapshot is deliberately unscoped. In particular, do
+    // not leave the disappeared or inaccessible selected room attached to it.
+    fallback.insert(QStringLiteral("timelineChannelId"), QString());
+    if (errorMessage != nullptr) {
+      errorMessage->clear();
+    }
+    return fallback;
+  }
+
+  if (errorMessage != nullptr) {
+    *errorMessage = fallbackError.isEmpty() ? channelError : fallbackError;
+  }
+  return {};
+}
+
+QString runtimeSnapshotDeviceDisplayName(const QJsonObject &snapshot,
+                                         const QString &deviceId) {
+  const auto normalizedDeviceId = deviceId.trimmed();
+  if (normalizedDeviceId.isEmpty()) {
+    return {};
+  }
+  for (const auto &profileValue :
+       snapshot.value(QStringLiteral("profiles")).toArray()) {
+    const auto profile = profileValue.toObject();
+    if (profile.value(QStringLiteral("deviceId")).toString().trimmed() ==
+        normalizedDeviceId) {
+      return profile.value(QStringLiteral("displayName")).toString().trimmed();
+    }
+  }
+  return {};
+}
+
+QString runtimeSnapshotLinkedPersonDisplayName(const QJsonObject &snapshot,
+                                               const QString &deviceId) {
+  const auto normalizedDeviceId = deviceId.trimmed();
+  if (normalizedDeviceId.isEmpty()) {
+    return {};
+  }
+
+  QString personId;
+  for (const auto &linkValue :
+       snapshot.value(QStringLiteral("personDeviceLinks")).toArray()) {
+    const auto link = linkValue.toObject();
+    if (link.value(QStringLiteral("deviceId")).toString().trimmed() !=
+        normalizedDeviceId) {
+      continue;
+    }
+    const auto linkedDisplayName =
+        link.value(QStringLiteral("personDisplayName")).toString().trimmed();
+    if (!linkedDisplayName.isEmpty()) {
+      return linkedDisplayName;
+    }
+    personId = link.value(QStringLiteral("personId")).toString().trimmed();
+    break;
+  }
+  if (personId.isEmpty()) {
+    return {};
+  }
+  for (const auto &profileValue :
+       snapshot.value(QStringLiteral("personProfiles")).toArray()) {
+    const auto profile = profileValue.toObject();
+    if (profile.value(QStringLiteral("personId")).toString().trimmed() ==
+        personId) {
+      return profile.value(QStringLiteral("displayName")).toString().trimmed();
+    }
+  }
+  return {};
+}
+
+bool runtimeSnapshotHasDisplayNamePair(const QJsonObject &snapshot,
+                                       const QString &deviceId,
+                                       const QString &displayName) {
+  const auto normalizedDisplayName = displayName.trimmed();
+  return !normalizedDisplayName.isEmpty() &&
+         runtimeSnapshotDeviceDisplayName(snapshot, deviceId) ==
+             normalizedDisplayName &&
+         runtimeSnapshotLinkedPersonDisplayName(snapshot, deviceId) ==
+             normalizedDisplayName;
 }
 
 QVariantList resultArrayValueFromJson(const QByteArray &json,
@@ -3190,6 +3354,10 @@ class ChaftController : public QObject {
   Q_PROPERTY(bool peerHostingInFlight READ peerHostingInFlight NOTIFY
                  peerHostingInFlightChanged)
   Q_PROPERTY(bool syncInFlight READ syncInFlight NOTIFY syncInFlightChanged)
+  Q_PROPERTY(bool timelineLoadInFlight READ timelineLoadInFlight NOTIFY
+                 timelineLoadInFlightChanged)
+  Q_PROPERTY(bool workspaceOperationInFlight READ workspaceOperationInFlight
+                 NOTIFY workspaceOperationInFlightChanged)
   Q_PROPERTY(bool runtimeUnlockRequired READ runtimeUnlockRequired NOTIFY
                  runtimeUnlockChanged)
   Q_PROPERTY(
@@ -3222,6 +3390,8 @@ public:
         m_workspaceId(normalizedSelectedWorkspaceId(
             qEnvironmentVariable("CHAFT_WORKSPACE_ID"))),
         m_workspaceSnapshot(std::move(fallbackSnapshot)) {
+    connect(this, &ChaftController::workspaceSnapshotChanged, this,
+            [this]() { ++m_workspaceSnapshotRevision; });
     m_identityPassphraseFromEnvironment = !m_identityPassphrase.isEmpty();
     m_rawEventStoreMode =
         !m_eventStorePath.isEmpty() &&
@@ -3387,6 +3557,12 @@ public:
   bool peerHosting() const { return !m_hostedPeerId.isEmpty(); }
   bool peerHostingInFlight() const { return m_peerHostingInFlight; }
   bool syncInFlight() const { return m_syncInFlight; }
+  bool timelineLoadInFlight() const { return m_timelineLoadInFlight; }
+  bool workspaceOperationInFlight() const {
+    return m_syncInFlight || m_timelineLoadInFlight ||
+           m_runtimeSnapshotReconcileInFlight ||
+           m_deviceProfileUpdateInFlight || m_keyTransferInFlight;
+  }
   bool runtimeUnlockRequired() const { return m_runtimeUnlockRequired; }
   bool runtimeUnlocked() const { return !m_identityPassphrase.isEmpty(); }
   bool runtimeLocked() const { return m_runtimeAccessSuspendedUntilUnlock; }
@@ -3786,7 +3962,7 @@ public:
           "return or save the current secure access response first"));
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4039,7 +4215,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4211,7 +4387,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4316,7 +4492,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4379,6 +4555,10 @@ public:
       setSyncStatus(QStringLiteral("secure invite join requests unavailable"));
       return false;
     }
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("access handoff already running"));
+      return false;
+    }
     const auto normalizedArtifactJson = artifactJson.trimmed();
     if (normalizedArtifactJson.isEmpty()) {
       setSyncStatus(QStringLiteral("invite required"));
@@ -4437,7 +4617,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4498,7 +4678,7 @@ public:
       setSyncStatus(QStringLiteral("secure invite response unavailable"));
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -4531,7 +4711,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -5345,7 +5525,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("another workspace update is still running"));
       return false;
     }
@@ -5378,7 +5558,6 @@ public:
     }
 
     const auto generation = ++m_runtimeWriteGeneration;
-    setSyncInFlight(true);
     setSyncStatus(QStringLiteral("starting direct message..."));
     runDirectMessageCreate(channelName, normalizedDeviceId, generation);
     return true;
@@ -5453,6 +5632,10 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
+      return false;
+    }
 
     const auto normalizedDisplayName = displayName.trimmed();
     if (normalizedDisplayName.isEmpty()) {
@@ -5471,10 +5654,15 @@ public:
       setSyncStatus(QStringLiteral("profile update unavailable"));
       return false;
     }
+    if (m_deviceId.trimmed().isEmpty()) {
+      setSyncStatus(QStringLiteral("device identity unavailable"));
+      return false;
+    }
 
     const auto generation = ++m_runtimeWriteGeneration;
+    const auto operationId = beginDeviceProfileUpdate();
     setSyncStatus(QStringLiteral("saving name..."));
-    runDeviceProfileUpdate(normalizedDisplayName, generation);
+    runDeviceProfileUpdate(normalizedDisplayName, generation, operationId);
     return true;
   }
 
@@ -5573,7 +5761,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("operation already running"));
       return false;
     }
@@ -5629,7 +5817,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("operation already running"));
       return false;
     }
@@ -5876,7 +6064,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("operation already running"));
       return false;
     }
@@ -5927,7 +6115,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("operation already running"));
       return false;
     }
@@ -6547,7 +6735,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6571,7 +6759,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6590,7 +6778,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6609,7 +6797,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6631,7 +6819,7 @@ public:
       setSyncStatus(QStringLiteral("open a workspace to import access"));
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6672,7 +6860,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6704,7 +6892,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6740,7 +6928,7 @@ public:
       setSyncStatus(QStringLiteral("open a workspace to import room access"));
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6779,7 +6967,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6815,7 +7003,7 @@ public:
       setSyncStatus(QStringLiteral("open a workspace to restore access"));
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -6864,7 +7052,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_keyTransferInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("access handoff already running"));
       return false;
     }
@@ -7095,8 +7283,8 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
-      setSyncStatus(QStringLiteral("sync already running"));
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
       return false;
     }
     const auto endpoint = peerEndpoint.trimmed();
@@ -7121,14 +7309,14 @@ public:
   }
 
   Q_INVOKABLE bool backupWorkspaceIfIdle(const QString &peerEndpoint) {
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       return false;
     }
     return startBackupWorkspace(peerEndpoint, false);
   }
 
   Q_INVOKABLE bool backupConfiguredPeersIfIdle() {
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       return false;
     }
     if (m_backupPeerEndpoints.isEmpty()) {
@@ -7166,8 +7354,8 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
-      setSyncStatus(QStringLiteral("sync already running"));
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
       return false;
     }
     if (m_publishEventWithTrustSnapshotJson == nullptr) {
@@ -7211,7 +7399,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("sync already running"));
       return false;
     }
@@ -7236,7 +7424,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("sync already running"));
       return false;
     }
@@ -7258,17 +7446,44 @@ public:
   }
 
   Q_INVOKABLE bool syncWorkspaceIfIdle(const QString &peerEndpoint) {
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       return false;
     }
     return syncWorkspace(peerEndpoint);
+  }
+
+  Q_INVOKABLE bool reconcileRuntimeSnapshotIfIdle() {
+    if (!ensureRuntimeWorkspace() || workspaceOperationInFlight()) {
+      return false;
+    }
+    const auto timelineChannelId =
+        m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
+            .toString()
+            .trimmed();
+    const auto workspaceSnapshotAvailable =
+        m_runtimeSnapshotJson != nullptr || m_runtimeSnapshotLatestJson != nullptr;
+    const auto channelSnapshotAvailable =
+        m_runtimeChannelSnapshotLatestJson != nullptr;
+    if (m_freeString == nullptr ||
+        (timelineChannelId.isEmpty()
+             ? !workspaceSnapshotAvailable
+             : !channelSnapshotAvailable && !workspaceSnapshotAvailable)) {
+      return false;
+    }
+
+    const auto runtimeWriteGeneration = m_runtimeWriteGeneration;
+    const auto workspaceSnapshotRevision = m_workspaceSnapshotRevision;
+    const auto operationId = beginRuntimeSnapshotReconcile();
+    runRuntimeSnapshotReconcile(runtimeWriteGeneration,
+                                workspaceSnapshotRevision, operationId);
+    return true;
   }
 
   Q_INVOKABLE bool repairWorkspaceStorageMetadata() {
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("sync already running"));
       return false;
     }
@@ -7286,7 +7501,7 @@ public:
     if (!ensureFfiReady()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("sync already running"));
       return false;
     }
@@ -7344,7 +7559,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       return false;
     }
     const auto normalizedChannelId = channelId.trimmed();
@@ -7376,7 +7591,7 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
+    if (workspaceOperationInFlight()) {
       setSyncStatus(QStringLiteral("sync already running"));
       return false;
     }
@@ -7427,8 +7642,8 @@ public:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
-      setSyncStatus(QStringLiteral("sync already running"));
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
       return false;
     }
     if (m_retryBlobTransfersJson == nullptr) {
@@ -7495,6 +7710,8 @@ signals:
   void hostedPeerChanged();
   void peerHostingInFlightChanged();
   void syncInFlightChanged();
+  void timelineLoadInFlightChanged();
+  void workspaceOperationInFlightChanged();
   void runtimeUnlockChanged();
   void keyTransferJsonChanged();
   void keyTransferInFlightChanged();
@@ -7510,6 +7727,9 @@ signals:
                                          const QString &message);
   void workspaceCreateFinished(const QString &workspaceId, bool success,
                                bool selected, const QString &message);
+  void deviceProfileUpdateFinished(const QString &workspaceId,
+                                   const QString &displayName, bool success,
+                                   const QString &message);
   void workspaceInviteClaimFinished(bool success, const QString &message);
   void joinResponseInboxEntryAcknowledged(bool success,
                                           const QString &message);
@@ -8462,6 +8682,88 @@ private:
       }
     }
     return snapshot;
+  }
+
+  bool runtimeSnapshotMatchesCurrentView(const QJsonObject &value) const {
+    const auto candidate = snapshotWithPreservedResolvedChannels(value);
+    if (candidate == m_workspaceSnapshot) {
+      return true;
+    }
+
+    auto comparableCurrent = m_workspaceSnapshot;
+    const auto normalizeLoadedPrefix = [&candidate, &comparableCurrent](
+                                           const QString &rowsKey,
+                                           const QString &countKey) {
+      if (candidate.value(countKey).toULongLong() !=
+          comparableCurrent.value(countKey).toULongLong()) {
+        return false;
+      }
+      const auto candidateRows = candidate.value(rowsKey).toList();
+      const auto currentRows = comparableCurrent.value(rowsKey).toList();
+      if (candidateRows.size() > currentRows.size()) {
+        return false;
+      }
+      for (qsizetype index = 0; index < candidateRows.size(); ++index) {
+        if (candidateRows.at(index) != currentRows.at(index)) {
+          return false;
+        }
+      }
+      comparableCurrent.insert(rowsKey, candidateRows);
+      return true;
+    };
+    if (!normalizeLoadedPrefix(QStringLiteral("channels"),
+                               QStringLiteral("channelCount")) ||
+        !normalizeLoadedPrefix(QStringLiteral("members"),
+                               QStringLiteral("memberCount"))) {
+      return false;
+    }
+
+    const auto candidateChannelId =
+        candidate.value(QStringLiteral("timelineChannelId")).toString();
+    if (candidateChannelId !=
+            m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
+                .toString()) {
+      return false;
+    }
+
+    const auto candidateWindow =
+        candidate.value(QStringLiteral("timelineWindow")).toMap();
+    const auto currentWindow =
+        m_workspaceSnapshot.value(QStringLiteral("timelineWindow")).toMap();
+    const auto candidateTotal =
+        candidateWindow.value(QStringLiteral("totalCount")).toULongLong();
+    const auto currentTotal =
+        currentWindow.value(QStringLiteral("totalCount")).toULongLong();
+    if (candidateTotal != currentTotal) {
+      return false;
+    }
+
+    const auto candidateTimeline =
+        candidate.value(QStringLiteral("timeline")).toList();
+    const auto currentTimeline =
+        m_workspaceSnapshot.value(QStringLiteral("timeline")).toList();
+    const auto candidateStart =
+        candidateWindow.value(QStringLiteral("startIndex")).toULongLong();
+    const auto currentStart =
+        currentWindow.value(QStringLiteral("startIndex")).toULongLong();
+    const auto candidateEnd =
+        candidateStart + static_cast<qulonglong>(candidateTimeline.size());
+    const auto currentEnd =
+        currentStart + static_cast<qulonglong>(currentTimeline.size());
+    if (candidateStart < currentStart || candidateEnd > currentEnd) {
+      return false;
+    }
+
+    QVariantList comparableTimeline;
+    comparableTimeline.reserve(candidateTimeline.size());
+    const auto offset = static_cast<qsizetype>(candidateStart - currentStart);
+    for (qsizetype index = 0; index < candidateTimeline.size(); ++index) {
+      comparableTimeline.append(currentTimeline.at(offset + index));
+    }
+
+    comparableCurrent.insert(QStringLiteral("timeline"), comparableTimeline);
+    comparableCurrent.insert(QStringLiteral("timelineWindow"), candidateWindow);
+    return candidate == comparableCurrent;
   }
 
   QString workspaceNameForId(const QString &workspaceId) const {
@@ -9423,8 +9725,8 @@ private:
     if (!ensureRuntimeWorkspace()) {
       return false;
     }
-    if (m_syncInFlight) {
-      setSyncStatus(QStringLiteral("sync already running"));
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
       return false;
     }
     if (m_backupWorkspaceJson == nullptr) {
@@ -9453,26 +9755,34 @@ private:
 
   void runDirectSync(RuntimeDirectSyncResultJsonFn syncFn,
                      const QString &peerEndpoint, DirectSyncMode mode) {
-    setSyncInFlight(true);
-    const auto generation =
-        (mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync)
-            ? ++m_runtimeWriteGeneration
-            : m_runtimeWriteGeneration;
+    const auto operationId = beginSyncOperation();
+    const auto updatesRuntime =
+        mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync;
+    const auto generation = updatesRuntime ? ++m_runtimeWriteGeneration
+                                           : m_runtimeWriteGeneration;
     const QPointer<ChaftController> guard(this);
     const auto freeString = m_freeString;
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
+    const auto channelSnapshotLatestFn = m_runtimeChannelSnapshotLatestJson;
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
     const auto workspaceId = m_workspaceId;
+    const auto timelineChannelId =
+        m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
+            .toString()
+            .trimmed();
     const auto timelineLimit = configuredTimelineLimit();
     auto *thread = QThread::create([guard, syncFn, freeString, snapshotFn,
-                                    snapshotLatestFn, runtimeDir, identityFile,
-                                    workspaceId, peerEndpoint, mode, generation,
-                                    timelineLimit]() {
+                                    snapshotLatestFn, channelSnapshotLatestFn,
+                                    runtimeDir, identityFile, workspaceId,
+                                    timelineChannelId, peerEndpoint, mode,
+                                    generation, timelineLimit, updatesRuntime,
+                                    operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
+      const auto timelineChannelIdBytes = timelineChannelId.toUtf8();
       const auto endpointBytes = peerEndpoint.toUtf8();
       char *raw = syncFn(
           runtimeDirBytes.constData(),
@@ -9508,6 +9818,9 @@ private:
       const auto fetchedCount =
           jsonCountOrArraySize(pulledValue, QStringLiteral("fetchedEventCount"),
                                QStringLiteral("fetchedEventIds"));
+      const auto appliedCount =
+          jsonCountOrArraySize(pulledValue, QStringLiteral("appliedEventCount"),
+                               QStringLiteral("appliedEventIds"));
       const auto fetchedBlobCount =
           jsonCountOrArraySize(pulledValue, QStringLiteral("fetchedBlobCount"),
                                QStringLiteral("fetchedBlobHashes"));
@@ -9520,15 +9833,24 @@ private:
           pulledValue.value(QStringLiteral("openmlsCatchup")).toObject();
       const auto openMlsCatchupCount =
           openMlsCatchupEventCountFromJson(openMlsCatchup);
-      const auto compromiseSummary = compromiseResponseSummaryText(
-          pulledValue.value(QStringLiteral("compromiseResponse")));
+      const auto compromiseResponse =
+          pulledValue.value(QStringLiteral("compromiseResponse"));
+      const auto compromiseSummary =
+          compromiseResponseSummaryText(compromiseResponse);
+      const auto inviteProfileEventCount = jsonCountOrArraySize(
+          pulledValue, QStringLiteral("inviteProfileEventCount"),
+          QStringLiteral("inviteProfileEventIds"));
+      const auto localGeneratedCount =
+          openMlsCatchupLocalGeneratedCountFromJson(openMlsCatchup) +
+          compromiseResponseLocalGeneratedCount(compromiseResponse) +
+          inviteProfileEventCount;
       QJsonObject snapshotValue;
       QString snapshotError;
-      if (!value.isEmpty() &&
-          (mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync)) {
-        snapshotValue = latestRuntimeSnapshotValue(
-            snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
-            identityFileBytes, workspaceIdBytes, timelineLimit, &snapshotError);
+      if (!value.isEmpty() && updatesRuntime) {
+        snapshotValue = latestRuntimeSnapshotValuePreservingTimeline(
+            snapshotFn, snapshotLatestFn, channelSnapshotLatestFn, freeString,
+            runtimeDirBytes, identityFileBytes, workspaceIdBytes,
+            timelineChannelIdBytes, timelineLimit, &snapshotError);
       }
       if (guard.isNull()) {
         return;
@@ -9537,27 +9859,39 @@ private:
           guard.data(),
           [guard, value, snapshotValue, publishedCount, publishedBlobCount,
            publishedMissingBlobCount, publishedSkippedGapCount, fetchedCount,
-           fetchedBlobCount, pulledMissingBlobCount, pulledGapCount,
-           openMlsCatchupCount, compromiseSummary, error, errorCode,
-           snapshotError, mode, peerEndpoint, workspaceId, generation]() {
+           appliedCount, fetchedBlobCount, pulledMissingBlobCount,
+           pulledGapCount, openMlsCatchupCount, localGeneratedCount,
+           compromiseSummary, error, errorCode, snapshotError, mode,
+           peerEndpoint, workspaceId, generation, updatesRuntime,
+           operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (value.isEmpty()) {
               if (mode == DirectSyncMode::Backup) {
                 guard->recordBackupResult(peerEndpoint, false, error, 0, 0,
                                           isPeerProtocolFailureCode(errorCode));
               }
+              guard->queueRuntimeSnapshotRefreshIfCurrent(updatesRuntime,
+                                                          workspaceId);
               guard->setSyncStatus(error);
               return;
             }
 
-            if (mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync) {
+            if (!updatesRuntime) {
+              guard->queuePublishQueueRefresh();
+            }
+            if (updatesRuntime) {
               if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                 guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
               } else if (snapshotValue.isEmpty()) {
+                guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
                 guard->setSyncStatus(snapshotError);
                 return;
               } else if (guard->m_workspaceId != workspaceId) {
@@ -9566,7 +9900,11 @@ private:
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
                 return;
               } else {
-                guard->applyRuntimeSnapshot(snapshotValue, false);
+                if (!guard->runtimeSnapshotMatchesCurrentView(snapshotValue)) {
+                  guard->applyRuntimeSnapshot(snapshotValue, false);
+                } else {
+                  guard->queuePublishQueueRefresh();
+                }
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
               }
             }
@@ -9597,12 +9935,15 @@ private:
               auto message =
                   QStringLiteral("fetched %1 update(s), %2 file(s), %3 "
                                  "file(s) to retry, %4 history item(s) to "
-                                 "fetch, %5 access item(s)")
+                                 "fetch, %5 access item(s), %6 update(s) in "
+                                 "the local view, %7 local follow-up(s)")
                       .arg(fetchedCount)
                       .arg(fetchedBlobCount)
                       .arg(pulledMissingBlobCount)
                       .arg(pulledGapCount)
-                      .arg(openMlsCatchupCount);
+                      .arg(openMlsCatchupCount)
+                      .arg(appliedCount)
+                      .arg(localGeneratedCount);
               if (!compromiseSummary.isEmpty()) {
                 message += QStringLiteral(", ") + compromiseSummary;
               }
@@ -9613,7 +9954,9 @@ private:
                                  "file(s) to retry, %4 history item(s) to "
                                  "fetch shared / %5 update(s), %6 file(s), "
                                  "%7 file(s) to retry, %8 history item(s) "
-                                 "to fetch, %9 access item(s) fetched")
+                                 "to fetch, %9 access item(s) fetched, %10 "
+                                 "update(s) in the local view, %11 local "
+                                 "follow-up(s)")
                       .arg(publishedCount)
                       .arg(publishedBlobCount)
                       .arg(publishedMissingBlobCount)
@@ -9622,13 +9965,15 @@ private:
                       .arg(fetchedBlobCount)
                       .arg(pulledMissingBlobCount)
                       .arg(pulledGapCount)
-                      .arg(openMlsCatchupCount);
+                      .arg(openMlsCatchupCount)
+                      .arg(appliedCount)
+                      .arg(localGeneratedCount);
               if (!compromiseSummary.isEmpty()) {
                 message += QStringLiteral(", ") + compromiseSummary;
               }
               guard->setSyncStatus(message);
             }
-            if (mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync) {
+            if (updatesRuntime) {
               guard->queueAccessEnvelopePullFromPeer(peerEndpoint, workspaceId,
                                                      false, true, false);
             }
@@ -9640,7 +9985,7 @@ private:
   }
 
   void runBlobTransferRetry(const QStringList &peerEndpoints) {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto freeString = m_freeString;
     const auto retryFn = m_retryBlobTransfersJson;
@@ -9650,7 +9995,7 @@ private:
     const auto peerEndpointsText = joinedPeerEndpoints(peerEndpoints);
     auto *thread = QThread::create([guard, retryFn, freeString, runtimeDir,
                                     identityFile, workspaceId,
-                                    peerEndpointsText]() {
+                                    peerEndpointsText, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -9685,12 +10030,16 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, pendingCount, retriedCount, reconciledCount,
-           missingCount, peerErrorCount, error]() {
+           missingCount, peerErrorCount, error, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
               return;
@@ -9718,14 +10067,14 @@ private:
   }
 
   void runBlobPrune() {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto pruneFn = m_pruneBlobsJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
     auto *thread = QThread::create([guard, pruneFn, freeString, runtimeDir,
-                                    identityFile]() {
+                                    identityFile, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       char *raw =
@@ -9751,12 +10100,16 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, removedCount, error]() {
+          [guard, value, removedCount, error, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
               return;
@@ -10322,7 +10675,7 @@ private:
   }
 
   void runWorkspaceStorageMetadataRepair() {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const auto generation = ++m_workspaceStorageHealthGeneration;
     const QPointer<ChaftController> guard(this);
     const auto repairFn = m_repairWorkspaceStorageMetadataJson;
@@ -10333,7 +10686,7 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, repairFn, healthFn, freeString,
                                     runtimeDir, identityFile, workspaceId,
-                                    generation]() {
+                                    generation, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -10376,12 +10729,17 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, healthValue, error, healthError, workspaceId,
-           generation, repairedCount, promotedCount, clearedCount]() {
+           generation, repairedCount, promotedCount, clearedCount,
+           operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (guard->m_workspaceId != workspaceId) {
               guard->setSyncStatus(QStringLiteral(
                   "history fixed after switching workspaces"));
@@ -10478,7 +10836,7 @@ private:
 
   void runStoreTimelinePageLoad(qulonglong timelineStart,
                                 qulonglong timelineCount, quint64 generation) {
-    setSyncInFlight(true);
+    const auto operationId = beginTimelineLoad();
     const QPointer<ChaftController> guard(this);
     const auto snapshotFn = m_storeSnapshotWindowJson;
     const auto freeString = m_freeString;
@@ -10486,7 +10844,7 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, snapshotFn, freeString,
                                     eventStorePath, workspaceId, timelineStart,
-                                    timelineCount, generation]() {
+                                    timelineCount, generation, operationId]() {
       const auto eventStorePathBytes = eventStorePath.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
       char *raw = snapshotFn(eventStorePathBytes.constData(),
@@ -10503,12 +10861,16 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, error, workspaceId, generation]() {
+          [guard, value, error, workspaceId, generation, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishTimelineLoad(operationId);
+                  }
+                });
             if (guard->m_timelinePageGeneration != generation) {
               return;
             }
@@ -10538,21 +10900,30 @@ private:
     const QPointer<ChaftController> guard(this);
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
+    const auto channelSnapshotLatestFn = m_runtimeChannelSnapshotLatestJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
     const auto workspaceId = m_workspaceId;
+    const auto timelineChannelId =
+        m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
+            .toString()
+            .trimmed();
     const auto timelineLimit = configuredTimelineLimit();
-    auto *thread = QThread::create(
-        [guard, snapshotFn, snapshotLatestFn, freeString, runtimeDir,
-         identityFile, workspaceId, generation, updateStatus, timelineLimit]() {
+    auto *thread = QThread::create([guard, snapshotFn, snapshotLatestFn,
+                                    channelSnapshotLatestFn, freeString,
+                                    runtimeDir, identityFile, workspaceId,
+                                    timelineChannelId, generation, updateStatus,
+                                    timelineLimit]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
+          const auto timelineChannelIdBytes = timelineChannelId.toUtf8();
           QString error;
-          const auto value = latestRuntimeSnapshotValue(
-              snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
-              identityFileBytes, workspaceIdBytes, timelineLimit, &error);
+          const auto value = latestRuntimeSnapshotValuePreservingTimeline(
+              snapshotFn, snapshotLatestFn, channelSnapshotLatestFn, freeString,
+              runtimeDirBytes, identityFileBytes, workspaceIdBytes,
+              timelineChannelIdBytes, timelineLimit, &error);
 
           if (guard.isNull()) {
             return;
@@ -10572,8 +10943,79 @@ private:
                   return;
                 }
 
-                guard->applyRuntimeSnapshot(value, updateStatus);
+                if (!guard->runtimeSnapshotMatchesCurrentView(value)) {
+                  guard->applyRuntimeSnapshot(value, updateStatus);
+                } else if (updateStatus) {
+                  guard->setSyncStatus(QStringLiteral("messages ready"));
+                }
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              },
+              Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+  }
+
+  void runRuntimeSnapshotReconcile(quint64 runtimeWriteGeneration,
+                                   quint64 workspaceSnapshotRevision,
+                                   quint64 operationId) {
+    const QPointer<ChaftController> guard(this);
+    const auto snapshotFn = m_runtimeSnapshotJson;
+    const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
+    const auto channelSnapshotLatestFn = m_runtimeChannelSnapshotLatestJson;
+    const auto freeString = m_freeString;
+    const auto runtimeDir = m_runtimeDir;
+    const auto identityFile = m_identityFile;
+    const auto workspaceId = m_workspaceId;
+    const auto timelineChannelId =
+        m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
+            .toString()
+            .trimmed();
+    const auto timelineLimit = configuredTimelineLimit();
+    auto *thread = QThread::create(
+        [guard, snapshotFn, snapshotLatestFn, channelSnapshotLatestFn,
+         freeString, runtimeDir, identityFile, workspaceId, timelineChannelId,
+         timelineLimit, runtimeWriteGeneration, workspaceSnapshotRevision,
+         operationId]() {
+          const auto runtimeDirBytes = runtimeDir.toUtf8();
+          const auto identityFileBytes = identityFile.toUtf8();
+          const auto workspaceIdBytes = workspaceId.toUtf8();
+          const auto timelineChannelIdBytes = timelineChannelId.toUtf8();
+          QString error;
+          const auto value = latestRuntimeSnapshotValuePreservingTimeline(
+              snapshotFn, snapshotLatestFn, channelSnapshotLatestFn, freeString,
+              runtimeDirBytes, identityFileBytes, workspaceIdBytes,
+              timelineChannelIdBytes, timelineLimit, &error);
+
+          if (guard.isNull()) {
+            return;
+          }
+          QMetaObject::invokeMethod(
+              guard.data(),
+              [guard, value, workspaceId, runtimeWriteGeneration,
+               workspaceSnapshotRevision, operationId]() {
+                if (guard.isNull()) {
+                  return;
+                }
+                [[maybe_unused]] const auto operationCompletion = qScopeGuard(
+                    [guard, operationId]() {
+                      if (!guard.isNull()) {
+                        guard->finishRuntimeSnapshotReconcile(operationId);
+                      }
+                    });
+                if (operationId !=
+                        guard->m_runtimeSnapshotReconcileOperationGeneration ||
+                    guard->m_workspaceId != workspaceId ||
+                    guard->m_runtimeWriteGeneration != runtimeWriteGeneration ||
+                    guard->m_workspaceSnapshotRevision !=
+                        workspaceSnapshotRevision ||
+                    value.isEmpty()) {
+                  return;
+                }
+
+                if (!guard->runtimeSnapshotMatchesCurrentView(value)) {
+                  guard->applyRuntimeSnapshot(value, false);
+                }
               },
               Qt::QueuedConnection);
         });
@@ -12409,7 +12851,7 @@ private:
 
   void runDirectEventPublishWithTrustSnapshot(const QString &eventId,
                                               const QString &peerEndpoint) {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto freeString = m_freeString;
     const auto publishFn = m_publishEventWithTrustSnapshotJson;
@@ -12418,7 +12860,7 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, publishFn, freeString, runtimeDir,
                                     identityFile, workspaceId, eventId,
-                                    peerEndpoint]() {
+                                    peerEndpoint, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -12449,12 +12891,16 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, publishedCount, publishedBlobCount, missingBlobCount,
-           error]() {
+           error, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
               return;
@@ -12608,7 +13054,6 @@ private:
                   return;
                 }
 
-                guard->setSyncInFlight(false);
                 if (workspaceId != guard->m_workspaceId ||
                     generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   return;
@@ -12683,7 +13128,6 @@ private:
                   return;
                 }
 
-                guard->setSyncInFlight(false);
                 if (workspaceId != guard->m_workspaceId ||
                     generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   return;
@@ -12712,6 +13156,7 @@ private:
   void runDirectMessageCreate(const QString &channelName,
                               const QString &memberDeviceId,
                               quint64 generation) {
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto createFn = m_createDirectMessageChannelJson;
     const auto snapshotFn = m_runtimeSnapshotJson;
@@ -12724,7 +13169,7 @@ private:
     auto *thread = QThread::create(
         [guard, createFn, snapshotFn, snapshotLatestFn, freeString,
          runtimeDir, identityFile, workspaceId, channelName, memberDeviceId,
-         generation, timelineLimit]() {
+         generation, timelineLimit, operationId]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -12761,11 +13206,16 @@ private:
           QMetaObject::invokeMethod(
               guard.data(),
               [guard, error, snapshotValue, snapshotError, workspaceId,
-               channelId, generation]() {
+               channelId, generation, operationId]() {
                 if (guard.isNull()) {
                   return;
                 }
-                guard->setSyncInFlight(false);
+                [[maybe_unused]] const auto operationCompletion =
+                    qScopeGuard([guard, operationId]() {
+                      if (!guard.isNull()) {
+                        guard->finishSyncOperation(operationId);
+                      }
+                    });
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(
                       error.isEmpty(), workspaceId);
@@ -12797,7 +13247,8 @@ private:
     thread->start();
   }
 
-  void runDeviceProfileUpdate(const QString &displayName, quint64 generation) {
+  void runDeviceProfileUpdate(const QString &displayName, quint64 generation,
+                              quint64 operationId) {
     const QPointer<ChaftController> guard(this);
     const auto updateFn = m_updateDeviceProfileJson;
     const auto personUpdateFn = m_updateLocalPersonProfileJson;
@@ -12807,50 +13258,90 @@ private:
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
     const auto workspaceId = m_workspaceId;
+    const auto deviceId = m_deviceId;
     const auto timelineLimit = configuredTimelineLimit();
     auto *thread = QThread::create([guard, updateFn, personUpdateFn, snapshotFn,
                                     snapshotLatestFn, freeString, runtimeDir,
                                     identityFile, workspaceId, displayName,
-                                    generation, timelineLimit]() {
+                                    deviceId, generation, timelineLimit,
+                                    operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
       const auto displayNameBytes = displayName.toUtf8();
-      char *raw = updateFn(
-          runtimeDirBytes.constData(),
-          identityFileBytes.isEmpty() ? nullptr : identityFileBytes.constData(),
-          workspaceIdBytes.constData(), displayNameBytes.constData());
-
       QString error;
-      const auto json = takeFfiString(raw, freeString, &error);
-      auto value =
-          error.isEmpty() ? resultValueFromJson(json, &error) : QJsonObject();
-      if (!value.isEmpty()) {
-        char *personRaw =
-            personUpdateFn(runtimeDirBytes.constData(),
-                           identityFileBytes.isEmpty()
-                               ? nullptr
-                               : identityFileBytes.constData(),
-                           workspaceIdBytes.constData(),
-                           displayNameBytes.constData());
-        QString personError;
-        const auto personJson = takeFfiString(personRaw, freeString, &personError);
-        const auto personValue = personError.isEmpty()
-                                     ? resultValueFromJson(personJson, &personError)
-                                     : QJsonObject();
-        if (personValue.isEmpty()) {
-          value = QJsonObject();
-          error = personError.isEmpty()
-                      ? QStringLiteral("name could not be saved")
-                      : personError;
+      auto snapshotValue = latestRuntimeSnapshotValue(
+          snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
+          identityFileBytes, workspaceIdBytes, timelineLimit, &error);
+      auto workspaceStateMayHaveChanged = false;
+      if (!snapshotValue.isEmpty()) {
+        const auto deviceProfileAlreadyCurrent =
+            runtimeSnapshotDeviceDisplayName(snapshotValue, deviceId) ==
+            displayName;
+        const auto personProfileAlreadyCurrent =
+            runtimeSnapshotLinkedPersonDisplayName(snapshotValue, deviceId) ==
+            displayName;
+
+        if (!deviceProfileAlreadyCurrent) {
+          workspaceStateMayHaveChanged = true;
+          QString deviceError;
+          const auto deviceJson = takeFfiString(
+              updateFn(runtimeDirBytes.constData(),
+                       identityFileBytes.isEmpty()
+                           ? nullptr
+                           : identityFileBytes.constData(),
+                       workspaceIdBytes.constData(), displayNameBytes.constData()),
+              freeString, &deviceError);
+          const auto deviceValue =
+              deviceError.isEmpty()
+                  ? resultValueFromJson(deviceJson, &deviceError)
+                  : QJsonObject();
+          if (deviceValue.isEmpty() && error.isEmpty()) {
+            error = deviceError.isEmpty()
+                        ? QStringLiteral("device name could not be saved")
+                        : deviceError;
+          }
+        }
+
+        if (!personProfileAlreadyCurrent) {
+          workspaceStateMayHaveChanged = true;
+          QString personError;
+          const auto personJson = takeFfiString(
+              personUpdateFn(
+                  runtimeDirBytes.constData(),
+                  identityFileBytes.isEmpty()
+                      ? nullptr
+                      : identityFileBytes.constData(),
+                  workspaceIdBytes.constData(), displayNameBytes.constData()),
+              freeString, &personError);
+          const auto personValue =
+              personError.isEmpty()
+                  ? resultValueFromJson(personJson, &personError)
+                  : QJsonObject();
+          if (personValue.isEmpty() && error.isEmpty()) {
+            error = personError.isEmpty()
+                        ? QStringLiteral("linked profile could not be saved")
+                        : personError;
+          }
+        }
+
+        if (workspaceStateMayHaveChanged) {
+          QString finalSnapshotError;
+          snapshotValue = latestRuntimeSnapshotValue(
+              snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
+              identityFileBytes, workspaceIdBytes, timelineLimit,
+              &finalSnapshotError);
+          if (snapshotValue.isEmpty()) {
+            error = finalSnapshotError.isEmpty()
+                        ? QStringLiteral("name saved; profile confirmation pending")
+                        : finalSnapshotError;
+          }
         }
       }
-      QJsonObject snapshotValue;
-      QString snapshotError;
-      if (!value.isEmpty()) {
-        snapshotValue = latestRuntimeSnapshotValue(
-            snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
-            identityFileBytes, workspaceIdBytes, timelineLimit, &snapshotError);
+      const auto profileComplete = runtimeSnapshotHasDisplayNamePair(
+          snapshotValue, deviceId, displayName);
+      if (!profileComplete && error.isEmpty()) {
+        error = QStringLiteral("name profile is not complete yet");
       }
 
       if (guard.isNull()) {
@@ -12858,34 +13349,52 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, snapshotValue, error, snapshotError, workspaceId,
-           generation]() {
+          [guard, snapshotValue, profileComplete, workspaceStateMayHaveChanged,
+           error, workspaceId, displayName, generation, operationId]() {
             if (guard.isNull()) {
               return;
             }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishDeviceProfileUpdate(operationId);
+                  }
+                });
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
-              guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
-                                                          workspaceId);
-              return;
-            }
-            if (value.isEmpty()) {
-              guard->setSyncStatus(error);
+              guard->queueRuntimeSnapshotRefreshIfCurrent(
+                  workspaceStateMayHaveChanged, workspaceId);
+              emit guard->deviceProfileUpdateFinished(
+                  workspaceId, displayName, profileComplete,
+                  profileComplete ? QStringLiteral("name saved") : error);
               return;
             }
             if (snapshotValue.isEmpty()) {
-              guard->setSyncStatus(snapshotError);
+              guard->queueRuntimeSnapshotRefreshIfCurrent(
+                  workspaceStateMayHaveChanged, workspaceId);
+              guard->setSyncStatus(error);
+              emit guard->deviceProfileUpdateFinished(
+                  workspaceId, displayName, false, error);
               return;
             }
             if (guard->m_workspaceId != workspaceId) {
-              guard->setSyncStatus(
-                  QStringLiteral("name saved after switching workspaces"));
+              const auto status = profileComplete
+                                      ? QStringLiteral(
+                                            "name saved after switching workspaces")
+                                      : error;
+              guard->setSyncStatus(status);
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
+              emit guard->deviceProfileUpdateFinished(
+                  workspaceId, displayName, profileComplete, status);
               return;
             }
 
             guard->applyRuntimeSnapshot(snapshotValue, false);
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
-            guard->setSyncStatus(QStringLiteral("name saved"));
+            const auto status = profileComplete ? QStringLiteral("name saved")
+                                                : error;
+            guard->setSyncStatus(status);
+            emit guard->deviceProfileUpdateFinished(
+                workspaceId, displayName, profileComplete, status);
           },
           Qt::QueuedConnection);
     });
@@ -13717,7 +14226,9 @@ private:
           row.value(QStringLiteral("status")).toString().trimmed().toLower();
       if (status == QStringLiteral("approved") ||
           status == QStringLiteral("declined") ||
-          status == QStringLiteral("closed")) {
+          status == QStringLiteral("closed") ||
+          status == QStringLiteral("profile_pending") ||
+          status == QStringLiteral("profile_written")) {
         continue;
       }
       const auto rowWorkspaceId =
@@ -15700,7 +16211,7 @@ private:
                          const QString &replyToMessageId, const QString &text,
                          const QString &filePath, const QString &mediaType,
                          quint64 generation) {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto sendFn = m_sendAttachmentJson;
     const auto sendReplyFn = m_sendAttachmentReplyJson;
@@ -15714,7 +16225,7 @@ private:
     auto *thread = QThread::create(
         [guard, sendFn, sendReplyFn, snapshotFn, snapshotLatestFn, freeString,
          runtimeDir, identityFile, workspaceId, channelId, replyToMessageId,
-         text, filePath, mediaType, generation, timelineLimit]() {
+         text, filePath, mediaType, generation, timelineLimit, operationId]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -15760,12 +16271,16 @@ private:
           QMetaObject::invokeMethod(
               guard.data(),
               [guard, value, snapshotValue, error, snapshotError, workspaceId,
-               generation]() {
+               generation, operationId]() {
                 if (guard.isNull()) {
                   return;
                 }
-
-                guard->setSyncInFlight(false);
+                [[maybe_unused]] const auto operationCompletion =
+                    qScopeGuard([guard, operationId]() {
+                      if (!guard.isNull()) {
+                        guard->finishSyncOperation(operationId);
+                      }
+                    });
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                               workspaceId);
@@ -15799,7 +16314,7 @@ private:
   void runAttachmentSave(const QString &messageId,
                          const QString &attachmentSelector,
                          const QString &outputPath) {
-    setSyncInFlight(true);
+    const auto operationId = beginSyncOperation();
     const QPointer<ChaftController> guard(this);
     const auto saveFn = m_saveAttachmentJson;
     const auto freeString = m_freeString;
@@ -15808,7 +16323,8 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, saveFn, freeString, runtimeDir,
                                     identityFile, workspaceId, messageId,
-                                    attachmentSelector, outputPath]() {
+                                    attachmentSelector, outputPath,
+                                    operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -15830,12 +16346,16 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, error]() {
+          [guard, value, error, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishSyncOperation(operationId);
+                  }
+                });
             if (value.isEmpty()) {
               guard->setSyncStatus(error);
               return;
@@ -15851,7 +16371,7 @@ private:
 
   void runTimelinePageLoad(qulonglong timelineStart, qulonglong timelineCount,
                            quint64 generation) {
-    setSyncInFlight(true);
+    const auto operationId = beginTimelineLoad();
     const QPointer<ChaftController> guard(this);
     const auto snapshotFn = m_runtimeSnapshotWindowJson;
     const auto freeString = m_freeString;
@@ -15860,7 +16380,7 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, snapshotFn, freeString, runtimeDir,
                                     identityFile, workspaceId, timelineStart,
-                                    timelineCount, generation]() {
+                                    timelineCount, generation, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -15879,12 +16399,16 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, error, workspaceId, generation]() {
+          [guard, value, error, workspaceId, generation, operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishTimelineLoad(operationId);
+                  }
+                });
             if (guard->m_timelinePageGeneration != generation) {
               return;
             }
@@ -15913,7 +16437,7 @@ private:
   void runChannelTimelineLatestLoad(const QString &channelId,
                                     std::size_t timelineLimit,
                                     quint64 generation) {
-    setSyncInFlight(true);
+    const auto operationId = beginTimelineLoad();
     const QPointer<ChaftController> guard(this);
     const auto snapshotFn = m_runtimeChannelSnapshotLatestJson;
     const auto freeString = m_freeString;
@@ -15922,7 +16446,7 @@ private:
     const auto workspaceId = m_workspaceId;
     auto *thread = QThread::create([guard, snapshotFn, freeString, runtimeDir,
                                     identityFile, workspaceId, channelId,
-                                    timelineLimit, generation]() {
+                                    timelineLimit, generation, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -15942,12 +16466,17 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, error, workspaceId, channelId, generation]() {
+          [guard, value, error, workspaceId, channelId, generation,
+           operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishTimelineLoad(operationId);
+                  }
+                });
             if (guard->m_timelinePageGeneration != generation) {
               return;
             }
@@ -15985,7 +16514,7 @@ private:
                                   qulonglong timelineStart,
                                   qulonglong timelineCount,
                                   quint64 generation) {
-    setSyncInFlight(true);
+    const auto operationId = beginTimelineLoad();
     const QPointer<ChaftController> guard(this);
     const auto snapshotFn = m_runtimeChannelSnapshotWindowJson;
     const auto freeString = m_freeString;
@@ -15995,7 +16524,7 @@ private:
     auto *thread = QThread::create([guard, snapshotFn, freeString, runtimeDir,
                                     identityFile, workspaceId, channelId,
                                     timelineStart, timelineCount,
-                                    generation]() {
+                                    generation, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
@@ -16016,12 +16545,17 @@ private:
       }
       QMetaObject::invokeMethod(
           guard.data(),
-          [guard, value, error, workspaceId, channelId, generation]() {
+          [guard, value, error, workspaceId, channelId, generation,
+           operationId]() {
             if (guard.isNull()) {
               return;
             }
-
-            guard->setSyncInFlight(false);
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard, operationId]() {
+                  if (!guard.isNull()) {
+                    guard->finishTimelineLoad(operationId);
+                  }
+                });
             if (guard->m_timelinePageGeneration != generation) {
               return;
             }
@@ -16173,8 +16707,96 @@ private:
     if (m_syncInFlight == syncInFlight) {
       return;
     }
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
     m_syncInFlight = syncInFlight;
     emit syncInFlightChanged();
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+  }
+
+  quint64 beginSyncOperation() {
+    const auto operationId = ++m_syncOperationGeneration;
+    setSyncInFlight(true);
+    return operationId;
+  }
+
+  void finishSyncOperation(quint64 operationId) {
+    if (operationId == m_syncOperationGeneration) {
+      setSyncInFlight(false);
+    }
+  }
+
+  quint64 beginDeviceProfileUpdate() {
+    const auto operationId = ++m_deviceProfileUpdateOperationGeneration;
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    m_deviceProfileUpdateInFlight = true;
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+    return operationId;
+  }
+
+  void finishDeviceProfileUpdate(quint64 operationId) {
+    if (operationId != m_deviceProfileUpdateOperationGeneration ||
+        !m_deviceProfileUpdateInFlight) {
+      return;
+    }
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    m_deviceProfileUpdateInFlight = false;
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+  }
+
+  quint64 beginTimelineLoad() {
+    const auto operationId = ++m_timelineLoadOperationGeneration;
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    if (!m_timelineLoadInFlight) {
+      m_timelineLoadInFlight = true;
+      emit timelineLoadInFlightChanged();
+      if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+        emit workspaceOperationInFlightChanged();
+      }
+    }
+    return operationId;
+  }
+
+  void finishTimelineLoad(quint64 operationId) {
+    if (operationId != m_timelineLoadOperationGeneration ||
+        !m_timelineLoadInFlight) {
+      return;
+    }
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    m_timelineLoadInFlight = false;
+    emit timelineLoadInFlightChanged();
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+  }
+
+  quint64 beginRuntimeSnapshotReconcile() {
+    const auto operationId = ++m_runtimeSnapshotReconcileOperationGeneration;
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    if (!m_runtimeSnapshotReconcileInFlight) {
+      m_runtimeSnapshotReconcileInFlight = true;
+      if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+        emit workspaceOperationInFlightChanged();
+      }
+    }
+    return operationId;
+  }
+
+  void finishRuntimeSnapshotReconcile(quint64 operationId) {
+    if (operationId != m_runtimeSnapshotReconcileOperationGeneration ||
+        !m_runtimeSnapshotReconcileInFlight) {
+      return;
+    }
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
+    m_runtimeSnapshotReconcileInFlight = false;
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
   }
 
   void setChannelPageInFlight(bool channelPageInFlight) {
@@ -16197,8 +16819,12 @@ private:
     if (m_keyTransferInFlight == keyTransferInFlight) {
       return;
     }
+    const auto workspaceOperationWasInFlight = workspaceOperationInFlight();
     m_keyTransferInFlight = keyTransferInFlight;
     emit keyTransferInFlightChanged();
+    if (workspaceOperationWasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
   }
 
   void setJoinRequestSubmitInFlight(bool joinRequestSubmitInFlight) {
@@ -16568,6 +17194,8 @@ private:
   std::unique_ptr<QSystemTrayIcon> m_notificationTrayIcon;
   bool m_ffiReady = false;
   bool m_syncInFlight = false;
+  bool m_timelineLoadInFlight = false;
+  bool m_deviceProfileUpdateInFlight = false;
   bool m_channelPageInFlight = false;
   bool m_memberPageInFlight = false;
   bool m_peerHostingInFlight = false;
@@ -16640,6 +17268,12 @@ private:
   quint64 m_channelPageGeneration = 0;
   quint64 m_memberPageGeneration = 0;
   quint64 m_timelinePageGeneration = 0;
+  quint64 m_syncOperationGeneration = 0;
+  quint64 m_timelineLoadOperationGeneration = 0;
+  quint64 m_deviceProfileUpdateOperationGeneration = 0;
+  quint64 m_runtimeSnapshotReconcileOperationGeneration = 0;
+  quint64 m_workspaceSnapshotRevision = 0;
+  bool m_runtimeSnapshotReconcileInFlight = false;
   quint64 m_readMarkerGeneration = 0;
   quint64 m_joinRequestInboxGeneration = 0;
   QString m_syncStatus;
@@ -16667,6 +17301,13 @@ bool desktopSmokeExpectNoWorkspace() {
 bool desktopSmokeExpectReachable() {
   return parseEnabledFlag(
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE"));
+}
+
+bool desktopSmokeReadyRequiresSync() {
+  const auto value =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_READY_REQUIRES_SYNC")
+          .trimmed();
+  return value.isEmpty() || parseEnabledFlag(value);
 }
 
 QString desktopSmokeExpectedReachabilityRoute() {
@@ -16768,6 +17409,19 @@ bool desktopSmokeSnapshotContainsText(const QVariantMap &snapshot,
   return false;
 }
 
+bool desktopSmokeSnapshotSettled(ChaftController *controller,
+                                 const QVariantMap &snapshot,
+                                 const QString &expectedText,
+                                 const QString &expectedChannelId) {
+  if (controller == nullptr || controller->workspaceOperationInFlight() ||
+      !desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+    return false;
+  }
+  return expectedChannelId.isEmpty() ||
+         snapshot.value(QStringLiteral("timelineChannelId")).toString() ==
+             expectedChannelId;
+}
+
 bool desktopSmokeReadyForEmptyRuntime(ChaftController *controller,
                                       const QVariantMap &snapshot) {
   if (controller == nullptr) {
@@ -16793,6 +17447,42 @@ bool ensureDesktopSmokeScreenshotDirectory(const QString &path,
             .arg(outputDir.absolutePath());
   }
   return false;
+}
+
+bool writeDesktopSmokeReadyFile(const QString &path,
+                                const QVariantMap &snapshot,
+                                ChaftController *controller,
+                                QString *errorMessage) {
+  if (!ensureDesktopSmokeScreenshotDirectory(path, errorMessage)) {
+    return false;
+  }
+
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) {
+    if (errorMessage != nullptr) {
+      *errorMessage =
+          QStringLiteral("failed to open desktop smoke ready file: %1")
+              .arg(path);
+    }
+    return false;
+  }
+  QJsonObject ready;
+  ready.insert(QStringLiteral("workspaceId"),
+               snapshot.value(QStringLiteral("workspaceId")).toString());
+  ready.insert(QStringLiteral("hostedPeerEndpoint"),
+               controller == nullptr ? QString()
+                                     : controller->hostedPeerEndpoint());
+  auto payload = QJsonDocument(ready).toJson(QJsonDocument::Compact);
+  payload.append('\n');
+  if (file.write(payload) != payload.size() || !file.commit()) {
+    if (errorMessage != nullptr) {
+      *errorMessage =
+          QStringLiteral("failed to write desktop smoke ready file: %1")
+              .arg(path);
+    }
+    return false;
+  }
+  return true;
 }
 
 QQuickItem *desktopSmokeRootQuickItem(QQmlApplicationEngine *engine) {
@@ -16972,6 +17662,13 @@ void configureDesktopSmoke(QCoreApplication *app,
 
   const auto expectedText =
       qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_TEXT").trimmed();
+  const auto expectedChannelId =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_EXPECT_CHANNEL_ID").trimmed();
+  const auto readyFilePath =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_READY_FILE").trimmed();
+  const auto readyText =
+      qEnvironmentVariable("CHAFT_DESKTOP_SMOKE_READY_TEXT").trimmed();
+  const auto readyRequiresSync = desktopSmokeReadyRequiresSync();
   const auto expectNoWorkspace = desktopSmokeExpectNoWorkspace();
   const auto expectReachable = desktopSmokeExpectReachable();
   const auto expectedReachabilityRoute =
@@ -16981,20 +17678,53 @@ void configureDesktopSmoke(QCoreApplication *app,
   const auto screenshotDelayMs = desktopSmokeScreenshotDelayMs();
   const auto timeoutMs = desktopSmokeTimeoutMs();
   const auto completed = std::make_shared<bool>(false);
+  auto *timeoutTimer = new QTimer(app);
+  timeoutTimer->setSingleShot(true);
+  timeoutTimer->setInterval(timeoutMs);
+  const auto readyFileWritten = std::make_shared<bool>(readyFilePath.isEmpty());
+  const auto observedSyncStart =
+      std::make_shared<bool>(controller->syncInFlight());
+  const auto observedSyncCompletion =
+      std::make_shared<bool>(!readyRequiresSync);
 
   const auto checkSnapshot = [app, controller, engine, expectedText,
+                              expectedChannelId, readyFilePath, readyText,
+                              readyFileWritten, observedSyncCompletion,
                               screenshotPath, expectNoWorkspace, completed,
                               screenshotDelayMs, expectReachable,
-                              expectedReachabilityRoute]() {
+                              expectedReachabilityRoute, timeoutTimer]() {
     if (*completed) {
       return;
     }
     const auto snapshot = controller->workspaceSnapshot();
+    if (!*readyFileWritten) {
+      if (!*observedSyncCompletion ||
+          !desktopSmokeSnapshotSettled(controller, snapshot, readyText,
+                                       expectedChannelId) ||
+          (expectReachable && !desktopSmokeReachabilityMatches(
+                                  controller, expectedReachabilityRoute))) {
+        return;
+      }
+      QString readyError;
+      if (!writeDesktopSmokeReadyFile(readyFilePath, snapshot, controller,
+                                      &readyError)) {
+        *completed = true;
+        const auto error = readyError.toUtf8();
+        std::fprintf(stderr, "desktop smoke readiness failed: %s\n",
+                     error.constData());
+        finishDesktopSmoke(126);
+      }
+      *readyFileWritten = true;
+      timeoutTimer->start();
+      const auto readyPath = readyFilePath.toUtf8();
+      std::fprintf(stderr, "desktop smoke ready: %s\n", readyPath.constData());
+    }
     if (expectNoWorkspace) {
       if (!desktopSmokeReadyForEmptyRuntime(controller, snapshot)) {
         return;
       }
-    } else if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+    } else if (!desktopSmokeSnapshotSettled(
+                   controller, snapshot, expectedText, expectedChannelId)) {
       return;
     }
     if (expectReachable && !desktopSmokeReachabilityMatches(
@@ -17043,29 +17773,51 @@ void configureDesktopSmoke(QCoreApplication *app,
     });
   };
 
+  QObject::connect(
+      controller, &ChaftController::syncInFlightChanged, app,
+      [controller, observedSyncStart, observedSyncCompletion]() {
+        if (controller->syncInFlight()) {
+          *observedSyncStart = true;
+        } else if (*observedSyncStart) {
+          *observedSyncCompletion = true;
+        }
+      });
   QObject::connect(controller, &ChaftController::workspaceSnapshotChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller, &ChaftController::syncStatusChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::syncInFlightChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::timelineLoadInFlightChanged,
+                   app, checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller,
+                   &ChaftController::workspaceOperationInFlightChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller, &ChaftController::hostedPeerChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
   QTimer::singleShot(0, app, checkSnapshot);
-  QTimer::singleShot(timeoutMs, app, [controller, expectedText, completed]() {
-    if (*completed) {
-      return;
-    }
-    *completed = true;
-    const auto snapshot = controller->workspaceSnapshot();
-    const auto workspaceId =
-        snapshot.value(QStringLiteral("workspaceId")).toString().toUtf8();
-    const auto syncStatus = controller->syncStatus().toUtf8();
-    const auto expected = expectedText.toUtf8();
-    std::fprintf(stderr,
-                 "desktop smoke timed out: workspace=%s expected=%s status=%s\n",
-                 workspaceId.constData(), expected.constData(),
-                 syncStatus.constData());
-    finishDesktopSmoke(124);
-  });
+  QObject::connect(timeoutTimer, &QTimer::timeout, app,
+                   [controller, expectedText, completed]() {
+                     if (*completed) {
+                       return;
+                     }
+                     *completed = true;
+                     const auto snapshot = controller->workspaceSnapshot();
+                     const auto workspaceId =
+                         snapshot.value(QStringLiteral("workspaceId"))
+                             .toString()
+                             .toUtf8();
+                     const auto syncStatus = controller->syncStatus().toUtf8();
+                     const auto expected = expectedText.toUtf8();
+                     std::fprintf(
+                         stderr,
+                         "desktop smoke timed out: workspace=%s expected=%s "
+                         "status=%s\n",
+                         workspaceId.constData(), expected.constData(),
+                         syncStatus.constData());
+                     finishDesktopSmoke(124);
+                   });
+  timeoutTimer->start();
 }
 
 void setLaunchEnvironmentValue(const char *name, const QString &value) {

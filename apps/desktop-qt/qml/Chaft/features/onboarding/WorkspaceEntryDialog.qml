@@ -1994,7 +1994,7 @@ Dialog {
                     Layout.fillWidth: true
                     visible: root.createOperationError.length > 0
                     text: root.createOperationError
-                    color: Tokens.danger
+                    color: Tokens.warningText
                     font.pixelSize: Tokens.fontSizeXs
                     wrapMode: Text.WordWrap
                     Accessible.role: Accessible.AlertMessage

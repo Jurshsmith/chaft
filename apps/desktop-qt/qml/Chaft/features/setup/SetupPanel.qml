@@ -2707,7 +2707,7 @@ ScrollView {
                     text: "Lock workspace"
                     enabled: chaftController.runtimeUnlockClearable
                         && !chaftController.keyTransferInFlight
-                        && !chaftController.syncInFlight
+                        && !chaftController.workspaceOperationInFlight
                     onClicked: chaftController.clearRuntimeUnlock()
                     ToolTip.visible: hovered
                     ToolTip.text: chaftController.runtimeUnlockClearable
@@ -2721,7 +2721,7 @@ ScrollView {
                         && chaftController.runtimeLocked
                     text: "Unlock workspace"
                     enabled: !chaftController.keyTransferInFlight
-                        && !chaftController.syncInFlight
+                        && !chaftController.workspaceOperationInFlight
                     onClicked: chaftController.requestRuntimeUnlock()
                     ToolTip.visible: hovered
                     ToolTip.text: "Show the workspace passphrase prompt"

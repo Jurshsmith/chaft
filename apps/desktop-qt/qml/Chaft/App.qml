@@ -28,6 +28,8 @@ ApplicationWindow {
     readonly property var channels: workspaceSnapshot.channels || []
     readonly property var resolvedChannels: workspaceSnapshot.resolvedChannels || ({})
     readonly property var profiles: workspaceSnapshot.profiles || []
+    readonly property var personProfiles: workspaceSnapshot.personProfiles || []
+    readonly property var personDeviceLinks: workspaceSnapshot.personDeviceLinks || []
     readonly property var members: workspaceSnapshot.members || []
     readonly property var invites: workspaceSnapshot.invites || []
     readonly property var joinRequests: workspaceSnapshot.joinRequests || []
@@ -50,6 +52,8 @@ ApplicationWindow {
         && !chaftController.rawEventStoreMode
     readonly property bool runtimeWorkReady: chaftController.hasRuntimeWorkspace
         && root.runtimeAccessReady
+    readonly property bool workspaceOperationInFlight:
+        chaftController.workspaceOperationInFlight
     readonly property bool hasWorkspaceContent: chaftController.hasRuntimeWorkspace
         || chaftController.rawEventStoreMode
         || root.demoTourActive
@@ -165,8 +169,20 @@ ApplicationWindow {
     property string pendingWorkspaceCreateDisplayName: ""
     property string pendingEntryDisplayName: ""
     property string pendingEntryDisplayNameWorkspaceId: ""
+    property string pendingEntryDisplayNameRequestId: ""
+    property string pendingEntryDisplayNameRequestKey: ""
+    property bool pendingEntryDisplayNameUpdateInFlight: false
+    property string pendingEntryDisplayNameUpdateName: ""
+    property string pendingEntryDisplayNameUpdateWorkspaceId: ""
+    property bool pendingEntryDisplayNameWriteSucceeded: false
+    property int pendingEntryDisplayNameRetryAttempt: 0
+    property int pendingEntryDisplayNameReconcileAttempt: 0
+    readonly property int pendingEntryDisplayNameRetryLimit: 5
     property string pendingJoinPeerEndpoint: ""
     property bool pendingJoinPullCompletion: false
+    property bool hostedRuntimeReconcileDue: true
+    property bool controllerIdleWorkPending: false
+    property bool controllerIdleWorkScheduled: false
     property bool pendingPrivateRoomHistoryRepairCompletion: false
     property string pendingPrivateRoomHistoryRepairChannelId: ""
     property string pendingPrivateRoomHistoryRepairRoomName: ""
@@ -279,6 +295,9 @@ ApplicationWindow {
         if (chaftController.syncInFlight) {
             return "Updating"
         }
+        if (chaftController.timelineLoadInFlight) {
+            return "Loading messages"
+        }
         if (chaftController.peerHosting) {
             return "Reachable"
         }
@@ -297,7 +316,7 @@ ApplicationWindow {
         if (chaftController.runtimeLocked) {
             return Tokens.warning
         }
-        if (chaftController.syncInFlight) {
+        if (root.workspaceOperationInFlight) {
             return Tokens.textMuted
         }
         if (chaftController.peerHosting || root.autoSyncEnabled) {
@@ -393,7 +412,7 @@ ApplicationWindow {
             shortcut: "",
             enabled: function () {
                 return root.runtimeWorkReady
-                    && !chaftController.syncInFlight
+                    && !root.workspaceOperationInFlight
                     && root.preferredSyncPeerEndpoint().length > 0
             },
             run: function () { root.syncWorkspaceFromPreferredPeer() }
@@ -404,7 +423,7 @@ ApplicationWindow {
             shortcut: "",
             enabled: function () {
                 return root.runtimeWorkReady
-                    && !chaftController.syncInFlight
+                    && !root.workspaceOperationInFlight
                     && root.preferredManualBackupPeerEndpoint().length > 0
             },
             run: function () { root.backupWorkspaceToPreferredPeer() }
@@ -415,7 +434,7 @@ ApplicationWindow {
             shortcut: "",
             enabled: function () {
                 return root.runtimeWorkReady
-                    && !chaftController.syncInFlight
+                    && !root.workspaceOperationInFlight
                     && root.preferredSyncPeerEndpoint().length > 0
             },
             run: function () { root.pullWorkspaceFromPreferredPeer() }
@@ -426,7 +445,7 @@ ApplicationWindow {
             shortcut: "",
             enabled: function () {
                 return root.runtimeWorkReady
-                    && !chaftController.syncInFlight
+                    && !root.workspaceOperationInFlight
                     && root.preferredSyncPeerEndpoint().length > 0
             },
             run: function () { root.publishWorkspaceToPreferredPeer() }
@@ -440,7 +459,7 @@ ApplicationWindow {
                     && chaftController.runtimeUnlocked
                     && chaftController.runtimeUnlockClearable
                     && !chaftController.keyTransferInFlight
-                    && !chaftController.syncInFlight
+                    && !root.workspaceOperationInFlight
             },
             run: function () { chaftController.clearRuntimeUnlock() }
         },
@@ -714,6 +733,7 @@ ApplicationWindow {
     onActiveChanged: {
         if (root.active) {
             root.updateUnreadNotificationBaseline()
+            root.scheduleMarkSelectedChannelRead()
         }
     }
     onTotalUnreadCountChanged: root.handleUnreadNotificationCountChanged()
@@ -1749,6 +1769,9 @@ ApplicationWindow {
         if (chaftController.syncInFlight) {
             return "Updating"
         }
+        if (chaftController.timelineLoadInFlight) {
+            return "Loading messages"
+        }
 
         var endpoint = root.preferredSyncPeerEndpoint()
         if (endpoint.length === 0) {
@@ -1881,7 +1904,7 @@ ApplicationWindow {
             return false
         }
         root.peerEndpointFormError = ""
-        if (!root.runtimeWorkReady || chaftController.syncInFlight) {
+        if (!root.runtimeWorkReady || root.workspaceOperationInFlight) {
             return false
         }
         chaftController.syncWorkspace(endpoint)
@@ -2332,7 +2355,8 @@ ApplicationWindow {
     }
 
     function privateRoomHistoryRepairActionEnabled() {
-        return root.preferredSyncPeerEndpoint().length === 0 || !chaftController.syncInFlight
+        return root.preferredSyncPeerEndpoint().length === 0
+            || !root.workspaceOperationInFlight
     }
 
     function privateRoomHistoryRepairActionTooltip() {
@@ -4057,6 +4081,7 @@ ApplicationWindow {
         var normalizedChannelId = String(channelId || "")
         if (normalizedChannelId.length === 0
                 || !root.runtimeWorkReady
+                || root.workspaceOperationInFlight
                 || root.normalizedSearchQuery.length > 0
                 || root.timelineChannelId === normalizedChannelId) {
             return false
@@ -4067,6 +4092,46 @@ ApplicationWindow {
     function requestSelectedChannelTimelineIfNeeded() {
         var channelId = String(root.selectedChannel.channelId || root.selectedChannelId || "")
         return root.requestChannelTimelineForId(channelId)
+    }
+
+    function scheduleControllerIdleWork() {
+        root.controllerIdleWorkPending = true
+        if (root.controllerIdleWorkScheduled) {
+            return
+        }
+        root.controllerIdleWorkScheduled = true
+        Qt.callLater(function() {
+            root.controllerIdleWorkScheduled = false
+            if (!root.controllerIdleWorkPending || !root.runtimeWorkReady) {
+                return
+            }
+            if (String(root.pendingEntryDisplayName || "").trim().length > 0
+                    && root.localDeviceMembershipReady()) {
+                if (root.pendingEntryDisplayNameUpdateInFlight
+                        || root.workspaceOperationInFlight) {
+                    return
+                }
+                if (root.applyPendingEntryDisplayName()) {
+                    return
+                }
+            }
+            if (root.pendingJoinPeerEndpointTargetsCurrentWorkspace()) {
+                if (root.workspaceOperationInFlight) {
+                    return
+                }
+                root.controllerIdleWorkPending = false
+                if (!root.pullPendingJoinPeerIfReady()
+                        && root.pendingJoinPeerEndpointTargetsCurrentWorkspace()) {
+                    root.controllerIdleWorkPending = true
+                }
+                return
+            }
+            if (root.workspaceOperationInFlight) {
+                return
+            }
+            root.controllerIdleWorkPending = false
+            root.requestSelectedChannelTimelineIfNeeded()
+        })
     }
 
     function ensureSelectedChannelInSnapshot() {
@@ -4138,6 +4203,320 @@ ApplicationWindow {
         return ""
     }
 
+    function localLinkedPersonDisplayName() {
+        var localDeviceId = String(chaftController.deviceId || "").trim()
+        if (localDeviceId.length === 0) {
+            return ""
+        }
+        var linkedPersonId = ""
+        for (var linkIndex = 0;
+                linkIndex < root.personDeviceLinks.length;
+                linkIndex += 1) {
+            var link = root.personDeviceLinks[linkIndex] || ({})
+            if (String(link.deviceId || "").trim() !== localDeviceId) {
+                continue
+            }
+            var linkedDisplayName = String(
+                link.personDisplayName || "").trim()
+            if (linkedDisplayName.length > 0) {
+                return linkedDisplayName
+            }
+            linkedPersonId = String(link.personId || "").trim()
+            break
+        }
+        if (linkedPersonId.length === 0) {
+            return ""
+        }
+        for (var profileIndex = 0;
+                profileIndex < root.personProfiles.length;
+                profileIndex += 1) {
+            var profile = root.personProfiles[profileIndex] || ({})
+            if (String(profile.personId || "").trim() === linkedPersonId) {
+                return String(profile.displayName || "")
+            }
+        }
+        return ""
+    }
+
+    function localDeviceMembershipReady() {
+        var localDeviceId = String(chaftController.deviceId || "").trim()
+        if (localDeviceId.length === 0) {
+            return false
+        }
+        for (var i = 0; i < root.members.length; i += 1) {
+            if (String(root.members[i].deviceId || "").trim() === localDeviceId) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function pendingEntryDisplayNameConfirmed() {
+        var displayName = String(root.pendingEntryDisplayName || "").trim()
+        if (displayName.length === 0) {
+            return false
+        }
+        var targetWorkspaceId = String(
+            root.pendingEntryDisplayNameWorkspaceId || "").trim()
+        return (targetWorkspaceId.length === 0
+                || root.currentWorkspaceId() === targetWorkspaceId)
+            && root.localDeviceDisplayName().trim() === displayName
+            && root.localLinkedPersonDisplayName().trim() === displayName
+    }
+
+    function pendingEntryDisplayNameRequestForCurrentWorkspace() {
+        var workspaceId = root.currentWorkspaceId()
+        if (workspaceId.length === 0) {
+            return ({})
+        }
+
+        var candidates = []
+        var persistedRequests = chaftController.pendingJoinRequests || ({})
+        for (var key in persistedRequests) {
+            if (!Object.prototype.hasOwnProperty.call(
+                    persistedRequests, key)) {
+                continue
+            }
+            var persistedRequest = persistedRequests[key] || ({})
+            var requestId = String(
+                persistedRequest.requestId || "").trim()
+            var displayName = String(
+                persistedRequest.displayName || "").trim()
+            var status = String(
+                persistedRequest.status || "").trim()
+            if (String(persistedRequest.workspaceId || "").trim()
+                        !== workspaceId
+                    || (status !== "profile_pending"
+                        && status !== "profile_written")
+                    || displayName.length === 0
+                    || chaftController.deviceDisplayNameValidationError(
+                        displayName).length > 0) {
+                continue
+            }
+            candidates.push({
+                key: key,
+                requestId: requestId,
+                displayName: displayName,
+                createdAt: String(persistedRequest.createdAt || ""),
+                writeSucceeded: status === "profile_written"
+            })
+        }
+        if (candidates.length === 0) {
+            return ({})
+        }
+        candidates.sort(function(left, right) {
+            return String(right.createdAt || "").localeCompare(
+                String(left.createdAt || ""))
+        })
+        var selectedName = candidates[0].displayName
+        for (var candidateIndex = 1;
+                candidateIndex < candidates.length;
+                candidateIndex += 1) {
+            // Concurrent approvals with different identities are ambiguous.
+            // Wait for an explicit in-memory import correlation instead of
+            // guessing which persisted request should name this device.
+            if (candidates[candidateIndex].displayName !== selectedName) {
+                return ({})
+            }
+        }
+        candidates.sort(function(left, right) {
+            if (left.writeSucceeded !== right.writeSucceeded) {
+                return left.writeSucceeded ? -1 : 1
+            }
+            return String(right.createdAt || "").localeCompare(
+                String(left.createdAt || ""))
+        })
+        return candidates[0]
+    }
+
+    function persistPendingEntryDisplayNameState(status) {
+        var workspaceId = String(
+            root.pendingEntryDisplayNameWorkspaceId || "").trim()
+        var displayName = String(
+            root.pendingEntryDisplayName || "").trim()
+        var requestId = String(
+            root.pendingEntryDisplayNameRequestId || "").trim()
+        if (workspaceId.length === 0 || displayName.length === 0) {
+            return false
+        }
+
+        var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
+        var key = String(
+            root.pendingEntryDisplayNameRequestKey || "").trim()
+        if (key.length === 0 && requestId.length > 0) {
+            for (var candidateKey in next) {
+                if (Object.prototype.hasOwnProperty.call(next, candidateKey)
+                        && String((next[candidateKey] || {}).requestId || "")
+                            .trim() === requestId) {
+                    key = candidateKey
+                    break
+                }
+            }
+        }
+        if (key.length === 0) {
+            key = requestId.length > 0
+                ? requestId
+                : "profile:" + workspaceId
+        }
+
+        var row = root.copyMap(
+            Object.prototype.hasOwnProperty.call(next, key)
+                ? next[key]
+                : ({}))
+        row.workspaceId = workspaceId
+        if (root.currentWorkspaceId() === workspaceId) {
+            row.workspaceName = String(
+                root.workspaceSnapshot.name || row.workspaceName || "").trim()
+        }
+        row.displayName = displayName
+        row.status = String(status || "profile_pending").trim()
+        row.createdAt = String(row.createdAt || (new Date()).toISOString())
+        delete row.error
+        if (requestId.length > 0) {
+            row.requestId = requestId
+        } else {
+            delete row.requestId
+            row.sourceType = "profile_finalization"
+        }
+        if (String(row.artifact || "").trim().length === 0) {
+            row.sourceType = "profile_finalization"
+            // The sanitizer requires a non-empty artifact. Persist only a
+            // secret-free lifecycle marker; never retain imported credentials
+            // or a workspace encryption key for this UI recovery state.
+            row.artifact = JSON.stringify({
+                kind: "chaft.pending-profile.v1",
+                schemaVersion: 1,
+                workspaceId: workspaceId
+            })
+        }
+        next[key] = row
+        root.pendingEntryDisplayNameRequestKey = key
+        return chaftController.storePendingJoinRequests(next)
+    }
+
+    function clearPendingEntryDisplayNamePersistence(key, requestId) {
+        var normalizedKey = String(key || "").trim()
+        var normalizedRequestId = String(requestId || "").trim()
+        var next = root.copyMap(chaftController.pendingJoinRequests || ({}))
+        if (normalizedKey.length > 0
+                && Object.prototype.hasOwnProperty.call(next, normalizedKey)) {
+            delete next[normalizedKey]
+            return chaftController.storePendingJoinRequests(next)
+        }
+        if (normalizedRequestId.length > 0) {
+            return root.clearPendingAccessRequestForRequestId(
+                normalizedRequestId)
+        }
+        return false
+    }
+
+    function restorePendingEntryDisplayNameFromRequests() {
+        var currentWorkspaceId = root.currentWorkspaceId()
+        if (!root.runtimeWorkReady || currentWorkspaceId.length === 0) {
+            return false
+        }
+        var pendingWorkspaceId = String(
+            root.pendingEntryDisplayNameWorkspaceId || "").trim()
+        if (String(root.pendingEntryDisplayName || "").trim().length > 0) {
+            if (pendingWorkspaceId !== currentWorkspaceId) {
+                if (root.pendingEntryDisplayNameUpdateInFlight
+                        || root.pendingEntryDisplayNameRequestKey.length === 0) {
+                    return false
+                }
+                // The old workspace's marker remains durable. Release only
+                // its in-memory state so the current workspace can recover its
+                // own pending identity; switching back will restore this one.
+                root.clearPendingEntryDisplayName()
+            } else {
+                if (root.pendingEntryDisplayNameRequestKey.length === 0) {
+                    var matchingRequest =
+                        root.pendingEntryDisplayNameRequestForCurrentWorkspace()
+                    if (String(matchingRequest.displayName || "").trim()
+                            === String(root.pendingEntryDisplayName || "").trim()) {
+                        root.pendingEntryDisplayNameRequestId = String(
+                            matchingRequest.requestId || "").trim()
+                        root.pendingEntryDisplayNameRequestKey = String(
+                            matchingRequest.key || "").trim()
+                        root.pendingEntryDisplayNameWriteSucceeded = Boolean(
+                            matchingRequest.writeSucceeded)
+                    }
+                }
+                return true
+            }
+        }
+
+        var request = root.pendingEntryDisplayNameRequestForCurrentWorkspace()
+        var displayName = String(request.displayName || "").trim()
+        var requestId = String(request.requestId || "").trim()
+        if (displayName.length === 0
+                || String(request.key || "").trim().length === 0) {
+            return false
+        }
+        root.pendingEntryDisplayName = displayName
+        root.pendingEntryDisplayNameWorkspaceId = currentWorkspaceId
+        root.pendingEntryDisplayNameRequestId = requestId
+        root.pendingEntryDisplayNameRequestKey = String(
+            request.key || "").trim()
+        root.pendingEntryDisplayNameWriteSucceeded = Boolean(
+            request.writeSucceeded)
+        root.pendingEntryDisplayNameRetryAttempt = 0
+        root.pendingEntryDisplayNameReconcileAttempt = 0
+        return true
+    }
+
+    function schedulePendingEntryDisplayNameRetry() {
+        if (String(root.pendingEntryDisplayName || "").trim().length === 0
+                || root.pendingEntryDisplayNameUpdateInFlight
+                || root.pendingEntryDisplayNameWriteSucceeded
+                || root.pendingEntryDisplayNameRetryAttempt
+                    >= root.pendingEntryDisplayNameRetryLimit) {
+            return false
+        }
+        root.pendingEntryDisplayNameRetryAttempt += 1
+        pendingEntryDisplayNameRetryTimer.interval = Math.min(
+            8000,
+            500 * Math.pow(2, root.pendingEntryDisplayNameRetryAttempt))
+        pendingEntryDisplayNameRetryTimer.restart()
+        return true
+    }
+
+    function schedulePendingEntryDisplayNameReconciliation() {
+        if (String(root.pendingEntryDisplayName || "").trim().length === 0
+                || !root.pendingEntryDisplayNameWriteSucceeded) {
+            return false
+        }
+        root.pendingEntryDisplayNameReconcileAttempt = Math.min(
+            root.pendingEntryDisplayNameReconcileAttempt + 1, 5)
+        pendingEntryDisplayNameRetryTimer.interval = Math.min(
+            8000,
+            500 * Math.pow(2,
+                root.pendingEntryDisplayNameReconcileAttempt))
+        pendingEntryDisplayNameRetryTimer.restart()
+        return true
+    }
+
+    function reconcilePendingEntryDisplayName() {
+        if (!root.pendingEntryDisplayNameWriteSucceeded) {
+            return root.applyPendingEntryDisplayName()
+        }
+        if (root.pendingEntryDisplayNameConfirmed()) {
+            return root.completePendingEntryDisplayName()
+        }
+        var targetWorkspaceId = String(
+            root.pendingEntryDisplayNameWorkspaceId || "").trim()
+        if (!root.runtimeWorkReady
+                || targetWorkspaceId.length === 0
+                || root.currentWorkspaceId() !== targetWorkspaceId
+                || root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight) {
+            return root.schedulePendingEntryDisplayNameReconciliation()
+        }
+        if (chaftController.reconcileRuntimeSnapshotIfIdle()) {
+            return true
+        }
+        return root.schedulePendingEntryDisplayNameReconciliation()
+    }
+
     function applyPendingEntryDisplayName() {
         var displayName = String(root.pendingEntryDisplayName || "").trim()
         if (displayName.length === 0) {
@@ -4152,22 +4531,104 @@ ApplicationWindow {
                 && root.currentWorkspaceId() !== targetWorkspaceId) {
             return false
         }
-        if (root.localDeviceDisplayName().trim() === displayName) {
-            root.pendingEntryDisplayName = ""
-            root.pendingEntryDisplayNameWorkspaceId = ""
-            return true
+        if (root.pendingEntryDisplayNameConfirmed()) {
+            return root.completePendingEntryDisplayName()
         }
+        if (root.pendingEntryDisplayNameWriteSucceeded) {
+            return root.schedulePendingEntryDisplayNameReconciliation()
+        }
+        if (!root.localDeviceMembershipReady()
+                || root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight
+                || root.pendingEntryDisplayNameRetryAttempt
+                    >= root.pendingEntryDisplayNameRetryLimit) {
+            return false
+        }
+
+        pendingEntryDisplayNameRetryTimer.stop()
+        root.pendingEntryDisplayNameUpdateName = displayName
+        root.pendingEntryDisplayNameUpdateWorkspaceId =
+            root.currentWorkspaceId()
+        root.pendingEntryDisplayNameUpdateInFlight = true
         if (chaftController.updateDeviceProfile(displayName)) {
-            root.pendingEntryDisplayName = ""
-            root.pendingEntryDisplayNameWorkspaceId = ""
             return true
         }
+        root.pendingEntryDisplayNameUpdateInFlight = false
+        root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateWorkspaceId = ""
+        root.schedulePendingEntryDisplayNameRetry()
         return false
+    }
+
+    function handleDeviceProfileUpdateFinished(workspaceId, displayName,
+                                               success, message) {
+        var completedWorkspaceId = String(workspaceId || "").trim()
+        var completedDisplayName = String(displayName || "").trim()
+        if (!root.pendingEntryDisplayNameUpdateInFlight
+                || completedWorkspaceId
+                    !== root.pendingEntryDisplayNameUpdateWorkspaceId
+                || completedDisplayName
+                    !== root.pendingEntryDisplayNameUpdateName) {
+            return
+        }
+
+        root.pendingEntryDisplayNameUpdateInFlight = false
+        root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateWorkspaceId = ""
+        if (String(root.pendingEntryDisplayName || "").trim().length === 0) {
+            root.scheduleControllerIdleWork()
+            return
+        }
+        if (root.pendingEntryDisplayNameConfirmed()) {
+            var confirmedRequestId = String(
+                root.pendingEntryDisplayNameRequestId || "").trim()
+            var confirmedRequestKey = String(
+                root.pendingEntryDisplayNameRequestKey || "").trim()
+            root.clearPendingEntryDisplayName()
+            root.clearPendingEntryDisplayNamePersistence(
+                confirmedRequestKey, confirmedRequestId)
+            root.scheduleControllerIdleWork()
+            return
+        }
+        if (success) {
+            // The signed event was appended. From this point onward, only
+            // reconcile snapshots; repeating updateDeviceProfile would append
+            // duplicate profile events when UI refresh is merely delayed.
+            root.pendingEntryDisplayNameWriteSucceeded = true
+            root.pendingEntryDisplayNameRetryAttempt = 0
+            root.pendingEntryDisplayNameReconcileAttempt = 0
+            root.persistPendingEntryDisplayNameState("profile_written")
+            root.schedulePendingEntryDisplayNameReconciliation()
+        } else {
+            root.schedulePendingEntryDisplayNameRetry()
+        }
+    }
+
+    function completePendingEntryDisplayName() {
+        if (!root.pendingEntryDisplayNameConfirmed()) {
+            return false
+        }
+        var requestId = String(
+            root.pendingEntryDisplayNameRequestId || "").trim()
+        var requestKey = String(
+            root.pendingEntryDisplayNameRequestKey || "").trim()
+        root.clearPendingEntryDisplayName()
+        root.clearPendingEntryDisplayNamePersistence(requestKey, requestId)
+        return true
     }
 
     function clearPendingEntryDisplayName() {
         root.pendingEntryDisplayName = ""
         root.pendingEntryDisplayNameWorkspaceId = ""
+        root.pendingEntryDisplayNameRequestId = ""
+        root.pendingEntryDisplayNameRequestKey = ""
+        root.pendingEntryDisplayNameUpdateInFlight = false
+        root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateWorkspaceId = ""
+        root.pendingEntryDisplayNameWriteSucceeded = false
+        root.pendingEntryDisplayNameRetryAttempt = 0
+        root.pendingEntryDisplayNameReconcileAttempt = 0
+        pendingEntryDisplayNameRetryTimer.stop()
     }
 
     function memberLabel(member) {
@@ -5275,7 +5736,14 @@ ApplicationWindow {
             var privateRoomCount = normalizedSource === "recovery"
                 ? chaftController.lastRecoveryImportedChannelCount
                 : -1
-            if (requestId.length > 0) {
+            var holdRequestUntilProfileConfirmed =
+                String(root.pendingEntryDisplayName || "").trim().length > 0
+                && root.pendingEntryDisplayNameWorkspaceId
+                    === completedWorkspaceId
+            if (holdRequestUntilProfileConfirmed) {
+                root.pendingEntryDisplayNameRequestId = requestId
+                root.persistPendingEntryDisplayNameState("profile_pending")
+            } else if (requestId.length > 0) {
                 root.clearPendingAccessRequestForRequestId(requestId)
             } else {
                 root.clearPendingAccessRequestForWorkspace(completedWorkspaceId)
@@ -5300,7 +5768,7 @@ ApplicationWindow {
                     false,
                     normalizedSource,
                     privateRoomCount)
-                root.pullPendingJoinPeerIfReady()
+                root.scheduleControllerIdleWork()
             } else {
                 root.rememberJoinWaitingForPeer(
                     completedWorkspaceId,
@@ -5426,8 +5894,10 @@ ApplicationWindow {
             root.pendingWorkspaceCreateDisplayName || "").trim()
         root.pendingWorkspaceCreateDisplayName = ""
         if (displayName.length > 0) {
+            root.clearPendingEntryDisplayName()
             root.pendingEntryDisplayName = displayName
             root.pendingEntryDisplayNameWorkspaceId = createdWorkspaceId
+            root.persistPendingEntryDisplayNameState("profile_pending")
         }
         root.pendingPostCreateExport = true
         root.pendingPostCreateWorkspaceId = createdWorkspaceId
@@ -5550,9 +6020,11 @@ ApplicationWindow {
                 : chaftController.importWorkspaceKey(credentialJson))
         if (accepted) {
             if (entryDisplayName.length > 0) {
+                root.clearPendingEntryDisplayName()
                 root.pendingEntryDisplayName = entryDisplayName
                 root.pendingEntryDisplayNameWorkspaceId =
                     root.credentialWorkspaceId(credentials)
+                root.pendingEntryDisplayNameRequestId = responseRequestId
             } else {
                 root.clearPendingEntryDisplayName()
             }
@@ -5741,9 +6213,28 @@ ApplicationWindow {
 
     function markSelectedChannelRead() {
         var channelId = String(root.selectedChannel.channelId || "")
-        if (root.runtimeWorkReady && channelId.length > 0) {
-            chaftController.markChannelRead(channelId)
+        if (!root.runtimeWorkReady || channelId.length === 0) {
+            return
         }
+        if (!root.active
+                || !root.conversationDestination
+                || root.normalizedSearchQuery.length > 0
+                || !timelineView.visible
+                || !root.selectedChannelTimelineReady
+                || root.timelineChannelId !== channelId
+                || timelineView.pendingInitialScroll
+                || timelineView.pendingUnreadScroll
+                || timelineView.preservingPrepend
+                || !timelineView.followLatest
+                || !timelineView.isNearLatest()) {
+            return
+        }
+        if (root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight) {
+            markReadDebounce.restart()
+            return
+        }
+        chaftController.markChannelRead(channelId)
     }
 
     function beginEditMessage(messageId, body) {
@@ -6262,6 +6753,12 @@ ApplicationWindow {
         for (var key in source) {
             if (Object.prototype.hasOwnProperty.call(source, key)) {
                 var row = root.copyMap(source[key])
+                var persistedStatus = String(
+                    row.status || "").trim()
+                if (persistedStatus === "profile_pending"
+                        || persistedStatus === "profile_written") {
+                    continue
+                }
                 row.key = key
                 row.workspaceLabel = String(row.workspaceName || "").trim().length > 0
                     ? String(row.workspaceName || "").trim()
@@ -6928,13 +7425,42 @@ ApplicationWindow {
     }
 
     function syncSelectedPeerIfReady() {
-        if (!root.autoSyncEnabled || !root.runtimeWorkReady || chaftController.syncInFlight) {
+        if (!root.runtimeWorkReady
+                || root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight
+                || root.pendingJoinPeerEndpointTargetsCurrentWorkspace()
+                || !root.autoSyncEnabled) {
             return
+        }
+        if (chaftController.peerHosting
+                && root.hostedRuntimeReconcileDue) {
+            if (root.reconcileHostedRuntimeIfReady()) {
+                return
+            }
+            root.hostedRuntimeReconcileDue = false
         }
         var endpoint = root.preferredSyncPeerEndpoint()
         if (endpoint.length > 0) {
-            chaftController.syncWorkspaceIfIdle(endpoint)
+            if (chaftController.syncWorkspaceIfIdle(endpoint)
+                    && chaftController.peerHosting) {
+                // Ensure inbound writes are materialized before another
+                // network sync can occupy the serialized workspace worker.
+                root.hostedRuntimeReconcileDue = true
+            }
         }
+    }
+
+    function reconcileHostedRuntimeIfReady() {
+        if (root.runtimeWorkReady
+                && chaftController.peerHosting
+                && !root.workspaceOperationInFlight
+                && !root.pendingEntryDisplayNameUpdateInFlight) {
+            if (chaftController.reconcileRuntimeSnapshotIfIdle()) {
+                root.hostedRuntimeReconcileDue = false
+                return true
+            }
+        }
+        return false
     }
 
     function rememberJoinWaitingForPeer(workspaceId, notify, source, privateRoomCount) {
@@ -6972,7 +7498,12 @@ ApplicationWindow {
     }
 
     function maybeClearJoinWaitingForPeerFromStatus() {
+        var targetWorkspaceId = String(
+            root.pendingJoinAwaitingWorkspaceId || "").trim()
         if (root.pendingJoinAwaitingReachablePeer
+                && targetWorkspaceId.length > 0
+                && root.currentWorkspaceId() === targetWorkspaceId
+                && String(root.pendingJoinPeerEndpoint || "").trim().length === 0
                 && root.historySyncStatusSucceeded(chaftController.syncStatus)) {
             root.clearJoinWaitingForPeer()
         }
@@ -7092,32 +7623,39 @@ ApplicationWindow {
             : root.focusPeerAddressField()
     }
 
-    function pullPendingJoinPeerIfReady() {
+    function pendingJoinPeerEndpointTargetsCurrentWorkspace() {
         var endpoint = String(root.pendingJoinPeerEndpoint || "").trim()
         var targetWorkspaceId = String(
             root.pendingJoinAwaitingWorkspaceId || "").trim()
-        if (endpoint.length === 0 || !root.runtimeWorkReady || chaftController.syncInFlight) {
+        return endpoint.length > 0
+            && targetWorkspaceId.length > 0
+            && root.currentWorkspaceId() === targetWorkspaceId
+    }
+
+    function pullPendingJoinPeerIfReady() {
+        var endpoint = String(root.pendingJoinPeerEndpoint || "").trim()
+        if (!root.pendingJoinPeerEndpointTargetsCurrentWorkspace()
+                || !root.runtimeWorkReady
+                || root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight) {
             return false
         }
-        if (targetWorkspaceId.length > 0
-                && root.currentWorkspaceId() !== targetWorkspaceId) {
-            return false
-        }
-        root.pendingJoinPeerEndpoint = ""
         peerEndpointField.text = endpoint
-        root.autoSyncEnabled = true
         toastHost.show("info", "Fetching workspace history", "", "", 3000)
         root.pendingJoinPullCompletion = true
         if (chaftController.pullWorkspace(endpoint)) {
+            root.pendingJoinPeerEndpoint = ""
+            root.autoSyncEnabled = true
             return true
         }
         root.pendingJoinPullCompletion = false
-        root.autoSyncEnabled = false
         return false
     }
 
     function handlePendingJoinPullStatus() {
-        if (!root.pendingJoinPullCompletion || chaftController.syncInFlight) {
+        if (!root.pendingJoinPullCompletion
+                || String(root.pendingJoinPeerEndpoint || "").trim().length > 0
+                || root.workspaceOperationInFlight) {
             return
         }
         var status = String(chaftController.syncStatus || "").trim()
@@ -7137,7 +7675,7 @@ ApplicationWindow {
     }
 
     function repairHistoryFromPeer() {
-        if (!root.runtimeWorkReady || chaftController.syncInFlight) {
+        if (!root.runtimeWorkReady || root.workspaceOperationInFlight) {
             return false
         }
         var endpoint = root.preferredSyncPeerEndpoint()
@@ -7149,27 +7687,41 @@ ApplicationWindow {
 
     function syncWorkspaceFromPreferredPeer() {
         var endpoint = root.preferredSyncPeerEndpoint()
-        return root.runtimeWorkReady && endpoint.length > 0 && chaftController.syncWorkspace(endpoint)
+        return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
+            && endpoint.length > 0
+            && chaftController.syncWorkspace(endpoint)
     }
 
     function publishWorkspaceToPreferredPeer() {
         var endpoint = root.preferredSyncPeerEndpoint()
-        return root.runtimeWorkReady && endpoint.length > 0 && chaftController.publishWorkspace(endpoint)
+        return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
+            && endpoint.length > 0
+            && chaftController.publishWorkspace(endpoint)
     }
 
     function backupWorkspaceToPreferredPeer() {
         var endpoint = root.preferredManualBackupPeerEndpoint()
-        return root.runtimeWorkReady && endpoint.length > 0 && chaftController.backupWorkspace(endpoint)
+        return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
+            && endpoint.length > 0
+            && chaftController.backupWorkspace(endpoint)
     }
 
     function pullWorkspaceFromPreferredPeer() {
         var endpoint = root.preferredSyncPeerEndpoint()
-        return root.runtimeWorkReady && endpoint.length > 0 && chaftController.pullWorkspace(endpoint)
+        return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
+            && endpoint.length > 0
+            && chaftController.pullWorkspace(endpoint)
     }
 
     function retryBlobTransfersWithPreferredPeers() {
         var endpoint = root.preferredRetryPeerEndpoint()
-        return root.runtimeWorkReady && chaftController.retryBlobTransfers(endpoint)
+        return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
+            && chaftController.retryBlobTransfers(endpoint)
     }
 
     function repairStorageMetadata() {
@@ -7181,6 +7733,7 @@ ApplicationWindow {
     function publishEventWithTrustSnapshotToPreferredPeer(eventId) {
         var endpoint = root.preferredSyncPeerEndpoint()
         return root.runtimeWorkReady
+            && !root.workspaceOperationInFlight
             && endpoint.length > 0
             && chaftController.publishEventWithTrustSnapshot(eventId, endpoint)
     }
@@ -7188,7 +7741,7 @@ ApplicationWindow {
     function backupConfiguredPeerIfReady() {
         var backupPeers = chaftController.backupPeerEndpoints || []
         if (!root.autoBackupEnabled || !root.runtimeWorkReady
-                || chaftController.syncInFlight || !root.hasAutoBackupTargets) {
+                || root.workspaceOperationInFlight || !root.hasAutoBackupTargets) {
             return
         }
         if (backupPeers.length > 0 && chaftController.backupConfiguredPeersIfIdle()) {
@@ -7210,7 +7763,7 @@ ApplicationWindow {
         root.inspectorAccessHistoryExpanded = false
         root.restoreSelectedDraft(false)
         root.resetTimelineForChannelContext()
-        root.requestSelectedChannelTimelineIfNeeded()
+        root.scheduleControllerIdleWork()
         root.scheduleMarkSelectedChannelRead()
     }
     onNormalizedSearchQueryChanged: {
@@ -7218,7 +7771,7 @@ ApplicationWindow {
             timelineView.resetToBeginningOnNextModel()
         } else {
             root.resetTimelineForChannelContext()
-            root.requestSelectedChannelTimelineIfNeeded()
+            root.scheduleControllerIdleWork()
         }
     }
     onChannelsChanged: {
@@ -7230,9 +7783,10 @@ ApplicationWindow {
         root.loadPersistedComposerDrafts()
         root.updateUnreadNotificationBaseline()
         root.ensureSelectedChannelInSnapshot()
+        root.restorePendingEntryDisplayNameFromRequests()
         root.restoreSelectedDraft(false)
         root.resetTimelineForChannelContext()
-        root.requestSelectedChannelTimelineIfNeeded()
+        root.scheduleControllerIdleWork()
         root.scheduleMarkSelectedChannelRead()
         root.applySmokeUiState()
         Qt.callLater(function() {
@@ -7266,12 +7820,17 @@ ApplicationWindow {
             return
         }
         root.updateUnreadNotificationBaseline()
-        root.requestSelectedChannelTimelineIfNeeded()
+        root.hostedRuntimeReconcileDue = true
+        root.restorePendingEntryDisplayNameFromRequests()
+        root.applyPendingEntryDisplayName()
+        var pendingJoinPullStarted = root.pullPendingJoinPeerIfReady()
+        root.scheduleControllerIdleWork()
         root.scheduleMarkSelectedChannelRead()
         if (root.searchHasTerms) {
             searchDebounce.restart()
         }
-        if (root.autoSyncEnabled) {
+        if (root.autoSyncEnabled && !pendingJoinPullStarted
+                && !root.pendingJoinPeerEndpointTargetsCurrentWorkspace()) {
             root.syncSelectedPeerIfReady()
         }
         if (root.autoBackupEnabled) {
@@ -7305,11 +7864,32 @@ ApplicationWindow {
     }
 
     Timer {
+        id: pendingEntryDisplayNameRetryTimer
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (root.pendingEntryDisplayNameWriteSucceeded) {
+                root.reconcilePendingEntryDisplayName()
+            } else {
+                root.applyPendingEntryDisplayName()
+            }
+        }
+    }
+
+    Timer {
         id: autoSyncTimer
         interval: 3000
         repeat: true
-        running: root.autoSyncEnabled && root.runtimeWorkReady
+        running: root.runtimeWorkReady && root.autoSyncEnabled
         onTriggered: root.syncSelectedPeerIfReady()
+    }
+
+    Timer {
+        id: hostedRuntimeReconcileTimer
+        interval: 2000
+        repeat: true
+        running: root.runtimeWorkReady && chaftController.peerHosting
+        onTriggered: root.reconcileHostedRuntimeIfReady()
     }
 
     Timer {
@@ -7445,11 +8025,11 @@ ApplicationWindow {
                 }
                 root.pendingDraftRestoreWorkspaceId = ""
             }
-            root.requestSelectedChannelTimelineIfNeeded()
             root.handleAccessRequestNotification()
             root.scheduleMarkSelectedChannelRead()
+            root.restorePendingEntryDisplayNameFromRequests()
             root.applyPendingEntryDisplayName()
-            root.pullPendingJoinPeerIfReady()
+            root.scheduleControllerIdleWork()
             if (root.autoBackupEnabled) {
                 autoBackupDebounce.restart()
             }
@@ -7474,17 +8054,29 @@ ApplicationWindow {
             }
         }
         function onSelectedWorkspaceChanged() {
+            root.hostedRuntimeReconcileDue = true
             root.inspectorItemKey = ""
             root.searchQuery = ""
             searchField.text = ""
             root.resetAccessRequestNotificationBaseline()
             timelineView.resetToLatestOnNextModel()
+            Qt.callLater(function() {
+                root.restorePendingEntryDisplayNameFromRequests()
+                root.applyPendingEntryDisplayName()
+                root.scheduleControllerIdleWork()
+            })
         }
         function onBackupPeerEndpointsChanged() {
             if (!root.hasAutoBackupTargets) {
                 root.autoBackupEnabled = false
             } else if (root.autoBackupEnabled) {
                 root.backupConfiguredPeerIfReady()
+            }
+        }
+        function onHostedPeerChanged() {
+            root.hostedRuntimeReconcileDue = true
+            if (chaftController.peerHosting) {
+                root.reconcileHostedRuntimeIfReady()
             }
         }
         function onKeyTransferJsonChanged() {
@@ -7511,10 +8103,30 @@ ApplicationWindow {
         }
         function onSyncInFlightChanged() {
             if (!chaftController.syncInFlight) {
-                root.requestSelectedChannelTimelineIfNeeded()
-                root.pullPendingJoinPeerIfReady()
+                root.handlePendingJoinPullStatus()
+                root.handlePrivateRoomHistoryRepairCompletion()
+                root.applyPendingEntryDisplayName()
+                root.scheduleMarkSelectedChannelRead()
+                root.scheduleControllerIdleWork()
                 pendingJoinPullCompletionTimer.restart()
                 pendingPrivateRoomHistoryRepairCompletionTimer.restart()
+            }
+        }
+        function onTimelineLoadInFlightChanged() {
+            if (!chaftController.timelineLoadInFlight) {
+                root.applyPendingEntryDisplayName()
+                root.scheduleMarkSelectedChannelRead()
+                if (root.controllerIdleWorkPending) {
+                    root.scheduleControllerIdleWork()
+                }
+            }
+        }
+        function onWorkspaceOperationInFlightChanged() {
+            if (!root.workspaceOperationInFlight) {
+                root.restorePendingEntryDisplayNameFromRequests()
+                root.applyPendingEntryDisplayName()
+                root.scheduleMarkSelectedChannelRead()
+                root.scheduleControllerIdleWork()
             }
         }
         function onSyncStatusChanged() {
@@ -7527,12 +8139,20 @@ ApplicationWindow {
             root.handleWorkspaceCredentialImportFinished(
                 source, workspaceId, success, message)
         }
+        function onDeviceProfileUpdateFinished(workspaceId, displayName,
+                                               success, message) {
+            root.handleDeviceProfileUpdateFinished(
+                workspaceId, displayName, success, message)
+            root.scheduleMarkSelectedChannelRead()
+        }
         function onWorkspaceCreateFinished(workspaceId, success, selected,
                                            message) {
             root.handleWorkspaceCreateFinished(
                 workspaceId, success, selected, message)
         }
         function onPendingJoinRequestsChanged() {
+            root.restorePendingEntryDisplayNameFromRequests()
+            root.applyPendingEntryDisplayName()
             var key = root.pendingAccessRequestSentUnpersistedKey
             if (key.length === 0) {
                 return
@@ -7612,6 +8232,16 @@ ApplicationWindow {
                 root.loadPersistedComposerDrafts()
                 root.restoreSelectedDraft(false)
             }
+        }
+    }
+
+    Connections {
+        target: timelineView
+        function onContentYChanged() {
+            root.scheduleMarkSelectedChannelRead()
+        }
+        function onMovementEnded() {
+            root.scheduleMarkSelectedChannelRead()
         }
     }
 
@@ -9732,7 +10362,7 @@ ApplicationWindow {
                                 Button {
                                     visible: root.storageMetadataRepairSuggested
                                     enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
+                                        && !root.workspaceOperationInFlight
                                     text: "Fix history"
                                     onClicked: root.repairStorageMetadata()
                                 }
@@ -9815,9 +10445,11 @@ ApplicationWindow {
 
                                 Button {
                                     enabled: root.runtimeWorkReady
-                                        && !chaftController.syncInFlight
+                                        && !root.workspaceOperationInFlight
                                         && root.peerEndpointFormIsValid()
-                                    text: chaftController.syncInFlight ? "Connecting..." : "Connect"
+                                    text: chaftController.syncInFlight
+                                        ? "Connecting..."
+                                        : "Connect"
                                     onClicked: root.connectPeerEndpointFromField()
                                 }
 
@@ -9835,7 +10467,7 @@ ApplicationWindow {
                                         MenuItem {
                                             text: "Share history"
                                             enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
+                                                && !root.workspaceOperationInFlight
                                                 && root.preferredSyncPeerEndpoint().length > 0
                                             onTriggered: root.publishWorkspaceToPreferredPeer()
                                         }
@@ -9843,7 +10475,7 @@ ApplicationWindow {
                                         MenuItem {
                                             text: "Back up now"
                                             enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
+                                                && !root.workspaceOperationInFlight
                                                 && root.preferredManualBackupPeerEndpoint().length > 0
                                             onTriggered: root.backupWorkspaceToPreferredPeer()
                                         }
@@ -9851,7 +10483,7 @@ ApplicationWindow {
                                         MenuItem {
                                             text: "Retry files"
                                             enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
+                                                && !root.workspaceOperationInFlight
                                                 && (root.preferredRetryPeerEndpoint().length > 0
                                                     || (chaftController.backupPeerEndpoints || []).length > 0)
                                             onTriggered: root.retryBlobTransfersWithPreferredPeers()
@@ -9860,7 +10492,7 @@ ApplicationWindow {
                                         MenuItem {
                                             text: "Fetch history"
                                             enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
+                                                && !root.workspaceOperationInFlight
                                                 && root.preferredSyncPeerEndpoint().length > 0
                                             onTriggered: root.pullWorkspaceFromPreferredPeer()
                                         }
@@ -9870,7 +10502,7 @@ ApplicationWindow {
                                         MenuItem {
                                             text: "Clean up local files"
                                             enabled: root.runtimeWorkReady
-                                                && !chaftController.syncInFlight
+                                                && !root.workspaceOperationInFlight
                                             onTriggered: chaftController.pruneBlobs()
                                         }
                                     }
@@ -9956,7 +10588,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 112
                                 enabled: root.runtimeWorkReady
                                     && (root.preferredSyncPeerEndpoint().length === 0
-                                        || !chaftController.syncInFlight)
+                                        || !root.workspaceOperationInFlight)
                                 onClicked: root.handleFirstSyncWaitingAction()
                             }
 
@@ -9983,7 +10615,7 @@ ApplicationWindow {
                             && root.runtimeWorkReady
                             && !root.runtimeSearchReady
                             && Boolean(root.timelineWindow.hasMoreBefore)
-                        enabled: !chaftController.syncInFlight
+                        enabled: !root.workspaceOperationInFlight
                         text: "Load older"
                         onClicked: {
                             timelineView.prepareForPrepend()
@@ -10005,7 +10637,7 @@ ApplicationWindow {
                     emptyText: root.selectedTimelineEmptyText()
                     actionsEnabled: root.runtimeWorkReady
                     historyRepairEnabled: root.runtimeWorkReady
-                        && !chaftController.syncInFlight
+                        && !root.workspaceOperationInFlight
                         && root.preferredSyncPeerEndpoint().length > 0
                     historyRepairHasAddress: root.preferredSyncPeerEndpoint().length > 0
                     historyRepairBusy: chaftController.syncInFlight
@@ -11238,7 +11870,7 @@ ApplicationWindow {
                             visible: chaftController.hasRuntimeWorkspace
                                 && root.storageMetadataRepairSuggested
                             enabled: root.runtimeWorkReady
-                                && !chaftController.syncInFlight
+                                && !root.workspaceOperationInFlight
                             text: "Fix history"
                             onClicked: root.repairStorageMetadata()
                         }
@@ -11284,7 +11916,7 @@ ApplicationWindow {
                                 backupPeer: Boolean(peerEndpointHintDelegate.modelData.isBackupPeer)
                                 expired: root.isPeerEndpointExpired(peerEndpointHintDelegate.modelData)
                                 runtimeReady: root.runtimeWorkReady
-                                syncInFlight: chaftController.syncInFlight
+                                syncInFlight: root.workspaceOperationInFlight
                                 savedAsBackup: root.isBackupPeerSaved(peerEndpointHintDelegate.endpoint)
                                 onUseRequested: function (endpoint) {
                                     root.usePeerEndpoint(endpoint)
