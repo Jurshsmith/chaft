@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
+};
 
 use chaft_types::{
     ATTACHMENT_BLOB_HASH_MAX_BYTES, ATTACHMENT_CIPHERTEXT_MAX_BYTES,
@@ -398,6 +401,7 @@ pub struct WorkspaceState {
     pub join_requests: HashMap<String, WorkspaceJoinRequestView>,
     pub read_markers: HashMap<DeviceId, HashMap<ChannelId, EventId>>,
     pub applied_events: Vec<EventId>,
+    applied_event_ids: HashSet<EventId>,
     access_index: WorkspaceAccessIndex,
 }
 
@@ -431,6 +435,7 @@ impl WorkspaceState {
             join_requests: HashMap::new(),
             read_markers: HashMap::new(),
             applied_events: Vec::new(),
+            applied_event_ids: HashSet::new(),
             access_index: WorkspaceAccessIndex::new(workspace_id),
         }
     }
@@ -463,45 +468,154 @@ impl WorkspaceState {
         }
 
         let mut report = MaterializationReport::default();
-        let mut pending = events.iter().collect::<Vec<_>>();
+        // Index causal dependencies once. The heap is ordered by stable-pass round and original
+        // input position, so ready events keep the legacy deterministic order without repeatedly
+        // scanning every pending event and every applied event ID. Authorization-dependent
+        // retries remain pass-based below because their readiness is semantic rather than causal.
+        let candidate_event_ids = events
+            .iter()
+            .map(|event| &event.event_id)
+            .collect::<HashSet<_>>();
+        let mut pending = vec![true; events.len()];
+        let mut missing_parent_counts = vec![0_usize; events.len()];
+        let mut earliest_ready_rounds = vec![0_usize; events.len()];
+        let mut waiting_by_parent = HashMap::<&EventId, Vec<usize>>::new();
+        let mut initially_ready_events = Vec::with_capacity(events.len());
+        let mut unique_parent_ids = HashSet::<&EventId>::new();
 
+        for (event_index, event) in events.iter().enumerate() {
+            unique_parent_ids.clear();
+            for parent_id in &event.event.parents {
+                if !unique_parent_ids.insert(parent_id)
+                    || self.applied_event_ids.contains(parent_id)
+                {
+                    continue;
+                }
+                missing_parent_counts[event_index] += 1;
+                if candidate_event_ids.contains(parent_id) {
+                    waiting_by_parent
+                        .entry(parent_id)
+                        .or_default()
+                        .push(event_index);
+                }
+            }
+            if missing_parent_counts[event_index] == 0 {
+                initially_ready_events.push(event_index);
+            }
+        }
+
+        // Initial and authorization-deferred events are already in stable input order, so scan
+        // them linearly. Only events newly unblocked by a parent need a heap for ordered merging.
+        // This keeps a no-progress pass O(N), even when unrelated events contain history gaps.
+        let mut stable_ready_events = initially_ready_events;
+        let mut dynamically_ready_events = BinaryHeap::<Reverse<usize>>::new();
+        let mut next_round_ready_events = BinaryHeap::<Reverse<usize>>::new();
+        let mut authorization_deferred = Vec::<usize>::new();
+        let mut current_round = 0_usize;
         loop {
             let mut progressed = false;
-            let mut index = 0;
+            authorization_deferred.clear();
+            let mut stable_ready_index = 0_usize;
 
-            while index < pending.len() {
-                if self.missing_parent_ids(pending[index])?.is_empty() {
-                    match self.apply_ready_event(pending[index]) {
-                        Ok(()) => {
-                            let event = pending.remove(index);
-                            report.applied_events.push(event.event_id.clone());
-                            progressed = true;
-                        }
-                        Err(CoreError::Authorization(
-                            error @ (AuthorizationError::EventPayloadTooLarge { .. }
-                            | AuthorizationError::EventPayloadRequired { .. }
-                            | AuthorizationError::EventItemCountTooLarge { .. }
-                            | AuthorizationError::UnsupportedPeerEndpoint
-                            | AuthorizationError::PeerEndpointTransportMismatch
-                            | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
-                        )) => return Err(CoreError::Authorization(error)),
-                        Err(CoreError::Authorization(_)) => index += 1,
-                        Err(error) => return Err(error),
+            loop {
+                let stable_event_index = stable_ready_events.get(stable_ready_index).copied();
+                let dynamic_event_index = dynamically_ready_events
+                    .peek()
+                    .map(|Reverse(event_index)| *event_index);
+                let event_index = match (stable_event_index, dynamic_event_index) {
+                    (Some(stable), Some(dynamic)) if stable <= dynamic => {
+                        stable_ready_index += 1;
+                        stable
                     }
-                } else {
-                    index += 1;
+                    (Some(_), Some(_)) | (None, Some(_)) => {
+                        dynamically_ready_events
+                            .pop()
+                            .expect("peeked dynamic ready event")
+                            .0
+                    }
+                    (Some(stable), None) => {
+                        stable_ready_index += 1;
+                        stable
+                    }
+                    (None, None) => break,
+                };
+                if !pending[event_index] {
+                    continue;
+                }
+
+                let event = &events[event_index];
+                let event_id = &event.event_id;
+                let event_id_was_applied = self.applied_event_ids.contains(event_id);
+                match self.apply_ready_event(event) {
+                    Ok(()) => {
+                        pending[event_index] = false;
+                        report.applied_events.push(event.event_id.clone());
+                        progressed = true;
+
+                        if !event_id_was_applied
+                            && let Some(waiting_events) = waiting_by_parent.remove(event_id)
+                        {
+                            for waiting_event_index in waiting_events {
+                                missing_parent_counts[waiting_event_index] -= 1;
+
+                                // Match the previous stable-pass ordering: a child later in
+                                // the input can run in this pass, while a child whose slot was
+                                // already visited waits for the next pass.
+                                let ready_round =
+                                    current_round + usize::from(event_index >= waiting_event_index);
+                                earliest_ready_rounds[waiting_event_index] =
+                                    earliest_ready_rounds[waiting_event_index].max(ready_round);
+
+                                if missing_parent_counts[waiting_event_index] == 0 {
+                                    if earliest_ready_rounds[waiting_event_index] == current_round {
+                                        dynamically_ready_events.push(Reverse(waiting_event_index));
+                                    } else {
+                                        next_round_ready_events.push(Reverse(waiting_event_index));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(CoreError::Authorization(
+                        error @ (AuthorizationError::EventPayloadTooLarge { .. }
+                        | AuthorizationError::EventPayloadRequired { .. }
+                        | AuthorizationError::EventItemCountTooLarge { .. }
+                        | AuthorizationError::UnsupportedPeerEndpoint
+                        | AuthorizationError::PeerEndpointTransportMismatch
+                        | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
+                    )) => return Err(CoreError::Authorization(error)),
+                    Err(CoreError::Authorization(_)) => {
+                        authorization_deferred.push(event_index);
+                    }
+                    Err(error) => return Err(error),
                 }
             }
 
             if !progressed {
                 break;
             }
+            stable_ready_events.clear();
+            std::mem::swap(&mut stable_ready_events, &mut authorization_deferred);
+            std::mem::swap(&mut dynamically_ready_events, &mut next_round_ready_events);
+            if stable_ready_events.is_empty() && dynamically_ready_events.is_empty() {
+                break;
+            }
+            current_round += 1;
         }
 
-        for event in pending {
+        for (event_index, event) in events.iter().enumerate() {
+            if !pending[event_index] {
+                continue;
+            }
             report.gaps.push(MissingHistoryGap {
                 event_id: event.event_id.clone(),
-                missing_parent_ids: self.missing_parent_ids(event)?,
+                missing_parent_ids: event
+                    .event
+                    .parents
+                    .iter()
+                    .filter(|parent_id| !self.applied_event_ids.contains(parent_id))
+                    .cloned()
+                    .collect(),
             });
         }
 
@@ -523,9 +637,7 @@ impl WorkspaceState {
     }
 
     fn has_applied_event(&self, event_id: &EventId) -> bool {
-        self.applied_events
-            .iter()
-            .any(|applied_id| applied_id == event_id)
+        self.applied_event_ids.contains(event_id)
     }
 
     pub fn channel_accessible_to(&self, channel_id: &ChannelId, device_id: &DeviceId) -> bool {
@@ -1162,6 +1274,7 @@ impl WorkspaceState {
         }
 
         self.applied_events.push(signed.event_id.clone());
+        self.applied_event_ids.insert(signed.event_id.clone());
         Ok(())
     }
 
@@ -2098,20 +2211,17 @@ pub fn authorize_event_with_history(
         .iter()
         .filter(|historical| historical.event.workspace_id == event.event.workspace_id)
         .collect::<Vec<_>>();
+    let mut deferred = Vec::with_capacity(pending.len());
 
     loop {
         let mut progressed = false;
-        let mut index_in_pending = 0;
 
-        while index_in_pending < pending.len() {
-            match index.authorize_and_apply(pending[index_in_pending]) {
+        for historical in pending.drain(..) {
+            match index.authorize_and_apply(historical) {
                 Ok(()) => {
-                    pending.remove(index_in_pending);
                     progressed = true;
                 }
-                Err(AuthorizationError::WorkspaceAlreadyCreated) => {
-                    pending.remove(index_in_pending);
-                }
+                Err(AuthorizationError::WorkspaceAlreadyCreated) => {}
                 Err(
                     AuthorizationError::MissingWorkspaceRoot
                     | AuthorizationError::ChannelNotFound { .. }
@@ -2133,7 +2243,7 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::PersonAlreadyLinked { .. }
                     | AuthorizationError::InsufficientRole { .. },
                 ) => {
-                    index_in_pending += 1;
+                    deferred.push(historical);
                 }
                 Err(
                     AuthorizationError::WrongWorkspace
@@ -2141,7 +2251,7 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::ChannelMismatch { .. }
                     | AuthorizationError::InvalidTrustSnapshot,
                 ) => {
-                    index_in_pending += 1;
+                    deferred.push(historical);
                 }
                 Err(
                     error @ (AuthorizationError::EventPayloadTooLarge { .. }
@@ -2159,6 +2269,7 @@ pub fn authorize_event_with_history(
         if !progressed {
             break;
         }
+        std::mem::swap(&mut pending, &mut deferred);
     }
 
     index.authorize(event)
@@ -3539,6 +3650,79 @@ mod tests {
         SignedEvent::from_signed_bytes(event, vec![7, 7, 7])
     }
 
+    fn apply_batch_with_legacy_stable_scans(
+        state: &mut WorkspaceState,
+        events: &[SignedEvent],
+    ) -> Result<MaterializationReport, CoreError> {
+        for event in events {
+            validate_signed_event_ids(event)?;
+            if event.event.workspace_id != state.workspace_id {
+                return Err(CoreError::WrongWorkspace);
+            }
+        }
+
+        let mut report = MaterializationReport::default();
+        let mut pending = events.iter().collect::<Vec<_>>();
+
+        loop {
+            let mut progressed = false;
+            let mut index = 0;
+
+            while index < pending.len() {
+                if state.missing_parent_ids(pending[index])?.is_empty() {
+                    match state.apply_ready_event(pending[index]) {
+                        Ok(()) => {
+                            let event = pending.remove(index);
+                            report.applied_events.push(event.event_id.clone());
+                            progressed = true;
+                        }
+                        Err(CoreError::Authorization(
+                            error @ (AuthorizationError::EventPayloadTooLarge { .. }
+                            | AuthorizationError::EventPayloadRequired { .. }
+                            | AuthorizationError::EventItemCountTooLarge { .. }
+                            | AuthorizationError::UnsupportedPeerEndpoint
+                            | AuthorizationError::PeerEndpointTransportMismatch
+                            | AuthorizationError::ReplicaCapabilityRequiresBackupPeer),
+                        )) => return Err(CoreError::Authorization(error)),
+                        Err(CoreError::Authorization(_)) => index += 1,
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+
+        for event in pending {
+            report.gaps.push(MissingHistoryGap {
+                event_id: event.event_id.clone(),
+                missing_parent_ids: state.missing_parent_ids(event)?,
+            });
+        }
+
+        Ok(report)
+    }
+
+    fn advance_permutation(values: &mut [usize]) -> bool {
+        if values.len() < 2 {
+            return false;
+        }
+        let Some(pivot) = (0..values.len() - 1).rfind(|&index| values[index] < values[index + 1])
+        else {
+            return false;
+        };
+        let swap_index = (pivot + 1..values.len())
+            .rfind(|&index| values[pivot] < values[index])
+            .expect("a permutation pivot always has a larger suffix value");
+        values.swap(pivot, swap_index);
+        values[pivot + 1..].reverse();
+        true
+    }
+
     fn assert_payload_too_large(
         error: AuthorizationError,
         expected_label: &'static str,
@@ -4532,6 +4716,471 @@ mod tests {
     }
 
     #[test]
+    fn apply_batch_preserves_stable_order_across_dependency_waves() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let device_id = DeviceId("dev_test".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let parent = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let mut child_before = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "child before parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        child_before.parents = vec![parent.event_id.clone()];
+        let child_before = signed(child_before);
+        let mut child_after = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "child after parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        child_after.parents = vec![parent.event_id.clone()];
+        let child_after = signed(child_after);
+        let independent = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            device_id,
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "independent".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply(&root).unwrap();
+        state.apply(&channel).unwrap();
+
+        let report = state
+            .apply_batch(&[
+                child_before.clone(),
+                parent.clone(),
+                child_after.clone(),
+                independent.clone(),
+            ])
+            .unwrap();
+
+        assert!(report.gaps.is_empty());
+        assert_eq!(
+            report.applied_events,
+            vec![
+                parent.event_id,
+                child_after.event_id,
+                independent.event_id,
+                child_before.event_id,
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_batch_deduplicates_repeated_candidate_parent_dependencies() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let device_id = DeviceId("dev_test".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let parent = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let child_message_id = MessageId::new();
+        let mut child = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            device_id,
+            EventBody::MessageCreated {
+                message_id: child_message_id.clone(),
+                markdown: "child".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        child.parents = vec![parent.event_id.clone(), parent.event_id.clone()];
+        let child = signed(child);
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply(&root).unwrap();
+        state.apply(&channel).unwrap();
+
+        let report = state.apply_batch(&[child.clone(), parent.clone()]).unwrap();
+
+        assert!(report.gaps.is_empty());
+        assert_eq!(report.applied_events, vec![parent.event_id, child.event_id]);
+        assert_eq!(state.messages[&child_message_id].markdown, "child");
+    }
+
+    #[test]
+    fn apply_batch_preserves_duplicate_absent_parents_in_gap_reports() {
+        const ABSENT_PARENT_COUNT: usize = 512;
+
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let device_id = DeviceId("dev_test".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let available_parent = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "available parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let absent_parents = (0..ABSENT_PARENT_COUNT)
+            .flat_map(|index| {
+                let parent_id = EventId(format!("evt_absent_parent_{index}"));
+                [parent_id.clone(), parent_id]
+            })
+            .collect::<Vec<_>>();
+        let mut child = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            device_id,
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "incomplete child".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        child.parents = absent_parents.clone();
+        child.parents.push(available_parent.event_id.clone());
+        child.parents.push(available_parent.event_id.clone());
+        let child = signed(child);
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply(&root).unwrap();
+        state.apply(&channel).unwrap();
+
+        let report = state
+            .apply_batch(&[child.clone(), available_parent.clone()])
+            .unwrap();
+
+        assert_eq!(report.applied_events, vec![available_parent.event_id]);
+        assert_eq!(
+            report.gaps,
+            vec![MissingHistoryGap {
+                event_id: child.event_id,
+                missing_parent_ids: absent_parents,
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_batch_reports_large_all_ready_unauthorized_batch_without_progress() {
+        const EVENT_COUNT: usize = 256;
+
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let outsider = DeviceId("dev_outsider".to_owned());
+        let events = (0..EVENT_COUNT)
+            .map(|index| {
+                signed(SignableEvent::new(
+                    workspace_id.clone(),
+                    Some(channel_id.clone()),
+                    outsider.clone(),
+                    EventBody::MessageCreated {
+                        message_id: MessageId::new(),
+                        markdown: format!("unauthorized {index}"),
+                        attachments: Vec::new(),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut state = WorkspaceState::new(workspace_id);
+
+        let report = state.apply_batch(&events).unwrap();
+
+        assert!(report.applied_events.is_empty());
+        assert_eq!(report.gaps.len(), EVENT_COUNT);
+        assert!(report.gaps.iter().zip(&events).all(
+            |(gap, event)| gap.event_id == event.event_id && gap.missing_parent_ids.is_empty()
+        ));
+        assert!(state.messages.is_empty());
+    }
+
+    #[test]
+    fn apply_batch_reports_large_unauthorized_batch_alongside_history_gap() {
+        const EVENT_COUNT: usize = 256;
+
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let outsider = DeviceId("dev_outsider".to_owned());
+        let missing_parent_id = EventId("evt_missing_parent".to_owned());
+        let mut gapped = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            outsider.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "gapped unauthorized".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        gapped.parents.push(missing_parent_id.clone());
+        let mut events = vec![signed(gapped)];
+        events.extend((0..EVENT_COUNT).map(|index| {
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                Some(channel_id.clone()),
+                outsider.clone(),
+                EventBody::MessageCreated {
+                    message_id: MessageId::new(),
+                    markdown: format!("unauthorized {index}"),
+                    attachments: Vec::new(),
+                },
+            ))
+        }));
+        let mut state = WorkspaceState::new(workspace_id);
+
+        let report = state.apply_batch(&events).unwrap();
+
+        assert!(report.applied_events.is_empty());
+        assert_eq!(report.gaps.len(), EVENT_COUNT + 1);
+        assert_eq!(report.gaps[0].missing_parent_ids, vec![missing_parent_id]);
+        assert!(
+            report.gaps[1..]
+                .iter()
+                .all(|gap| gap.missing_parent_ids.is_empty())
+        );
+        assert!(state.messages.is_empty());
+    }
+
+    #[test]
+    fn indexed_apply_batch_matches_legacy_order_for_all_small_history_permutations() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let parent_message_id = MessageId::new();
+        let mut parent = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageCreated {
+                message_id: parent_message_id.clone(),
+                markdown: "parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        parent.parents = vec![channel.event_id.clone()];
+        let parent = signed(parent);
+        let reply_message_id = MessageId::new();
+        let mut reply = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member,
+            EventBody::MessageReplyCreated {
+                message_id: reply_message_id,
+                reply_to_message_id: parent_message_id.clone(),
+                markdown: "reply".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        reply.parents = vec![parent.event_id.clone()];
+        let reply = signed(reply);
+        let reaction = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            owner,
+            EventBody::ReactionAdded {
+                message_id: parent_message_id,
+                reaction: "✅".to_owned(),
+            },
+        ));
+        let events = [root, invite, channel, parent, reply, reaction];
+        let mut order = (0..events.len()).collect::<Vec<_>>();
+
+        loop {
+            let batch = order
+                .iter()
+                .map(|event_index| events[*event_index].clone())
+                .collect::<Vec<_>>();
+            let mut expected_state = WorkspaceState::new(workspace_id.clone());
+            let mut actual_state = WorkspaceState::new(workspace_id.clone());
+            let expected = apply_batch_with_legacy_stable_scans(&mut expected_state, &batch);
+            let actual = actual_state.apply_batch(&batch);
+
+            assert_eq!(actual, expected, "batch order {order:?}");
+            assert_eq!(
+                actual_state.applied_events, expected_state.applied_events,
+                "batch order {order:?}"
+            );
+            assert_eq!(
+                actual_state.channels, expected_state.channels,
+                "batch order {order:?}"
+            );
+            assert_eq!(
+                actual_state.messages, expected_state.messages,
+                "batch order {order:?}"
+            );
+            assert_eq!(
+                actual_state.members, expected_state.members,
+                "batch order {order:?}"
+            );
+
+            if !advance_permutation(&mut order) {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn apply_batch_materializes_large_reverse_causal_chain() {
+        const EVENT_COUNT: usize = 512;
+
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let device_id = DeviceId("dev_test".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let mut events = Vec::with_capacity(EVENT_COUNT);
+        let mut expected_event_ids = Vec::with_capacity(EVENT_COUNT);
+        let mut parent_id = channel.event_id.clone();
+        for index in 0..EVENT_COUNT {
+            let mut event = SignableEvent::new(
+                workspace_id.clone(),
+                Some(channel_id.clone()),
+                device_id.clone(),
+                EventBody::MessageCreated {
+                    message_id: MessageId::new(),
+                    markdown: format!("message {index}"),
+                    attachments: Vec::new(),
+                },
+            );
+            event.parents = vec![parent_id];
+            let event = signed(event);
+            parent_id = event.event_id.clone();
+            expected_event_ids.push(event.event_id.clone());
+            events.push(event);
+        }
+        events.reverse();
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply(&root).unwrap();
+        state.apply(&channel).unwrap();
+
+        let report = state.apply_batch(&events).unwrap();
+
+        assert!(report.gaps.is_empty());
+        assert_eq!(report.applied_events, expected_event_ids);
+        assert_eq!(state.messages.len(), EVENT_COUNT);
+    }
+
+    #[test]
     fn apply_batch_reports_unauthorized_ready_events_without_rendering_them() {
         let workspace_id = WorkspaceId::new();
         let channel_id = ChannelId::new();
@@ -4560,6 +5209,73 @@ mod tests {
             }]
         );
         assert!(!state.messages.contains_key(&message_id));
+    }
+
+    #[test]
+    fn apply_batch_gap_excludes_parents_applied_later_in_the_batch() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let device_id = DeviceId("dev_test".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            device_id.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let parent = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "available parent".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let first_missing_parent = EventId("evt_first_missing_parent".to_owned());
+        let second_missing_parent = EventId("evt_second_missing_parent".to_owned());
+        let mut child = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id),
+            device_id,
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: "still incomplete".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        child.parents = vec![
+            first_missing_parent.clone(),
+            parent.event_id.clone(),
+            second_missing_parent.clone(),
+        ];
+        let child = signed(child);
+        let mut state = WorkspaceState::new(workspace_id);
+        state.apply(&root).unwrap();
+        state.apply(&channel).unwrap();
+
+        let report = state.apply_batch(&[child.clone(), parent.clone()]).unwrap();
+
+        assert_eq!(report.applied_events, vec![parent.event_id]);
+        assert_eq!(
+            report.gaps,
+            vec![MissingHistoryGap {
+                event_id: child.event_id,
+                missing_parent_ids: vec![first_missing_parent, second_missing_parent],
+            }]
+        );
     }
 
     #[test]

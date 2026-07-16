@@ -4,6 +4,7 @@ use std::{
 };
 
 use chaft_app::{WorkspaceSnapshot, WorkspaceSnapshotOptions};
+use chaft_core::WorkspaceState;
 use chaft_ffi::{
     chaft_decrypted_workspace_snapshot_from_runtime_latest_result_json, chaft_string_free,
 };
@@ -12,7 +13,9 @@ use chaft_net::{PeerAddress, PeerId};
 use chaft_net_direct::{DirectPeerServer, DirectTransport};
 use chaft_runtime::LocalRuntime;
 use chaft_store::EventStore;
-use chaft_types::{ChannelId, SignedEvent, WorkspaceId};
+use chaft_types::{
+    ChannelId, DeviceId, EventBody, MessageId, SignableEvent, SignedEvent, WorkspaceId,
+};
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use tempfile::TempDir;
 use tokio::{runtime::Runtime, sync::oneshot, task::JoinHandle};
@@ -21,6 +24,7 @@ const BASE_MESSAGE_COUNT: usize = 128;
 const SNAPSHOT_MESSAGE_COUNT: usize = 256;
 const SYNC_MESSAGE_COUNT: usize = 96;
 const BLOB_BYTES: usize = 256 * 1024;
+const MATERIALIZATION_EVENT_COUNT: usize = 512;
 
 struct RuntimeFixture {
     _temp_dir: TempDir,
@@ -36,6 +40,13 @@ struct DirectSyncFixture {
     peer: PeerAddress,
     shutdown: Option<oneshot::Sender<()>>,
     server_task: JoinHandle<()>,
+}
+
+struct MaterializationFixture {
+    workspace_id: WorkspaceId,
+    root: SignedEvent,
+    channel: SignedEvent,
+    reverse_causal_chain: Vec<SignedEvent>,
 }
 
 impl DirectSyncFixture {
@@ -92,6 +103,60 @@ fn runtime_events_fixture(messages: usize) -> (RuntimeFixture, Vec<SignedEvent>)
         .workspace_events(&fixture.workspace_id)
         .expect("read benchmark workspace events");
     (fixture, events)
+}
+
+fn signed(event: SignableEvent) -> SignedEvent {
+    SignedEvent::from_signed_bytes(event, vec![7, 7, 7])
+}
+
+fn materialization_fixture(event_count: usize) -> MaterializationFixture {
+    let workspace_id = WorkspaceId::new();
+    let channel_id = ChannelId::new();
+    let device_id = DeviceId("dev_benchmark".to_owned());
+    let root = signed(SignableEvent::new(
+        workspace_id.clone(),
+        None,
+        device_id.clone(),
+        EventBody::WorkspaceCreated {
+            name: "Bench Workspace".to_owned(),
+        },
+    ));
+    let channel = signed(SignableEvent::new(
+        workspace_id.clone(),
+        None,
+        device_id.clone(),
+        EventBody::ChannelCreated {
+            channel_id: channel_id.clone(),
+            name: "general".to_owned(),
+            is_private: false,
+        },
+    ));
+    let mut reverse_causal_chain = Vec::with_capacity(event_count);
+    let mut parent_id = channel.event_id.clone();
+    for index in 0..event_count {
+        let mut event = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            device_id.clone(),
+            EventBody::MessageCreated {
+                message_id: MessageId::new(),
+                markdown: format!("materialization benchmark message {index:04}"),
+                attachments: Vec::new(),
+            },
+        );
+        event.parents = vec![parent_id];
+        let event = signed(event);
+        parent_id = event.event_id.clone();
+        reverse_causal_chain.push(event);
+    }
+    reverse_causal_chain.reverse();
+
+    MaterializationFixture {
+        workspace_id,
+        root,
+        channel,
+        reverse_causal_chain,
+    }
 }
 
 fn direct_sync_fixture(rt: &Runtime, messages: usize, include_blob: bool) -> DirectSyncFixture {
@@ -183,6 +248,34 @@ fn bench_runtime_append(c: &mut Criterion) {
             BatchSize::SmallInput,
         );
     });
+}
+
+fn bench_core_materialization(c: &mut Criterion) {
+    let fixture = materialization_fixture(MATERIALIZATION_EVENT_COUNT);
+    c.bench_function(
+        "core_materialization/reverse_causal_chain_512_events",
+        |b| {
+            b.iter_batched(
+                || {
+                    let mut state = WorkspaceState::new(fixture.workspace_id.clone());
+                    state
+                        .apply(&fixture.root)
+                        .expect("apply benchmark workspace root");
+                    state
+                        .apply(&fixture.channel)
+                        .expect("apply benchmark channel");
+                    state
+                },
+                |mut state| {
+                    let report = state
+                        .apply_batch(black_box(fixture.reverse_causal_chain.as_slice()))
+                        .expect("materialize benchmark causal chain");
+                    black_box(report.applied_events.len());
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
 }
 
 fn bench_snapshot_hydration(c: &mut Criterion) {
@@ -311,6 +404,7 @@ fn bench_ffi_json(c: &mut Criterion) {
 
 criterion_group!(
     hot_paths,
+    bench_core_materialization,
     bench_runtime_append,
     bench_snapshot_hydration,
     bench_search,
