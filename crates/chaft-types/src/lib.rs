@@ -22,6 +22,10 @@ pub const WORKSPACE_NAME_MAX_BYTES: usize = 128;
 pub const CHANNEL_NAME_MAX_BYTES: usize = 128;
 pub const CHANNEL_TOPIC_MAX_BYTES: usize = 512;
 pub const DEVICE_DISPLAY_NAME_MAX_BYTES: usize = 128;
+pub const AVATAR_ID_MAX_BYTES: usize = 64;
+pub const RELAY_AVATAR_GROUP_COUNT: u8 = 16;
+pub const RELAY_AVATAR_PATTERN_COUNT: u8 = 8;
+pub const RELAY_AVATAR_COLOR_COUNT: u8 = 12;
 pub const PERSON_ID_MAX_BYTES: usize = 128;
 pub const PERSON_ID_PREFIX: &str = "person_";
 pub const WORKSPACE_INVITE_ID_MAX_BYTES: usize = 128;
@@ -128,6 +132,38 @@ impl Display for IdValidationError {
 
 impl StdError for IdValidationError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AvatarIdValidationError {
+    TooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+    InvalidCharacters,
+    InvalidRelayV1,
+}
+
+impl Display for AvatarIdValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                f,
+                "avatar ID is too large ({actual_bytes} bytes, max {max_bytes})"
+            ),
+            Self::InvalidCharacters => f.write_str(
+                "avatar ID may contain only lowercase ASCII letters, digits, colons, underscores, and hyphens",
+            ),
+            Self::InvalidRelayV1 => {
+                f.write_str("relay-v1 avatar ID must match relay-v1:gNN:pNN:cNN")
+            }
+        }
+    }
+}
+
+impl StdError for AvatarIdValidationError {}
+
 pub fn validate_id_bytes(
     field: &'static str,
     value: &str,
@@ -174,6 +210,70 @@ pub fn validate_device_id_str(value: &str) -> Result<(), IdValidationError> {
 
 pub fn validate_person_id_str(value: &str) -> Result<(), IdValidationError> {
     validate_id_bytes("person ID", value, PERSON_ID_MAX_BYTES)
+}
+
+/// Validates an optional stable avatar identifier.
+///
+/// An empty value means that no explicit avatar was selected. Non-empty values
+/// are deliberately restricted to a small, URL-safe lowercase ASCII alphabet
+/// so future avatar families can be introduced without accepting arbitrary
+/// user-authored text. The built-in relay-v1 family has a stricter fixed shape
+/// and catalog range.
+pub fn validate_avatar_id_str(value: &str) -> Result<(), AvatarIdValidationError> {
+    if value.len() > AVATAR_ID_MAX_BYTES {
+        return Err(AvatarIdValidationError::TooLarge {
+            actual_bytes: value.len(),
+            max_bytes: AVATAR_ID_MAX_BYTES,
+        });
+    }
+    if !value
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b':' | b'_' | b'-'))
+    {
+        return Err(AvatarIdValidationError::InvalidCharacters);
+    }
+    if value.starts_with("relay-v1:") && parse_relay_avatar_id(value).is_none() {
+        return Err(AvatarIdValidationError::InvalidRelayV1);
+    }
+    Ok(())
+}
+
+/// Returns the stable identifier for one built-in Chaft relay avatar.
+pub fn relay_avatar_id(group: u8, pattern: u8, color: u8) -> Option<String> {
+    if group >= RELAY_AVATAR_GROUP_COUNT
+        || pattern >= RELAY_AVATAR_PATTERN_COUNT
+        || color >= RELAY_AVATAR_COLOR_COUNT
+    {
+        return None;
+    }
+    Some(format!("relay-v1:g{group:02}:p{pattern:02}:c{color:02}"))
+}
+
+fn parse_relay_avatar_id(value: &str) -> Option<(u8, u8, u8)> {
+    let mut parts = value.strip_prefix("relay-v1:")?.split(':');
+    let group = parse_relay_avatar_component(parts.next()?, b'g')?;
+    let pattern = parse_relay_avatar_component(parts.next()?, b'p')?;
+    let color = parse_relay_avatar_component(parts.next()?, b'c')?;
+    if parts.next().is_some()
+        || group >= RELAY_AVATAR_GROUP_COUNT
+        || pattern >= RELAY_AVATAR_PATTERN_COUNT
+        || color >= RELAY_AVATAR_COLOR_COUNT
+    {
+        return None;
+    }
+    Some((group, pattern, color))
+}
+
+fn parse_relay_avatar_component(value: &str, prefix: u8) -> Option<u8> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 3
+        || bytes[0] != prefix
+        || !bytes[1].is_ascii_digit()
+        || !bytes[2].is_ascii_digit()
+    {
+        return None;
+    }
+    Some((bytes[1] - b'0') * 10 + bytes[2] - b'0')
 }
 
 pub fn validate_workspace_id(value: &WorkspaceId) -> Result<(), IdValidationError> {
@@ -595,6 +695,8 @@ pub enum EventBody {
     },
     DeviceProfileUpdated {
         display_name: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        avatar_id: String,
     },
     PersonDeviceLinked {
         person_id: PersonId,
@@ -603,6 +705,8 @@ pub enum EventBody {
     PersonProfileUpdated {
         person_id: PersonId,
         display_name: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        avatar_id: String,
     },
     DeviceKeyPackagePublished {
         key_package_id: DeviceKeyPackageId,
@@ -803,6 +907,8 @@ pub struct TrustSnapshotChannel {
 pub struct TrustSnapshotMessage {
     pub message_id: MessageId,
     pub channel_id: ChannelId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_device_id: Option<DeviceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1088,6 +1194,95 @@ mod tests {
         let reserialized = serde_json::to_vec(&event).unwrap();
 
         assert_eq!(reserialized, legacy);
+    }
+
+    #[test]
+    fn legacy_profile_signing_json_round_trips_without_adding_avatar_id() {
+        let legacy_device = br#"{"schema_version":1,"workspace_id":"wrk_legacy","channel_id":null,"author_device_id":"dev_owner","timestamp":{"physical_ms":10,"logical":0},"parents":[],"body":{"kind":"device_profile_updated","display_name":"Mina"}}"#;
+        let legacy_person = br#"{"schema_version":1,"workspace_id":"wrk_legacy","channel_id":null,"author_device_id":"dev_owner","timestamp":{"physical_ms":10,"logical":0},"parents":[],"body":{"kind":"person_profile_updated","person_id":"person_mina","display_name":"Mina"}}"#;
+
+        for legacy in [legacy_device.as_slice(), legacy_person.as_slice()] {
+            let event: SignableEvent = serde_json::from_slice(legacy).unwrap();
+            assert_eq!(serde_json::to_vec(&event).unwrap(), legacy);
+            match event.body {
+                EventBody::DeviceProfileUpdated { avatar_id, .. }
+                | EventBody::PersonProfileUpdated { avatar_id, .. } => {
+                    assert!(avatar_id.is_empty());
+                }
+                other => panic!("unexpected profile body: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn profile_signing_json_preserves_explicit_avatar_id() {
+        let avatar_id = relay_avatar_id(7, 4, 9).unwrap();
+        let body = EventBody::PersonProfileUpdated {
+            person_id: PersonId("person_mina".to_owned()),
+            display_name: "Mina".to_owned(),
+            avatar_id: avatar_id.clone(),
+        };
+
+        let json = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(json["avatar_id"], avatar_id);
+        assert_eq!(serde_json::from_value::<EventBody>(json).unwrap(), body);
+    }
+
+    #[test]
+    fn avatar_ids_are_bounded_and_relay_v1_ids_are_canonical() {
+        assert_eq!(
+            relay_avatar_id(7, 4, 9).as_deref(),
+            Some("relay-v1:g07:p04:c09")
+        );
+        assert_eq!(relay_avatar_id(RELAY_AVATAR_GROUP_COUNT, 0, 0), None);
+        assert_eq!(relay_avatar_id(0, RELAY_AVATAR_PATTERN_COUNT, 0), None);
+        assert_eq!(relay_avatar_id(0, 0, RELAY_AVATAR_COLOR_COUNT), None);
+
+        for valid in [
+            "",
+            "relay-v1:g00:p00:c00",
+            "relay-v1:g15:p07:c11",
+            "future-v2:shape_9:color-blue",
+        ] {
+            assert!(
+                validate_avatar_id_str(valid).is_ok(),
+                "{valid:?} should be valid"
+            );
+        }
+
+        for invalid in [
+            "relay-v1:g16:p00:c00",
+            "relay-v1:g00:p08:c00",
+            "relay-v1:g00:p00:c12",
+            "relay-v1:g1:p04:c09",
+            "Relay-v1:g07:p04:c09",
+            "future/v2",
+            "future avatar",
+        ] {
+            assert!(
+                validate_avatar_id_str(invalid).is_err(),
+                "{invalid:?} should be invalid"
+            );
+        }
+
+        assert_eq!(
+            validate_avatar_id_str(&"a".repeat(AVATAR_ID_MAX_BYTES + 1)),
+            Err(AvatarIdValidationError::TooLarge {
+                actual_bytes: AVATAR_ID_MAX_BYTES + 1,
+                max_bytes: AVATAR_ID_MAX_BYTES,
+            })
+        );
+    }
+
+    #[test]
+    fn legacy_snapshot_message_json_round_trips_without_adding_author() {
+        let legacy = br#"{"message_id":"msg_legacy","channel_id":"chn_legacy"}"#;
+
+        let message: TrustSnapshotMessage = serde_json::from_slice(legacy).unwrap();
+
+        assert_eq!(message.author_device_id, None);
+        assert_eq!(serde_json::to_vec(&message).unwrap(), legacy);
     }
 
     #[test]

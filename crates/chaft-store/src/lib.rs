@@ -1103,6 +1103,7 @@ mod tests {
                 DeviceId("dev_atomic_first".to_owned()),
                 EventBody::DeviceProfileUpdated {
                     display_name: "first".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             vec![1],
@@ -1114,6 +1115,7 @@ mod tests {
                 DeviceId("dev_atomic_fail".to_owned()),
                 EventBody::DeviceProfileUpdated {
                     display_name: "second".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             vec![2],
@@ -1159,6 +1161,7 @@ mod tests {
                 DeviceId("dev_existing".to_owned()),
                 EventBody::DeviceProfileUpdated {
                     display_name: "existing".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             vec![1],
@@ -1170,6 +1173,7 @@ mod tests {
                 DeviceId("dev_candidate".to_owned()),
                 EventBody::DeviceProfileUpdated {
                     display_name: "candidate".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             vec![2],
@@ -1489,6 +1493,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mallory".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         forged.signature[0] ^= 0x01;
@@ -1630,6 +1635,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Forged".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         forged.signature[0] ^= 0x01;
@@ -1821,6 +1827,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Forged".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         forged.signature[0] ^= 0x01;
@@ -1914,6 +1921,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Forged".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         forged.signature[0] ^= 0x01;
@@ -2145,6 +2153,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Legacy forged".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         forged.signature[0] ^= 0x01;

@@ -4223,6 +4223,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Second".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let third = identity.sign_event(SignableEvent::new(
@@ -4231,6 +4232,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Third".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let store = EventStore::open_in_memory().unwrap();
@@ -4262,6 +4264,7 @@ mod tests {
                 identity.device_id().clone(),
                 EventBody::DeviceProfileUpdated {
                     display_name: format!("Inventory {index:04}"),
+                    avatar_id: String::new(),
                 },
             ));
             event_ids.push(event.event_id.0.clone());
@@ -5976,6 +5979,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Duplicate Target".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let mut request = empty_sync_request(WireSyncRequestKind::PublishEvents);
@@ -6000,6 +6004,7 @@ mod tests {
             identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Duplicate Proof".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let mut request = empty_sync_request(WireSyncRequestKind::PublishEvents);

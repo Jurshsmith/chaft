@@ -342,6 +342,8 @@ pub struct WireChannelMemberChanged {
 pub struct WireDeviceProfileUpdated {
     #[prost(string, tag = "1")]
     pub display_name: String,
+    #[prost(string, tag = "2")]
+    pub avatar_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -358,6 +360,8 @@ pub struct WirePersonProfileUpdated {
     pub person_id: String,
     #[prost(string, tag = "2")]
     pub display_name: String,
+    #[prost(string, tag = "3")]
+    pub avatar_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1071,11 +1075,13 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
             channel_id: channel_id.0.clone(),
             member_device_id: member_device_id.0.clone(),
         }),
-        EventBody::DeviceProfileUpdated { display_name } => {
-            Kind::DeviceProfileUpdated(WireDeviceProfileUpdated {
-                display_name: display_name.clone(),
-            })
-        }
+        EventBody::DeviceProfileUpdated {
+            display_name,
+            avatar_id,
+        } => Kind::DeviceProfileUpdated(WireDeviceProfileUpdated {
+            display_name: display_name.clone(),
+            avatar_id: avatar_id.clone(),
+        }),
         EventBody::PersonDeviceLinked {
             person_id,
             device_id,
@@ -1086,9 +1092,11 @@ fn encode_event_body(body: &EventBody) -> WireEventBody {
         EventBody::PersonProfileUpdated {
             person_id,
             display_name,
+            avatar_id,
         } => Kind::PersonProfileUpdated(WirePersonProfileUpdated {
             person_id: person_id.0.clone(),
             display_name: display_name.clone(),
+            avatar_id: avatar_id.clone(),
         }),
         EventBody::DeviceKeyPackagePublished {
             key_package_id,
@@ -1423,6 +1431,7 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
         }),
         Kind::DeviceProfileUpdated(body) => Ok(EventBody::DeviceProfileUpdated {
             display_name: body.display_name,
+            avatar_id: body.avatar_id,
         }),
         Kind::PersonDeviceLinked(body) => Ok(EventBody::PersonDeviceLinked {
             person_id: PersonId(body.person_id),
@@ -1431,6 +1440,7 @@ fn decode_event_body(body: WireEventBody) -> Result<EventBody, WireError> {
         Kind::PersonProfileUpdated(body) => Ok(EventBody::PersonProfileUpdated {
             person_id: PersonId(body.person_id),
             display_name: body.display_name,
+            avatar_id: body.avatar_id,
         }),
         Kind::DeviceKeyPackagePublished(body) => Ok(EventBody::DeviceKeyPackagePublished {
             key_package_id: DeviceKeyPackageId(body.key_package_id),
@@ -1703,6 +1713,8 @@ pub struct WireTrustSnapshotMessage {
     pub message_id: String,
     #[prost(string, tag = "2")]
     pub channel_id: String,
+    #[prost(string, optional, tag = "3")]
+    pub author_device_id: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -1885,6 +1897,10 @@ fn encode_trust_snapshot_message(message: &TrustSnapshotMessage) -> WireTrustSna
     WireTrustSnapshotMessage {
         message_id: message.message_id.0.clone(),
         channel_id: message.channel_id.0.clone(),
+        author_device_id: message
+            .author_device_id
+            .as_ref()
+            .map(|device_id| device_id.0.clone()),
     }
 }
 
@@ -1892,6 +1908,7 @@ fn decode_trust_snapshot_message(message: WireTrustSnapshotMessage) -> TrustSnap
     TrustSnapshotMessage {
         message_id: MessageId(message.message_id),
         channel_id: ChannelId(message.channel_id),
+        author_device_id: message.author_device_id.map(DeviceId),
     }
 }
 
@@ -2148,6 +2165,7 @@ mod tests {
                 messages: vec![TrustSnapshotMessage {
                     message_id: MessageId("msg_snapshot".to_owned()),
                     channel_id: ChannelId("chn_private".to_owned()),
+                    author_device_id: Some(DeviceId("dev_member".to_owned())),
                 }],
                 event_channels: vec![TrustSnapshotEventChannel {
                     event_id: EventId("evt_snapshot".to_owned()),
@@ -2286,6 +2304,7 @@ mod tests {
             },
             EventBody::DeviceProfileUpdated {
                 display_name: "Wire Tester".to_owned(),
+                avatar_id: "relay-v1:g07:p04:c09".to_owned(),
             },
             EventBody::PersonDeviceLinked {
                 person_id: PersonId("person_wire".to_owned()),
@@ -2294,6 +2313,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: PersonId("person_wire".to_owned()),
                 display_name: "Wire Person".to_owned(),
+                avatar_id: "relay-v1:g03:p02:c11".to_owned(),
             },
             EventBody::DeviceKeyPackagePublished {
                 key_package_id: DeviceKeyPackageId("dkp_wire".to_owned()),
@@ -2512,6 +2532,42 @@ mod tests {
     }
 
     #[test]
+    fn legacy_profile_wire_preserves_missing_avatar_id() {
+        let bodies = [
+            EventBody::DeviceProfileUpdated {
+                display_name: "Legacy Device".to_owned(),
+                avatar_id: String::new(),
+            },
+            EventBody::PersonProfileUpdated {
+                person_id: PersonId("person_legacy".to_owned()),
+                display_name: "Legacy Person".to_owned(),
+                avatar_id: String::new(),
+            },
+        ];
+
+        for body in bodies {
+            let signed = signed_with_body(body);
+            let envelope = encode_event_envelope(&signed);
+            match envelope
+                .body
+                .as_ref()
+                .and_then(|body| body.kind.as_ref())
+                .expect("typed event body")
+            {
+                wire_event_body::Kind::DeviceProfileUpdated(body) => {
+                    assert!(body.avatar_id.is_empty());
+                }
+                wire_event_body::Kind::PersonProfileUpdated(body) => {
+                    assert!(body.avatar_id.is_empty());
+                }
+                _ => panic!("unexpected event body"),
+            }
+
+            assert_eq!(decode_event_envelope(envelope).unwrap(), signed);
+        }
+    }
+
+    #[test]
     fn legacy_capability_invite_wire_preserves_missing_max_claims() {
         let signed = signed_with_body(EventBody::WorkspaceInviteCapabilityCreated {
             invite_id: "inv_legacy".to_owned(),
@@ -2564,6 +2620,29 @@ mod tests {
         let signed = sample_signed_trust_snapshot();
 
         let decoded = decode_trust_snapshot(&encode_trust_snapshot(&signed)).unwrap();
+
+        assert_eq!(decoded, signed);
+    }
+
+    #[test]
+    fn legacy_trust_snapshot_wire_preserves_missing_message_author() {
+        let mut signed = sample_signed_trust_snapshot();
+        signed.snapshot.messages[0].author_device_id = None;
+
+        let envelope = encode_trust_snapshot_envelope(&signed);
+        assert_eq!(
+            envelope
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .messages
+                .first()
+                .unwrap()
+                .author_device_id,
+            None
+        );
+
+        let decoded = decode_trust_snapshot(&envelope.encode_to_vec()).unwrap();
 
         assert_eq!(decoded, signed);
     }

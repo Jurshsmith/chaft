@@ -192,7 +192,7 @@ use chaft_net_direct::{
     AuthorizedPublishTransport, BlobSyncTransport, MAX_PUBLISH_EVENTS_PER_REQUEST,
 };
 #[cfg(test)]
-use chaft_types::{MESSAGE_MARKDOWN_MAX_BYTES, REACTION_TEXT_MAX_BYTES};
+use chaft_types::{AVATAR_ID_MAX_BYTES, MESSAGE_MARKDOWN_MAX_BYTES, REACTION_TEXT_MAX_BYTES};
 
 const DIRECT_WHOLE_BLOB_SYNC_LIMIT: usize = 4 * 1024 * 1024;
 const DIRECT_BLOB_CHUNK_SIZE: usize = 4 * 1024 * 1024;
@@ -302,6 +302,8 @@ pub enum RuntimeError {
     AttachmentFileTooLarge { actual_bytes: u64, max_bytes: u64 },
     #[error("display name is required")]
     DisplayNameRequired,
+    #[error("avatar ID is invalid")]
+    InvalidAvatarId,
     #[error("device key package protocol is required")]
     DeviceKeyPackageProtocolRequired,
     #[error("device key package bytes are required")]
@@ -4063,6 +4065,7 @@ mod tests {
             runtime.identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Forged Profile".to_owned(),
+                avatar_id: String::new(),
             },
         );
         forged_event.parents = vec![EventId(sent.event_id.clone())];
@@ -4127,6 +4130,7 @@ mod tests {
             runtime.identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Forged Profile".to_owned(),
+                avatar_id: String::new(),
             },
         );
         forged_event.parents = vec![EventId(created.channel_event_id)];
@@ -4780,9 +4784,80 @@ mod tests {
         );
         assert!(matches!(
             &events[2].event.body,
-            EventBody::DeviceProfileUpdated { display_name } if display_name == "Mira"
+            EventBody::DeviceProfileUpdated { display_name, .. } if display_name == "Mira"
         ));
         assert_eq!(events[2].event.parents, vec![events[1].event_id.clone()]);
+    }
+
+    #[test]
+    fn avatar_profile_updates_are_atomic_idempotent_and_preserved_by_legacy_saves() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime.create_workspace("Chaft", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let avatar_id = "relay-v1:g03:p04:c05";
+
+        let updated = runtime
+            .update_device_profile_with_avatar(workspace_id.clone(), "Mira", avatar_id)
+            .unwrap();
+        assert_eq!(updated.avatar_id, avatar_id);
+        let event_count = runtime.workspace_events(&workspace_id).unwrap().len();
+        let repeated = runtime
+            .update_device_profile_with_avatar(workspace_id.clone(), "Mira", avatar_id)
+            .unwrap();
+        assert_eq!(repeated.event_id, updated.event_id);
+        assert_eq!(
+            runtime.workspace_events(&workspace_id).unwrap().len(),
+            event_count
+        );
+
+        let renamed = runtime
+            .update_device_profile(workspace_id.clone(), "Mira Chen")
+            .unwrap();
+        assert_eq!(renamed.avatar_id, avatar_id);
+        runtime
+            .send_message(
+                workspace_id.clone(),
+                ChannelId(created.channel_id),
+                "avatar projection",
+            )
+            .unwrap();
+
+        let snapshot = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        assert_eq!(snapshot.profiles[0].avatar_id, avatar_id);
+        assert_eq!(snapshot.members[0].avatar_id, avatar_id);
+        assert_eq!(snapshot.timeline[0].author_avatar_id, avatar_id);
+        assert!(snapshot.timeline[0].can_edit);
+        assert!(snapshot.timeline[0].can_delete);
+        let search = runtime
+            .search_workspace_messages(workspace_id, "projection")
+            .unwrap();
+        assert_eq!(search.hits[0].author_avatar_id, avatar_id);
+    }
+
+    #[test]
+    fn person_avatar_is_the_effective_member_avatar_and_survives_name_only_updates() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime.create_workspace("Chaft", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let avatar_id = "relay-v1:g06:p07:c08";
+
+        let updated = runtime
+            .update_local_person_profile_with_avatar(workspace_id.clone(), "Mira", avatar_id)
+            .unwrap();
+        assert_eq!(updated.avatar_id, avatar_id);
+        let renamed = runtime
+            .update_local_person_profile(workspace_id.clone(), "Mira Chen")
+            .unwrap();
+        assert_eq!(renamed.avatar_id, avatar_id);
+
+        let snapshot = runtime.decrypted_workspace_snapshot(workspace_id).unwrap();
+        assert_eq!(snapshot.person_profiles[0].avatar_id, avatar_id);
+        assert_eq!(snapshot.person_device_links[0].person_avatar_id, avatar_id);
+        assert_eq!(snapshot.members[0].avatar_id, avatar_id);
     }
 
     #[test]
@@ -4842,6 +4917,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: profile_person_id,
                 display_name,
+                ..
             } if profile_person_id == &person_id && display_name == "Mira Chen"
         ));
         assert_eq!(snapshot.person_profile_count, 1);
@@ -4888,6 +4964,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: profile_person_id,
                 display_name,
+                ..
             } if profile_person_id == &person_id && display_name == "Mira C."
         ));
     }
@@ -6604,6 +6681,28 @@ mod tests {
                 actual_bytes,
                 max_bytes: DEVICE_DISPLAY_NAME_MAX_BYTES,
             }) if actual_bytes == DEVICE_DISPLAY_NAME_MAX_BYTES + 1
+        ));
+
+        let oversized_avatar_id = "a".repeat(AVATAR_ID_MAX_BYTES + 1);
+        assert!(matches!(
+            runtime.update_device_profile_with_avatar(
+                workspace_id.clone(),
+                "Mira",
+                oversized_avatar_id,
+            ),
+            Err(RuntimeError::MetadataFieldTooLarge {
+                field: "avatar ID",
+                actual_bytes,
+                max_bytes: AVATAR_ID_MAX_BYTES,
+            }) if actual_bytes == AVATAR_ID_MAX_BYTES + 1
+        ));
+        assert!(matches!(
+            runtime.update_device_profile_with_avatar(
+                workspace_id.clone(),
+                "Mira",
+                "Relay-V1:g00:p00:c00",
+            ),
+            Err(RuntimeError::InvalidAvatarId)
         ));
 
         let oversized_protocol = "p".repeat(DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES + 1);

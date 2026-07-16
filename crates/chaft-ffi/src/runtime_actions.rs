@@ -188,6 +188,24 @@ pub(crate) fn runtime_update_device_profile_result(
     })
 }
 
+pub(crate) fn runtime_update_device_profile_with_avatar_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    avatar_id: *const c_char,
+) -> FfiResult<UpdatedDeviceProfile> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let avatar_id = read_c_string(avatar_id, "avatar_id")?;
+        runtime
+            .update_device_profile_with_avatar(WorkspaceId(workspace_id), display_name, avatar_id)
+            .map_err(|error| ffi_error("runtime_update_device_profile_failed", error.to_string()))
+    })
+}
+
 pub(crate) fn runtime_update_local_person_profile_result(
     data_dir: *const c_char,
     identity_file: *const c_char,
@@ -200,6 +218,33 @@ pub(crate) fn runtime_update_local_person_profile_result(
         let display_name = read_c_string(display_name, "display_name")?;
         runtime
             .update_local_person_profile(WorkspaceId(workspace_id), display_name)
+            .map_err(|error| {
+                ffi_error(
+                    "runtime_update_local_person_profile_failed",
+                    error.to_string(),
+                )
+            })
+    })
+}
+
+pub(crate) fn runtime_update_local_person_profile_with_avatar_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    avatar_id: *const c_char,
+) -> FfiResult<UpdatedPersonProfile> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        let display_name = read_c_string(display_name, "display_name")?;
+        let avatar_id = read_c_string(avatar_id, "avatar_id")?;
+        runtime
+            .update_local_person_profile_with_avatar(
+                WorkspaceId(workspace_id),
+                display_name,
+                avatar_id,
+            )
             .map_err(|error| {
                 ffi_error(
                     "runtime_update_local_person_profile_failed",

@@ -136,6 +136,22 @@ impl LocalRuntime {
                     .profiles
                     .get(author_device_id)
                     .map(|profile| profile.display_name.clone());
+                let author_avatar_id = state
+                    .person_device_links
+                    .get(author_device_id)
+                    .and_then(|link| state.person_profiles.get(&link.person_id))
+                    .map(|profile| profile.avatar_id.trim())
+                    .filter(|avatar_id| !avatar_id.is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        state
+                            .profiles
+                            .get(author_device_id)
+                            .map(|profile| profile.avatar_id.trim())
+                            .filter(|avatar_id| !avatar_id.is_empty())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_default();
                 Some(WorkspaceSearchHit {
                     workspace_id: workspace_id.0.clone(),
                     event_id: hit.event_id.0,
@@ -145,6 +161,7 @@ impl LocalRuntime {
                     channel_is_private: channel.is_private,
                     author_device_id: author_device_id.0.clone(),
                     author_display_name,
+                    author_avatar_id,
                     physical_ms: *physical_ms,
                     body: hit.markdown,
                     body_char_count: hit.markdown_char_count,

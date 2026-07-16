@@ -43,6 +43,8 @@ pub struct WorkspaceSearchHit {
     pub channel_is_private: bool,
     pub author_device_id: String,
     pub author_display_name: Option<String>,
+    #[serde(default)]
+    pub author_avatar_id: String,
     pub physical_ms: i64,
     pub body: String,
     #[serde(default)]

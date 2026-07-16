@@ -1,17 +1,18 @@
 use chaft_core::{WorkspaceState, authorize_event_with_history};
 use chaft_crypto::seal_message_markdown;
 use chaft_types::{
-    CHANNEL_NAME_MAX_BYTES, CHANNEL_TOPIC_MAX_BYTES, ChannelId, DEVICE_DISPLAY_NAME_MAX_BYTES,
-    DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, DeviceId, DeviceKeyPackageId, EventBody, MessageId,
-    PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_MAX_BYTES, PEER_ENDPOINT_TRANSPORT_MAX_BYTES,
-    PERSON_ID_MAX_BYTES, PersonId, REACTION_TEXT_MAX_BYTES, REPLICA_RETENTION_HINT_MAX_BYTES,
-    ReplicaStorageClass, SignableEvent, WORKSPACE_ACCESS_POLICY_MAX_BYTES,
-    WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES, WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES,
-    WORKSPACE_INVITE_ID_MAX_BYTES, WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES,
-    WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES, WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES,
-    WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy, WorkspaceId, WorkspaceInviteResolution,
-    WorkspaceJoinRequestResolution, WorkspaceRole, peer_endpoint_hint_is_supported,
-    peer_endpoint_hint_transport_is_consistent,
+    AVATAR_ID_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, CHANNEL_TOPIC_MAX_BYTES, ChannelId,
+    DEVICE_DISPLAY_NAME_MAX_BYTES, DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, DeviceId,
+    DeviceKeyPackageId, EventBody, MessageId, PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_MAX_BYTES,
+    PEER_ENDPOINT_TRANSPORT_MAX_BYTES, PERSON_ID_MAX_BYTES, PersonId, REACTION_TEXT_MAX_BYTES,
+    REPLICA_RETENTION_HINT_MAX_BYTES, ReplicaStorageClass, SignableEvent,
+    WORKSPACE_ACCESS_POLICY_MAX_BYTES, WORKSPACE_INVITE_APPROVAL_POLICY_MAX_BYTES,
+    WORKSPACE_INVITE_EXPIRES_AT_MAX_BYTES, WORKSPACE_INVITE_ID_MAX_BYTES,
+    WORKSPACE_INVITE_SYNC_EXPECTATION_MAX_BYTES, WORKSPACE_JOIN_REQUEST_ID_MAX_BYTES,
+    WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
+    WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
+    peer_endpoint_hint_is_supported, peer_endpoint_hint_transport_is_consistent,
+    validate_avatar_id_str,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,13 @@ use crate::{
 };
 
 const PERSONAL_CHANNEL_NAME: &str = "dm-you";
+
+fn normalize_avatar_id(avatar_id: &str) -> Result<String, RuntimeError> {
+    let avatar_id = avatar_id.trim().to_owned();
+    validate_metadata_field_size("avatar ID", &avatar_id, AVATAR_ID_MAX_BYTES)?;
+    validate_avatar_id_str(&avatar_id).map_err(|_| RuntimeError::InvalidAvatarId)?;
+    Ok(avatar_id)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +59,7 @@ pub struct UpdatedDeviceProfile {
     pub workspace_id: String,
     pub device_id: String,
     pub display_name: String,
+    pub avatar_id: String,
     pub event_id: String,
 }
 
@@ -61,6 +70,7 @@ pub struct UpdatedPersonProfile {
     pub person_id: String,
     pub device_id: String,
     pub display_name: String,
+    pub avatar_id: String,
     pub link_event_id: Option<String>,
     pub profile_event_id: String,
 }
@@ -697,19 +707,73 @@ impl LocalRuntime {
         workspace_id: WorkspaceId,
         display_name: impl AsRef<str>,
     ) -> Result<UpdatedDeviceProfile, RuntimeError> {
-        let display_name = display_name.as_ref().trim().to_owned();
+        self.update_device_profile_fields(workspace_id, display_name.as_ref(), None)
+    }
+
+    pub fn update_device_profile_with_avatar(
+        &self,
+        workspace_id: WorkspaceId,
+        display_name: impl AsRef<str>,
+        avatar_id: impl AsRef<str>,
+    ) -> Result<UpdatedDeviceProfile, RuntimeError> {
+        self.update_device_profile_fields(
+            workspace_id,
+            display_name.as_ref(),
+            Some(avatar_id.as_ref()),
+        )
+    }
+
+    fn update_device_profile_fields(
+        &self,
+        workspace_id: WorkspaceId,
+        display_name: &str,
+        avatar_id: Option<&str>,
+    ) -> Result<UpdatedDeviceProfile, RuntimeError> {
+        let display_name = display_name.trim().to_owned();
         if display_name.is_empty() {
             return Err(RuntimeError::DisplayNameRequired);
         }
         validate_metadata_field_size("display name", &display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
 
         let context = self.workspace_write_context(&workspace_id)?;
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state.apply_batch(&context.events)?;
+        let device_id = self.identity.device_id();
+        let existing = state.profiles.get(device_id);
+        let current_avatar_id = existing
+            .map(|profile| profile.avatar_id.as_str())
+            .filter(|avatar_id| !avatar_id.trim().is_empty())
+            .or_else(|| {
+                state
+                    .person_device_links
+                    .get(device_id)
+                    .and_then(|link| state.person_profiles.get(&link.person_id))
+                    .map(|profile| profile.avatar_id.as_str())
+            })
+            .unwrap_or_default();
+        let requested_avatar_id = avatar_id
+            .filter(|avatar_id| !avatar_id.trim().is_empty())
+            .unwrap_or(current_avatar_id);
+        let avatar_id = normalize_avatar_id(requested_avatar_id)?;
+        if let Some(existing) = existing
+            && existing.display_name == display_name
+            && existing.avatar_id == avatar_id
+        {
+            return Ok(UpdatedDeviceProfile {
+                workspace_id: workspace_id.0,
+                device_id: device_id.0.clone(),
+                display_name,
+                avatar_id,
+                event_id: existing.updated_event_id.0.clone(),
+            });
+        }
         let mut event = SignableEvent::new(
             workspace_id.clone(),
             None,
-            self.identity.device_id().clone(),
+            device_id.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: display_name.clone(),
+                avatar_id: avatar_id.clone(),
             },
         );
         event.parents = context.head_event_ids.clone();
@@ -719,6 +783,7 @@ impl LocalRuntime {
             workspace_id: workspace_id.0,
             device_id: self.identity.device_id().0.clone(),
             display_name,
+            avatar_id,
             event_id: event.event_id.0,
         })
     }
@@ -728,8 +793,30 @@ impl LocalRuntime {
         workspace_id: WorkspaceId,
         display_name: impl AsRef<str>,
     ) -> Result<UpdatedPersonProfile, RuntimeError> {
+        self.update_local_person_profile_fields(workspace_id, display_name.as_ref(), None)
+    }
+
+    pub fn update_local_person_profile_with_avatar(
+        &self,
+        workspace_id: WorkspaceId,
+        display_name: impl AsRef<str>,
+        avatar_id: impl AsRef<str>,
+    ) -> Result<UpdatedPersonProfile, RuntimeError> {
+        self.update_local_person_profile_fields(
+            workspace_id,
+            display_name.as_ref(),
+            Some(avatar_id.as_ref()),
+        )
+    }
+
+    fn update_local_person_profile_fields(
+        &self,
+        workspace_id: WorkspaceId,
+        display_name: &str,
+        avatar_id: Option<&str>,
+    ) -> Result<UpdatedPersonProfile, RuntimeError> {
         validate_workspace_id_reference(&workspace_id)?;
-        let display_name = display_name.as_ref().trim().to_owned();
+        let display_name = display_name.trim().to_owned();
         if display_name.is_empty() {
             return Err(RuntimeError::DisplayNameRequired);
         }
@@ -745,7 +832,7 @@ impl LocalRuntime {
             .map(|link| link.person_id.clone())
             .unwrap_or_default();
 
-        self.update_person_profile(workspace_id, person_id, display_name)
+        self.update_person_profile_fields(workspace_id, person_id, &display_name, avatar_id)
     }
 
     pub fn update_person_profile(
@@ -754,9 +841,34 @@ impl LocalRuntime {
         person_id: PersonId,
         display_name: impl AsRef<str>,
     ) -> Result<UpdatedPersonProfile, RuntimeError> {
+        self.update_person_profile_fields(workspace_id, person_id, display_name.as_ref(), None)
+    }
+
+    pub fn update_person_profile_with_avatar(
+        &self,
+        workspace_id: WorkspaceId,
+        person_id: PersonId,
+        display_name: impl AsRef<str>,
+        avatar_id: impl AsRef<str>,
+    ) -> Result<UpdatedPersonProfile, RuntimeError> {
+        self.update_person_profile_fields(
+            workspace_id,
+            person_id,
+            display_name.as_ref(),
+            Some(avatar_id.as_ref()),
+        )
+    }
+
+    fn update_person_profile_fields(
+        &self,
+        workspace_id: WorkspaceId,
+        person_id: PersonId,
+        display_name: &str,
+        avatar_id: Option<&str>,
+    ) -> Result<UpdatedPersonProfile, RuntimeError> {
         validate_workspace_id_reference(&workspace_id)?;
         validate_metadata_field_size("person ID", &person_id.0, PERSON_ID_MAX_BYTES)?;
-        let display_name = display_name.as_ref().trim().to_owned();
+        let display_name = display_name.trim().to_owned();
         if display_name.is_empty() {
             return Err(RuntimeError::DisplayNameRequired);
         }
@@ -767,6 +879,21 @@ impl LocalRuntime {
         state.apply_batch(&context.events)?;
 
         let device_id = self.identity.device_id().clone();
+        let existing = state.person_profiles.get(&person_id);
+        let current_avatar_id = existing
+            .map(|profile| profile.avatar_id.as_str())
+            .filter(|avatar_id| !avatar_id.trim().is_empty())
+            .or_else(|| {
+                state
+                    .profiles
+                    .get(&device_id)
+                    .map(|profile| profile.avatar_id.as_str())
+            })
+            .unwrap_or_default();
+        let requested_avatar_id = avatar_id
+            .filter(|avatar_id| !avatar_id.trim().is_empty())
+            .unwrap_or(current_avatar_id);
+        let avatar_id = normalize_avatar_id(requested_avatar_id)?;
         let already_linked = state
             .person_device_links
             .get(&device_id)
@@ -793,6 +920,21 @@ impl LocalRuntime {
             Some(link_event_id)
         };
 
+        if let Some(existing) = existing
+            && existing.display_name == display_name
+            && existing.avatar_id == avatar_id
+        {
+            return Ok(UpdatedPersonProfile {
+                workspace_id: workspace_id.0,
+                person_id: person_id.0,
+                device_id: device_id.0,
+                display_name,
+                avatar_id,
+                link_event_id,
+                profile_event_id: existing.updated_event_id.0.clone(),
+            });
+        }
+
         let mut profile = SignableEvent::new(
             workspace_id.clone(),
             None,
@@ -800,6 +942,7 @@ impl LocalRuntime {
             EventBody::PersonProfileUpdated {
                 person_id: person_id.clone(),
                 display_name: display_name.clone(),
+                avatar_id: avatar_id.clone(),
             },
         );
         profile.parents = parents;
@@ -810,6 +953,7 @@ impl LocalRuntime {
             person_id: person_id.0,
             device_id: device_id.0,
             display_name,
+            avatar_id,
             link_event_id,
             profile_event_id: profile.event_id.0,
         })

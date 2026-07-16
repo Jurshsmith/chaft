@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chaft_types::{
     ATTACHMENT_BLOB_HASH_MAX_BYTES, ATTACHMENT_CIPHERTEXT_MAX_BYTES,
     ATTACHMENT_DISPLAY_NAME_MAX_BYTES, ATTACHMENT_ID_MAX_BYTES, ATTACHMENT_KEY_ID_MAX_BYTES,
-    ATTACHMENT_MEDIA_TYPE_MAX_BYTES, ATTACHMENT_PLAINTEXT_MAX_BYTES, AttachmentRef,
-    CHANNEL_ID_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, CHANNEL_TOPIC_MAX_BYTES,
+    ATTACHMENT_MEDIA_TYPE_MAX_BYTES, ATTACHMENT_PLAINTEXT_MAX_BYTES, AVATAR_ID_MAX_BYTES,
+    AttachmentRef, CHANNEL_ID_MAX_BYTES, CHANNEL_NAME_MAX_BYTES, CHANNEL_TOPIC_MAX_BYTES,
     CONTENT_KEY_ALGORITHM_MAX_BYTES, CONTENT_KEY_ID_MAX_BYTES, ChannelId, ContentKeyScope,
     DEVICE_DISPLAY_NAME_MAX_BYTES, DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES,
     DEVICE_KEY_PACKAGE_PROTOCOL_MAX_BYTES, DeviceId, DeviceKeyPackageId,
@@ -26,7 +26,7 @@ use chaft_types::{
     WORKSPACE_JOIN_REQUEST_NOTE_MAX_BYTES, WORKSPACE_NAME_MAX_BYTES, WorkspaceAccessPolicy,
     WorkspaceId, WorkspaceInviteResolution, WorkspaceJoinRequestResolution, WorkspaceRole,
     effective_workspace_invite_max_claims, peer_endpoint_hint_is_supported,
-    peer_endpoint_hint_transport_is_consistent,
+    peer_endpoint_hint_transport_is_consistent, validate_avatar_id_str,
 };
 use thiserror::Error;
 
@@ -69,6 +69,16 @@ pub enum AuthorizationError {
     },
     #[error("message {message_id:?} is not authorized by workspace history")]
     MessageNotFound { message_id: MessageId },
+    #[error(
+        "device {device_id:?} cannot modify message {message_id:?} authored by {author_device_id:?}"
+    )]
+    MessageMutationDenied {
+        message_id: MessageId,
+        device_id: DeviceId,
+        author_device_id: DeviceId,
+    },
+    #[error("message {message_id:?} has no trusted author metadata")]
+    MessageAuthorUnknown { message_id: MessageId },
     #[error("event channel {actual:?} does not match expected channel {expected:?}")]
     ChannelMismatch {
         expected: ChannelId,
@@ -131,6 +141,8 @@ pub enum AuthorizationError {
     },
     #[error("event {label} is required")]
     EventPayloadRequired { label: &'static str },
+    #[error("event avatar ID is invalid")]
+    InvalidAvatarId,
     #[error("event peer endpoint uses an unsupported P2P route")]
     UnsupportedPeerEndpoint,
     #[error("event peer endpoint transport does not match its route")]
@@ -242,6 +254,7 @@ impl MessageView {
 pub struct DeviceProfileView {
     pub device_id: DeviceId,
     pub display_name: String,
+    pub avatar_id: String,
     pub updated_event_id: EventId,
 }
 
@@ -249,6 +262,7 @@ pub struct DeviceProfileView {
 pub struct PersonProfileView {
     pub person_id: PersonId,
     pub display_name: String,
+    pub avatar_id: String,
     pub updated_event_id: EventId,
     pub updated_by_device_id: DeviceId,
 }
@@ -870,13 +884,25 @@ impl WorkspaceState {
                     }
                 }
             }
-            EventBody::DeviceProfileUpdated { display_name } => {
+            EventBody::DeviceProfileUpdated {
+                display_name,
+                avatar_id,
+            } => {
                 let device_id = signed.event.author_device_id.clone();
+                let avatar_id = if avatar_id.trim().is_empty() {
+                    self.profiles
+                        .get(&device_id)
+                        .map(|profile| profile.avatar_id.clone())
+                        .unwrap_or_default()
+                } else {
+                    avatar_id.clone()
+                };
                 self.profiles.insert(
                     device_id.clone(),
                     DeviceProfileView {
                         device_id,
                         display_name: display_name.clone(),
+                        avatar_id,
                         updated_event_id: signed.event_id.clone(),
                     },
                 );
@@ -897,12 +923,22 @@ impl WorkspaceState {
             EventBody::PersonProfileUpdated {
                 person_id,
                 display_name,
+                avatar_id,
             } => {
+                let avatar_id = if avatar_id.trim().is_empty() {
+                    self.person_profiles
+                        .get(person_id)
+                        .map(|profile| profile.avatar_id.clone())
+                        .unwrap_or_default()
+                } else {
+                    avatar_id.clone()
+                };
                 self.person_profiles.insert(
                     person_id.clone(),
                     PersonProfileView {
                         person_id: person_id.clone(),
                         display_name: display_name.clone(),
+                        avatar_id,
                         updated_event_id: signed.event_id.clone(),
                         updated_by_device_id: signed.event.author_device_id.clone(),
                     },
@@ -1158,7 +1194,7 @@ pub struct WorkspaceAccessIndex {
     workspace_id: WorkspaceId,
     roles: HashMap<DeviceId, WorkspaceRole>,
     channels: HashMap<ChannelId, ChannelAccess>,
-    messages: HashMap<MessageId, ChannelId>,
+    messages: HashMap<MessageId, MessageAccess>,
     event_channels: HashMap<EventId, ChannelId>,
     invites: HashMap<String, WorkspaceInviteAccess>,
     join_requests: HashSet<String>,
@@ -1172,6 +1208,12 @@ struct ChannelAccess {
     is_private: bool,
     creator_device_id: DeviceId,
     members: HashSet<DeviceId>,
+}
+
+#[derive(Debug, Clone)]
+struct MessageAccess {
+    channel_id: ChannelId,
+    author_device_id: Option<DeviceId>,
 }
 
 #[derive(Debug, Clone)]
@@ -1260,9 +1302,13 @@ impl WorkspaceAccessIndex {
             {
                 return Err(AuthorizationError::InvalidTrustSnapshot);
             }
-            index
-                .messages
-                .insert(message.message_id.clone(), message.channel_id.clone());
+            index.messages.insert(
+                message.message_id.clone(),
+                MessageAccess {
+                    channel_id: message.channel_id.clone(),
+                    author_device_id: message.author_device_id.clone(),
+                },
+            );
         }
         for event_channel in &snapshot.event_channels {
             if !index.channels.contains_key(&event_channel.channel_id)
@@ -1616,10 +1662,10 @@ impl WorkspaceAccessIndex {
                 self.require_rooted_member(&event.event.author_device_id)?;
                 let channel_id = require_event_channel(event)?;
                 self.require_channel_access(channel_id, &event.event.author_device_id)?;
-                let reply_channel_id = self.require_message(reply_to_message_id)?;
-                if channel_id != reply_channel_id {
+                let reply = self.require_message(reply_to_message_id)?;
+                if channel_id != &reply.channel_id {
                     return Err(AuthorizationError::ChannelMismatch {
-                        expected: reply_channel_id.clone(),
+                        expected: reply.channel_id.clone(),
                         actual: channel_id.clone(),
                     });
                 }
@@ -1627,19 +1673,47 @@ impl WorkspaceAccessIndex {
             }
             EventBody::MessageEdited { message_id, .. }
             | EventBody::MessageEditedEncrypted { message_id, .. }
-            | EventBody::MessageDeleted { message_id }
-            | EventBody::ReactionAdded { message_id, .. }
-            | EventBody::ReactionRemoved { message_id, .. } => {
+            | EventBody::MessageDeleted { message_id } => {
                 self.require_rooted_member(&event.event.author_device_id)?;
-                let expected_channel_id = self.require_message(message_id)?;
+                let message = self.require_message(message_id)?;
                 let actual_channel_id = require_event_channel(event)?;
-                if actual_channel_id != expected_channel_id {
+                if actual_channel_id != &message.channel_id {
                     return Err(AuthorizationError::ChannelMismatch {
-                        expected: expected_channel_id.clone(),
+                        expected: message.channel_id.clone(),
                         actual: actual_channel_id.clone(),
                     });
                 }
-                self.require_channel_access(expected_channel_id, &event.event.author_device_id)?;
+                self.require_channel_access(&message.channel_id, &event.event.author_device_id)?;
+                match &message.author_device_id {
+                    Some(author_device_id) if &event.event.author_device_id == author_device_id => {
+                    }
+                    Some(author_device_id) => {
+                        return Err(AuthorizationError::MessageMutationDenied {
+                            message_id: message_id.clone(),
+                            device_id: event.event.author_device_id.clone(),
+                            author_device_id: author_device_id.clone(),
+                        });
+                    }
+                    None => {
+                        return Err(AuthorizationError::MessageAuthorUnknown {
+                            message_id: message_id.clone(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            EventBody::ReactionAdded { message_id, .. }
+            | EventBody::ReactionRemoved { message_id, .. } => {
+                self.require_rooted_member(&event.event.author_device_id)?;
+                let message = self.require_message(message_id)?;
+                let actual_channel_id = require_event_channel(event)?;
+                if actual_channel_id != &message.channel_id {
+                    return Err(AuthorizationError::ChannelMismatch {
+                        expected: message.channel_id.clone(),
+                        actual: actual_channel_id.clone(),
+                    });
+                }
+                self.require_channel_access(&message.channel_id, &event.event.author_device_id)?;
                 Ok(())
             }
             EventBody::ReadMarkerUpdated {
@@ -1845,7 +1919,13 @@ impl WorkspaceAccessIndex {
             | EventBody::MessageReplyCreated { message_id, .. }
             | EventBody::MessageReplyCreatedEncrypted { message_id, .. } => {
                 if let Some(channel_id) = event.event.channel_id.as_ref() {
-                    self.messages.insert(message_id.clone(), channel_id.clone());
+                    self.messages.insert(
+                        message_id.clone(),
+                        MessageAccess {
+                            channel_id: channel_id.clone(),
+                            author_device_id: Some(event.event.author_device_id.clone()),
+                        },
+                    );
                     self.event_channels
                         .insert(event.event_id.clone(), channel_id.clone());
                 }
@@ -1855,9 +1935,9 @@ impl WorkspaceAccessIndex {
             | EventBody::MessageDeleted { message_id }
             | EventBody::ReactionAdded { message_id, .. }
             | EventBody::ReactionRemoved { message_id, .. } => {
-                if let Some(channel_id) = self.messages.get(message_id) {
+                if let Some(message) = self.messages.get(message_id) {
                     self.event_channels
-                        .insert(event.event_id.clone(), channel_id.clone());
+                        .insert(event.event_id.clone(), message.channel_id.clone());
                 }
             }
             EventBody::ReadMarkerUpdated { channel_id, .. } => {
@@ -1929,7 +2009,10 @@ impl WorkspaceAccessIndex {
         }
     }
 
-    fn require_message(&self, message_id: &MessageId) -> Result<&ChannelId, AuthorizationError> {
+    fn require_message(
+        &self,
+        message_id: &MessageId,
+    ) -> Result<&MessageAccess, AuthorizationError> {
         self.messages
             .get(message_id)
             .ok_or_else(|| AuthorizationError::MessageNotFound {
@@ -2043,6 +2126,8 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::WorkspaceRootRoleCannotBeChanged { .. }
                     | AuthorizationError::PrivateChannelAccessDenied { .. }
                     | AuthorizationError::ChannelMemberGrantDenied { .. }
+                    | AuthorizationError::MessageMutationDenied { .. }
+                    | AuthorizationError::MessageAuthorUnknown { .. }
                     | AuthorizationError::PersonProfileUpdateDenied { .. }
                     | AuthorizationError::PersonDeviceAlreadyLinked { .. }
                     | AuthorizationError::PersonAlreadyLinked { .. }
@@ -2061,6 +2146,7 @@ pub fn authorize_event_with_history(
                 Err(
                     error @ (AuthorizationError::EventPayloadTooLarge { .. }
                     | AuthorizationError::EventPayloadRequired { .. }
+                    | AuthorizationError::InvalidAvatarId
                     | AuthorizationError::EventItemCountTooLarge { .. }
                     | AuthorizationError::UnsupportedPeerEndpoint
                     | AuthorizationError::PeerEndpointTransportMismatch
@@ -2105,7 +2191,7 @@ pub fn trust_snapshot_from_events(
 
     let mut roles = HashMap::<DeviceId, WorkspaceRole>::new();
     let mut channels = HashMap::<ChannelId, TrustSnapshotChannel>::new();
-    let mut messages = HashMap::<MessageId, ChannelId>::new();
+    let mut messages = HashMap::<MessageId, (ChannelId, DeviceId)>::new();
     let mut event_channels = HashMap::<EventId, ChannelId>::new();
     let mut person_device_links = HashMap::<DeviceId, PersonId>::new();
 
@@ -2239,7 +2325,10 @@ pub fn trust_snapshot_from_events(
             | EventBody::MessageReplyCreated { message_id, .. }
             | EventBody::MessageReplyCreatedEncrypted { message_id, .. } => {
                 if let Some(channel_id) = event.event.channel_id.as_ref() {
-                    messages.insert(message_id.clone(), channel_id.clone());
+                    messages.insert(
+                        message_id.clone(),
+                        (channel_id.clone(), event.event.author_device_id.clone()),
+                    );
                     event_channels.insert(event.event_id.clone(), channel_id.clone());
                 }
             }
@@ -2248,7 +2337,7 @@ pub fn trust_snapshot_from_events(
             | EventBody::MessageDeleted { message_id }
             | EventBody::ReactionAdded { message_id, .. }
             | EventBody::ReactionRemoved { message_id, .. } => {
-                if let Some(channel_id) = messages.get(message_id) {
+                if let Some((channel_id, _)) = messages.get(message_id) {
                     event_channels.insert(event.event_id.clone(), channel_id.clone());
                 }
             }
@@ -2277,10 +2366,13 @@ pub fn trust_snapshot_from_events(
 
     let mut messages = messages
         .into_iter()
-        .map(|(message_id, channel_id)| TrustSnapshotMessage {
-            message_id,
-            channel_id,
-        })
+        .map(
+            |(message_id, (channel_id, author_device_id))| TrustSnapshotMessage {
+                message_id,
+                channel_id,
+                author_device_id: Some(author_device_id),
+            },
+        )
         .collect::<Vec<_>>();
     messages.sort_by(|left, right| left.message_id.0.cmp(&right.message_id.0));
 
@@ -2362,6 +2454,9 @@ fn trust_snapshot_for_events(
     for message in &snapshot.messages {
         if needed_messages.contains(&message.message_id) {
             needed_channels.insert(message.channel_id.clone());
+            if let Some(author_device_id) = &message.author_device_id {
+                needed_devices.insert(author_device_id.clone());
+            }
         }
     }
     for event_channel in &snapshot.event_channels {
@@ -2741,6 +2836,9 @@ fn validate_trust_snapshot_ids(snapshot: &TrustSnapshot) -> Result<(), Authoriza
     for message in &snapshot.messages {
         validate_message_id_size("trust snapshot message ID", &message.message_id)?;
         validate_channel_id_size("trust snapshot message channel ID", &message.channel_id)?;
+        if let Some(author_device_id) = &message.author_device_id {
+            validate_device_id_size("trust snapshot message author device ID", author_device_id)?;
+        }
     }
     for event_channel in &snapshot.event_channels {
         validate_event_id_size("trust snapshot event ID", &event_channel.event_id)?;
@@ -2849,12 +2947,23 @@ fn validate_event_body_payload_sizes(body: &EventBody) -> Result<(), Authorizati
             }
             Ok(())
         }
-        EventBody::DeviceProfileUpdated { display_name } => {
-            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)
+        EventBody::DeviceProfileUpdated {
+            display_name,
+            avatar_id,
+        } => {
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            validate_event_text_size("avatar ID", avatar_id, AVATAR_ID_MAX_BYTES)?;
+            validate_avatar_id_str(avatar_id).map_err(|_| AuthorizationError::InvalidAvatarId)
         }
         EventBody::PersonDeviceLinked { .. } => Ok(()),
-        EventBody::PersonProfileUpdated { display_name, .. } => {
-            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)
+        EventBody::PersonProfileUpdated {
+            display_name,
+            avatar_id,
+            ..
+        } => {
+            validate_event_text_size("display name", display_name, DEVICE_DISPLAY_NAME_MAX_BYTES)?;
+            validate_event_text_size("avatar ID", avatar_id, AVATAR_ID_MAX_BYTES)?;
+            validate_avatar_id_str(avatar_id).map_err(|_| AuthorizationError::InvalidAvatarId)
         }
         EventBody::WorkspaceInviteRecorded {
             invite_id,
@@ -3650,11 +3759,12 @@ mod tests {
                 channel_id: channel_id.clone(),
                 is_private: false,
                 creator_device_id: owner,
-                member_device_ids: vec![member],
+                member_device_ids: vec![member.clone()],
             }],
             messages: vec![TrustSnapshotMessage {
                 message_id: MessageId("msg_one".to_owned()),
                 channel_id: channel_id.clone(),
+                author_device_id: Some(member.clone()),
             }],
             event_channels: vec![TrustSnapshotEventChannel {
                 event_id: EventId("evt_channel".to_owned()),
@@ -3983,6 +4093,173 @@ mod tests {
                 .reactions_for_device(&member)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn only_the_original_author_can_edit_or_delete_a_message() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let message_id = MessageId::new();
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let channel = public_channel(&workspace_id, &owner, &channel_id);
+        let message = plaintext_message(&workspace_id, &channel_id, &owner, &message_id);
+        let history = [
+            root.clone(),
+            invite.clone(),
+            channel.clone(),
+            message.clone(),
+        ];
+
+        let member_edit = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageEdited {
+                message_id: message_id.clone(),
+                markdown: "not mine".to_owned(),
+            },
+        ));
+        let member_encrypted_edit = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageEditedEncrypted {
+                message_id: message_id.clone(),
+                sealed_markdown: SealedPayload {
+                    mode: chaft_types::PayloadEncryption::Aes256GcmSiv,
+                    key_id: "key".to_owned(),
+                    nonce: vec![1; 12],
+                    aad: Vec::new(),
+                    bytes: vec![2; 16],
+                },
+            },
+        ));
+        let member_delete = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageDeleted {
+                message_id: message_id.clone(),
+            },
+        ));
+
+        for mutation in [&member_edit, &member_encrypted_edit, &member_delete] {
+            assert_eq!(
+                authorize_event_with_history(&history, mutation),
+                Err(AuthorizationError::MessageMutationDenied {
+                    message_id: message_id.clone(),
+                    device_id: member.clone(),
+                    author_device_id: owner.clone(),
+                })
+            );
+        }
+
+        let owner_edit = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            owner.clone(),
+            EventBody::MessageEdited {
+                message_id: message_id.clone(),
+                markdown: "updated".to_owned(),
+            },
+        ));
+        let owner_delete = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            owner,
+            EventBody::MessageDeleted {
+                message_id: message_id.clone(),
+            },
+        ));
+        let member_reaction = signed(SignableEvent::new(
+            workspace_id,
+            Some(channel_id),
+            member,
+            EventBody::ReactionAdded {
+                message_id,
+                reaction: "+1".to_owned(),
+            },
+        ));
+        assert!(authorize_event_with_history(&history, &owner_edit).is_ok());
+        assert!(authorize_event_with_history(&history, &owner_delete).is_ok());
+        assert!(authorize_event_with_history(&history, &member_reaction).is_ok());
+    }
+
+    #[test]
+    fn empty_avatar_profile_updates_preserve_the_existing_selection() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let person_id = PersonId::new();
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        let events = [
+            workspace_root(&workspace_id, &owner),
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "Mira".to_owned(),
+                    avatar_id: "relay-v1:g01:p02:c03".to_owned(),
+                },
+            )),
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::DeviceProfileUpdated {
+                    display_name: "Mira Chen".to_owned(),
+                    avatar_id: String::new(),
+                },
+            )),
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::PersonDeviceLinked {
+                    person_id: person_id.clone(),
+                    device_id: owner.clone(),
+                },
+            )),
+            signed(SignableEvent::new(
+                workspace_id.clone(),
+                None,
+                owner.clone(),
+                EventBody::PersonProfileUpdated {
+                    person_id: person_id.clone(),
+                    display_name: "Mira".to_owned(),
+                    avatar_id: "relay-v1:g04:p05:c06".to_owned(),
+                },
+            )),
+            signed(SignableEvent::new(
+                workspace_id,
+                None,
+                owner,
+                EventBody::PersonProfileUpdated {
+                    person_id: person_id.clone(),
+                    display_name: "Mira Chen".to_owned(),
+                    avatar_id: String::new(),
+                },
+            )),
+        ];
+        state.apply_batch(&events).unwrap();
+
+        let device_profile = state.profiles.values().next().unwrap();
+        assert_eq!(device_profile.display_name, "Mira Chen");
+        assert_eq!(device_profile.avatar_id, "relay-v1:g01:p02:c03");
+        let person_profile = state.person_profiles.get(&person_id).unwrap();
+        assert_eq!(person_profile.display_name, "Mira Chen");
+        assert_eq!(person_profile.avatar_id, "relay-v1:g04:p05:c06");
     }
 
     #[test]
@@ -4887,16 +5164,50 @@ mod tests {
             owner.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "d".repeat(DEVICE_DISPLAY_NAME_MAX_BYTES + 1),
+                avatar_id: String::new(),
             },
         ));
         assert_payload_rejected_before_materialization(
-            workspace_id,
+            workspace_id.clone(),
             std::slice::from_ref(&root),
             &[root.clone(), oversized_profile.clone()],
             &oversized_profile,
             "display name",
             DEVICE_DISPLAY_NAME_MAX_BYTES + 1,
             DEVICE_DISPLAY_NAME_MAX_BYTES,
+        );
+
+        let oversized_avatar = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DeviceProfileUpdated {
+                display_name: "Mira".to_owned(),
+                avatar_id: "a".repeat(AVATAR_ID_MAX_BYTES + 1),
+            },
+        ));
+        assert_payload_rejected_before_materialization(
+            workspace_id.clone(),
+            std::slice::from_ref(&root),
+            &[root.clone(), oversized_avatar.clone()],
+            &oversized_avatar,
+            "avatar ID",
+            AVATAR_ID_MAX_BYTES + 1,
+            AVATAR_ID_MAX_BYTES,
+        );
+
+        let invalid_avatar = signed(SignableEvent::new(
+            workspace_id,
+            None,
+            owner,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Mira".to_owned(),
+                avatar_id: "Relay-V1:g00:p00:c00".to_owned(),
+            },
+        ));
+        assert_eq!(
+            authorize_event_with_history(std::slice::from_ref(&root), &invalid_avatar),
+            Err(AuthorizationError::InvalidAvatarId)
         );
     }
 
@@ -6081,6 +6392,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: person_id.clone(),
                 display_name: "Ayo".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let link = signed(SignableEvent::new(
@@ -6117,6 +6429,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: person_id.clone(),
                 display_name: "Ayo".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -6861,6 +7174,49 @@ mod tests {
     }
 
     #[test]
+    fn legacy_trust_snapshot_messages_allow_reactions_but_deny_mutation() {
+        let mut snapshot = sample_trust_snapshot();
+        snapshot.messages[0].author_device_id = None;
+        let index = WorkspaceAccessIndex::from_trust_snapshot(&snapshot).unwrap();
+        let member = snapshot.roles[0].device_id.clone();
+        let channel_id = snapshot.messages[0].channel_id.clone();
+        let message_id = snapshot.messages[0].message_id.clone();
+
+        let reaction = signed(SignableEvent::new(
+            snapshot.workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::ReactionAdded {
+                message_id: message_id.clone(),
+                reaction: "+1".to_owned(),
+            },
+        ));
+        assert!(index.authorize(&reaction).is_ok());
+
+        let edit = signed(SignableEvent::new(
+            snapshot.workspace_id,
+            Some(channel_id),
+            member,
+            EventBody::MessageEdited {
+                message_id: message_id.clone(),
+                markdown: "legacy author unknown".to_owned(),
+            },
+        ));
+        assert_eq!(
+            index.authorize(&edit),
+            Err(AuthorizationError::MessageAuthorUnknown { message_id })
+        );
+    }
+
+    #[test]
+    fn trust_snapshot_accepts_historical_message_authors_who_are_no_longer_members() {
+        let mut snapshot = sample_trust_snapshot();
+        snapshot.messages[0].author_device_id =
+            Some(DeviceId("dev_removed_historical_author".to_owned()));
+        assert!(WorkspaceAccessIndex::from_trust_snapshot(&snapshot).is_ok());
+    }
+
+    #[test]
     fn trust_snapshot_rejects_unknown_or_duplicate_channel_members() {
         let mut snapshot = sample_trust_snapshot();
         snapshot.channels[0]
@@ -7532,6 +7888,7 @@ mod tests {
             invitee,
             EventBody::DeviceProfileUpdated {
                 display_name: "Joined".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let claim = capability_invite_claim(
@@ -7802,6 +8159,7 @@ mod tests {
             member,
             EventBody::DeviceProfileUpdated {
                 display_name: "Rina Cole".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let invite_resolved = signed(SignableEvent::new(

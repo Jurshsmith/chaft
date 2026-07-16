@@ -716,6 +716,30 @@ pub unsafe extern "C" fn chaft_runtime_update_device_profile_result_json(
     into_c_string(&result)
 }
 
+/// Atomically updates this device's signed display name and avatar selection.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_device_profile_with_avatar_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    avatar_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_update_device_profile_with_avatar_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+        avatar_id,
+    );
+    into_c_string(&result)
+}
+
 /// Updates this device's signed person profile in a local workspace.
 ///
 /// If the local device has not yet linked itself to a person in this workspace,
@@ -737,6 +761,30 @@ pub unsafe extern "C" fn chaft_runtime_update_local_person_profile_result_json(
         identity_file,
         workspace_id,
         display_name,
+    );
+    into_c_string(&result)
+}
+
+/// Atomically updates this device's linked person display name and avatar selection.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_update_local_person_profile_with_avatar_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    display_name: *const c_char,
+    avatar_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_update_local_person_profile_with_avatar_result(
+        data_dir,
+        identity_file,
+        workspace_id,
+        display_name,
+        avatar_id,
     );
     into_c_string(&result)
 }

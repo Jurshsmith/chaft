@@ -1899,8 +1899,21 @@ mod tests {
         }
 
         let person_id = chaft_types::PersonId::new();
+        let avatar_id = "relay-v1:g07:p06:c05";
         joiner
-            .update_person_profile(workspace_id.clone(), person_id.clone(), "Temporary Name")
+            .update_device_profile_with_avatar(
+                workspace_id.clone(),
+                "Temporary Device Name",
+                avatar_id,
+            )
+            .unwrap();
+        joiner
+            .update_person_profile_with_avatar(
+                workspace_id.clone(),
+                person_id.clone(),
+                "Temporary Name",
+                avatar_id,
+            )
             .unwrap();
         let context = joiner.workspace_write_context(&workspace_id).unwrap();
         let mut blank_device = SignableEvent::new(
@@ -1909,6 +1922,7 @@ mod tests {
             joiner.identity.device_id().clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "   ".to_owned(),
+                avatar_id: String::new(),
             },
         );
         blank_device.parents = context.head_event_ids;
@@ -1924,6 +1938,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: person_id.clone(),
                 display_name: "\t".to_owned(),
+                avatar_id: String::new(),
             },
         );
         blank_person.parents = vec![blank_device.event_id];
@@ -1959,6 +1974,22 @@ mod tests {
                 .get(joiner.identity.device_id())
                 .map(|profile| profile.display_name.as_str()),
             Some("Canonical Invite Name")
+        );
+        assert_eq!(
+            after
+                .state
+                .profiles
+                .get(joiner.identity.device_id())
+                .map(|profile| profile.avatar_id.as_str()),
+            Some(avatar_id)
+        );
+        assert_eq!(
+            after
+                .state
+                .person_profiles
+                .get(&person_id)
+                .map(|profile| profile.avatar_id.as_str()),
+            Some(avatar_id)
         );
         assert_eq!(
             after

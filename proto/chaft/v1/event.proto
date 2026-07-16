@@ -107,6 +107,13 @@ message ChannelMemberChanged {
 
 message DeviceProfileUpdated {
   string display_name = 1;
+  string avatar_id = 2;
+}
+
+message PersonProfileUpdated {
+  string person_id = 1;
+  string display_name = 2;
+  string avatar_id = 3;
 }
 
 message DeviceKeyPackagePublished {
@@ -283,6 +290,7 @@ message EventBody {
     MessageReplyCreatedEncrypted message_reply_created_encrypted = 24;
     ReactionRemoved reaction_removed = 25;
     PeerEndpointPublished peer_endpoint_published = 26;
+    PersonProfileUpdated person_profile_updated = 36;
     WorkspaceInviteCapabilityCreated workspace_invite_capability_created = 37;
     WorkspaceInviteClaimed workspace_invite_claimed = 38;
   }
@@ -303,6 +311,7 @@ message TrustSnapshotChannel {
 message TrustSnapshotMessage {
   string message_id = 1;
   string channel_id = 2;
+  optional string author_device_id = 3;
 }
 
 message TrustSnapshotEventChannel {

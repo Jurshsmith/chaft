@@ -432,6 +432,20 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
             )
         }),
     );
+    let avatar_id = CString::new("relay-v1:g00:p00:c00").unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_update_device_profile_with_avatar_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_update_device_profile_with_avatar_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                display_name.as_ptr(),
+                avatar_id.as_ptr(),
+            )
+        }),
+    );
     insert_contract_shape(
         &mut contract,
         "chaft_runtime_update_local_person_profile_result_json",
@@ -441,6 +455,19 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
                 std::ptr::null(),
                 runtime_workspace_id.as_ptr(),
                 display_name.as_ptr(),
+            )
+        }),
+    );
+    insert_contract_shape(
+        &mut contract,
+        "chaft_runtime_update_local_person_profile_with_avatar_result_json",
+        parse_ffi_json(unsafe {
+            chaft_runtime_update_local_person_profile_with_avatar_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                display_name.as_ptr(),
+                avatar_id.as_ptr(),
             )
         }),
     );
@@ -823,6 +850,16 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
     );
 
     let actual = Value::Object(contract);
+    if std::env::var_os("CHAFT_UPDATE_FFI_JSON_CONTRACT").is_some() {
+        let snapshot_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("ffi-json-contract.snapshot.json");
+        std::fs::write(
+            snapshot_path,
+            format!("{}\n", serde_json::to_string_pretty(&actual).unwrap()),
+        )
+        .unwrap();
+        return;
+    }
     let expected =
         serde_json::from_str::<Value>(include_str!("../ffi-json-contract.snapshot.json")).unwrap();
     if actual != expected {
@@ -3563,6 +3600,7 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
     assert_eq!(profile["ok"], true);
     assert_eq!(profile["value"]["workspaceId"], workspace_id);
     assert_eq!(profile["value"]["displayName"], "Mira");
+    assert_eq!(profile["value"]["avatarId"], "");
 
     let person_profile_json = unsafe {
         take_ffi_string(chaft_runtime_update_local_person_profile_result_json(
@@ -3580,6 +3618,7 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
         profile["value"]["deviceId"]
     );
     assert_eq!(person_profile["value"]["displayName"], "Mira");
+    assert_eq!(person_profile["value"]["avatarId"], "");
     assert!(
         person_profile["value"]["personId"]
             .as_str()
@@ -3588,6 +3627,37 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
     );
     assert!(person_profile["value"]["linkEventId"].is_string());
     assert!(person_profile["value"]["profileEventId"].is_string());
+
+    let avatar_id = CString::new("relay-v1:g02:p03:c04").unwrap();
+    let avatar_profile_json = unsafe {
+        take_ffi_string(chaft_runtime_update_device_profile_with_avatar_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id_c.as_ptr(),
+            display_name.as_ptr(),
+            avatar_id.as_ptr(),
+        ))
+    };
+    let avatar_profile = serde_json::from_str::<Value>(&avatar_profile_json).unwrap();
+    assert_eq!(avatar_profile["ok"], true);
+    assert_eq!(avatar_profile["value"]["avatarId"], "relay-v1:g02:p03:c04");
+    let avatar_person_profile_json = unsafe {
+        take_ffi_string(
+            chaft_runtime_update_local_person_profile_with_avatar_result_json(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                workspace_id_c.as_ptr(),
+                display_name.as_ptr(),
+                avatar_id.as_ptr(),
+            ),
+        )
+    };
+    let avatar_person_profile = serde_json::from_str::<Value>(&avatar_person_profile_json).unwrap();
+    assert_eq!(avatar_person_profile["ok"], true);
+    assert_eq!(
+        avatar_person_profile["value"]["avatarId"],
+        "relay-v1:g02:p03:c04"
+    );
 
     let profile_snapshot_json = unsafe {
         take_ffi_string(chaft_decrypted_workspace_snapshot_from_runtime_result_json(
@@ -3607,6 +3677,14 @@ fn runtime_action_ffi_creates_workspace_sends_and_decrypts_message() {
     assert_eq!(
         profile_snapshot["value"]["personProfiles"][0]["displayName"],
         "Mira"
+    );
+    assert_eq!(
+        profile_snapshot["value"]["personProfiles"][0]["avatarId"],
+        "relay-v1:g02:p03:c04"
+    );
+    assert_eq!(
+        profile_snapshot["value"]["members"][0]["avatarId"],
+        "relay-v1:g02:p03:c04"
     );
     assert_eq!(
         profile_snapshot["value"]["personDeviceLinks"][0]["personDisplayName"],

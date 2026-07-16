@@ -89,8 +89,12 @@ pub struct ChannelAccessHistorySnapshot {
     pub kind: String,
     pub actor_device_id: String,
     pub actor_display_name: Option<String>,
+    #[serde(default)]
+    pub actor_avatar_id: String,
     pub target_device_id: Option<String>,
     pub target_display_name: Option<String>,
+    #[serde(default)]
+    pub target_avatar_id: String,
     pub physical_ms: i64,
     pub title: String,
     pub detail: String,
@@ -127,6 +131,8 @@ pub struct ChannelActivitySnapshot {
     pub message_id: Option<String>,
     pub author_device_id: String,
     pub author_display_name: Option<String>,
+    #[serde(default)]
+    pub author_avatar_id: String,
     pub physical_ms: i64,
     pub preview: String,
 }
@@ -136,6 +142,8 @@ pub struct ChannelActivitySnapshot {
 pub struct DeviceProfileSnapshot {
     pub device_id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub avatar_id: String,
     pub updated_event_id: String,
 }
 
@@ -144,6 +152,8 @@ pub struct DeviceProfileSnapshot {
 pub struct PersonProfileSnapshot {
     pub person_id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub avatar_id: String,
     pub updated_event_id: String,
     pub updated_by_device_id: String,
 }
@@ -153,8 +163,12 @@ pub struct PersonProfileSnapshot {
 pub struct PersonDeviceLinkSnapshot {
     pub person_id: String,
     pub person_display_name: Option<String>,
+    #[serde(default)]
+    pub person_avatar_id: String,
     pub device_id: String,
     pub device_display_name: Option<String>,
+    #[serde(default)]
+    pub device_avatar_id: String,
     pub linked_event_id: String,
 }
 
@@ -164,6 +178,8 @@ pub struct WorkspaceMemberSnapshot {
     pub device_id: String,
     pub role: WorkspaceRole,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub avatar_id: String,
     pub profile_event_id: Option<String>,
     pub membership_event_id: String,
 }
@@ -174,6 +190,8 @@ pub struct WorkspaceJoinRequestSnapshot {
     pub request_id: String,
     pub requester_device_id: String,
     pub requester_display_name: Option<String>,
+    #[serde(default)]
+    pub requester_avatar_id: String,
     pub display_name: String,
     pub note: String,
     pub source_type: String,
@@ -185,10 +203,14 @@ pub struct WorkspaceJoinRequestSnapshot {
     pub requested_event_id: String,
     pub requested_by_device_id: String,
     pub requested_by_display_name: Option<String>,
+    #[serde(default)]
+    pub requested_by_avatar_id: String,
     pub requested_physical_ms: i64,
     pub resolved_event_id: Option<String>,
     pub resolved_by_device_id: Option<String>,
     pub resolved_by_display_name: Option<String>,
+    #[serde(default)]
+    pub resolved_by_avatar_id: String,
     pub resolved_physical_ms: Option<i64>,
 }
 
@@ -198,6 +220,8 @@ pub struct WorkspaceInviteSnapshot {
     pub invite_id: String,
     pub invitee_device_id: String,
     pub invitee_display_name: Option<String>,
+    #[serde(default)]
+    pub invitee_avatar_id: String,
     /// Legacy recipient display name for device-targeted v1 invites.
     pub display_name: String,
     /// Inviter-defined label for v2 claimable invites; never a member display name.
@@ -216,12 +240,16 @@ pub struct WorkspaceInviteSnapshot {
     pub created_event_id: String,
     pub created_by_device_id: String,
     pub created_by_display_name: Option<String>,
+    #[serde(default)]
+    pub created_by_avatar_id: String,
     pub created_physical_ms: i64,
     pub accepted_event_id: Option<String>,
     pub accepted_physical_ms: Option<i64>,
     pub resolved_event_id: Option<String>,
     pub resolved_by_device_id: Option<String>,
     pub resolved_by_display_name: Option<String>,
+    #[serde(default)]
+    pub resolved_by_avatar_id: String,
     pub resolved_physical_ms: Option<i64>,
 }
 
@@ -252,6 +280,8 @@ pub struct DeviceKeyPackageSnapshot {
 pub struct PeerEndpointSnapshot {
     pub device_id: String,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub avatar_id: String,
     pub endpoint_id: String,
     pub endpoint: String,
     pub transport: String,
@@ -286,6 +316,8 @@ pub struct TimelineItem {
     pub channel_id: Option<String>,
     pub author_device_id: Option<String>,
     pub author_display_name: Option<String>,
+    #[serde(default)]
+    pub author_avatar_id: String,
     pub physical_ms: Option<i64>,
     pub body: String,
     #[serde(default)]
@@ -304,6 +336,10 @@ pub struct TimelineItem {
     pub day_boundary: bool,
     #[serde(default)]
     pub body_decrypted: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+    #[serde(default)]
+    pub can_delete: bool,
 }
 
 const THREAD_REPLY_PREVIEW_LIMIT: usize = 5;
@@ -314,6 +350,8 @@ pub struct ReplyPreviewSnapshot {
     pub message_id: String,
     pub author_device_id: String,
     pub author_display_name: Option<String>,
+    #[serde(default)]
+    pub author_avatar_id: String,
     pub body: String,
     pub deleted: bool,
 }
@@ -628,6 +666,7 @@ impl WorkspaceSnapshot {
             .map(|profile| DeviceProfileSnapshot {
                 device_id: profile.device_id.0.clone(),
                 display_name: profile.display_name.clone(),
+                avatar_id: profile.avatar_id.clone(),
                 updated_event_id: profile.updated_event_id.0.clone(),
             })
             .collect::<Vec<_>>();
@@ -641,6 +680,7 @@ impl WorkspaceSnapshot {
             .map(|profile| PersonProfileSnapshot {
                 person_id: profile.person_id.0.clone(),
                 display_name: profile.display_name.clone(),
+                avatar_id: profile.avatar_id.clone(),
                 updated_event_id: profile.updated_event_id.0.clone(),
                 updated_by_device_id: profile.updated_by_device_id.0.clone(),
             })
@@ -662,8 +702,18 @@ impl WorkspaceSnapshot {
                     .person_profiles
                     .get(&link.person_id)
                     .and_then(|profile| non_empty_string(profile.display_name.clone())),
+                person_avatar_id: state
+                    .person_profiles
+                    .get(&link.person_id)
+                    .map(|profile| profile.avatar_id.clone())
+                    .unwrap_or_default(),
                 device_id: link.device_id.0.clone(),
                 device_display_name: profile_display_name(state, &link.device_id),
+                device_avatar_id: state
+                    .profiles
+                    .get(&link.device_id)
+                    .map(|profile| profile.avatar_id.clone())
+                    .unwrap_or_default(),
                 linked_event_id: link.linked_event_id.0.clone(),
             })
             .collect::<Vec<_>>();
@@ -730,6 +780,7 @@ impl WorkspaceSnapshot {
                     .profiles
                     .get(&endpoint.device_id)
                     .map(|profile| profile.display_name.clone()),
+                avatar_id: profile_avatar_id(state, &endpoint.device_id),
                 endpoint_id: endpoint.endpoint_id.clone(),
                 endpoint: endpoint.endpoint.clone(),
                 transport: endpoint.transport.clone(),
@@ -1155,12 +1206,17 @@ fn channel_access_history_by_channel(
                 kind,
                 actor_device_id: event.event.author_device_id.0.clone(),
                 actor_display_name: profile_display_name(state, &event.event.author_device_id),
+                actor_avatar_id: profile_avatar_id(state, &event.event.author_device_id),
                 target_device_id: target_device_id
                     .as_ref()
                     .map(|device_id| device_id.0.clone()),
                 target_display_name: target_device_id
                     .as_ref()
                     .and_then(|device_id| profile_display_name(state, device_id)),
+                target_avatar_id: target_device_id
+                    .as_ref()
+                    .map(|device_id| profile_avatar_id(state, device_id))
+                    .unwrap_or_default(),
                 physical_ms: event.event.timestamp.physical_ms,
                 title,
                 detail,
@@ -1417,6 +1473,7 @@ fn member_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceMemberSna
                 device_id: member.device_id.0.clone(),
                 role: member.role,
                 display_name: profile.map(|profile| profile.display_name.clone()),
+                avatar_id: profile_avatar_id(state, &member.device_id),
                 profile_event_id: profile.map(|profile| profile.updated_event_id.0.clone()),
                 membership_event_id: member.membership_event_id.0.clone(),
             }
@@ -1447,6 +1504,11 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
                 invite_id: invite.invite_id.clone(),
                 invitee_device_id,
                 invitee_display_name,
+                invitee_avatar_id: if is_multi_claim {
+                    String::new()
+                } else {
+                    profile_avatar_id(state, &invite.invitee_device_id)
+                },
                 display_name: invite.invitee_display_name.clone().unwrap_or_default(),
                 invite_label: invite.invite_label.clone(),
                 role: invite.role,
@@ -1469,6 +1531,7 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
                 created_event_id: invite.created_event_id.0.clone(),
                 created_by_device_id: invite.created_by_device_id.0.clone(),
                 created_by_display_name: profile_display_name(state, &invite.created_by_device_id),
+                created_by_avatar_id: profile_avatar_id(state, &invite.created_by_device_id),
                 created_physical_ms: invite.created_physical_ms,
                 accepted_event_id: invite
                     .accepted_event_id
@@ -1487,6 +1550,11 @@ fn invite_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceInviteSna
                     .resolved_by_device_id
                     .as_ref()
                     .and_then(|device_id| profile_display_name(state, device_id)),
+                resolved_by_avatar_id: invite
+                    .resolved_by_device_id
+                    .as_ref()
+                    .map(|device_id| profile_avatar_id(state, device_id))
+                    .unwrap_or_default(),
                 resolved_physical_ms: invite.resolved_physical_ms,
             }
         })
@@ -1504,6 +1572,7 @@ fn join_request_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceJoi
             requester_device_id: request.requester_device_id.0.clone(),
             requester_display_name: profile_display_name(state, &request.requester_device_id)
                 .or_else(|| non_empty_string(request.display_name.clone())),
+            requester_avatar_id: profile_avatar_id(state, &request.requester_device_id),
             display_name: request.display_name.clone(),
             note: request.note.clone(),
             source_type: request.source_type.clone(),
@@ -1515,6 +1584,7 @@ fn join_request_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceJoi
             requested_event_id: request.requested_event_id.0.clone(),
             requested_by_device_id: request.requested_by_device_id.0.clone(),
             requested_by_display_name: profile_display_name(state, &request.requested_by_device_id),
+            requested_by_avatar_id: profile_avatar_id(state, &request.requested_by_device_id),
             requested_physical_ms: request.requested_physical_ms,
             resolved_event_id: request
                 .resolved_event_id
@@ -1528,6 +1598,11 @@ fn join_request_snapshots_from_state(state: &WorkspaceState) -> Vec<WorkspaceJoi
                 .resolved_by_device_id
                 .as_ref()
                 .and_then(|device_id| profile_display_name(state, device_id)),
+            resolved_by_avatar_id: request
+                .resolved_by_device_id
+                .as_ref()
+                .map(|device_id| profile_avatar_id(state, device_id))
+                .unwrap_or_default(),
             resolved_physical_ms: request.resolved_physical_ms,
         })
         .collect::<Vec<_>>();
@@ -2431,6 +2506,25 @@ fn profile_display_name(state: &WorkspaceState, device_id: &DeviceId) -> Option<
         .and_then(|profile| non_empty_string(profile.display_name.clone()))
 }
 
+fn profile_avatar_id(state: &WorkspaceState, device_id: &DeviceId) -> String {
+    state
+        .person_device_links
+        .get(device_id)
+        .and_then(|link| state.person_profiles.get(&link.person_id))
+        .map(|profile| profile.avatar_id.trim())
+        .filter(|avatar_id| !avatar_id.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            state
+                .profiles
+                .get(device_id)
+                .map(|profile| profile.avatar_id.trim())
+                .filter(|avatar_id| !avatar_id.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
 fn non_empty_string(value: String) -> Option<String> {
     (!value.trim().is_empty()).then_some(value)
 }
@@ -2599,6 +2693,7 @@ fn channel_activity_for_event(
                 .profiles
                 .get(&event.event.author_device_id)
                 .map(|profile| profile.display_name.clone()),
+            author_avatar_id: profile_avatar_id(state, &event.event.author_device_id),
             physical_ms: event.event.timestamp.physical_ms,
             preview,
         },
@@ -2763,6 +2858,7 @@ fn timeline_item_for_applied_event(
                     .profiles
                     .get(&event.event.author_device_id)
                     .map(|profile| profile.display_name.clone()),
+                author_avatar_id: profile_avatar_id(state, &event.event.author_device_id),
                 physical_ms: Some(event.event.timestamp.physical_ms),
                 body,
                 attachment_count: message.attachments.len(),
@@ -2789,6 +2885,12 @@ fn timeline_item_for_applied_event(
                 grouped_with_previous: false,
                 day_boundary: false,
                 body_decrypted,
+                can_edit: !deleted
+                    && reader_device_id
+                        .is_some_and(|device_id| device_id == &event.event.author_device_id),
+                can_delete: !deleted
+                    && reader_device_id
+                        .is_some_and(|device_id| device_id == &event.event.author_device_id),
             })
         }
         EventBody::WorkspaceCreated { .. }
@@ -2886,6 +2988,7 @@ fn reply_preview_snapshot(
             .profiles
             .get(&event.event.author_device_id)
             .map(|profile| profile.display_name.clone()),
+        author_avatar_id: profile_avatar_id(state, &event.event.author_device_id),
         body: message_activity_preview(message, &event.event_id, body_overrides_by_event_id),
         deleted: message.deleted,
     }
@@ -2952,6 +3055,7 @@ fn gap_timeline_item(gap: &MissingHistoryGap) -> TimelineItem {
         channel_id: None,
         author_device_id: None,
         author_display_name: None,
+        author_avatar_id: String::new(),
         physical_ms: None,
         body: if gap.missing_parent_ids.is_empty() {
             "Chaft needs earlier access history before this can be shown.".to_owned()
@@ -2978,6 +3082,8 @@ fn gap_timeline_item(gap: &MissingHistoryGap) -> TimelineItem {
         grouped_with_previous: false,
         day_boundary: false,
         body_decrypted: false,
+        can_edit: false,
+        can_delete: false,
     }
 }
 
@@ -2994,6 +3100,7 @@ fn invalid_signature_timeline_item(invalid: &InvalidSignatureSnapshot) -> Timeli
         channel_id: invalid.channel_id.clone(),
         author_device_id: Some(invalid.author_device_id.clone()),
         author_display_name: None,
+        author_avatar_id: String::new(),
         physical_ms: Some(invalid.physical_ms),
         body: "Chaft could not verify this message. Ask an admin before trusting it.".to_owned(),
         attachment_count: 0,
@@ -3007,6 +3114,8 @@ fn invalid_signature_timeline_item(invalid: &InvalidSignatureSnapshot) -> Timeli
         grouped_with_previous: false,
         day_boundary: false,
         body_decrypted: false,
+        can_edit: false,
+        can_delete: false,
     }
 }
 
@@ -3171,6 +3280,7 @@ mod tests {
             device_id.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mira".to_owned(),
+                avatar_id: "relay-v1:g02:p03:c04".to_owned(),
             },
         ));
         let channel = signed(SignableEvent::new(
@@ -3219,6 +3329,7 @@ mod tests {
             latest_thread_reply.author_display_name.as_deref(),
             Some("Mira")
         );
+        assert_eq!(latest_thread_reply.author_avatar_id, "relay-v1:g02:p03:c04");
         assert_eq!(latest_thread_reply.body, "reply body");
         assert_eq!(snapshot.timeline[0].thread_reply_previews.len(), 1);
         assert_eq!(
@@ -3232,6 +3343,7 @@ mod tests {
         let reply_preview = snapshot.timeline[1].reply_preview.as_ref().unwrap();
         assert_eq!(reply_preview.message_id, parent_message_id.0);
         assert_eq!(reply_preview.author_display_name.as_deref(), Some("Mira"));
+        assert_eq!(reply_preview.author_avatar_id, "relay-v1:g02:p03:c04");
         assert_eq!(reply_preview.body, "parent message with enough context");
         assert!(!reply_preview.deleted);
     }
@@ -3256,6 +3368,7 @@ mod tests {
             device_id.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mira".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let channel = signed(SignableEvent::new(
@@ -4038,6 +4151,7 @@ mod tests {
             device_id.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mira".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let channel = signed(SignableEvent::new(
@@ -4095,6 +4209,7 @@ mod tests {
             device_id.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mira's laptop".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let person_link = signed(SignableEvent::new(
@@ -4113,6 +4228,7 @@ mod tests {
             EventBody::PersonProfileUpdated {
                 person_id: person_id.clone(),
                 display_name: "Mira Chen".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -4504,6 +4620,7 @@ mod tests {
                 profile_device_id,
                 EventBody::DeviceProfileUpdated {
                     display_name: format!("Member {index:03}"),
+                    avatar_id: String::new(),
                 },
             )));
         }
@@ -4562,6 +4679,7 @@ mod tests {
                 profile_device_id,
                 EventBody::DeviceProfileUpdated {
                     display_name: format!("Member {index:03}"),
+                    avatar_id: String::new(),
                 },
             )));
         }
@@ -4580,6 +4698,7 @@ mod tests {
             reader.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Zzz Local".to_owned(),
+                avatar_id: String::new(),
             },
         )));
 
@@ -4742,6 +4861,7 @@ mod tests {
             member,
             EventBody::DeviceProfileUpdated {
                 display_name: "Nia".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -4793,6 +4913,7 @@ mod tests {
             owner,
             EventBody::DeviceProfileUpdated {
                 display_name: "Ada".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -4848,6 +4969,7 @@ mod tests {
             owner.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Ada".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let member_invite = signed(SignableEvent::new(
@@ -4880,6 +5002,7 @@ mod tests {
             invitee,
             EventBody::DeviceProfileUpdated {
                 display_name: "Rina Cole".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -4991,6 +5114,7 @@ mod tests {
             invitee,
             EventBody::DeviceProfileUpdated {
                 display_name: "Sam Rivera".to_owned(),
+                avatar_id: String::new(),
             },
         ));
 
@@ -5252,6 +5376,7 @@ mod tests {
             owner.clone(),
             EventBody::DeviceProfileUpdated {
                 display_name: "Mira".to_owned(),
+                avatar_id: String::new(),
             },
         ));
         let first = signed(SignableEvent::new(
@@ -6255,6 +6380,7 @@ mod tests {
                 owner.clone(),
                 EventBody::DeviceProfileUpdated {
                     display_name: "Ayo".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             1_100,
@@ -6278,6 +6404,7 @@ mod tests {
                 member.clone(),
                 EventBody::DeviceProfileUpdated {
                     display_name: "Rina".to_owned(),
+                    avatar_id: String::new(),
                 },
             ),
             1_300,
@@ -6491,8 +6618,10 @@ mod tests {
                     kind: "added".to_owned(),
                     actor_device_id: "dev_test".to_owned(),
                     actor_display_name: Some("Mira".to_owned()),
+                    actor_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                     target_device_id: Some("dev_invitee".to_owned()),
                     target_display_name: Some("Rina".to_owned()),
+                    target_avatar_id: "relay-v1:g01:p01:c01".to_owned(),
                     physical_ms: 1_700_000_000_030,
                     title: "Access added".to_owned(),
                     detail: "Rina can read new messages in this room.".to_owned(),
@@ -6501,25 +6630,30 @@ mod tests {
             profiles: vec![DeviceProfileSnapshot {
                 device_id: "dev_test".to_owned(),
                 display_name: "Mira".to_owned(),
+                avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 updated_event_id: "evt_device_profile".to_owned(),
             }],
             person_profiles: vec![PersonProfileSnapshot {
                 person_id: "person_mira".to_owned(),
                 display_name: "Mira Chen".to_owned(),
+                avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 updated_event_id: "evt_person_profile".to_owned(),
                 updated_by_device_id: "dev_test".to_owned(),
             }],
             person_device_links: vec![PersonDeviceLinkSnapshot {
                 person_id: "person_mira".to_owned(),
                 person_display_name: Some("Mira Chen".to_owned()),
+                person_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 device_id: "dev_test".to_owned(),
                 device_display_name: Some("Mira".to_owned()),
+                device_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 linked_event_id: "evt_person_link".to_owned(),
             }],
             members: vec![WorkspaceMemberSnapshot {
                 device_id: "dev_test".to_owned(),
                 role: WorkspaceRole::Owner,
                 display_name: Some("Mira".to_owned()),
+                avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 profile_event_id: Some("evt_profile".to_owned()),
                 membership_event_id: "evt_workspace".to_owned(),
             }],
@@ -6527,6 +6661,7 @@ mod tests {
                 invite_id: "inv_test".to_owned(),
                 invitee_device_id: "dev_invitee".to_owned(),
                 invitee_display_name: Some("Rina".to_owned()),
+                invitee_avatar_id: "relay-v1:g01:p01:c01".to_owned(),
                 display_name: "Rina".to_owned(),
                 invite_label: String::new(),
                 role: WorkspaceRole::Member,
@@ -6543,18 +6678,21 @@ mod tests {
                 created_event_id: "evt_invite".to_owned(),
                 created_by_device_id: "dev_test".to_owned(),
                 created_by_display_name: Some("Mira".to_owned()),
+                created_by_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 created_physical_ms: 1_700_000_000_010,
                 accepted_event_id: None,
                 accepted_physical_ms: None,
                 resolved_event_id: None,
                 resolved_by_device_id: None,
                 resolved_by_display_name: None,
+                resolved_by_avatar_id: String::new(),
                 resolved_physical_ms: None,
             }],
             join_requests: vec![WorkspaceJoinRequestSnapshot {
                 request_id: "req_test".to_owned(),
                 requester_device_id: "dev_requester".to_owned(),
                 requester_display_name: Some("Rina".to_owned()),
+                requester_avatar_id: "relay-v1:g01:p01:c01".to_owned(),
                 display_name: "Rina".to_owned(),
                 note: "Design team".to_owned(),
                 source_type: "workspace_card".to_owned(),
@@ -6566,10 +6704,12 @@ mod tests {
                 requested_event_id: "evt_request".to_owned(),
                 requested_by_device_id: "dev_test".to_owned(),
                 requested_by_display_name: Some("Mira".to_owned()),
+                requested_by_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 requested_physical_ms: 1_700_000_000_015,
                 resolved_event_id: None,
                 resolved_by_device_id: None,
                 resolved_by_display_name: None,
+                resolved_by_avatar_id: String::new(),
                 resolved_physical_ms: None,
             }],
             key_packages: vec![DeviceKeyPackageSnapshot {
@@ -6583,6 +6723,7 @@ mod tests {
             peer_endpoints: vec![PeerEndpointSnapshot {
                 device_id: "dev_test".to_owned(),
                 display_name: Some("Mira".to_owned()),
+                avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 endpoint_id: "desktop".to_owned(),
                 endpoint: "direct+tcp://127.0.0.1:7777".to_owned(),
                 transport: "direct-tcp".to_owned(),
@@ -6622,6 +6763,7 @@ mod tests {
                 channel_id: Some("chn_general".to_owned()),
                 author_device_id: Some("dev_test".to_owned()),
                 author_display_name: Some("Mira".to_owned()),
+                author_avatar_id: "relay-v1:g00:p00:c00".to_owned(),
                 physical_ms: Some(1_700_000_000_000),
                 body: "Encrypted message".to_owned(),
                 attachment_count: 0,
@@ -6635,6 +6777,8 @@ mod tests {
                 grouped_with_previous: true,
                 day_boundary: false,
                 body_decrypted: false,
+                can_edit: true,
+                can_delete: true,
             }],
             gap_count: 1,
             gaps: vec![MissingHistorySnapshot {
@@ -6673,6 +6817,10 @@ mod tests {
         assert_eq!(value["channels"][0]["memberCount"], 1);
         assert_eq!(value["personProfiles"][0]["personId"], "person_mira");
         assert_eq!(value["personProfiles"][0]["displayName"], "Mira Chen");
+        assert_eq!(
+            value["personProfiles"][0]["avatarId"],
+            "relay-v1:g00:p00:c00"
+        );
         assert_eq!(value["personDeviceLinks"][0]["personId"], "person_mira");
         assert_eq!(
             value["personDeviceLinks"][0]["personDisplayName"],
@@ -6721,15 +6869,23 @@ mod tests {
         );
         assert_eq!(value["timeline"][0]["authorDeviceId"], "dev_test");
         assert_eq!(value["timeline"][0]["authorDisplayName"], "Mira");
+        assert_eq!(
+            value["timeline"][0]["authorAvatarId"],
+            "relay-v1:g00:p00:c00"
+        );
+        assert_eq!(value["timeline"][0]["canEdit"], true);
+        assert_eq!(value["timeline"][0]["canDelete"], true);
         assert_eq!(value["timeline"][0]["physicalMs"], 1_700_000_000_000_i64);
         assert_eq!(value["timeline"][0]["groupedWithPrevious"], true);
         assert_eq!(value["timeline"][0]["dayBoundary"], false);
         assert_eq!(value["profiles"][0]["deviceId"], "dev_test");
         assert_eq!(value["profiles"][0]["displayName"], "Mira");
+        assert_eq!(value["profiles"][0]["avatarId"], "relay-v1:g00:p00:c00");
         assert_eq!(value["profiles"][0]["updatedEventId"], "evt_device_profile");
         assert_eq!(value["members"][0]["deviceId"], "dev_test");
         assert_eq!(value["members"][0]["role"], "owner");
         assert_eq!(value["members"][0]["displayName"], "Mira");
+        assert_eq!(value["members"][0]["avatarId"], "relay-v1:g00:p00:c00");
         assert_eq!(value["members"][0]["profileEventId"], "evt_profile");
         assert_eq!(value["members"][0]["membershipEventId"], "evt_workspace");
         assert_eq!(value["invites"][0]["inviteId"], "inv_test");
