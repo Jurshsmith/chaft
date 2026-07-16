@@ -10,6 +10,9 @@ Item {
     property int unreadCount: 0
     property bool privateChannel: false
     property bool directMessage: false
+    property string avatarId: ""
+    property string avatarWorkspaceId: ""
+    property string avatarIdentityId: ""
     property bool hasDraft: false
     property bool muted: false
     property bool archived: false
@@ -52,10 +55,24 @@ Item {
         border.width: root.activeFocus ? 2 : 0
     }
 
+    AvatarMark {
+        id: directAvatar
+        visible: root.directMessage
+        anchors.left: parent.left
+        anchors.leftMargin: 8
+        anchors.verticalCenter: parent.verticalCenter
+        width: 26
+        height: 26
+        avatarId: root.avatarId
+        workspaceId: root.avatarWorkspaceId
+        identityId: root.avatarIdentityId
+        displayName: root.label
+    }
+
     Column {
         anchors.left: parent.left
         anchors.right: root.unreadCount > 0 ? unreadBadge.left : (root.showPrivateAffordance ? privateDot.left : parent.right)
-        anchors.leftMargin: 10
+        anchors.leftMargin: root.directMessage ? 42 : 10
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
         spacing: 1

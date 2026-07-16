@@ -5,6 +5,10 @@ import Chaft
 Rectangle {
     id: root
     property string label: ""
+    property string avatarId: ""
+    property string workspaceId: ""
+    property string authorDeviceId: ""
+    property string authorDisplayName: ""
 
     implicitHeight: 28
     visible: label.length > 0
@@ -28,6 +32,18 @@ Rectangle {
             Layout.bottomMargin: 6
             radius: 2
             color: Tokens.secure
+        }
+
+        AvatarMark {
+            visible: root.authorDeviceId.length > 0
+                || root.avatarId.length > 0
+                || root.authorDisplayName.length > 0
+            Layout.preferredWidth: 18
+            Layout.preferredHeight: 18
+            avatarId: root.avatarId
+            workspaceId: root.workspaceId
+            identityId: root.authorDeviceId
+            displayName: root.authorDisplayName
         }
 
         Text {

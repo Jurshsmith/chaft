@@ -10,6 +10,10 @@ Rectangle {
     property bool editMode: false
     property bool replyMode: false
     property string replyLabel: ""
+    property string replyAvatarId: ""
+    property string replyWorkspaceId: ""
+    property string replyIdentityId: ""
+    property string replyDisplayName: ""
     signal sendRequested(string text)
     signal attachRequested(string text)
     signal saveEditRequested(string text)
@@ -99,6 +103,15 @@ Rectangle {
                 visible: root.replyMode && !root.editMode
                 Layout.fillWidth: true
                 spacing: 6
+
+                AvatarMark {
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 22
+                    avatarId: root.replyAvatarId
+                    workspaceId: root.replyWorkspaceId
+                    identityId: root.replyIdentityId
+                    displayName: root.replyDisplayName
+                }
 
                 Text {
                     Layout.fillWidth: true

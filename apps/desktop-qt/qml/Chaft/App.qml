@@ -167,12 +167,15 @@ ApplicationWindow {
     property bool pendingPostCreateExport: false
     property string pendingPostCreateWorkspaceId: ""
     property string pendingWorkspaceCreateDisplayName: ""
+    property string pendingWorkspaceCreateAvatarId: ""
     property string pendingEntryDisplayName: ""
+    property string pendingEntryAvatarId: ""
     property string pendingEntryDisplayNameWorkspaceId: ""
     property string pendingEntryDisplayNameRequestId: ""
     property string pendingEntryDisplayNameRequestKey: ""
     property bool pendingEntryDisplayNameUpdateInFlight: false
     property string pendingEntryDisplayNameUpdateName: ""
+    property string pendingEntryDisplayNameUpdateAvatarId: ""
     property string pendingEntryDisplayNameUpdateWorkspaceId: ""
     property bool pendingEntryDisplayNameWriteSucceeded: false
     property int pendingEntryDisplayNameRetryAttempt: 0
@@ -2016,6 +2019,99 @@ ApplicationWindow {
         return null
     }
 
+    function memberAvatarId(member) {
+        var row = member || ({})
+        var resolvedAvatarId = root.avatarIdForDevice(
+            String(row.deviceId || ""))
+        if (AvatarCatalog.isValid(resolvedAvatarId)) {
+            return resolvedAvatarId
+        }
+        var directAvatarId = String(row.avatarId || "").trim()
+        return AvatarCatalog.isValid(directAvatarId) ? directAvatarId : ""
+    }
+
+    function avatarIdForDevice(deviceId) {
+        var target = String(deviceId || "").trim()
+        if (target.length === 0) {
+            return ""
+        }
+        for (var linkIndex = 0;
+                linkIndex < root.personDeviceLinks.length;
+                linkIndex += 1) {
+            var link = root.personDeviceLinks[linkIndex] || ({})
+            if (String(link.deviceId || "").trim() !== target) {
+                continue
+            }
+            var linkedAvatarId = String(
+                link.personAvatarId || "").trim()
+            if (AvatarCatalog.isValid(linkedAvatarId)) {
+                return linkedAvatarId
+            }
+            var linkedDeviceAvatarId = String(
+                link.deviceAvatarId || "").trim()
+            if (AvatarCatalog.isValid(linkedDeviceAvatarId)) {
+                return linkedDeviceAvatarId
+            }
+        }
+        for (var memberIndex = 0;
+                memberIndex < root.members.length;
+                memberIndex += 1) {
+            var member = root.members[memberIndex] || ({})
+            if (String(member.deviceId || "").trim() === target
+                    && AvatarCatalog.isValid(member.avatarId)) {
+                return String(member.avatarId)
+            }
+        }
+        for (var profileIndex = 0;
+                profileIndex < root.profiles.length;
+                profileIndex += 1) {
+            var profile = root.profiles[profileIndex] || ({})
+            if (String(profile.deviceId || "").trim() === target
+                    && AvatarCatalog.isValid(profile.avatarId)) {
+                return String(profile.avatarId)
+            }
+        }
+        return ""
+    }
+
+    function usedWorkspaceAvatarIds() {
+        var ids = []
+        for (var i = 0; i < root.members.length; i += 1) {
+            var member = root.members[i] || ({})
+            var avatarId = root.memberAvatarId(member)
+            if (!AvatarCatalog.isValid(avatarId)) {
+                avatarId = AvatarCatalog.deterministicAvatarId(
+                    root.currentWorkspaceId(),
+                    String(member.deviceId || ""))
+            }
+            if (AvatarCatalog.isValid(avatarId)
+                    && ids.indexOf(avatarId) === -1) {
+                ids.push(avatarId)
+            }
+        }
+        return ids
+    }
+
+    function directMessageParticipantDeviceId(channel) {
+        var ids = root.channelDirectMessageParticipantDeviceIds(channel)
+        var localDeviceId = String(chaftController.deviceId || "").trim()
+        for (var i = 0; i < ids.length; i += 1) {
+            var deviceId = String(ids[i] || "").trim()
+            if (deviceId.length > 0 && deviceId !== localDeviceId) {
+                return deviceId
+            }
+        }
+        return ids.length === 1 ? String(ids[0] || "") : ""
+    }
+
+    function directMessageAvatarId(channel) {
+        var deviceId = root.directMessageParticipantDeviceId(channel)
+        var member = root.memberByDeviceId(deviceId)
+        return member === null
+            ? root.avatarIdForDevice(deviceId)
+            : root.memberAvatarId(member)
+    }
+
     function memberAccessRow(member, deviceId) {
         var row = member || ({})
         var normalizedDeviceId = String(deviceId || row.deviceId || "").trim()
@@ -3093,6 +3189,11 @@ ApplicationWindow {
             root.openSettings("profile")
         } else if (state === "setup-identity") {
             root.openSettings("profile")
+        } else if (state === "setup-avatar-picker") {
+            root.openSettings("profile")
+            Qt.callLater(function() {
+                setupPanel.openProfileAvatarPicker()
+            })
         } else if (state === "setup-add-device") {
             root.openSettings("devices")
         } else if (state === "setup-access-updates") {
@@ -4203,6 +4304,15 @@ ApplicationWindow {
         return ""
     }
 
+    function localDeviceAvatarId() {
+        for (var i = 0; i < root.profiles.length; i += 1) {
+            if (root.profiles[i].deviceId === chaftController.deviceId) {
+                return String(root.profiles[i].avatarId || "")
+            }
+        }
+        return ""
+    }
+
     function localLinkedPersonDisplayName() {
         var localDeviceId = String(chaftController.deviceId || "").trim()
         if (localDeviceId.length === 0) {
@@ -4238,6 +4348,41 @@ ApplicationWindow {
         return ""
     }
 
+    function localLinkedPersonAvatarId() {
+        var localDeviceId = String(chaftController.deviceId || "").trim()
+        if (localDeviceId.length === 0) {
+            return ""
+        }
+        var linkedPersonId = ""
+        for (var linkIndex = 0;
+                linkIndex < root.personDeviceLinks.length;
+                linkIndex += 1) {
+            var link = root.personDeviceLinks[linkIndex] || ({})
+            if (String(link.deviceId || "").trim() !== localDeviceId) {
+                continue
+            }
+            var linkedAvatarId = String(
+                link.personAvatarId || "").trim()
+            if (linkedAvatarId.length > 0) {
+                return linkedAvatarId
+            }
+            linkedPersonId = String(link.personId || "").trim()
+            break
+        }
+        if (linkedPersonId.length === 0) {
+            return ""
+        }
+        for (var profileIndex = 0;
+                profileIndex < root.personProfiles.length;
+                profileIndex += 1) {
+            var profile = root.personProfiles[profileIndex] || ({})
+            if (String(profile.personId || "").trim() === linkedPersonId) {
+                return String(profile.avatarId || "")
+            }
+        }
+        return ""
+    }
+
     function localDeviceMembershipReady() {
         var localDeviceId = String(chaftController.deviceId || "").trim()
         if (localDeviceId.length === 0) {
@@ -4253,6 +4398,7 @@ ApplicationWindow {
 
     function pendingEntryDisplayNameConfirmed() {
         var displayName = String(root.pendingEntryDisplayName || "").trim()
+        var avatarId = String(root.pendingEntryAvatarId || "").trim()
         if (displayName.length === 0) {
             return false
         }
@@ -4262,6 +4408,9 @@ ApplicationWindow {
                 || root.currentWorkspaceId() === targetWorkspaceId)
             && root.localDeviceDisplayName().trim() === displayName
             && root.localLinkedPersonDisplayName().trim() === displayName
+            && (avatarId.length === 0
+                || (root.localDeviceAvatarId().trim() === avatarId
+                    && root.localLinkedPersonAvatarId().trim() === avatarId))
     }
 
     function pendingEntryDisplayNameRequestForCurrentWorkspace() {
@@ -4282,6 +4431,8 @@ ApplicationWindow {
                 persistedRequest.requestId || "").trim()
             var displayName = String(
                 persistedRequest.displayName || "").trim()
+            var avatarId = String(
+                persistedRequest.avatarId || "").trim()
             var status = String(
                 persistedRequest.status || "").trim()
             if (String(persistedRequest.workspaceId || "").trim()
@@ -4290,13 +4441,17 @@ ApplicationWindow {
                         && status !== "profile_written")
                     || displayName.length === 0
                     || chaftController.deviceDisplayNameValidationError(
-                        displayName).length > 0) {
+                        displayName).length > 0
+                    || (avatarId.length > 0
+                        && chaftController.avatarIdValidationError(
+                            avatarId).length > 0)) {
                 continue
             }
             candidates.push({
                 key: key,
                 requestId: requestId,
                 displayName: displayName,
+                avatarId: avatarId,
                 createdAt: String(persistedRequest.createdAt || ""),
                 writeSucceeded: status === "profile_written"
             })
@@ -4309,13 +4464,16 @@ ApplicationWindow {
                 String(left.createdAt || ""))
         })
         var selectedName = candidates[0].displayName
+        var selectedAvatarId = candidates[0].avatarId
         for (var candidateIndex = 1;
                 candidateIndex < candidates.length;
                 candidateIndex += 1) {
             // Concurrent approvals with different identities are ambiguous.
             // Wait for an explicit in-memory import correlation instead of
             // guessing which persisted request should name this device.
-            if (candidates[candidateIndex].displayName !== selectedName) {
+            if (candidates[candidateIndex].displayName !== selectedName
+                    || candidates[candidateIndex].avatarId
+                        !== selectedAvatarId) {
                 return ({})
             }
         }
@@ -4334,6 +4492,8 @@ ApplicationWindow {
             root.pendingEntryDisplayNameWorkspaceId || "").trim()
         var displayName = String(
             root.pendingEntryDisplayName || "").trim()
+        var avatarId = String(
+            root.pendingEntryAvatarId || "").trim()
         var requestId = String(
             root.pendingEntryDisplayNameRequestId || "").trim()
         if (workspaceId.length === 0 || displayName.length === 0) {
@@ -4369,6 +4529,11 @@ ApplicationWindow {
                 root.workspaceSnapshot.name || row.workspaceName || "").trim()
         }
         row.displayName = displayName
+        if (avatarId.length > 0) {
+            row.avatarId = avatarId
+        } else {
+            delete row.avatarId
+        }
         row.status = String(status || "profile_pending").trim()
         row.createdAt = String(row.createdAt || (new Date()).toISOString())
         delete row.error
@@ -4432,7 +4597,9 @@ ApplicationWindow {
                     var matchingRequest =
                         root.pendingEntryDisplayNameRequestForCurrentWorkspace()
                     if (String(matchingRequest.displayName || "").trim()
-                            === String(root.pendingEntryDisplayName || "").trim()) {
+                            === String(root.pendingEntryDisplayName || "").trim()
+                            && String(matchingRequest.avatarId || "").trim()
+                            === String(root.pendingEntryAvatarId || "").trim()) {
                         root.pendingEntryDisplayNameRequestId = String(
                             matchingRequest.requestId || "").trim()
                         root.pendingEntryDisplayNameRequestKey = String(
@@ -4447,12 +4614,14 @@ ApplicationWindow {
 
         var request = root.pendingEntryDisplayNameRequestForCurrentWorkspace()
         var displayName = String(request.displayName || "").trim()
+        var avatarId = String(request.avatarId || "").trim()
         var requestId = String(request.requestId || "").trim()
         if (displayName.length === 0
                 || String(request.key || "").trim().length === 0) {
             return false
         }
         root.pendingEntryDisplayName = displayName
+        root.pendingEntryAvatarId = avatarId
         root.pendingEntryDisplayNameWorkspaceId = currentWorkspaceId
         root.pendingEntryDisplayNameRequestId = requestId
         root.pendingEntryDisplayNameRequestKey = String(
@@ -4519,6 +4688,7 @@ ApplicationWindow {
 
     function applyPendingEntryDisplayName() {
         var displayName = String(root.pendingEntryDisplayName || "").trim()
+        var avatarId = String(root.pendingEntryAvatarId || "").trim()
         if (displayName.length === 0) {
             return false
         }
@@ -4547,14 +4717,20 @@ ApplicationWindow {
 
         pendingEntryDisplayNameRetryTimer.stop()
         root.pendingEntryDisplayNameUpdateName = displayName
+        root.pendingEntryDisplayNameUpdateAvatarId = avatarId
         root.pendingEntryDisplayNameUpdateWorkspaceId =
             root.currentWorkspaceId()
         root.pendingEntryDisplayNameUpdateInFlight = true
-        if (chaftController.updateDeviceProfile(displayName)) {
+        var accepted = avatarId.length > 0
+            ? chaftController.updateDeviceProfileWithAvatar(
+                displayName, avatarId)
+            : chaftController.updateDeviceProfile(displayName)
+        if (accepted) {
             return true
         }
         root.pendingEntryDisplayNameUpdateInFlight = false
         root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateAvatarId = ""
         root.pendingEntryDisplayNameUpdateWorkspaceId = ""
         root.schedulePendingEntryDisplayNameRetry()
         return false
@@ -4574,6 +4750,7 @@ ApplicationWindow {
 
         root.pendingEntryDisplayNameUpdateInFlight = false
         root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateAvatarId = ""
         root.pendingEntryDisplayNameUpdateWorkspaceId = ""
         if (String(root.pendingEntryDisplayName || "").trim().length === 0) {
             root.scheduleControllerIdleWork()
@@ -4619,11 +4796,13 @@ ApplicationWindow {
 
     function clearPendingEntryDisplayName() {
         root.pendingEntryDisplayName = ""
+        root.pendingEntryAvatarId = ""
         root.pendingEntryDisplayNameWorkspaceId = ""
         root.pendingEntryDisplayNameRequestId = ""
         root.pendingEntryDisplayNameRequestKey = ""
         root.pendingEntryDisplayNameUpdateInFlight = false
         root.pendingEntryDisplayNameUpdateName = ""
+        root.pendingEntryDisplayNameUpdateAvatarId = ""
         root.pendingEntryDisplayNameUpdateWorkspaceId = ""
         root.pendingEntryDisplayNameWriteSucceeded = false
         root.pendingEntryDisplayNameRetryAttempt = 0
@@ -5861,6 +6040,12 @@ ApplicationWindow {
             workspaceEntryDialog.createOperationError = displayNameError
             return false
         }
+        var avatarError = chaftController.avatarIdValidationError(
+            workspaceEntryDialog.avatarIdText)
+        if (avatarError.length > 0) {
+            workspaceEntryDialog.createOperationError = avatarError
+            return false
+        }
         workspaceEntryDialog.createOperationError = ""
         if (chaftController.createWorkspace(
                     workspaceEntryDialog.createNameText,
@@ -5868,6 +6053,8 @@ ApplicationWindow {
                     workspaceEntryDialog.createAccessPolicyText)) {
             root.pendingWorkspaceCreateDisplayName =
                 workspaceEntryDialog.displayNameText.trim()
+            root.pendingWorkspaceCreateAvatarId =
+                workspaceEntryDialog.avatarIdText.trim()
             workspaceEntryDialog.createOperationPending = true
             return true
         }
@@ -5885,6 +6072,7 @@ ApplicationWindow {
         var createdWorkspaceId = String(workspaceId || "").trim()
         if (!success || createdWorkspaceId.length === 0) {
             root.pendingWorkspaceCreateDisplayName = ""
+            root.pendingWorkspaceCreateAvatarId = ""
             workspaceEntryDialog.createOperationError = String(
                 message || "Could not create the workspace.")
             return
@@ -5892,10 +6080,14 @@ ApplicationWindow {
 
         var displayName = String(
             root.pendingWorkspaceCreateDisplayName || "").trim()
+        var avatarId = String(
+            root.pendingWorkspaceCreateAvatarId || "").trim()
         root.pendingWorkspaceCreateDisplayName = ""
+        root.pendingWorkspaceCreateAvatarId = ""
         if (displayName.length > 0) {
             root.clearPendingEntryDisplayName()
             root.pendingEntryDisplayName = displayName
+            root.pendingEntryAvatarId = avatarId
             root.pendingEntryDisplayNameWorkspaceId = createdWorkspaceId
             root.persistPendingEntryDisplayNameState("profile_pending")
         }
@@ -5991,8 +6183,13 @@ ApplicationWindow {
         var entryDisplayName = workspaceEntryDialog.restoreMode
             ? ""
             : workspaceEntryDialog.displayNameText.trim()
+        var entryAvatarId = workspaceEntryDialog.restoreMode
+            ? ""
+            : workspaceEntryDialog.avatarIdText.trim()
         var requestedDisplayName = String(
             (pendingRequest && pendingRequest.displayName) || "").trim()
+        var requestedAvatarId = String(
+            (pendingRequest && pendingRequest.avatarId) || "").trim()
         var requestedDisplayNameError = requestedDisplayName.length > 0
             ? chaftController.deviceDisplayNameValidationError(
                 requestedDisplayName)
@@ -6001,6 +6198,9 @@ ApplicationWindow {
                 && requestedDisplayNameError.length === 0) {
             entryDisplayName = requestedDisplayName
         }
+        if (AvatarCatalog.isValid(requestedAvatarId)) {
+            entryAvatarId = requestedAvatarId
+        }
         if (!workspaceEntryDialog.restoreMode && entryDisplayName.length > 0) {
             var entryDisplayNameError =
                 chaftController.deviceDisplayNameValidationError(entryDisplayName)
@@ -6008,6 +6208,12 @@ ApplicationWindow {
                 if (requestedDisplayNameError.length > 0) {
                     workspaceEntryDialog.receivedApprovalDisplayNamePreserved = false
                 }
+                workspaceEntryDialog.displayNameEditing = true
+                return false
+            }
+            var entryAvatarError =
+                chaftController.avatarIdValidationError(entryAvatarId)
+            if (entryAvatarError.length > 0) {
                 workspaceEntryDialog.displayNameEditing = true
                 return false
             }
@@ -6022,6 +6228,7 @@ ApplicationWindow {
             if (entryDisplayName.length > 0) {
                 root.clearPendingEntryDisplayName()
                 root.pendingEntryDisplayName = entryDisplayName
+                root.pendingEntryAvatarId = entryAvatarId
                 root.pendingEntryDisplayNameWorkspaceId =
                     root.credentialWorkspaceId(credentials)
                 root.pendingEntryDisplayNameRequestId = responseRequestId
@@ -6897,7 +7104,8 @@ ApplicationWindow {
         return ({})
     }
 
-    function recordPendingAccessRequestFromArtifact(status, artifactText) {
+    function recordPendingAccessRequestFromArtifact(status, artifactText,
+                                                    selectedAvatarId) {
         var normalizedArtifactText = String(artifactText || "").trim()
         var request = root.parsedCredentialObject(normalizedArtifactText)
         var kind = String((request && request.kind) || "")
@@ -6946,11 +7154,24 @@ ApplicationWindow {
             delete next[existingKey]
         }
         var now = (new Date()).toISOString()
+        var avatarId = String(selectedAvatarId || "").trim()
+        if (!AvatarCatalog.isValid(avatarId)) {
+            avatarId = String(existing.avatarId || "").trim()
+        }
+        if (!AvatarCatalog.isValid(avatarId)
+                && workspaceEntryDialog.visible
+                && String(request.displayName || "").trim()
+                    === workspaceEntryDialog.displayNameText.trim()
+                && AvatarCatalog.isValid(
+                    workspaceEntryDialog.avatarIdText)) {
+            avatarId = workspaceEntryDialog.avatarIdText.trim()
+        }
         next[key] = {
             requestId: requestId,
             workspaceId: workspaceId,
             workspaceName: String(request.workspaceName || "").trim(),
             displayName: String(request.displayName || "").trim(),
+            avatarId: AvatarCatalog.isValid(avatarId) ? avatarId : "",
             deliveryDisplayName: String(request.deliveryDisplayName || "").trim(),
             deliveryDeviceId: String(request.deliveryDeviceId || "").trim(),
             deliveryPeerEndpoint: String(request.deliveryPeerEndpoint || "").trim(),
@@ -6977,7 +7198,8 @@ ApplicationWindow {
             return false
         }
         return root.recordPendingAccessRequestFromArtifact(
-            status, root.keyTransferFileText())
+            status, root.keyTransferFileText(),
+            workspaceEntryDialog.avatarIdText)
     }
 
     function pendingAccessRequestCopyText(row) {
@@ -9344,6 +9566,11 @@ ApplicationWindow {
                                     unreadCount: directMessageSidebarDelegate.modelData.unreadCount
                                     privateChannel: true
                                     directMessage: true
+                                    avatarId: root.directMessageAvatarId(
+                                        directMessageSidebarDelegate.modelData)
+                                    avatarWorkspaceId: root.currentWorkspaceId()
+                                    avatarIdentityId: root.directMessageParticipantDeviceId(
+                                        directMessageSidebarDelegate.modelData)
                                     hasDraft: root.draftTextForChannel(directMessageSidebarDelegate.modelData.channelId).trim().length > 0
                                     muted: root.channelMuted(directMessageSidebarDelegate.modelData)
                                     archived: false
@@ -10634,6 +10861,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     timelineModel: root.selectedTimeline
+                    workspaceId: root.currentWorkspaceId()
                     emptyText: root.selectedTimelineEmptyText()
                     actionsEnabled: root.runtimeWorkReady
                     historyRepairEnabled: root.runtimeWorkReady
@@ -10698,6 +10926,10 @@ ApplicationWindow {
                     replyLabel: root.replyTargetMessageId.length > 0
                         ? root.replyTargetLabel(root.replyTarget)
                         : ""
+                    replyAvatarId: String(root.replyTarget.authorAvatarId || "")
+                    replyWorkspaceId: root.currentWorkspaceId()
+                    replyIdentityId: String(root.replyTarget.authorDeviceId || "")
+                    replyDisplayName: root.itemAuthorLabel(root.replyTarget)
                     enabled: root.runtimeWorkReady && root.selectedChannelKey.length > 0
                     onDraftChanged: function(text) {
                         root.saveSelectedDraftText(text)
@@ -11429,25 +11661,15 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: 8
 
-                                    Rectangle {
+                                    AvatarMark {
                                         Layout.preferredWidth: 32
                                         Layout.preferredHeight: 32
-                                        radius: Tokens.radiusMd
-                                        color: (root.inspectorItem.kind === "missing_history_gap" || root.inspectorItem.kind === "invalid_signature")
-                                            ? Tokens.warning
-                                            : (root.inspectorItem.encrypted ? Tokens.secure : Tokens.accent)
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: (root.inspectorItem.kind === "missing_history_gap" || root.inspectorItem.kind === "invalid_signature")
-                                                ? "!"
-                                                : (root.itemAuthorLabel(root.inspectorItem).length > 0
-                                                    ? root.itemAuthorLabel(root.inspectorItem).slice(0, 1).toUpperCase()
-                                                    : "?")
-                                            color: Tokens.onAccent
-                                            font.pixelSize: Tokens.fontSizeSm
-                                            font.weight: Font.DemiBold
-                                        }
+                                        warning: root.inspectorItem.kind === "missing_history_gap"
+                                            || root.inspectorItem.kind === "invalid_signature"
+                                        avatarId: String(root.inspectorItem.authorAvatarId || "")
+                                        workspaceId: root.currentWorkspaceId()
+                                        identityId: String(root.inspectorItem.authorDeviceId || "")
+                                        displayName: root.itemAuthorLabel(root.inspectorItem)
                                     }
 
                                     ColumnLayout {
@@ -11633,6 +11855,7 @@ ApplicationWindow {
 
                         InspectorThreadPanel {
                             Layout.fillWidth: true
+                            workspaceId: root.currentWorkspaceId()
                             replyCount: root.inspectorThreadReplyCount
                             replyPreviews: root.inspectorThreadReplyPreviews
                             runtimeReady: root.runtimeWorkReady
@@ -12007,6 +12230,8 @@ ApplicationWindow {
 
                                 width: ListView.view.width
                                 deviceId: String(memberRowDelegate.modelData.deviceId || "")
+                                avatarId: root.memberAvatarId(memberRowDelegate.modelData)
+                                workspaceId: root.currentWorkspaceId()
                                 displayLabel: root.memberLabel(memberRowDelegate.modelData)
                                 initial: root.memberInitial(memberRowDelegate.modelData)
                                 roleLabel: root.roleLabel(memberRowDelegate.modelData.role)

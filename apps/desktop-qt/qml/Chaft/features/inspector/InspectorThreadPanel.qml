@@ -10,6 +10,7 @@ ColumnLayout {
     property int replyCount: 0
     property var replyPreviews: []
     property bool runtimeReady: false
+    property string workspaceId: ""
     property string messageId: ""
     property bool messageDeleted: false
     readonly property bool hasReplies: replyCount > 0
@@ -112,26 +113,40 @@ ColumnLayout {
             Accessible.role: Accessible.ListItem
             Accessible.name: authorText + ": " + bodyText
 
-            ColumnLayout {
+            RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
-                spacing: 2
+                spacing: 8
 
-                Text {
-                    Layout.fillWidth: true
-                    text: replyRow.authorText
-                    color: Tokens.textStrong
-                    font.pixelSize: Tokens.fontSizeSm
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                AvatarMark {
+                    Layout.preferredWidth: 32
+                    Layout.preferredHeight: 32
+                    avatarId: String(replyRow.modelData.authorAvatarId || "")
+                    workspaceId: root.workspaceId
+                    identityId: String(replyRow.modelData.authorDeviceId || "")
+                    displayName: replyRow.authorText
                 }
 
-                Text {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: replyRow.bodyText
-                    color: replyRow.modelData.deleted ? Tokens.textMuted : Tokens.textStrong
-                    font.pixelSize: Tokens.fontSizeSm
-                    elide: Text.ElideRight
+                    spacing: 2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: replyRow.authorText
+                        color: Tokens.textStrong
+                        font.pixelSize: Tokens.fontSizeSm
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: replyRow.bodyText
+                        color: replyRow.modelData.deleted ? Tokens.textMuted : Tokens.textStrong
+                        font.pixelSize: Tokens.fontSizeSm
+                        elide: Text.ElideRight
+                    }
                 }
             }
         }

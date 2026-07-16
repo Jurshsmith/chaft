@@ -53,6 +53,8 @@ ScrollView {
     property string autoLoadedKeyTransferText: ""
     property string profileSaveError: ""
     property string profileDraftWorkspaceId: ""
+    property string profileDraftAvatarId: ""
+    property string profileSavedAvatarId: ""
     readonly property string standardAccessUpdateProtocol: "openmls/key-package"
 
     onAdvancedAccessToolsOpenChanged: {
@@ -167,17 +169,42 @@ ScrollView {
         return "Set your name so teammates can recognize you."
     }
 
+    function localProfileAvatarId() {
+        if (!setupScroll.app) {
+            return ""
+        }
+        var storedAvatarId = setupScroll.app.avatarIdForDevice(
+            String(chaftController.deviceId || ""))
+        return AvatarCatalog.isValid(storedAvatarId)
+            ? storedAvatarId
+            : AvatarCatalog.deterministicAvatarId(
+                setupScroll.app.currentWorkspaceId(),
+                String(chaftController.deviceId || ""))
+    }
+
+    function profileDraftDirty() {
+        return displayNameField.dirty
+            || setupScroll.profileDraftAvatarId
+                !== setupScroll.profileSavedAvatarId
+    }
+
+    function openProfileAvatarPicker() {
+        profileAvatarPicker.openPicker()
+    }
+
     function syncDisplayNameDraft(force) {
         if (!setupScroll.app) {
             return false
         }
         var workspaceId = setupScroll.app.currentWorkspaceId()
         var workspaceChanged = workspaceId !== setupScroll.profileDraftWorkspaceId
-        if (!force && !workspaceChanged && displayNameField.dirty) {
+        if (!force && !workspaceChanged && setupScroll.profileDraftDirty()) {
             return false
         }
         displayNameField.text = setupScroll.app.localDeviceDisplayName()
         displayNameField.markClean()
+        setupScroll.profileDraftAvatarId = setupScroll.localProfileAvatarId()
+        setupScroll.profileSavedAvatarId = setupScroll.profileDraftAvatarId
         setupScroll.profileDraftWorkspaceId = workspaceId
         setupScroll.profileSaveError = ""
         return true
@@ -205,13 +232,21 @@ ScrollView {
             setupScroll.profileSaveError = "Unlock this workspace before saving your name."
             return false
         }
-        if (!chaftController.updateDeviceProfile(displayName)) {
+        var avatarId = AvatarCatalog.isValid(setupScroll.profileDraftAvatarId)
+            ? setupScroll.profileDraftAvatarId
+            : setupScroll.localProfileAvatarId()
+        var saved = typeof chaftController.updateDeviceProfileWithAvatar === "function"
+            ? chaftController.updateDeviceProfileWithAvatar(displayName, avatarId)
+            : chaftController.updateDeviceProfile(displayName)
+        if (!saved) {
             setupScroll.profileSaveError = String(chaftController.syncStatus
                 || "Could not save your name. Try again.")
             return false
         }
         displayNameField.text = displayName
         displayNameField.markClean()
+        setupScroll.profileDraftAvatarId = avatarId
+        setupScroll.profileSavedAvatarId = avatarId
         setupScroll.profileDraftWorkspaceId = workspaceId
         setupScroll.profileSaveError = ""
         return true
@@ -2591,6 +2626,22 @@ ScrollView {
                 collapsible: false
                 defaultExpanded: true
 
+                AvatarPicker {
+                    id: profileAvatarPicker
+                    Layout.fillWidth: true
+                    visible: chaftController.hasRuntimeWorkspace
+                    avatarId: setupScroll.profileDraftAvatarId
+                    workspaceId: app ? app.currentWorkspaceId() : ""
+                    identityId: String(chaftController.deviceId || "")
+                    displayName: displayNameField.text.trim()
+                    usedAvatarIds: app ? app.usedWorkspaceAvatarIds() : []
+                    editable: app && app.runtimeWorkReady
+                    onAvatarChosen: function(nextAvatarId) {
+                        setupScroll.profileDraftAvatarId = nextAvatarId
+                        setupScroll.profileSaveError = ""
+                    }
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     visible: chaftController.hasRuntimeWorkspace
@@ -2615,7 +2666,7 @@ ScrollView {
                         text: "Save"
                         enabled: app.runtimeWorkReady
                             && displayNameField.text.trim().length > 0
-                            && displayNameField.dirty
+                            && setupScroll.profileDraftDirty()
                         onClicked: setupScroll.saveDisplayNameDraft()
                     }
                 }
@@ -3153,6 +3204,8 @@ ScrollView {
 
                             Layout.fillWidth: true
                             deviceId: String(peopleMemberRow.modelData.deviceId || "")
+                            avatarId: app.memberAvatarId(peopleMemberRow.modelData)
+                            workspaceId: app.currentWorkspaceId()
                             displayLabel: app.memberLabel(peopleMemberRow.modelData)
                             initial: app.memberInitial(peopleMemberRow.modelData)
                             roleLabel: app.roleLabel(peopleMemberRow.modelData.role)

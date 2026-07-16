@@ -9,6 +9,7 @@ ListView {
     id: root
     property var timelineModel: []
     property string emptyText: "No messages yet"
+    property string workspaceId: ""
     property bool actionsEnabled: false
     property bool historyRepairEnabled: false
     property bool historyRepairHasAddress: false
@@ -649,6 +650,8 @@ ListView {
                     warning: row.warningRow
                     encrypted: row.modelData.encrypted
                     authorDeviceId: String(row.modelData.authorDeviceId || "")
+                    authorAvatarId: String(row.modelData.authorAvatarId || "")
+                    workspaceId: root.workspaceId
                     label: row.warningRow
                         ? ""
                         : root.authorInitial(row.modelData.authorDisplayName, row.modelData.authorDeviceId)
@@ -685,6 +688,16 @@ ListView {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 28
                     label: row.modelData.replyPreview ? root.replyPreviewLabel(row.modelData.replyPreview) : ""
+                    avatarId: row.modelData.replyPreview
+                        ? String(row.modelData.replyPreview.authorAvatarId || "")
+                        : ""
+                    authorDeviceId: row.modelData.replyPreview
+                        ? String(row.modelData.replyPreview.authorDeviceId || "")
+                        : ""
+                    authorDisplayName: row.modelData.replyPreview
+                        ? String(row.modelData.replyPreview.authorDisplayName || "")
+                        : ""
+                    workspaceId: root.workspaceId
                 }
 
                 RowLayout {
@@ -910,7 +923,8 @@ ListView {
 
             MenuItem {
                 text: "Edit message"
-                enabled: root.actionsEnabled && Boolean(row.modelData.messageId)
+                enabled: root.actionsEnabled && Boolean(row.modelData.canEdit)
+                    && Boolean(row.modelData.messageId)
                     && !row.modelData.deleted && !Boolean(row.modelData.bodyTruncated)
                 onTriggered: root.editRequested(row.modelData.messageId || "", row.modelData.body || "")
             }
@@ -923,7 +937,8 @@ ListView {
 
             MenuItem {
                 text: "Delete message"
-                enabled: root.actionsEnabled && Boolean(row.modelData.messageId)
+                enabled: root.actionsEnabled && Boolean(row.modelData.canDelete)
+                    && Boolean(row.modelData.messageId)
                     && !row.modelData.deleted
                 onTriggered: root.deleteRequested(row.modelData.messageId || "")
             }

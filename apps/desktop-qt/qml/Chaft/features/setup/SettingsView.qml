@@ -63,6 +63,10 @@ Item {
         setupPanel.focusInviteForm()
     }
 
+    function openProfileAvatarPicker() {
+        setupPanel.openProfileAvatarPicker()
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Tokens.surfaceBase

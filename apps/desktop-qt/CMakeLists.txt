@@ -14,7 +14,10 @@ if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
 endif()
 
-set_source_files_properties(qml/Chaft/tokens/Themes.qml qml/Chaft/tokens/Tokens.qml
+set_source_files_properties(
+    qml/Chaft/tokens/AvatarCatalog.qml
+    qml/Chaft/tokens/Themes.qml
+    qml/Chaft/tokens/Tokens.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE
 )
 
@@ -47,8 +50,11 @@ qt_add_qml_module(ChaftDesktop
         QtQuick.Layouts
     QML_FILES
         qml/Chaft/App.qml
+        qml/Chaft/tokens/AvatarCatalog.qml
         qml/Chaft/tokens/Themes.qml
         qml/Chaft/tokens/Tokens.qml
+        qml/Chaft/components/AvatarMark.qml
+        qml/Chaft/components/AvatarPicker.qml
         qml/Chaft/components/AttachmentRow.qml
         qml/Chaft/components/BackupPeerStatusRow.qml
         qml/Chaft/components/KeyPackageRow.qml

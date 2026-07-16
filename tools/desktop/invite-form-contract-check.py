@@ -457,6 +457,42 @@ class InviteFormContracts(unittest.TestCase):
                 f'status == QStringLiteral("{lifecycle_status}")', response_poll
             )
 
+    def test_joiner_avatar_tracks_the_durable_profile_lifecycle(self) -> None:
+        confirmation = function_body(self.app, "pendingEntryDisplayNameConfirmed")
+        self.assertIn("pendingEntryAvatarId", confirmation)
+        self.assertIn("localDeviceAvatarId()", confirmation)
+        self.assertIn("localLinkedPersonAvatarId()", confirmation)
+
+        persist = function_body(self.app, "persistPendingEntryDisplayNameState")
+        self.assertIn("row.avatarId = avatarId", persist)
+
+        restore = function_body(
+            self.app, "restorePendingEntryDisplayNameFromRequests"
+        )
+        self.assertIn("pendingEntryAvatarId = avatarId", restore)
+
+        apply_profile = function_body(self.app, "applyPendingEntryDisplayName")
+        self.assertIn("updateDeviceProfileWithAvatar", apply_profile)
+        self.assertIn("pendingEntryDisplayNameUpdateAvatarId", apply_profile)
+
+        submit_join = function_body(self.app, "submitWorkspaceJoin")
+        self.assertIn("requestedAvatarId", submit_join)
+        self.assertIn("pendingEntryAvatarId = entryAvatarId", submit_join)
+
+        pending_request = function_body(
+            self.app, "recordPendingAccessRequestFromArtifact"
+        )
+        self.assertIn("avatarId:", pending_request)
+
+        sanitizer_start = self.main_cpp.index(
+            "QVariantMap sanitizedPendingJoinRequests("
+        )
+        sanitizer_suffix = self.main_cpp.index(") {", sanitizer_start)
+        sanitizer = balanced_block(
+            self.main_cpp, self.main_cpp.index("{", sanitizer_suffix)
+        )
+        self.assertIn('QStringLiteral("avatarId")', sanitizer)
+
     def test_message_refresh_does_not_depend_on_a_receiver_action(self) -> None:
         auto_sync = function_body(self.app, "syncSelectedPeerIfReady")
         reconcile_due = auto_sync.index("hostedRuntimeReconcileDue")
@@ -478,6 +514,18 @@ class InviteFormContracts(unittest.TestCase):
         invoke_opening = self.main_cpp.index("{", invoke_start)
         invoke = balanced_block(self.main_cpp, invoke_opening)
         self.assertNotIn("++m_runtimeWriteGeneration", invoke)
+
+    def test_search_only_messages_keep_author_actions_and_avatars(self) -> None:
+        apply_results = cpp_void_function_body(
+            self.main_cpp, "applyWorkspaceSearchResults"
+        )
+        self.assertIn('QStringLiteral("authorAvatarId")', apply_results)
+        self.assertIn(
+            'row.value(QStringLiteral("authorDeviceId")).toString() == m_deviceId',
+            apply_results,
+        )
+        self.assertIn('QStringLiteral("canEdit")', apply_results)
+        self.assertIn('QStringLiteral("canDelete")', apply_results)
 
     def test_profile_completion_is_emitted_after_the_confirming_snapshot(self) -> None:
         self.assertIn("void deviceProfileUpdateFinished(", self.main_cpp)

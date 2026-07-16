@@ -17,6 +17,7 @@ Dialog {
     property alias createChannelText: createChannelField.text
     property string createAccessPolicyText: createAccessPolicyBox.currentValue || "invite_only"
     property alias displayNameText: displayNameField.text
+    property string avatarIdText: ""
     property bool displayNameEditing: false
     property bool receivedApprovalDisplayNamePreserved: false
 
@@ -298,6 +299,7 @@ Dialog {
         createChannelField.text = "general"
         createAccessPolicyBox.currentIndex = 0
         displayNameField.text = ""
+        root.avatarIdText = ""
         credentialsArea.text = ""
         recoveryPassphraseField.text = ""
         peerEndpointField.text = chaftController.defaultPeerEndpoint
@@ -1031,6 +1033,19 @@ Dialog {
             Layout.fillWidth: true
             visible: root.identityVisible && !root.joinRequestPrepared
             spacing: Tokens.space1
+
+            AvatarPicker {
+                Layout.fillWidth: true
+                avatarId: root.avatarIdText
+                workspaceId: root.app ? root.app.currentWorkspaceId() : ""
+                identityId: String(chaftController.deviceId || "")
+                displayName: displayNameField.text.trim()
+                usedAvatarIds: root.app ? root.app.usedWorkspaceAvatarIds() : []
+                editable: !root.handoffOperationPending
+                onAvatarChosen: function(nextAvatarId) {
+                    root.avatarIdText = nextAvatarId
+                }
+            }
 
             LabeledField {
                 id: displayNameField
@@ -2033,6 +2048,21 @@ Dialog {
 
     onOpened: {
         peerEndpointField.text = chaftController.defaultPeerEndpoint
+        if (!AvatarCatalog.isValid(root.avatarIdText)) {
+            var savedAvatarId = root.app
+                ? root.app.avatarIdForDevice(
+                    String(chaftController.deviceId || ""))
+                : ""
+            if (!AvatarCatalog.isValid(savedAvatarId) && root.app) {
+                savedAvatarId = AvatarCatalog.deterministicAvatarId(
+                    root.app.currentWorkspaceId(),
+                    String(chaftController.deviceId || ""))
+            }
+            root.avatarIdText = AvatarCatalog.isValid(savedAvatarId)
+                ? savedAvatarId
+                : AvatarCatalog.shuffledAvatarId(
+                    "", root.app ? root.app.usedWorkspaceAvatarIds() : [])
+        }
         if (displayNameField.text.trim().length === 0) {
             displayNameField.text = root.app.localDeviceDisplayName()
         }

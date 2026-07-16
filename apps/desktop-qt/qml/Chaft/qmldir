@@ -1,7 +1,10 @@
 module Chaft
 App 1.0 App.qml
+singleton AvatarCatalog 1.0 tokens/AvatarCatalog.qml
 singleton Themes 1.0 tokens/Themes.qml
 singleton Tokens 1.0 tokens/Tokens.qml
+AvatarMark 1.0 components/AvatarMark.qml
+AvatarPicker 1.0 components/AvatarPicker.qml
 AttachmentRow 1.0 components/AttachmentRow.qml
 BackupPeerStatusRow 1.0 components/BackupPeerStatusRow.qml
 KeyPackageRow 1.0 components/KeyPackageRow.qml

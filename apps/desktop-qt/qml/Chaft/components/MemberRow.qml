@@ -6,6 +6,8 @@ import Chaft
 Rectangle {
     id: root
     property string deviceId: ""
+    property string avatarId: ""
+    property string workspaceId: ""
     property string displayLabel: ""
     property string initial: "?"
     property string roleLabel: ""
@@ -55,19 +57,13 @@ Rectangle {
         anchors.margins: 8
         spacing: 8
 
-        Rectangle {
+        AvatarMark {
             Layout.preferredWidth: 30
             Layout.preferredHeight: 30
-            radius: Tokens.radiusMd
-            color: root.owner ? Tokens.accent : Tokens.secure
-
-            Text {
-                anchors.centerIn: parent
-                text: root.initial
-                color: Tokens.onAccent
-                font.pixelSize: Tokens.fontSizeSm
-                font.weight: Font.DemiBold
-            }
+            avatarId: root.avatarId
+            workspaceId: root.workspaceId
+            identityId: root.deviceId
+            displayName: root.displayLabel
         }
 
         ColumnLayout {

@@ -48,7 +48,7 @@ mkdir -p "$(dirname "$output_path")"
 rm -f "$output_path"
 
 default_screenshot_timeout_ms="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-30000}"
-default_ui_states="setup,setup-identity,setup-add-device,setup-access-updates,setup-security,setup-backup,setup-room-access,setup-people,setup-invite-dialog,setup-request-review,setup-request,setup-request-approved,setup-request-lost,setup-request-reinvite,setup-invite,setup-approval-invite,setup-invite-lost,first-sync-waiting,first-sync-recovery,drawer,drawer-advanced,member-roles,direct-message,palette,entry,entry-join,entry-restore,entry-restore-failed,entry-join-invite,entry-approval-invite,entry-workspace-card,entry-workspace-card-invite-only,entry-request-sent,post-create,post-create-recovery,add-workspace,channel-details,private-channel-details,private-channel-access,private-channel-repair-failed,private-channel-repair-saved,private-channel-inspector,channel-archived,reaction-picker,external-link"
+default_ui_states="setup,setup-identity,setup-avatar-picker,setup-add-device,setup-access-updates,setup-security,setup-backup,setup-room-access,setup-people,setup-invite-dialog,setup-request-review,setup-request,setup-request-approved,setup-request-lost,setup-request-reinvite,setup-invite,setup-approval-invite,setup-invite-lost,first-sync-waiting,first-sync-recovery,drawer,drawer-advanced,member-roles,direct-message,palette,entry,entry-join,entry-restore,entry-restore-failed,entry-join-invite,entry-approval-invite,entry-workspace-card,entry-workspace-card-invite-only,entry-request-sent,post-create,post-create-recovery,add-workspace,channel-details,private-channel-details,private-channel-access,private-channel-repair-failed,private-channel-repair-saved,private-channel-inspector,channel-archived,reaction-picker,external-link"
 explicit_ui_states=0
 ui_states="${CHAFT_SMOKE_UI_STATES:-$default_ui_states}"
 if [ -n "${CHAFT_SMOKE_UI_STATES:-}" ]; then
@@ -320,6 +320,8 @@ for ui_state in $(printf '%s' "$ui_states" | tr ',' ' '); do
     screenshot_delay_ms=2500
   elif [ "$ui_state" = "setup-identity" ]; then
     screenshot_delay_ms=750
+  elif [ "$ui_state" = "setup-avatar-picker" ]; then
+    screenshot_delay_ms=1000
   elif [ "$ui_state" = "setup-add-device" ]; then
     screenshot_delay_ms=1000
   elif [ "$ui_state" = "setup-access-updates" ]; then

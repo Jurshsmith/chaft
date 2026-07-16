@@ -122,6 +122,12 @@ using RuntimeUpdateLocalPersonProfileResultJsonFn = char *(*)(const char *,
                                                               const char *,
                                                               const char *,
                                                               const char *);
+using RuntimeUpdateDeviceProfileWithAvatarResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *,
+              const char *);
+using RuntimeUpdateLocalPersonProfileWithAvatarResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *,
+              const char *);
 using RuntimePublishDeviceKeyPackageResultJsonFn = char *(*)(const char *,
                                                              const char *,
                                                              const char *,
@@ -730,6 +736,23 @@ QString runtimeSnapshotDeviceDisplayName(const QJsonObject &snapshot,
   return {};
 }
 
+QString runtimeSnapshotDeviceAvatarId(const QJsonObject &snapshot,
+                                      const QString &deviceId) {
+  const auto normalizedDeviceId = deviceId.trimmed();
+  if (normalizedDeviceId.isEmpty()) {
+    return {};
+  }
+  for (const auto &profileValue :
+       snapshot.value(QStringLiteral("profiles")).toArray()) {
+    const auto profile = profileValue.toObject();
+    if (profile.value(QStringLiteral("deviceId")).toString().trimmed() ==
+        normalizedDeviceId) {
+      return profile.value(QStringLiteral("avatarId")).toString().trimmed();
+    }
+  }
+  return {};
+}
+
 QString runtimeSnapshotLinkedPersonDisplayName(const QJsonObject &snapshot,
                                                const QString &deviceId) {
   const auto normalizedDeviceId = deviceId.trimmed();
@@ -767,15 +790,68 @@ QString runtimeSnapshotLinkedPersonDisplayName(const QJsonObject &snapshot,
   return {};
 }
 
+QString runtimeSnapshotLinkedPersonAvatarId(const QJsonObject &snapshot,
+                                            const QString &deviceId) {
+  const auto normalizedDeviceId = deviceId.trimmed();
+  if (normalizedDeviceId.isEmpty()) {
+    return {};
+  }
+
+  QString personId;
+  for (const auto &linkValue :
+       snapshot.value(QStringLiteral("personDeviceLinks")).toArray()) {
+    const auto link = linkValue.toObject();
+    if (link.value(QStringLiteral("deviceId")).toString().trimmed() !=
+        normalizedDeviceId) {
+      continue;
+    }
+    const auto linkedAvatarId =
+        link.value(QStringLiteral("personAvatarId")).toString().trimmed();
+    if (!linkedAvatarId.isEmpty()) {
+      return linkedAvatarId;
+    }
+    personId = link.value(QStringLiteral("personId")).toString().trimmed();
+    break;
+  }
+  if (personId.isEmpty()) {
+    return {};
+  }
+  for (const auto &profileValue :
+       snapshot.value(QStringLiteral("personProfiles")).toArray()) {
+    const auto profile = profileValue.toObject();
+    if (profile.value(QStringLiteral("personId")).toString().trimmed() ==
+        personId) {
+      return profile.value(QStringLiteral("avatarId")).toString().trimmed();
+    }
+  }
+  return {};
+}
+
+bool runtimeSnapshotHasProfilePair(const QJsonObject &snapshot,
+                                   const QString &deviceId,
+                                   const QString &displayName,
+                                   const QString &avatarId) {
+  const auto normalizedDisplayName = displayName.trimmed();
+  const auto normalizedAvatarId = avatarId.trimmed();
+  const auto displayNamesMatch =
+      !normalizedDisplayName.isEmpty() &&
+      runtimeSnapshotDeviceDisplayName(snapshot, deviceId) ==
+          normalizedDisplayName &&
+      runtimeSnapshotLinkedPersonDisplayName(snapshot, deviceId) ==
+          normalizedDisplayName;
+  return displayNamesMatch &&
+         (normalizedAvatarId.isEmpty() ||
+          (runtimeSnapshotDeviceAvatarId(snapshot, deviceId) ==
+               normalizedAvatarId &&
+           runtimeSnapshotLinkedPersonAvatarId(snapshot, deviceId) ==
+               normalizedAvatarId));
+}
+
 bool runtimeSnapshotHasDisplayNamePair(const QJsonObject &snapshot,
                                        const QString &deviceId,
                                        const QString &displayName) {
-  const auto normalizedDisplayName = displayName.trimmed();
-  return !normalizedDisplayName.isEmpty() &&
-         runtimeSnapshotDeviceDisplayName(snapshot, deviceId) ==
-             normalizedDisplayName &&
-         runtimeSnapshotLinkedPersonDisplayName(snapshot, deviceId) ==
-             normalizedDisplayName;
+  return runtimeSnapshotHasProfilePair(snapshot, deviceId, displayName,
+                                       QString());
 }
 
 QVariantList resultArrayValueFromJson(const QByteArray &json,
@@ -1281,6 +1357,7 @@ constexpr qsizetype kMaxInviteApprovalPolicyBytes = 32;
 constexpr qsizetype kMaxWorkspaceAccessPolicyBytes = 32;
 constexpr qsizetype kEventIdHashHexBytes = 64;
 constexpr qsizetype kMaxDeviceDisplayNameBytes = 128;
+constexpr qsizetype kMaxAvatarIdBytes = 64;
 constexpr qsizetype kMaxInviteLabelBytes = 128;
 constexpr qsizetype kMaxJoinRequestIdBytes = 128;
 constexpr qsizetype kMaxJoinRequestNoteBytes = 512;
@@ -1355,6 +1432,19 @@ bool validateMetadataTextForWrite(const QString &value, qsizetype maxBytes,
     return false;
   }
   return true;
+}
+
+bool isValidAvatarId(const QString &avatarId) {
+  const auto bytes = avatarId.trimmed().toUtf8();
+  if (bytes.isEmpty() || bytes.size() > kMaxAvatarIdBytes) {
+    return false;
+  }
+  return std::all_of(bytes.cbegin(), bytes.cend(), [](char value) {
+    const auto character = static_cast<unsigned char>(value);
+    return (character >= 'a' && character <= 'z') ||
+           (character >= '0' && character <= '9') || character == ':' ||
+           character == '_' || character == '-';
+  });
 }
 
 bool isCanonicalEventId(const QString &value) {
@@ -2405,6 +2495,11 @@ QVariantMap sanitizedPendingJoinRequests(const QVariantMap &requests) {
         request, QStringLiteral("workspaceName"), kMaxWorkspaceNameBytes);
     const auto displayName = sanitizedPendingJoinRequestText(
         request, QStringLiteral("displayName"), kMaxDeviceDisplayNameBytes);
+    auto avatarId = sanitizedPendingJoinRequestText(
+        request, QStringLiteral("avatarId"), kMaxAvatarIdBytes);
+    if (!avatarId.isEmpty() && !isValidAvatarId(avatarId)) {
+      avatarId.clear();
+    }
     const auto deliveryDisplayName = sanitizedPendingJoinRequestText(
         request, QStringLiteral("deliveryDisplayName"),
         kMaxDeviceDisplayNameBytes);
@@ -2455,6 +2550,9 @@ QVariantMap sanitizedPendingJoinRequests(const QVariantMap &requests) {
     }
     if (!displayName.isEmpty()) {
       row.insert(QStringLiteral("displayName"), displayName);
+    }
+    if (!avatarId.isEmpty()) {
+      row.insert(QStringLiteral("avatarId"), avatarId);
     }
     if (!deliveryDisplayName.isEmpty()) {
       row.insert(QStringLiteral("deliveryDisplayName"), deliveryDisplayName);
@@ -5662,7 +5760,47 @@ public:
     const auto generation = ++m_runtimeWriteGeneration;
     const auto operationId = beginDeviceProfileUpdate();
     setSyncStatus(QStringLiteral("saving name..."));
-    runDeviceProfileUpdate(normalizedDisplayName, generation, operationId);
+    runDeviceProfileUpdate(normalizedDisplayName, QString(), generation,
+                           operationId);
+    return true;
+  }
+
+  Q_INVOKABLE bool updateDeviceProfileWithAvatar(const QString &displayName,
+                                                 const QString &avatarId) {
+    if (!ensureRuntimeWorkspace()) {
+      return false;
+    }
+    if (workspaceOperationInFlight()) {
+      setSyncStatus(QStringLiteral("workspace operation already running"));
+      return false;
+    }
+
+    const auto normalizedDisplayName = displayName.trimmed();
+    const auto normalizedAvatarId = avatarId.trimmed();
+    QString validationError = deviceDisplayNameValidationError(displayName);
+    if (validationError.isEmpty()) {
+      validationError = avatarIdValidationError(avatarId);
+    }
+    if (!validationError.isEmpty()) {
+      setSyncStatus(validationError);
+      return false;
+    }
+    if (m_updateDeviceProfileWithAvatarJson == nullptr ||
+        m_updateLocalPersonProfileWithAvatarJson == nullptr) {
+      setSyncStatus(QStringLiteral(
+          "avatar updates require the current local service"));
+      return false;
+    }
+    if (m_deviceId.trimmed().isEmpty()) {
+      setSyncStatus(QStringLiteral("device identity unavailable"));
+      return false;
+    }
+
+    const auto generation = ++m_runtimeWriteGeneration;
+    const auto operationId = beginDeviceProfileUpdate();
+    setSyncStatus(QStringLiteral("saving profile..."));
+    runDeviceProfileUpdate(normalizedDisplayName, normalizedAvatarId,
+                           generation, operationId);
     return true;
   }
 
@@ -5678,6 +5816,20 @@ public:
             QStringLiteral("name"), QStringLiteral("128 bytes"),
             &metadataError)) {
       return metadataError;
+    }
+    return {};
+  }
+
+  Q_INVOKABLE QString avatarIdValidationError(const QString &avatarId) const {
+    const auto normalizedAvatarId = avatarId.trimmed();
+    if (normalizedAvatarId.isEmpty()) {
+      return QStringLiteral("Choose an avatar.");
+    }
+    if (normalizedAvatarId.toUtf8().size() > kMaxAvatarIdBytes) {
+      return QStringLiteral("Avatar selection is too large.");
+    }
+    if (!isValidAvatarId(normalizedAvatarId)) {
+      return QStringLiteral("Choose an avatar from the Relaymark gallery.");
     }
     return {};
   }
@@ -7923,6 +8075,16 @@ private:
           reinterpret_cast<RuntimeUpdateLocalPersonProfileResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_update_local_person_profile_result_json"));
+      m_updateDeviceProfileWithAvatarJson =
+          reinterpret_cast<RuntimeUpdateDeviceProfileWithAvatarResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_update_device_profile_with_avatar_result_"
+                  "json"));
+      m_updateLocalPersonProfileWithAvatarJson = reinterpret_cast<
+          RuntimeUpdateLocalPersonProfileWithAvatarResultJsonFn>(
+          m_library.resolve(
+              "chaft_runtime_update_local_person_profile_with_avatar_result_"
+              "json"));
       m_publishDeviceKeyPackageJson =
           reinterpret_cast<RuntimePublishDeviceKeyPackageResultJsonFn>(
               m_library.resolve(
@@ -8924,6 +9086,8 @@ private:
                    hit.value(QStringLiteral("authorDeviceId")).toString());
         row.insert(QStringLiteral("authorDisplayName"),
                    hit.value(QStringLiteral("authorDisplayName")).toVariant());
+        row.insert(QStringLiteral("authorAvatarId"),
+                   hit.value(QStringLiteral("authorAvatarId")).toString());
         row.insert(QStringLiteral("attachmentCount"), 0);
         row.insert(QStringLiteral("attachments"), QVariantList{});
         row.insert(QStringLiteral("reactionCount"), 0);
@@ -8948,6 +9112,18 @@ private:
           !hit.value(QStringLiteral("authorDisplayName")).isNull()) {
         row.insert(QStringLiteral("authorDisplayName"),
                    hit.value(QStringLiteral("authorDisplayName")).toVariant());
+      }
+      if (row.value(QStringLiteral("authorAvatarId")).toString().isEmpty()) {
+        row.insert(QStringLiteral("authorAvatarId"),
+                   hit.value(QStringLiteral("authorAvatarId")).toString());
+      }
+      if (!row.contains(QStringLiteral("canEdit")) ||
+          !row.contains(QStringLiteral("canDelete"))) {
+        const auto authoredByCurrentDevice =
+            !m_deviceId.isEmpty() &&
+            row.value(QStringLiteral("authorDeviceId")).toString() == m_deviceId;
+        row.insert(QStringLiteral("canEdit"), authoredByCurrentDevice);
+        row.insert(QStringLiteral("canDelete"), authoredByCurrentDevice);
       }
       row.insert(QStringLiteral("channelId"),
                  hit.value(QStringLiteral("channelId")).toString());
@@ -13247,11 +13423,15 @@ private:
     thread->start();
   }
 
-  void runDeviceProfileUpdate(const QString &displayName, quint64 generation,
+  void runDeviceProfileUpdate(const QString &displayName,
+                              const QString &avatarId, quint64 generation,
                               quint64 operationId) {
     const QPointer<ChaftController> guard(this);
     const auto updateFn = m_updateDeviceProfileJson;
     const auto personUpdateFn = m_updateLocalPersonProfileJson;
+    const auto updateWithAvatarFn = m_updateDeviceProfileWithAvatarJson;
+    const auto personUpdateWithAvatarFn =
+        m_updateLocalPersonProfileWithAvatarJson;
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
     const auto freeString = m_freeString;
@@ -13260,15 +13440,17 @@ private:
     const auto workspaceId = m_workspaceId;
     const auto deviceId = m_deviceId;
     const auto timelineLimit = configuredTimelineLimit();
-    auto *thread = QThread::create([guard, updateFn, personUpdateFn, snapshotFn,
-                                    snapshotLatestFn, freeString, runtimeDir,
-                                    identityFile, workspaceId, displayName,
-                                    deviceId, generation, timelineLimit,
-                                    operationId]() {
+    auto *thread = QThread::create(
+        [guard, updateFn, personUpdateFn, updateWithAvatarFn,
+         personUpdateWithAvatarFn, snapshotFn, snapshotLatestFn, freeString,
+         runtimeDir, identityFile, workspaceId, displayName, avatarId, deviceId,
+         generation, timelineLimit, operationId]() {
       const auto runtimeDirBytes = runtimeDir.toUtf8();
       const auto identityFileBytes = identityFile.toUtf8();
       const auto workspaceIdBytes = workspaceId.toUtf8();
       const auto displayNameBytes = displayName.toUtf8();
+      const auto avatarIdBytes = avatarId.toUtf8();
+      const auto writesAvatar = !avatarId.isEmpty();
       QString error;
       auto snapshotValue = latestRuntimeSnapshotValue(
           snapshotFn, snapshotLatestFn, freeString, runtimeDirBytes,
@@ -13277,21 +13459,37 @@ private:
       if (!snapshotValue.isEmpty()) {
         const auto deviceProfileAlreadyCurrent =
             runtimeSnapshotDeviceDisplayName(snapshotValue, deviceId) ==
-            displayName;
+                displayName &&
+            (!writesAvatar ||
+             runtimeSnapshotDeviceAvatarId(snapshotValue, deviceId) ==
+                 avatarId);
         const auto personProfileAlreadyCurrent =
             runtimeSnapshotLinkedPersonDisplayName(snapshotValue, deviceId) ==
-            displayName;
+                displayName &&
+            (!writesAvatar ||
+             runtimeSnapshotLinkedPersonAvatarId(snapshotValue, deviceId) ==
+                 avatarId);
 
         if (!deviceProfileAlreadyCurrent) {
           workspaceStateMayHaveChanged = true;
           QString deviceError;
-          const auto deviceJson = takeFfiString(
-              updateFn(runtimeDirBytes.constData(),
-                       identityFileBytes.isEmpty()
-                           ? nullptr
-                           : identityFileBytes.constData(),
-                       workspaceIdBytes.constData(), displayNameBytes.constData()),
-              freeString, &deviceError);
+          char *rawDeviceJson = nullptr;
+          if (writesAvatar) {
+            rawDeviceJson = updateWithAvatarFn(
+                runtimeDirBytes.constData(),
+                identityFileBytes.isEmpty() ? nullptr
+                                            : identityFileBytes.constData(),
+                workspaceIdBytes.constData(), displayNameBytes.constData(),
+                avatarIdBytes.constData());
+          } else {
+            rawDeviceJson = updateFn(
+                runtimeDirBytes.constData(),
+                identityFileBytes.isEmpty() ? nullptr
+                                            : identityFileBytes.constData(),
+                workspaceIdBytes.constData(), displayNameBytes.constData());
+          }
+          const auto deviceJson =
+              takeFfiString(rawDeviceJson, freeString, &deviceError);
           const auto deviceValue =
               deviceError.isEmpty()
                   ? resultValueFromJson(deviceJson, &deviceError)
@@ -13306,14 +13504,23 @@ private:
         if (!personProfileAlreadyCurrent) {
           workspaceStateMayHaveChanged = true;
           QString personError;
-          const auto personJson = takeFfiString(
-              personUpdateFn(
-                  runtimeDirBytes.constData(),
-                  identityFileBytes.isEmpty()
-                      ? nullptr
-                      : identityFileBytes.constData(),
-                  workspaceIdBytes.constData(), displayNameBytes.constData()),
-              freeString, &personError);
+          char *rawPersonJson = nullptr;
+          if (writesAvatar) {
+            rawPersonJson = personUpdateWithAvatarFn(
+                runtimeDirBytes.constData(),
+                identityFileBytes.isEmpty() ? nullptr
+                                            : identityFileBytes.constData(),
+                workspaceIdBytes.constData(), displayNameBytes.constData(),
+                avatarIdBytes.constData());
+          } else {
+            rawPersonJson = personUpdateFn(
+                runtimeDirBytes.constData(),
+                identityFileBytes.isEmpty() ? nullptr
+                                            : identityFileBytes.constData(),
+                workspaceIdBytes.constData(), displayNameBytes.constData());
+          }
+          const auto personJson =
+              takeFfiString(rawPersonJson, freeString, &personError);
           const auto personValue =
               personError.isEmpty()
                   ? resultValueFromJson(personJson, &personError)
@@ -13333,15 +13540,20 @@ private:
               &finalSnapshotError);
           if (snapshotValue.isEmpty()) {
             error = finalSnapshotError.isEmpty()
-                        ? QStringLiteral("name saved; profile confirmation pending")
+                        ? QStringLiteral(
+                              "profile saved; confirmation pending")
                         : finalSnapshotError;
           }
         }
       }
-      const auto profileComplete = runtimeSnapshotHasDisplayNamePair(
-          snapshotValue, deviceId, displayName);
+      const auto profileComplete =
+          avatarId.isEmpty()
+              ? runtimeSnapshotHasDisplayNamePair(snapshotValue, deviceId,
+                                                  displayName)
+              : runtimeSnapshotHasProfilePair(snapshotValue, deviceId,
+                                              displayName, avatarId);
       if (!profileComplete && error.isEmpty()) {
-        error = QStringLiteral("name profile is not complete yet");
+        error = QStringLiteral("profile is not complete yet");
       }
 
       if (guard.isNull()) {
@@ -13350,7 +13562,8 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, snapshotValue, profileComplete, workspaceStateMayHaveChanged,
-           error, workspaceId, displayName, generation, operationId]() {
+           error, workspaceId, displayName, avatarId, generation,
+           operationId]() {
             if (guard.isNull()) {
               return;
             }
@@ -13365,7 +13578,10 @@ private:
                   workspaceStateMayHaveChanged, workspaceId);
               emit guard->deviceProfileUpdateFinished(
                   workspaceId, displayName, profileComplete,
-                  profileComplete ? QStringLiteral("name saved") : error);
+                  profileComplete
+                      ? (avatarId.isEmpty() ? QStringLiteral("name saved")
+                                            : QStringLiteral("profile saved"))
+                      : error);
               return;
             }
             if (snapshotValue.isEmpty()) {
@@ -13378,8 +13594,13 @@ private:
             }
             if (guard->m_workspaceId != workspaceId) {
               const auto status = profileComplete
-                                      ? QStringLiteral(
-                                            "name saved after switching workspaces")
+                                      ? (avatarId.isEmpty()
+                                             ? QStringLiteral(
+                                                   "name saved after switching "
+                                                   "workspaces")
+                                             : QStringLiteral(
+                                                   "profile saved after "
+                                                   "switching workspaces"))
                                       : error;
               guard->setSyncStatus(status);
               guard->m_lastAppliedRuntimeWriteGeneration = generation;
@@ -13390,8 +13611,11 @@ private:
 
             guard->applyRuntimeSnapshot(snapshotValue, false);
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
-            const auto status = profileComplete ? QStringLiteral("name saved")
-                                                : error;
+            const auto status =
+                profileComplete
+                    ? (avatarId.isEmpty() ? QStringLiteral("name saved")
+                                          : QStringLiteral("profile saved"))
+                    : error;
             guard->setSyncStatus(status);
             emit guard->deviceProfileUpdateFinished(
                 workspaceId, displayName, profileComplete, status);
@@ -17044,6 +17268,10 @@ private:
   RuntimeUpdateDeviceProfileResultJsonFn m_updateDeviceProfileJson = nullptr;
   RuntimeUpdateLocalPersonProfileResultJsonFn m_updateLocalPersonProfileJson =
       nullptr;
+  RuntimeUpdateDeviceProfileWithAvatarResultJsonFn
+      m_updateDeviceProfileWithAvatarJson = nullptr;
+  RuntimeUpdateLocalPersonProfileWithAvatarResultJsonFn
+      m_updateLocalPersonProfileWithAvatarJson = nullptr;
   RuntimePublishDeviceKeyPackageResultJsonFn m_publishDeviceKeyPackageJson =
       nullptr;
   RuntimePublishPeerEndpointResultJsonFn m_publishPeerEndpointJson = nullptr;
