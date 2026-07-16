@@ -18,6 +18,9 @@ Rectangle {
     radius: Tokens.radiusMd
     color: selected ? Tokens.accent : Tokens.railElevated
     opacity: railMouse.enabled ? 1 : 0.58
+    border.width: root.activeFocus ? 2 : 0
+    border.color: Tokens.railText
+    activeFocusOnTab: railMouse.enabled
 
     Accessible.role: Accessible.Button
     Accessible.name: root.unreadCount > 0
@@ -83,4 +86,16 @@ Rectangle {
     ToolTip.text: root.unreadCount > 0
         ? root.workspaceName + " — " + root.unreadLabel + " unread"
         : root.workspaceName
+
+    Keys.onPressed: function (event) {
+        if (!railMouse.enabled) {
+            return
+        }
+        if (event.key === Qt.Key_Return
+                || event.key === Qt.Key_Enter
+                || event.key === Qt.Key_Space) {
+            root.activated(root.workspaceId)
+            event.accepted = true
+        }
+    }
 }

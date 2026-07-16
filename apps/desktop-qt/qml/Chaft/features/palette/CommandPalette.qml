@@ -142,12 +142,47 @@ Popup {
             kind: "action",
             rowId: "action:" + String(action.id || ""),
             label: String(action.label || ""),
-            detail: "Action",
+            detail: palette.actionCategory(action),
             keys: String(action.shortcut || ""),
             enabledNow: Boolean(action.enabled === undefined || action.enabled()),
             channelId: "",
             action: action
         }
+    }
+
+    function actionCategory(action) {
+        var actionId = String((action && action.id) || "")
+        if (actionId === "toggle-setup") {
+            return "Settings"
+        }
+        if (actionId === "join-workspace" || actionId === "create-workspace") {
+            return "Workspace"
+        }
+        if (actionId === "new-channel") {
+            return "Room"
+        }
+        if (actionId === "focus-composer") {
+            return "Compose"
+        }
+        if (actionId === "focus-search" || actionId === "jump-latest"
+                || actionId === "reindex-search") {
+            return "Navigation"
+        }
+        if (actionId === "toggle-sync-drawer" || actionId === "toggle-live-sync"
+                || actionId === "sync-now" || actionId === "pull-peer"
+                || actionId === "push-peer") {
+            return "Updates"
+        }
+        if (actionId === "backup-now") {
+            return "Backup"
+        }
+        if (actionId === "lock-runtime") {
+            return "Security"
+        }
+        if (actionId === "shortcut-overlay") {
+            return "Help"
+        }
+        return "Command"
     }
 
     function scoredRows(candidates, labelFor) {
@@ -267,13 +302,27 @@ Popup {
             }
         }
 
-        Text {
+        ColumnLayout {
             Layout.fillWidth: true
             visible: palette.results.length === 0
-            text: "No matching actions, rooms, or DMs"
-            color: Tokens.textMuted
-            font.pixelSize: Tokens.fontSizeSm
-            elide: Text.ElideRight
+            spacing: Tokens.space1
+
+            Text {
+                Layout.fillWidth: true
+                text: "No results"
+                color: Tokens.textStrong
+                font.pixelSize: Tokens.fontSizeSm
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Try a room name, teammate, or action."
+                color: Tokens.textMuted
+                font.pixelSize: Tokens.fontSizeXs
+                elide: Text.ElideRight
+            }
         }
 
         ListView {

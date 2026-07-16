@@ -2,13 +2,71 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    readonly property string defaultThemeId: "midnight-relay"
-    readonly property string defaultLightThemeId: "paper-atelier"
+    readonly property string defaultThemeId: "chaft-signal"
+    readonly property string defaultLightThemeId: "chaft-canvas"
 
     // Every entry must define the full color role set Tokens exposes.
     // catalog[0] is the default theme and the fallback for unknown IDs
     // loaded from desktop.json or CHAFT_THEME. Order here is picker order.
     readonly property var catalog: [
+        {
+            id: "chaft-signal",
+            name: "Chaft Signal",
+            tagline: "Brand ink, clear sky, and a quiet coral signal",
+            dark: true,
+            rail: "#11191d",
+            railElevated: "#1b2a33",
+            railText: "#f7fafc",
+            sidebar: "#151e23",
+            sidebarInput: "#202c33",
+            sidebarActive: "#263c49",
+            sidebarText: "#b8c6cf",
+            sidebarTextStrong: "#f7fafc",
+            sidebarTextSoft: "#d6e0e6",
+            sidebarTextMuted: "#7e919d",
+            surfaceBase: "#182024",
+            surfaceRaised: "#202a30",
+            borderSubtle: "#364750",
+            textStrong: "#f6f8fa",
+            textMuted: "#a1b0b8",
+            accent: "#66beeb",
+            onAccent: "#10212a",
+            success: "#42bc74",
+            secure: "#a4d1f1",
+            secureSurface: "#1d3440",
+            warning: "#f48058",
+            warningSurface: "#3a221d",
+            warningText: "#ffb49b"
+        },
+        {
+            id: "chaft-canvas",
+            name: "Chaft Canvas",
+            tagline: "Soft daylight with confident brand blue",
+            dark: false,
+            rail: "#e6eef3",
+            railElevated: "#ffffff",
+            railText: "#182024",
+            sidebar: "#eef5f8",
+            sidebarInput: "#ffffff",
+            sidebarActive: "#d7e9f3",
+            sidebarText: "#405561",
+            sidebarTextStrong: "#182024",
+            sidebarTextSoft: "#2b414d",
+            sidebarTextMuted: "#5a707b",
+            surfaceBase: "#f7fbfd",
+            surfaceRaised: "#ffffff",
+            borderSubtle: "#c4d4dd",
+            textStrong: "#222426",
+            textMuted: "#586d78",
+            accent: "#2f54a5",
+            onAccent: "#ffffff",
+            success: "#248753",
+            secure: "#2f54a5",
+            secureSurface: "#e3ecf8",
+            warning: "#b44928",
+            warningSurface: "#fff0eb",
+            warningText: "#7b2b16"
+        },
         {
             id: "midnight-relay",
             name: "Midnight Relay",

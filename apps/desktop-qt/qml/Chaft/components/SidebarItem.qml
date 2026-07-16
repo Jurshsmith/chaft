@@ -71,7 +71,9 @@ Item {
 
     Column {
         anchors.left: parent.left
-        anchors.right: root.unreadCount > 0 ? unreadBadge.left : (root.showPrivateAffordance ? privateDot.left : parent.right)
+        anchors.right: root.unreadCount > 0
+            ? unreadBadge.left
+            : (root.showPrivateAffordance ? privateLock.left : parent.right)
         anchors.leftMargin: root.directMessage ? 42 : 10
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
@@ -101,18 +103,46 @@ Item {
         }
     }
 
-    Text {
-        id: privateDot
+    Item {
+        id: privateLock
         visible: root.showPrivateAffordance
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: root.unreadCount > 0 ? unreadBadge.left : parent.right
         anchors.rightMargin: 8
-        text: "🔒"
-        color: Tokens.secure
-        font.pixelSize: Tokens.fontSizeXs - 1
+        width: 13
+        height: 15
 
         Accessible.role: Accessible.StaticText
         Accessible.name: "Private room"
+
+        Rectangle {
+            x: 3
+            y: 0
+            width: 7
+            height: 8
+            radius: height / 2
+            color: "transparent"
+            border.width: 1
+            border.color: Tokens.secure
+        }
+
+        Rectangle {
+            x: 1
+            y: 6
+            width: 11
+            height: 9
+            radius: 2
+            color: Tokens.secure
+        }
+
+        Rectangle {
+            x: 5
+            y: 9
+            width: 3
+            height: 3
+            radius: 2
+            color: root.selected ? Tokens.sidebarActive : Tokens.sidebar
+        }
     }
 
     Rectangle {

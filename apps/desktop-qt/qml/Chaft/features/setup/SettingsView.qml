@@ -17,8 +17,8 @@ Item {
         { id: "preferences", label: "Preferences" }
     ]
     readonly property var workspaceCategories: [
-        { id: "workspace", label: "Workspace" },
-        { id: "devices", label: "Devices & Recovery" },
+        { id: "workspace", label: "General" },
+        { id: "devices", label: "Devices & keys" },
         { id: "backup", label: "Backup" },
         { id: "advanced", label: "Advanced" }
     ]
@@ -111,8 +111,8 @@ Item {
                 }
 
                 Button {
-                    text: "×"
-                    implicitWidth: 34
+                    text: "Close"
+                    implicitWidth: 68
                     implicitHeight: 34
                     Accessible.name: root.settingsDestination
                         ? "Close settings"
@@ -142,7 +142,7 @@ Item {
             Rectangle {
                 visible: root.settingsDestination && root.wideNavigation
                 Layout.fillHeight: true
-                Layout.preferredWidth: visible ? 196 : 0
+                Layout.preferredWidth: visible ? 184 : 0
                 color: Tokens.surfaceRaised
 
                 ColumnLayout {
@@ -155,26 +155,53 @@ Item {
                     Repeater {
                         model: root.availableCategories
 
-                        delegate: Button {
-                            id: categoryButton
+                        delegate: ColumnLayout {
+                            id: categoryGroup
                             required property var modelData
 
                             Layout.fillWidth: true
-                            checkable: true
-                            checked: root.category === String(categoryButton.modelData.id || "")
-                            text: String(categoryButton.modelData.label || "")
-                            Accessible.name: text + " settings"
-                            Accessible.description: checked ? "Current settings category" : "Open settings category"
-                            onClicked: root.categoryRequested(
-                                String(categoryButton.modelData.id || ""))
+                            Layout.topMargin: String(categoryGroup.modelData.id || "") === "workspace"
+                                ? Tokens.space3
+                                : 0
+                            spacing: Tokens.space1
 
-                            contentItem: Text {
-                                text: categoryButton.text
-                                color: categoryButton.enabled ? Tokens.textStrong : Tokens.textMuted
-                                font: categoryButton.font
-                                horizontalAlignment: Text.AlignLeft
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Tokens.space2
+                                visible: String(categoryGroup.modelData.id || "") === "profile"
+                                    || String(categoryGroup.modelData.id || "") === "workspace"
+                                text: String(categoryGroup.modelData.id || "") === "workspace"
+                                    ? "Workspace"
+                                    : "Personal"
+                                color: Tokens.textMuted
+                                font.pixelSize: Tokens.fontSizeXs
+                                font.weight: Font.DemiBold
+                            }
+
+                            Button {
+                                id: categoryButton
+                                Layout.fillWidth: true
+                                implicitHeight: 36
+                                checkable: true
+                                checked: root.category === String(categoryGroup.modelData.id || "")
+                                text: String(categoryGroup.modelData.label || "")
+                                Accessible.name: text + " settings"
+                                Accessible.description: checked
+                                    ? "Current settings category"
+                                    : "Open settings category"
+                                onClicked: root.categoryRequested(
+                                    String(categoryGroup.modelData.id || ""))
+
+                                contentItem: Text {
+                                    text: categoryButton.text
+                                    color: categoryButton.enabled
+                                        ? Tokens.textStrong
+                                        : Tokens.textMuted
+                                    font: categoryButton.font
+                                    horizontalAlignment: Text.AlignLeft
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                }
                             }
                         }
                     }
@@ -233,7 +260,7 @@ Item {
                     anchors.bottomMargin: Tokens.space4
                     width: Math.max(0, Math.min(
                         parent.width - Tokens.space4 * 2,
-                        root.settingsDestination ? 680 : 760))
+                        root.settingsDestination ? 840 : 920))
                     onCategoryRequested: function(categoryId) {
                         if (categoryId === "people") {
                             root.peopleAccessRequested(false)

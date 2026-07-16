@@ -30,6 +30,22 @@ Rectangle {
         var value = String(root.deviceId || "")
         return value.length > 14 ? value.slice(0, 7) + "..." + value.slice(value.length - 4) : value
     }
+    readonly property string friendlyDisplayLabel: {
+        var value = String(root.displayLabel || "").trim()
+        return value.toLowerCase().indexOf("unnamed person") === 0
+            ? "Unnamed teammate"
+            : (value.length > 0 ? value : "Unnamed teammate")
+    }
+    readonly property string metadataLabel: {
+        var parts = []
+        if (!root.showRoleEditor && String(root.roleLabel || "").trim().length > 0) {
+            parts.push(String(root.roleLabel).trim())
+        }
+        if (root.shortDeviceLabel.length > 0) {
+            parts.push("Support code " + root.shortDeviceLabel)
+        }
+        return parts.join(" · ")
+    }
 
     function roleOptionIndex(role) {
         var normalized = String(role || "").trim().toLowerCase()
@@ -42,34 +58,36 @@ Rectangle {
     }
 
     width: parent ? parent.width : 320
-    height: 58
+    height: 68
     radius: Tokens.radiusSm
-    color: localDevice ? Tokens.secureSurface : Tokens.surfaceBase
-    border.color: Tokens.borderSubtle
+    color: localDevice
+        ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.10)
+        : Tokens.surfaceBase
+    border.color: localDevice ? Tokens.accent : Tokens.borderSubtle
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: displayLabel
-    Accessible.description: roleLabel + ". " + (localDevice ? "This is you. " : "")
-        + "Support code " + shortDeviceLabel
+    Accessible.name: root.friendlyDisplayLabel
+    Accessible.description: (localDevice ? "This is you. " : "")
+        + root.metadataLabel
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 8
+        anchors.margins: 10
+        spacing: 10
 
         AvatarMark {
-            Layout.preferredWidth: 30
-            Layout.preferredHeight: 30
+            Layout.preferredWidth: 34
+            Layout.preferredHeight: 34
             avatarId: root.avatarId
             workspaceId: root.workspaceId
             identityId: root.deviceId
-            displayName: root.displayLabel
+            displayName: root.friendlyDisplayLabel
         }
 
         ColumnLayout {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
-            spacing: 1
+            spacing: 3
 
             RowLayout {
                 Layout.fillWidth: true
@@ -77,25 +95,37 @@ Rectangle {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.displayLabel
+                    text: root.friendlyDisplayLabel
                     color: Tokens.textStrong
                     font.pixelSize: Tokens.fontSizeSm
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
 
-                Text {
+                Rectangle {
                     visible: root.localDevice
-                    text: "You"
-                    color: Tokens.textMuted
-                    font.pixelSize: Tokens.fontSizeXs
+                    Layout.preferredWidth: youLabel.implicitWidth + 12
+                    Layout.preferredHeight: 20
+                    radius: Tokens.radiusMd
+                    color: Tokens.surfaceRaised
+                    border.width: 1
+                    border.color: Tokens.borderSubtle
+
+                    Text {
+                        id: youLabel
+                        anchors.centerIn: parent
+                        text: "You"
+                        color: Tokens.textMuted
+                        font.pixelSize: Tokens.fontSizeXs
+                        font.weight: Font.DemiBold
+                    }
                 }
             }
 
             Text {
                 Layout.fillWidth: true
-                visible: !root.showRoleEditor
-                text: root.roleLabel
+                visible: root.metadataLabel.length > 0
+                text: root.metadataLabel
                 color: Tokens.textMuted
                 font.pixelSize: Tokens.fontSizeXs
                 elide: Text.ElideRight
@@ -111,8 +141,10 @@ Rectangle {
             textRole: "label"
             valueRole: "role"
             currentIndex: root.roleOptionIndex(root.roleValue)
-            Accessible.name: "Role for " + root.displayLabel
-            Accessible.description: enabled ? root.displayLabel : root.roleUnavailableReason
+            Accessible.name: "Role for " + root.friendlyDisplayLabel
+            Accessible.description: enabled
+                ? root.friendlyDisplayLabel
+                : root.roleUnavailableReason
             onActivated: function (index) {
                 var row = root.roleOptions[index] || ({})
                 var nextRole = String(row.role || "").trim().toLowerCase()
@@ -131,7 +163,7 @@ Rectangle {
             text: "⋯"
             Layout.preferredWidth: 34
             Layout.preferredHeight: 30
-            Accessible.name: "Actions for " + root.displayLabel
+            Accessible.name: "Actions for " + root.friendlyDisplayLabel
             onClicked: memberActions.open()
             ToolTip.visible: hovered
             ToolTip.text: Accessible.name

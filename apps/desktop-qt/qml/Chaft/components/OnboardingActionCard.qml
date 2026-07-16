@@ -14,9 +14,15 @@ Rectangle {
 
     implicitHeight: cardColumn.implicitHeight + Tokens.space4 * 2
     radius: Tokens.radiusMd
-    color: cardMouse.containsMouse && root.actionable
-        ? Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.05)
-        : Tokens.surfaceRaised
+    color: root.primary
+        ? Qt.rgba(
+            Tokens.accent.r,
+            Tokens.accent.g,
+            Tokens.accent.b,
+            cardMouse.containsMouse && root.actionable ? 0.12 : 0.07)
+        : cardMouse.containsMouse && root.actionable
+            ? Qt.rgba(Tokens.textStrong.r, Tokens.textStrong.g, Tokens.textStrong.b, 0.05)
+            : Tokens.surfaceRaised
     border.width: root.activeFocus ? 2 : 1
     border.color: root.activeFocus
         ? Tokens.accent

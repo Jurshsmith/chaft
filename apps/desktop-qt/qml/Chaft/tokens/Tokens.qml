@@ -8,6 +8,17 @@ QtObject {
     property string activeThemeId: Themes.defaultThemeId
     readonly property var activeTheme: Themes.themeById(activeThemeId)
 
+    // Stable Chaft identity colors sampled from the approved gradient mark.
+    // Themes derive semantic roles from these anchors without recoloring the
+    // logo itself.
+    readonly property color brandInk: "#222426"
+    readonly property color brandNight: "#182021"
+    readonly property color brandBlue: "#2f54a5"
+    readonly property color brandSky: "#66beeb"
+    readonly property color brandCoral: "#f48058"
+    readonly property color brandViolet: "#414287"
+    readonly property color brandCanvas: "#ffffff"
+
     readonly property color rail: activeTheme.rail
     readonly property color railElevated: activeTheme.railElevated
     readonly property color railText: activeTheme.railText

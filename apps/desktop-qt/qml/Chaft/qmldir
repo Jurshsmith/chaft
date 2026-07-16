@@ -7,6 +7,7 @@ AvatarMark 1.0 components/AvatarMark.qml
 AvatarPicker 1.0 components/AvatarPicker.qml
 AttachmentRow 1.0 components/AttachmentRow.qml
 BackupPeerStatusRow 1.0 components/BackupPeerStatusRow.qml
+BrandMark 1.0 components/BrandMark.qml
 KeyPackageRow 1.0 components/KeyPackageRow.qml
 MemberRow 1.0 components/MemberRow.qml
 OnboardingActionCard 1.0 components/OnboardingActionCard.qml
