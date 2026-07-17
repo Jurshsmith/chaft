@@ -94,6 +94,7 @@ qt_add_qml_module(ChaftDesktop
         qml/Chaft/features/setup/InvitePeopleDialog.qml
         qml/Chaft/features/setup/ReviewAccessRequestDialog.qml
         qml/Chaft/features/setup/SettingsView.qml
+        qml/Chaft/features/setup/DataPortabilityPanel.qml
         qml/Chaft/features/timeline/TimelineView.qml
         qml/Chaft/features/composer/ComposerBar.qml
         qml/Chaft/features/inspector/ChannelMediaPanel.qml

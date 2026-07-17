@@ -249,6 +249,13 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Write a portable, decrypted workspace ZIP for offline use or migration.
+    ExportPortableWorkspace {
+        #[arg(long)]
+        workspace_id: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
     PruneBlobs,
     EditMessage {
         #[arg(long)]
@@ -1108,6 +1115,20 @@ async fn run_cli() -> Result<()> {
                 output,
             )?;
             println!("{}", serde_json::to_string_pretty(&saved)?);
+        }
+        Command::ExportPortableWorkspace {
+            workspace_id,
+            output,
+        } => {
+            let output = checked_cli_path_arg(output, "portable export output file")?;
+            let runtime = open_runtime(
+                &data_dir,
+                identity_file.clone(),
+                cli.identity_passphrase.as_deref(),
+            )?;
+            let exported = runtime
+                .export_portable_workspace_archive(workspace_id_arg(workspace_id)?, output)?;
+            println!("{}", serde_json::to_string_pretty(&exported)?);
         }
         Command::PruneBlobs => {
             let runtime = open_runtime(
@@ -2211,6 +2232,30 @@ mod tests {
         CHANNEL_ID_MAX_BYTES, DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES,
         MESSAGE_ID_MAX_BYTES, WORKSPACE_ID_MAX_BYTES,
     };
+
+    #[test]
+    fn portable_workspace_export_command_accepts_workspace_and_output() {
+        let cli = Cli::try_parse_from([
+            "chaft",
+            "export-portable-workspace",
+            "--workspace-id",
+            "wrk_cli_local",
+            "--output",
+            "workspace-copy.zip",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::ExportPortableWorkspace {
+                workspace_id,
+                output,
+            } => {
+                assert_eq!(workspace_id, "wrk_cli_local");
+                assert_eq!(output, PathBuf::from("workspace-copy.zip"));
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+    }
 
     #[test]
     fn workspace_id_arg_trims_values() {

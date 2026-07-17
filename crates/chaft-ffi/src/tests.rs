@@ -411,6 +411,22 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
     let runtime_workspace_id =
         CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
     let runtime_channel_id = CString::new(created["value"]["channelId"].as_str().unwrap()).unwrap();
+    let portable_export_dir = tempfile::tempdir().unwrap();
+    let portable_export_path = portable_export_dir.path().join("workspace-copy.zip");
+    let portable_export_path_c =
+        CString::new(portable_export_path.to_string_lossy().as_bytes()).unwrap();
+    insert_contract_shape(
+        &mut contract,
+        "chaft_export_portable_workspace_archive",
+        parse_ffi_json(unsafe {
+            chaft_export_portable_workspace_archive(
+                data_dir.as_ptr(),
+                std::ptr::null(),
+                runtime_workspace_id.as_ptr(),
+                portable_export_path_c.as_ptr(),
+            )
+        }),
+    );
 
     insert_contract_shape(
         &mut contract,
@@ -5127,6 +5143,115 @@ fn runtime_attachment_ffi_sends_encrypted_file_metadata() {
     )
     .unwrap();
     assert!(!events_json.contains(ATTACHMENT_TEXT));
+}
+
+#[test]
+fn portable_workspace_export_ffi_writes_archive_directly_to_disk() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let output_dir = tempfile::tempdir().unwrap();
+    let data_dir = CString::new(runtime_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Portable FFI Workspace").unwrap();
+    let channel_name = CString::new("general").unwrap();
+    let created = parse_ffi_json(unsafe {
+        chaft_runtime_create_workspace_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        )
+    });
+    let workspace_id = CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
+    let output_path = output_dir.path().join("workspace-copy.zip");
+    let output_path_c = CString::new(output_path.to_string_lossy().as_bytes()).unwrap();
+
+    let exported = parse_ffi_json(unsafe {
+        chaft_export_portable_workspace_archive(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+            output_path_c.as_ptr(),
+        )
+    });
+
+    assert_eq!(exported["ok"], true, "{exported}");
+    assert_eq!(
+        exported["value"]["workspaceId"],
+        workspace_id.to_str().unwrap()
+    );
+    assert_eq!(
+        exported["value"]["outputPath"],
+        output_path.to_string_lossy().as_ref()
+    );
+    assert_eq!(exported["value"]["schemaVersion"], 2);
+    assert_eq!(exported["value"]["kind"], "chaft.portable-workspace.v2");
+    assert_eq!(exported["value"]["channelCount"], 1);
+    assert_eq!(exported["value"]["memberCount"], 1);
+    assert!(exported["value"]["corruptEventCount"].is_null());
+    assert_eq!(
+        exported["value"]["storageIntegrityAssessment"],
+        "not_assessed_for_privacy"
+    );
+    assert_eq!(
+        exported["value"]["archiveSha256"].as_str().unwrap().len(),
+        64
+    );
+    assert!(exported["value"]["archiveBytes"].as_u64().unwrap() > 0);
+    let archive = std::fs::read(output_path).unwrap();
+    assert!(archive.starts_with(b"PK\x03\x04"));
+    assert!(archive.len() > 4);
+}
+
+#[test]
+fn portable_workspace_export_ffi_rejects_null_output_before_runtime_open() {
+    let data_dir = CString::new("unused-runtime").unwrap();
+    let workspace_id = CString::new("wrk_portable_ffi").unwrap();
+
+    let exported = parse_ffi_json(unsafe {
+        chaft_export_portable_workspace_archive(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+            std::ptr::null(),
+        )
+    });
+
+    assert_eq!(exported["ok"], false);
+    assert_eq!(exported["error"]["code"], "output_path");
+}
+
+#[test]
+fn portable_workspace_export_ffi_maps_runtime_destination_errors() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let data_dir = CString::new(runtime_dir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_name = CString::new("Portable FFI Destination").unwrap();
+    let channel_name = CString::new("general").unwrap();
+    let created = parse_ffi_json(unsafe {
+        chaft_runtime_create_workspace_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_name.as_ptr(),
+            channel_name.as_ptr(),
+        )
+    });
+    let workspace_id = CString::new(created["value"]["workspaceId"].as_str().unwrap()).unwrap();
+    let output_path = runtime_dir.path().join("must-not-export-here.zip");
+    let output_path_c = CString::new(output_path.to_string_lossy().as_bytes()).unwrap();
+
+    let exported = parse_ffi_json(unsafe {
+        chaft_export_portable_workspace_archive(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+            output_path_c.as_ptr(),
+        )
+    });
+
+    assert_eq!(exported["ok"], false);
+    assert_eq!(
+        exported["error"]["code"],
+        "portable_export_destination_inside_runtime"
+    );
+    assert!(!output_path.exists());
 }
 
 #[test]

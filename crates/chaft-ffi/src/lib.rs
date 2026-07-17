@@ -51,6 +51,7 @@ mod join_response_inbox;
 mod join_response_outbox;
 mod peer_endpoint;
 mod peer_host;
+mod portable_export;
 mod result_sampling;
 mod runtime_actions;
 mod runtime_direct;
@@ -80,6 +81,7 @@ use join_request_inbox::*;
 use join_request_outbox::*;
 use join_response_inbox::*;
 use join_response_outbox::*;
+use portable_export::export_portable_workspace_archive_result;
 #[cfg(test)]
 use result_sampling::*;
 use runtime_actions::*;
@@ -1343,6 +1345,34 @@ pub unsafe extern "C" fn chaft_runtime_save_attachment_result_json(
         workspace_id,
         message_id,
         blob_hash,
+        output_path,
+    );
+    into_c_string(&result)
+}
+
+/// Writes a decrypted, portable workspace archive directly to `output_path`.
+///
+/// The returned string is a compact JSON result envelope containing export
+/// metadata, counts, completeness warnings, the archive byte length, and its
+/// SHA-256 digest. Archive bytes are never copied through the FFI boundary.
+/// The caller owns the returned string and must release it with
+/// `chaft_string_free`.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_export_portable_workspace_archive(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = export_portable_workspace_archive_result(
+        data_dir,
+        identity_file,
+        workspace_id,
         output_path,
     );
     into_c_string(&result)

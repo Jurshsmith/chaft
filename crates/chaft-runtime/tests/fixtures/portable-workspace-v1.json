@@ -1,0 +1,137 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "kind": "chaft.portable-workspace.v1",
+    "generatedAt": "2026-01-02T03:04:05Z",
+    "generator": { "name": "Chaft", "version": "0.1.0" },
+    "workspace": {
+      "schemaVersion": 1,
+      "workspaceId": "wrk_fixture",
+      "name": "Legacy fixture workspace",
+      "accessPolicy": "invite_only"
+    },
+    "selection": {
+      "scope": "workspace",
+      "readableChannelsOnly": true,
+      "includesPrivateChannels": true,
+      "includesDirectMessages": true,
+      "includesAttachments": true,
+      "messageState": "current"
+    },
+    "cutoff": {
+      "capturedAt": "2026-01-02T03:04:05Z",
+      "acceptedEventCount": 4,
+      "parseableEventCount": 4,
+      "appliedEventCount": 4,
+      "eventInventoryBlake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "causalFrontierEventIds": ["evt_fixture_reaction"],
+      "sourceChangedDuringCapture": false
+    },
+    "counts": {
+      "channels": 1,
+      "members": 1,
+      "messages": 1,
+      "attachments": 1,
+      "includedAttachments": 1,
+      "missingAttachments": 0
+    },
+    "files": {
+      "offlineIndex": "index.html",
+      "workspace": "data/workspace.json",
+      "channels": "data/channels.jsonl",
+      "members": "data/members.jsonl",
+      "messages": "data/messages.jsonl",
+      "attachments": "data/attachments.jsonl",
+      "completeness": "completeness.json",
+      "schema": "schemas/chaft-portable-workspace-v1.schema.json",
+      "checksums": "SHA256SUMS"
+    },
+    "integrity": {
+      "algorithm": "sha-256",
+      "checksumsFile": "SHA256SUMS",
+      "coverage": "every archive entry except SHA256SUMS"
+    },
+    "completeness": {
+      "status": "complete",
+      "warningCount": 0,
+      "missingAttachmentCount": 0,
+      "unavailableMessageBodyCount": 0,
+      "gapCount": 0,
+      "invalidSignatureCount": 0,
+      "corruptEventCount": 0
+    }
+  },
+  "workspace": {
+    "schemaVersion": 1,
+    "workspaceId": "wrk_fixture",
+    "name": "Legacy fixture workspace",
+    "accessPolicy": "invite_only"
+  },
+  "channels": [{
+    "schemaVersion": 1,
+    "channelId": "chn_fixture",
+    "name": "general",
+    "topic": "",
+    "archived": false,
+    "isPrivate": false,
+    "directMessage": false,
+    "memberDeviceIds": ["dev_fixture"],
+    "directMessageParticipantDeviceIds": [],
+    "htmlPath": "html/channels/general-fixture.html"
+  }],
+  "members": [{
+    "schemaVersion": 1,
+    "deviceId": "dev_fixture",
+    "personId": "person_fixture",
+    "displayName": "Fixture User",
+    "avatarId": "",
+    "role": "owner"
+  }],
+  "messages": [{
+    "schemaVersion": 1,
+    "messageId": "msg_fixture",
+    "channelId": "chn_fixture",
+    "replyToMessageId": null,
+    "author": {
+      "deviceId": "dev_fixture",
+      "personId": "person_fixture",
+      "displayName": "Fixture User"
+    },
+    "createdEventId": "evt_fixture_message",
+    "createdAt": "2026-01-02T03:04:05Z",
+    "createdAtUnixMs": 1767323045000,
+    "createdAtLogical": 0,
+    "editedEventId": null,
+    "editedAt": null,
+    "deleted": false,
+    "bodyState": "available",
+    "markdown": "Hello from the immutable v1 fixture",
+    "attachmentIds": ["legacy_fixture_attachment"],
+    "reactions": [{ "value": "+1", "count": 1 }]
+  }],
+  "attachments": [{
+    "schemaVersion": 1,
+    "attachmentId": "legacy_fixture_attachment",
+    "messageId": "msg_fixture",
+    "channelId": "chn_fixture",
+    "attachmentIndex": 0,
+    "displayName": "fixture.txt",
+    "mediaType": "text/plain",
+    "declaredPlaintextBytes": 7,
+    "sourceBlobHash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "availability": "included",
+    "archivePath": "files/chn_fixture/msg_fixture/000-fixture.txt-legacyhash",
+    "plaintextSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  }],
+  "completeness": {
+    "schemaVersion": 1,
+    "status": "complete",
+    "sourceChangedDuringCapture": false,
+    "missingAttachments": [],
+    "unavailableMessageBodies": [],
+    "historyGaps": [],
+    "invalidSignatureCount": 0,
+    "corruptEventCount": 0,
+    "warnings": []
+  }
+}

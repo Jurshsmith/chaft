@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import Chaft
@@ -107,6 +109,7 @@ Item {
 
                     Button {
                         id: toastAction
+                        objectName: "toastActionButton"
                         visible: toastDelegate.modelData.actionLabel.length > 0
                         text: toastDelegate.modelData.actionLabel
                         anchors.verticalCenter: parent.verticalCenter

@@ -39,6 +39,7 @@ WorkspaceRailItem 1.0 components/WorkspaceRailItem.qml
 TimelineView 1.0 features/timeline/TimelineView.qml
 SetupPanel 1.0 features/setup/SetupPanel.qml
 SettingsView 1.0 features/setup/SettingsView.qml
+DataPortabilityPanel 1.0 features/setup/DataPortabilityPanel.qml
 EmptyWorkspaceView 1.0 features/onboarding/EmptyWorkspaceView.qml
 WorkspaceEntryDialog 1.0 features/onboarding/WorkspaceEntryDialog.qml
 CommandPalette 1.0 features/palette/CommandPalette.qml
