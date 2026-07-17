@@ -3,7 +3,7 @@ use std::{
     env, fmt,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
     task::{Context, Poll},
     time::Duration,
 };
@@ -62,7 +62,7 @@ pub const CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY_ENV: &str = "CHAFT_IROH_ALLOW_PUBLIC
 pub const CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE_ENV: &str = "CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE";
 pub const IROH_POLICY_ENV_FLAG_MAX_BYTES: usize = 16;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IrohTransportConfig {
     pub allow_public_relays: bool,
     pub allow_public_discovery: bool,
@@ -156,6 +156,26 @@ impl IrohTransport {
 
     pub fn from_environment() -> Self {
         Self::new(IrohTransportConfig::from_environment())
+    }
+
+    /// Returns a process-shared transport for the current environment policy.
+    /// Clones share the native endpoint and live-connection cache.
+    pub fn shared_from_environment() -> Self {
+        Self::shared_for_config(IrohTransportConfig::from_environment())
+    }
+
+    fn shared_for_config(config: IrohTransportConfig) -> Self {
+        static TRANSPORTS: OnceLock<StdMutex<HashMap<IrohTransportConfig, IrohTransport>>> =
+            OnceLock::new();
+
+        let transports = TRANSPORTS.get_or_init(|| StdMutex::new(HashMap::new()));
+        let mut transports = transports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        transports
+            .entry(config.clone())
+            .or_insert_with(|| Self::new(config))
+            .clone()
     }
 
     pub fn classify_endpoint(endpoint: &str) -> Result<IrohEndpointRoute, NetError> {
@@ -1980,6 +2000,39 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn shared_transports_reuse_state_per_policy_and_isolate_other_policies() {
+        let default_config = IrohTransportConfig::default();
+        let first = IrohTransport::shared_for_config(default_config.clone());
+        let second = IrohTransport::shared_for_config(default_config);
+        assert!(Arc::ptr_eq(
+            &first.native_client_endpoint,
+            &second.native_client_endpoint
+        ));
+        assert!(Arc::ptr_eq(
+            &first.native_connections,
+            &second.native_connections
+        ));
+        assert!(Arc::ptr_eq(
+            &first.native_connection_gates,
+            &second.native_connection_gates
+        ));
+
+        let relay_config = IrohTransportConfig {
+            allow_public_relays: true,
+            ..IrohTransportConfig::default()
+        };
+        let isolated = IrohTransport::shared_for_config(relay_config);
+        assert!(!Arc::ptr_eq(
+            &first.native_client_endpoint,
+            &isolated.native_client_endpoint
+        ));
+        assert!(!Arc::ptr_eq(
+            &first.native_connections,
+            &isolated.native_connections
+        ));
+    }
 
     #[derive(Default)]
     struct MemoryAccessInbox {

@@ -349,6 +349,61 @@ fn bench_direct_sync(c: &mut Criterion) {
     });
 }
 
+fn bench_no_change_direct_sync(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create benchmark tokio runtime");
+    let mut group = c.benchmark_group("sync_no_change_96_events");
+
+    let optimized = direct_sync_fixture(&rt, SYNC_MESSAGE_COUNT, false);
+    rt.block_on(optimized.target.sync_workspace_direct(
+        &DirectTransport,
+        &optimized.peer,
+        optimized.workspace_id.clone(),
+    ))
+    .expect("prime optimized no-change sync");
+    group.bench_function("single_inventory_delta_plan", |b| {
+        b.iter(|| {
+            let report = rt
+                .block_on(optimized.target.sync_workspace_direct(
+                    &DirectTransport,
+                    &optimized.peer,
+                    optimized.workspace_id.clone(),
+                ))
+                .expect("optimized no-change sync");
+            black_box(report.pulled.fetched_event_count);
+        });
+    });
+    rt.block_on(optimized.shutdown());
+
+    let legacy = direct_sync_fixture(&rt, SYNC_MESSAGE_COUNT, false);
+    rt.block_on(legacy.target.sync_workspace_direct(
+        &DirectTransport,
+        &legacy.peer,
+        legacy.workspace_id.clone(),
+    ))
+    .expect("prime composed no-change sync");
+    group.bench_function("legacy_publish_then_pull", |b| {
+        b.iter(|| {
+            let published = rt
+                .block_on(legacy.target.publish_workspace_direct(
+                    &DirectTransport,
+                    &legacy.peer,
+                    legacy.workspace_id.clone(),
+                ))
+                .expect("legacy no-change publish");
+            let pulled = rt
+                .block_on(legacy.target.pull_workspace_direct(
+                    &DirectTransport,
+                    &legacy.peer,
+                    legacy.workspace_id.clone(),
+                ))
+                .expect("legacy no-change pull");
+            black_box((published.published_event_count, pulled.fetched_event_count));
+        });
+    });
+    rt.block_on(legacy.shutdown());
+    group.finish();
+}
+
 fn bench_blob_transfer(c: &mut Criterion) {
     let rt = Runtime::new().expect("create benchmark tokio runtime");
     c.bench_function("blob_transfer/direct_pull_256kb_attachment", |b| {
@@ -410,6 +465,7 @@ criterion_group!(
     bench_search,
     bench_app_projection,
     bench_direct_sync,
+    bench_no_change_direct_sync,
     bench_blob_transfer,
     bench_ffi_json
 );

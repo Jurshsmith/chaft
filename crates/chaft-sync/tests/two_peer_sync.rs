@@ -484,7 +484,7 @@ async fn pull_workspace_imports_out_of_order_fetches_in_materialized_order() {
 }
 
 #[tokio::test]
-async fn pull_workspace_materialization_ignores_invalid_local_signature_events() {
+async fn no_change_pull_does_not_rematerialize_invalid_local_signature_events() {
     let local_store = EventStore::open_in_memory().unwrap();
     let alice = DeviceIdentity::generate();
     let workspace_id = WorkspaceId::new();
@@ -540,21 +540,12 @@ async fn pull_workspace_materialization_ignores_invalid_local_signature_events()
 
     assert!(report.requested_event_ids.is_empty());
     assert!(report.fetched_event_ids.is_empty());
-    assert_eq!(
-        report.materialization.applied_events,
-        vec![root.event_id, channel.event_id]
-    );
-    assert!(
-        !report
-            .materialization
-            .applied_events
-            .contains(&forged_message.event_id)
-    );
+    assert!(report.materialization.applied_events.is_empty());
     assert!(report.materialization.gaps.is_empty());
 }
 
 #[tokio::test]
-async fn pull_workspace_materialization_ignores_corrupt_local_event_json() {
+async fn no_change_pull_does_not_rematerialize_corrupt_local_event_json() {
     let tempdir = tempfile::tempdir().unwrap();
     let store_path = tempdir.path().join("events.db");
     let local_store = EventStore::open(&store_path).unwrap();
@@ -607,10 +598,7 @@ async fn pull_workspace_materialization_ignores_corrupt_local_event_json() {
 
     assert!(report.requested_event_ids.is_empty());
     assert!(report.fetched_event_ids.is_empty());
-    assert_eq!(
-        report.materialization.applied_events,
-        vec![root.event_id, channel.event_id]
-    );
+    assert!(report.materialization.applied_events.is_empty());
     assert!(report.materialization.gaps.is_empty());
 }
 
@@ -728,6 +716,10 @@ async fn pull_workspace_from_direct_peer_fetches_stores_and_materializes_events(
     assert!(report.ignored_event_ids.is_empty());
     assert_eq!(report.materialization.applied_events.len(), 3);
     assert!(report.materialization.gaps.is_empty());
+    assert_eq!(
+        report.materialized_member_device_ids,
+        vec![alice.device_id().clone()]
+    );
     assert_eq!(bob_store.list_events().unwrap().len(), 3);
 
     shutdown_tx.send(()).unwrap();
