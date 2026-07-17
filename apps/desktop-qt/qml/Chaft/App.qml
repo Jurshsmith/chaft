@@ -232,6 +232,7 @@ ApplicationWindow {
     property bool pendingEntryDisplayNameWriteSucceeded: false
     property int pendingEntryDisplayNameRetryAttempt: 0
     property int pendingEntryDisplayNameReconcileAttempt: 0
+    property bool closeAfterWorkspaceExport: false
     readonly property int pendingEntryDisplayNameRetryLimit: 5
     property string pendingJoinPeerEndpoint: ""
     property bool pendingJoinPullCompletion: false
@@ -653,11 +654,34 @@ ApplicationWindow {
                 root.openPeopleAccess(true)
             } else if (id === "check-private-room-key") {
                 root.checkSelectedPrivateRoomKey()
-            } else if (id === "open-workspace-copy-folder") {
-                chaftController.openContainingFolder(
-                    String(chaftController.workspaceExportJob.outputPath || ""))
-            } else if (id === "review-workspace-copy") {
-                root.openSettings("data")
+            } else if (id === "keep-open-during-workspace-export") {
+                root.closeAfterWorkspaceExport = false
+            } else if (id.indexOf("open-workspace-export-folder:") === 0) {
+                var outputPath = decodeURIComponent(
+                    id.slice("open-workspace-export-folder:".length))
+                chaftController.openContainingFolder(outputPath)
+            } else if (id.indexOf("review-workspace-export:") === 0) {
+                var workspaceId = decodeURIComponent(
+                    id.slice("review-workspace-export:".length))
+                var selectedWorkspaceId = String(
+                    chaftController.selectedWorkspaceId || "")
+                if (workspaceId.length > 0
+                        && workspaceId !== selectedWorkspaceId) {
+                    if (!root.selectWorkspaceId(workspaceId)) {
+                        toastHost.show(
+                            "warning",
+                            "Couldn’t switch to the export’s workspace. Finish any current message action, then try again.",
+                            "Try again",
+                            id,
+                            8000)
+                        return
+                    }
+                    Qt.callLater(function() {
+                        root.openSettings("data")
+                    })
+                } else {
+                    root.openSettings("data")
+                }
             }
         }
     }
@@ -850,7 +874,21 @@ ApplicationWindow {
         }
     }
     onTotalUnreadCountChanged: root.handleUnreadNotificationCountChanged()
-    onClosing: {
+    onClosing: function(closeEvent) {
+        var exportJob = chaftController.workspaceExportJob || ({})
+        if (String(exportJob.state || "idle") === "running") {
+            closeEvent.accepted = false
+            if (!root.closeAfterWorkspaceExport) {
+                root.closeAfterWorkspaceExport = true
+                toastHost.show(
+                    "info",
+                    "Finishing the workspace export. Chaft will close when it’s done.",
+                    "Keep open",
+                    "keep-open-during-workspace-export",
+                    2147483647)
+            }
+            return
+        }
         root.persistComposerDrafts()
         root.persistWindowGeometry()
         root.flushPendingDeletes()
@@ -9119,14 +9157,36 @@ ApplicationWindow {
                 workspaceId, success, selected, message)
         }
         function onWorkspaceExportFinished(success, outputPath, message) {
-            toastHost.show(
-                success ? "success" : "warning",
-                success
-                    ? String(message || "Workspace copy saved")
-                    : "Workspace copy was not created. Review Data & portability to try again.",
-                success ? "Open folder" : "Review",
-                success ? "open-workspace-copy-folder" : "review-workspace-copy",
-                success ? 6500 : 8000)
+            var closeWhenFinished = root.closeAfterWorkspaceExport
+            var job = chaftController.workspaceExportJob || ({})
+            var workspaceId = String(job.workspaceId || "")
+            var workspaceName = String(job.workspaceName || "").trim()
+            var actionId = success
+                ? "open-workspace-export-folder:"
+                    + encodeURIComponent(String(outputPath || ""))
+                : "review-workspace-export:"
+                    + encodeURIComponent(workspaceId)
+            var failureMessage = workspaceName.length > 0
+                ? "Couldn’t export “" + workspaceName + "”"
+                : "Workspace export failed"
+            if (!success && String(message || "").length > 0) {
+                failureMessage += ": " + String(message)
+            }
+            if (!closeWhenFinished) {
+                toastHost.show(
+                    success ? "success" : "warning",
+                    success
+                        ? String(message || "Workspace export saved")
+                        : failureMessage,
+                    success ? "Open folder" : "Review",
+                    actionId,
+                    success ? 6500 : 8000)
+            } else {
+                root.closeAfterWorkspaceExport = false
+                Qt.callLater(function() {
+                    root.close()
+                })
+            }
         }
         function onPendingJoinRequestsChanged() {
             root.restorePendingEntryDisplayNameFromRequests()

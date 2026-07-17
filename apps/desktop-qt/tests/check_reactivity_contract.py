@@ -150,4 +150,64 @@ require(
     "composer operations must be represented optimistically in the timeline",
 )
 
+closing_start = APP.index("onClosing: function(closeEvent)")
+closing_end = APP.index("\n\n    ConfirmDialog", closing_start)
+closing = APP[closing_start:closing_end]
+for fragment in (
+    'String(exportJob.state || "idle") === "running"',
+    "closeEvent.accepted = false",
+    "if (!root.closeAfterWorkspaceExport)",
+    "root.closeAfterWorkspaceExport = true",
+    "Finishing the workspace export. Chaft will close when it’s done.",
+    '"Keep open"',
+    '"keep-open-during-workspace-export"',
+):
+    require(
+        fragment in closing,
+        f"window close must wait visibly for a running workspace export: {fragment}",
+    )
+require(
+    closing.index("closeEvent.accepted = false")
+    < closing.index("if (!root.closeAfterWorkspaceExport)"),
+    "every repeated close attempt must remain rejected while export is running",
+)
+require(
+    'id === "keep-open-during-workspace-export"' in APP
+    and "root.closeAfterWorkspaceExport = false" in APP,
+    "the deferred close notice must let the user keep Chaft open",
+)
+
+export_finished_start = APP.index(
+    "function onWorkspaceExportFinished(success, outputPath, message)"
+)
+export_finished_end = APP.index(
+    "function onPendingJoinRequestsChanged()", export_finished_start
+)
+export_finished = APP[export_finished_start:export_finished_end]
+for fragment in (
+    "var closeWhenFinished = root.closeAfterWorkspaceExport",
+    "root.closeAfterWorkspaceExport = false",
+    "Qt.callLater(function()",
+    "root.close()",
+):
+    require(
+        fragment in export_finished,
+        f"a deferred window close must resume after export completion: {fragment}",
+    )
+
+review_action_start = APP.index(
+    'id.indexOf("review-workspace-export:") === 0'
+)
+review_action_end = APP.index("\n            }", review_action_start)
+review_action = APP[review_action_start:review_action_end]
+for fragment in (
+    "if (!root.selectWorkspaceId(workspaceId))",
+    "Couldn’t switch to the export’s workspace.",
+    '"Try again"',
+):
+    require(
+        fragment in review_action,
+        f"blocked export-review navigation needs a visible retry: {fragment}",
+    )
+
 print("desktop reactivity contract: ok")

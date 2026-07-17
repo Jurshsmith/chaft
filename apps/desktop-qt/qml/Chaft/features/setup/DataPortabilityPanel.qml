@@ -32,6 +32,18 @@ Item {
     readonly property bool exportAvailable: root.controller
         ? root.controller.workspaceExportAvailable === true
         : false
+    readonly property bool runtimeLocked: root.controller
+        ? root.controller.runtimeLocked === true
+        : false
+    property bool accessibilityAnnouncementsReady: false
+    property string lastAnnouncedExportState: "idle"
+
+    onExportStateChanged: root.announceExportState()
+
+    Component.onCompleted: {
+        root.lastAnnouncedExportState = root.exportState
+        root.accessibilityAnnouncementsReady = true
+    }
 
     function safeWorkspaceSlug() {
         var value = String(root.workspaceName || "workspace")
@@ -43,8 +55,12 @@ Item {
     }
 
     function suggestedFileName() {
+        var timestamp = new Date().toISOString().slice(0, 23)
+            .replace(/[-:]/g, "")
+            .replace("T", "-")
+            .replace(".", "-")
         return "chaft-" + root.safeWorkspaceSlug() + "-"
-            + new Date().toISOString().slice(0, 10) + ".zip"
+            + timestamp + ".zip"
     }
 
     function fileUrlFromLocalPath(path) {
@@ -136,7 +152,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Take a usable copy of this workspace with you."
+                    text: "Export readable workspace data as an unencrypted ZIP."
                     color: Tokens.textMuted
                     font.pixelSize: Tokens.fontSizeSm
                     wrapMode: Text.WordWrap
@@ -159,47 +175,31 @@ Item {
                     anchors.margins: Tokens.space4
                     spacing: Tokens.space3
 
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: Tokens.space3
+                        spacing: Tokens.space1
 
-                        ColumnLayout {
+                        Text {
                             Layout.fillWidth: true
-                            spacing: Tokens.space1
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Workspace copy"
-                                color: Tokens.textStrong
-                                font.pixelSize: Tokens.fontSizeLg
-                                font.weight: Font.DemiBold
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "ZIP · browsable HTML · structured JSONL"
-                                color: Tokens.textMuted
-                                font.pixelSize: Tokens.fontSizeXs
-                                wrapMode: Text.WordWrap
-                            }
+                            text: "Portable ZIP"
+                            color: Tokens.textStrong
+                            font.pixelSize: Tokens.fontSizeLg
+                            font.weight: Font.DemiBold
                         }
 
-                        Button {
-                            objectName: "downloadWorkspaceCopyButton"
-                            text: root.exportSucceeded
-                                ? "Download another copy"
-                                : (root.exportFailed ? "Try again" : "Download workspace copy")
-                            enabled: root.exportAvailable && !root.exportRunning
-                            Accessible.name: text
-                            Accessible.description: "Choose where to save a portable workspace ZIP"
-                            onClicked: root.chooseExportLocation()
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Offline HTML and structured JSONL"
+                            color: Tokens.textMuted
+                            font.pixelSize: Tokens.fontSizeXs
+                            wrapMode: Text.WordWrap
                         }
                     }
 
                     Text {
                         objectName: "workspaceCopyDisclosure"
                         Layout.fillWidth: true
-                        text: "Includes the current workspace data this device can read—including private rooms and direct messages—plus available attachments. Deleted message content, encryption keys, credentials, invites, and peer addresses are not included. This is a portability copy, not a Chaft backup or restore file."
+                        text: "Includes messages from rooms and direct messages this device can read, plus locally available attachments. Only data currently available on this device is included; unsynced or missing history and files may be omitted. Deleted content, encryption keys, credentials, invites, and peer addresses are excluded. This ZIP cannot restore a Chaft workspace."
                         color: Tokens.textStrong
                         font.pixelSize: Tokens.fontSizeSm
                         wrapMode: Text.WordWrap
@@ -213,11 +213,24 @@ Item {
                         wrapMode: Text.WordWrap
                     }
 
+                    Button {
+                        objectName: "downloadWorkspaceCopyButton"
+                        text: root.exportSucceeded
+                            ? "Export another ZIP…"
+                            : (root.exportFailed ? "Try again" : "Export ZIP…")
+                        enabled: root.exportAvailable && !root.exportRunning
+                        Accessible.name: text
+                        Accessible.description: "Choose where to save a portable workspace ZIP"
+                        onClicked: root.chooseExportLocation()
+                    }
+
                     Text {
                         objectName: "workspaceCopyUnavailableText"
                         visible: !root.exportAvailable && !root.exportRunning
                         Layout.fillWidth: true
-                        text: "Unlock this workspace or update Chaft before creating a copy."
+                        text: root.runtimeLocked
+                            ? "Unlock Chaft to export this workspace."
+                            : "Update Chaft to export workspace data."
                         color: Tokens.textMuted
                         font.pixelSize: Tokens.fontSizeXs
                         wrapMode: Text.WordWrap
@@ -226,6 +239,7 @@ Item {
             }
 
             Rectangle {
+                id: exportStatusCard
                 objectName: "workspaceCopyStatusCard"
                 visible: root.exportState !== "idle"
                 Layout.fillWidth: true
@@ -234,6 +248,10 @@ Item {
                 color: root.exportFailed ? Tokens.warningSurface : Tokens.surfaceRaised
                 border.width: 1
                 border.color: root.exportFailed ? Tokens.warning : Tokens.borderSubtle
+                Accessible.role: root.exportFailed
+                    ? Accessible.AlertMessage
+                    : Accessible.StatusBar
+                Accessible.name: root.statusAccessibleName()
 
                 ColumnLayout {
                     id: exportStatusColumn
@@ -253,7 +271,7 @@ Item {
                             running: root.exportRunning
                             implicitWidth: 24
                             implicitHeight: 24
-                            Accessible.name: "Creating workspace copy"
+                            Accessible.name: "Exporting workspace"
                         }
 
                         Text {
@@ -262,8 +280,8 @@ Item {
                             text: root.exportRunning
                                 ? root.runningStatusTitle()
                                 : (root.exportSucceeded
-                                    ? "Workspace copy saved"
-                                    : "Workspace copy was not created")
+                                    ? "Workspace export saved"
+                                    : "Workspace export failed")
                             color: root.exportFailed
                                 ? Tokens.warningText
                                 : Tokens.textStrong
@@ -277,7 +295,7 @@ Item {
                         objectName: "workspaceCopyStatusDetail"
                         Layout.fillWidth: true
                         text: root.exportRunning
-                            ? "You can keep using Chaft while this finishes."
+                            ? "You can continue using Chaft."
                             : (root.exportFailed
                                 ? String(root.exportJob.error || "Try a different save location.")
                                 : root.successSummary())
@@ -289,6 +307,7 @@ Item {
                     }
 
                     Text {
+                        objectName: "workspaceExportOutputPath"
                         visible: !root.exportRunning
                             && String(root.exportJob.outputPath || "").length > 0
                         Layout.fillWidth: true
@@ -297,6 +316,7 @@ Item {
                         font.family: Tokens.fontMono
                         font.pixelSize: Tokens.fontSizeXs
                         elide: Text.ElideMiddle
+                        Accessible.name: "Export file path: " + text
                     }
 
                     Button {
@@ -326,8 +346,9 @@ Item {
             + ", and " + attachments + " attachment"
             + (attachments === 1 ? "" : "s") + " included."
         if (warnings > 0) {
-            summary += " Review the archive’s completeness report for "
-                + warnings + " notice" + (warnings === 1 ? "." : "s.")
+            summary += " " + warnings + " item"
+                + (warnings === 1 ? " may be missing." : "s may be missing.")
+                + " Review completeness.json in the ZIP."
         }
         return summary
     }
@@ -335,15 +356,47 @@ Item {
     function runningStatusTitle() {
         var name = String(root.exportJob.workspaceName || "").trim()
         return name.length > 0
-            ? "Creating a copy of “" + name + "”…"
-            : "Creating your workspace copy…"
+            ? "Exporting “" + name + "”…"
+            : "Exporting workspace…"
+    }
+
+    function statusAccessibleName() {
+        if (root.exportState === "idle") {
+            return ""
+        }
+        var title = root.exportRunning
+            ? root.runningStatusTitle()
+            : (root.exportSucceeded
+                ? "Workspace export saved"
+                : "Workspace export failed")
+        var detail = root.exportRunning
+            ? "You can continue using Chaft."
+            : (root.exportFailed
+                ? String(root.exportJob.error || "Try a different save location.")
+                : root.successSummary())
+        return title + " " + detail
+    }
+
+    function announceExportState() {
+        var state = root.exportState
+        if (!root.accessibilityAnnouncementsReady
+                || state === root.lastAnnouncedExportState) {
+            return
+        }
+        root.lastAnnouncedExportState = state
+        if (!root.visible || state === "idle") {
+            return
+        }
+        exportStatusCard.Accessible.announce(
+            root.statusAccessibleName(),
+            state === "failed" ? Accessible.Assertive : Accessible.Polite)
     }
 
     FileDialog {
         id: saveWorkspaceCopyDialog
-        title: "Save workspace copy"
+        title: "Export workspace"
         fileMode: FileDialog.SaveFile
-        nameFilters: [ "Chaft workspace copies (*.zip)" ]
+        nameFilters: [ "Chaft workspace exports (*.zip)" ]
         onAccepted: root.exportToPath(root.localPathFromUrl(selectedFile))
     }
 }

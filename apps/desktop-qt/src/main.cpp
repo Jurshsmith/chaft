@@ -3718,6 +3718,9 @@ public:
   }
 
   ~ChaftController() override {
+    if (!m_workspaceExportThread.isNull()) {
+      m_workspaceExportThread->wait();
+    }
     if (!m_peerHostingInFlight) {
       stopLocalPeerBlocking();
     }
@@ -4031,15 +4034,21 @@ public:
   Q_INVOKABLE bool exportWorkspaceArchive(const QString &outputPath) {
     if (m_workspaceExportJob.value(QStringLiteral("state")).toString() ==
         QStringLiteral("running")) {
-      setSyncStatus(QStringLiteral("workspace copy is already being created"));
+      setSyncStatus(QStringLiteral("workspace export is already running"));
       return false;
     }
 
     const auto requestedOutputPath = outputPath;
+    const auto workspaceId = m_workspaceId;
+    const auto workspaceName =
+        m_workspaceSnapshot.value(QStringLiteral("name")).toString();
     const auto failBeforeDispatch =
-        [this, &requestedOutputPath](const QString &message) {
+        [this, &requestedOutputPath, &workspaceId,
+         &workspaceName](const QString &message) {
           setWorkspaceExportJob(
               QVariantMap{{QStringLiteral("state"), QStringLiteral("failed")},
+                          {QStringLiteral("workspaceId"), workspaceId},
+                          {QStringLiteral("workspaceName"), workspaceName},
                           {QStringLiteral("outputPath"), requestedOutputPath},
                           {QStringLiteral("error"), message},
                           {QStringLiteral("finishedAtMs"),
@@ -4054,7 +4063,7 @@ public:
                                     ? QStringLiteral(
                                           "unlock the workspace to create a copy")
                                     : QStringLiteral(
-                                          "workspace copy export is unavailable"));
+                                          "workspace export is unavailable"));
     }
     if (requestedOutputPath.trimmed().isEmpty()) {
       return failBeforeDispatch(QStringLiteral("save location required"));
@@ -4071,15 +4080,13 @@ public:
     }
     if (QFileInfo(normalizedOutputPath).isDir()) {
       return failBeforeDispatch(
-          QStringLiteral("choose a file name for the workspace copy"));
+          QStringLiteral("choose a file name for the workspace export"));
     }
     if (QFileInfo::exists(normalizedOutputPath)) {
       return failBeforeDispatch(
           QStringLiteral("choose a new file name; that file already exists"));
     }
 
-    const auto workspaceName =
-        m_workspaceSnapshot.value(QStringLiteral("name")).toString();
     setWorkspaceExportJob(
         QVariantMap{{QStringLiteral("state"), QStringLiteral("running")},
                     {QStringLiteral("workspaceId"), m_workspaceId},
@@ -4087,7 +4094,7 @@ public:
                     {QStringLiteral("outputPath"), normalizedOutputPath},
                     {QStringLiteral("startedAtMs"),
                      QDateTime::currentMSecsSinceEpoch()}});
-    setSyncStatus(QStringLiteral("creating workspace copy..."));
+    setSyncStatus(QStringLiteral("exporting workspace..."));
     runWorkspaceArchiveExport(normalizedOutputPath, workspaceName);
     return true;
   }
@@ -17549,7 +17556,7 @@ private:
                 if (value.isEmpty()) {
                   const auto message = friendlyRuntimeStatusText(
                       error.isEmpty()
-                          ? QStringLiteral("workspace copy could not be created")
+                          ? QStringLiteral("workspace export failed")
                           : error);
                   guard->setWorkspaceExportJob(QVariantMap{
                       {QStringLiteral("state"), QStringLiteral("failed")},
@@ -17578,31 +17585,37 @@ private:
                                     .toInt(0));
                 const auto status = warningCount > 0
                                         ? QStringLiteral(
-                                              "workspace copy saved with %1 "
-                                              "notice%2")
+                                              "workspace export saved; %1 "
+                                              "item%2 may be missing")
                                               .arg(warningCount)
                                               .arg(warningCount == 1
                                                        ? QString()
                                                        : QStringLiteral("s"))
                                         : QStringLiteral(
-                                              "workspace copy saved");
+                                              "workspace export saved");
                 const auto notification = warningCount > 0
                                               ? QStringLiteral(
-                                                    "Workspace copy saved with "
-                                                    "%1 notice%2")
+                                                    "Workspace export saved; "
+                                                    "%1 item%2 may be missing")
                                                     .arg(warningCount)
                                                     .arg(warningCount == 1
                                                              ? QString()
                                                              : QStringLiteral(
                                                                    "s"))
                                               : QStringLiteral(
-                                                    "Workspace copy saved");
+                                                    "Workspace export saved");
                 guard->setSyncStatus(status);
                 emit guard->workspaceExportFinished(true, outputPath,
                                                      notification);
               },
               Qt::QueuedConnection);
         });
+    m_workspaceExportThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread]() {
+      if (m_workspaceExportThread == thread) {
+        m_workspaceExportThread.clear();
+      }
+    });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
   }
@@ -18504,6 +18517,7 @@ private:
   QVariantMap m_workspaceStorageHealth;
   QVariantMap m_workspaceExportJob{
       {QStringLiteral("state"), QStringLiteral("idle")}};
+  QPointer<QThread> m_workspaceExportThread;
   QVariantList m_workspaceSummaries;
   QString m_lastCreatedChannelId;
   QVariantList m_messageSearchHits;

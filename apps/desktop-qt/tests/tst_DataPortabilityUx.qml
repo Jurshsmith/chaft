@@ -14,6 +14,7 @@ TestCase {
     QtObject {
         id: mockController
         property bool workspaceExportAvailable: true
+        property bool runtimeLocked: false
         property string selectedWorkspaceId: "wrk_design"
         property var workspaceExportJob: ({ state: "idle" })
         property string lastExportPath: ""
@@ -43,6 +44,7 @@ TestCase {
 
     function init() {
         mockController.workspaceExportAvailable = true
+        mockController.runtimeLocked = false
         mockController.workspaceExportJob = ({ state: "idle" })
         mockController.lastExportPath = ""
         mockController.lastOpenedPath = ""
@@ -59,9 +61,13 @@ TestCase {
     function test_discloses_scope_and_adds_zip_extension() {
         var disclosure = findChild(panel, "workspaceCopyDisclosure")
         verify(disclosure !== null)
-        verify(disclosure.text.indexOf("current workspace data") >= 0)
-        verify(disclosure.text.indexOf("available attachments") >= 0)
+        verify(disclosure.text.indexOf("currently available on this device") >= 0)
+        verify(disclosure.text.indexOf("locally available attachments") >= 0)
+        verify(disclosure.text.indexOf("unsynced or missing history") >= 0)
         verify(disclosure.text.indexOf("encryption keys") >= 0)
+
+        verify(/^chaft-design-guild-\d{8}-\d{6}-\d{3}\.zip$/
+            .test(panel.suggestedFileName()))
 
         compare(panel.exportToPath("/tmp/design-guild-copy"), true)
         compare(mockController.lastExportPath, "/tmp/design-guild-copy.zip")
@@ -82,7 +88,7 @@ TestCase {
 
         var detail = findChild(panel, "workspaceCopyStatusDetail")
         verify(detail !== null)
-        compare(detail.text, "You can keep using Chaft while this finishes.")
+        compare(detail.text, "You can continue using Chaft.")
         var busy = findChild(panel, "workspaceCopyBusyIndicator")
         verify(busy !== null)
         compare(busy.running, true)
@@ -101,12 +107,18 @@ TestCase {
 
         var title = findChild(panel, "workspaceCopyStatusTitle")
         verify(title !== null)
-        compare(title.text, "Workspace copy saved")
+        compare(title.text, "Workspace export saved")
 
         var detail = findChild(panel, "workspaceCopyStatusDetail")
         verify(detail !== null)
         verify(detail.text.indexOf("4 rooms, 127 messages, and 3 attachments") >= 0)
-        verify(detail.text.indexOf("completeness report") >= 0)
+        verify(detail.text.indexOf("1 item may be missing") >= 0)
+        verify(detail.text.indexOf("completeness.json") >= 0)
+
+        var outputPath = findChild(panel, "workspaceExportOutputPath")
+        verify(outputPath !== null)
+        compare(outputPath.Accessible.name,
+                "Export file path: /tmp/design-guild-copy.zip")
 
         var openButton = findChild(panel, "openWorkspaceCopyFolderButton")
         verify(openButton !== null)
@@ -126,7 +138,7 @@ TestCase {
         var title = findChild(panel, "workspaceCopyStatusTitle")
         var detail = findChild(panel, "workspaceCopyStatusDetail")
         var button = findChild(panel, "downloadWorkspaceCopyButton")
-        compare(title.text, "Workspace copy was not created")
+        compare(title.text, "Workspace export failed")
         compare(detail.text, "The destination is not writable.")
         compare(button.text, "Try again")
         compare(button.enabled, true)
@@ -147,7 +159,21 @@ TestCase {
         var button = findChild(panel, "downloadWorkspaceCopyButton")
         compare(panel.exportState, "idle")
         compare(statusCard.visible, false)
-        compare(button.text, "Download workspace copy")
+        compare(button.text, "Export ZIP…")
         compare(button.enabled, true)
+    }
+
+    function test_unavailable_reason_distinguishes_locked_and_unsupported() {
+        mockController.workspaceExportAvailable = false
+        mockController.runtimeLocked = true
+        wait(0)
+
+        var unavailable = findChild(panel, "workspaceCopyUnavailableText")
+        verify(unavailable !== null)
+        compare(unavailable.text, "Unlock Chaft to export this workspace.")
+
+        mockController.runtimeLocked = false
+        wait(0)
+        compare(unavailable.text, "Update Chaft to export workspace data.")
     }
 }
