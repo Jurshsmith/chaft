@@ -45,6 +45,7 @@ mod materialization_health;
 mod openmls_actions;
 mod openmls_provisioning;
 mod paths;
+mod portable_export;
 mod publish_queue;
 mod recovery_bundle;
 mod runtime_validation;
@@ -129,6 +130,9 @@ pub use paths::RuntimePaths;
 pub(crate) use paths::{RUNTIME_PASSPHRASE_MAX_BYTES, RUNTIME_PATH_MAX_BYTES};
 pub(crate) use paths::{
     normalize_runtime_identity_passphrase, validate_runtime_path, validate_runtime_paths,
+};
+pub use portable_export::{
+    PORTABLE_EXPORT_KIND, PORTABLE_EXPORT_SCHEMA_VERSION, PortableWorkspaceExport,
 };
 pub(crate) use publish_queue::{
     MAX_PUBLISH_QUEUE_BLOB_HASH_SAMPLE_ROWS, MAX_PUBLISH_QUEUE_EVENT_ID_SAMPLE_ROWS,
@@ -220,6 +224,12 @@ pub enum RuntimeError {
     Crypto(#[from] CryptoError),
     #[error("runtime metadata serialization error")]
     Serde(#[from] serde_json::Error),
+    #[error("portable export archive error")]
+    PortableExportArchive(#[from] zip::result::ZipError),
+    #[error("portable export destination must be outside Chaft runtime and identity storage")]
+    PortableExportDestinationInsideRuntime,
+    #[error("portable export destination cannot replace a symbolic link or directory")]
+    PortableExportDestinationUnsafe,
     #[error("workspace materialization error")]
     Core(#[from] CoreError),
     #[error("workspace authorization error: {0}")]

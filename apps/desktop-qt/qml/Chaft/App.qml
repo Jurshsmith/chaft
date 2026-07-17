@@ -653,6 +653,11 @@ ApplicationWindow {
                 root.openPeopleAccess(true)
             } else if (id === "check-private-room-key") {
                 root.checkSelectedPrivateRoomKey()
+            } else if (id === "open-workspace-copy-folder") {
+                chaftController.openContainingFolder(
+                    String(chaftController.workspaceExportJob.outputPath || ""))
+            } else if (id === "review-workspace-copy") {
+                root.openSettings("data")
             }
         }
     }
@@ -1170,6 +1175,7 @@ ApplicationWindow {
                 && (value === "workspace"
                     || value === "devices"
                     || value === "backup"
+                    || value === "data"
                     || value === "advanced")) {
             return value
         }
@@ -9111,6 +9117,16 @@ ApplicationWindow {
                                            message) {
             root.handleWorkspaceCreateFinished(
                 workspaceId, success, selected, message)
+        }
+        function onWorkspaceExportFinished(success, outputPath, message) {
+            toastHost.show(
+                success ? "success" : "warning",
+                success
+                    ? String(message || "Workspace copy saved")
+                    : "Workspace copy was not created. Review Data & portability to try again.",
+                success ? "Open folder" : "Review",
+                success ? "open-workspace-copy-folder" : "review-workspace-copy",
+                success ? 6500 : 8000)
         }
         function onPendingJoinRequestsChanged() {
             root.restorePendingEntryDisplayNameFromRequests()

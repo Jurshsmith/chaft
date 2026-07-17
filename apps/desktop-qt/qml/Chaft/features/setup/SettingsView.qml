@@ -20,6 +20,7 @@ Item {
         { id: "workspace", label: "General" },
         { id: "devices", label: "Devices & keys" },
         { id: "backup", label: "Backup" },
+        { id: "data", label: "Data & portability" },
         { id: "advanced", label: "Advanced" }
     ]
     readonly property var availableCategories: chaftController.hasRuntimeWorkspace
@@ -249,6 +250,7 @@ Item {
                     id: setupPanel
                     app: root.app
                     category: root.settingsDestination ? root.category : "people"
+                    visible: !root.settingsDestination || root.category !== "data"
                     anchors.top: compactCategorySelector.visible
                         ? compactCategorySelector.bottom
                         : parent.top
@@ -268,6 +270,26 @@ Item {
                             root.categoryRequested(categoryId)
                         }
                     }
+                }
+
+                DataPortabilityPanel {
+                    id: dataPortabilityPanel
+                    visible: root.settingsDestination && root.category === "data"
+                    controller: chaftController
+                    workspaceName: root.app
+                        ? String(root.app.workspaceSnapshot.name || "")
+                        : ""
+                    anchors.top: compactCategorySelector.visible
+                        ? compactCategorySelector.bottom
+                        : parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.topMargin: compactCategorySelector.visible
+                        ? Tokens.space3
+                        : Tokens.space4
+                    anchors.bottomMargin: Tokens.space4
+                    width: Math.max(0, Math.min(
+                        parent.width - Tokens.space4 * 2, 840))
                 }
             }
         }

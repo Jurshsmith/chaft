@@ -176,6 +176,8 @@ using RuntimeSendAttachmentReplyResultJsonFn =
 using RuntimeSaveAttachmentResultJsonFn = char *(*)(const char *, const char *,
                                                     const char *, const char *,
                                                     const char *, const char *);
+using ExportPortableWorkspaceArchiveResultJsonFn =
+    char *(*)(const char *, const char *, const char *, const char *);
 using RuntimePruneBlobsResultJsonFn = char *(*)(const char *, const char *);
 using RuntimeEditMessageResultJsonFn = char *(*)(const char *, const char *,
                                                  const char *, const char *,
@@ -3560,6 +3562,10 @@ class ChaftController : public QObject {
                  timelineLoadInFlightChanged)
   Q_PROPERTY(bool workspaceOperationInFlight READ workspaceOperationInFlight
                  NOTIFY workspaceOperationInFlightChanged)
+  Q_PROPERTY(bool workspaceExportAvailable READ workspaceExportAvailable NOTIFY
+                 workspaceExportAvailableChanged)
+  Q_PROPERTY(QVariantMap workspaceExportJob READ workspaceExportJob NOTIFY
+                 workspaceExportJobChanged)
   Q_PROPERTY(bool runtimeUnlockRequired READ runtimeUnlockRequired NOTIFY
                  runtimeUnlockChanged)
   Q_PROPERTY(
@@ -3594,6 +3600,10 @@ public:
         m_workspaceSnapshot(std::move(fallbackSnapshot)) {
     connect(this, &ChaftController::workspaceSnapshotChanged, this,
             [this]() { ++m_workspaceSnapshotRevision; });
+    connect(this, &ChaftController::runtimeWorkspaceChanged, this,
+            &ChaftController::workspaceExportAvailableChanged);
+    connect(this, &ChaftController::runtimeUnlockChanged, this,
+            &ChaftController::workspaceExportAvailableChanged);
     m_runtimeStoreWatcher = new QFileSystemWatcher(this);
     m_hostedStoreRefreshTimer = new QTimer(this);
     m_hostedStoreRefreshTimer->setSingleShot(true);
@@ -3784,6 +3794,12 @@ public:
            m_deviceProfileUpdateInFlight || m_keyTransferInFlight ||
            m_localMutationInFlightCount > 0;
   }
+  bool workspaceExportAvailable() const {
+    return hasRuntimeWorkspace() && !runtimeLocked() &&
+           m_exportPortableWorkspaceArchiveJson != nullptr &&
+           m_freeString != nullptr;
+  }
+  QVariantMap workspaceExportJob() const { return m_workspaceExportJob; }
   bool runtimeUnlockRequired() const { return m_runtimeUnlockRequired; }
   bool runtimeUnlocked() const { return !m_identityPassphrase.isEmpty(); }
   bool runtimeLocked() const { return m_runtimeAccessSuspendedUntilUnlock; }
@@ -4009,6 +4025,88 @@ public:
     }
 
     setSyncStatus(QStringLiteral("%1 saved").arg(itemLabel));
+    return true;
+  }
+
+  Q_INVOKABLE bool exportWorkspaceArchive(const QString &outputPath) {
+    if (m_workspaceExportJob.value(QStringLiteral("state")).toString() ==
+        QStringLiteral("running")) {
+      setSyncStatus(QStringLiteral("workspace copy is already being created"));
+      return false;
+    }
+
+    const auto requestedOutputPath = outputPath;
+    const auto failBeforeDispatch =
+        [this, &requestedOutputPath](const QString &message) {
+          setWorkspaceExportJob(
+              QVariantMap{{QStringLiteral("state"), QStringLiteral("failed")},
+                          {QStringLiteral("outputPath"), requestedOutputPath},
+                          {QStringLiteral("error"), message},
+                          {QStringLiteral("finishedAtMs"),
+                           QDateTime::currentMSecsSinceEpoch()}});
+          setSyncStatus(message);
+          emit workspaceExportFinished(false, requestedOutputPath, message);
+          return false;
+        };
+
+    if (!workspaceExportAvailable()) {
+      return failBeforeDispatch(runtimeLocked()
+                                    ? QStringLiteral(
+                                          "unlock the workspace to create a copy")
+                                    : QStringLiteral(
+                                          "workspace copy export is unavailable"));
+    }
+    if (requestedOutputPath.trimmed().isEmpty()) {
+      return failBeforeDispatch(QStringLiteral("save location required"));
+    }
+
+    const auto normalizedOutputPath =
+        QFileInfo(requestedOutputPath).absoluteFilePath();
+    QString metadataError;
+    if (!validateMetadataTextForWrite(
+            normalizedOutputPath, kMaxFfiPathBytes,
+            QStringLiteral("save location"), QStringLiteral("64 KB"),
+            &metadataError)) {
+      return failBeforeDispatch(metadataError);
+    }
+    if (QFileInfo(normalizedOutputPath).isDir()) {
+      return failBeforeDispatch(
+          QStringLiteral("choose a file name for the workspace copy"));
+    }
+    if (QFileInfo::exists(normalizedOutputPath)) {
+      return failBeforeDispatch(
+          QStringLiteral("choose a new file name; that file already exists"));
+    }
+
+    const auto workspaceName =
+        m_workspaceSnapshot.value(QStringLiteral("name")).toString();
+    setWorkspaceExportJob(
+        QVariantMap{{QStringLiteral("state"), QStringLiteral("running")},
+                    {QStringLiteral("workspaceId"), m_workspaceId},
+                    {QStringLiteral("workspaceName"), workspaceName},
+                    {QStringLiteral("outputPath"), normalizedOutputPath},
+                    {QStringLiteral("startedAtMs"),
+                     QDateTime::currentMSecsSinceEpoch()}});
+    setSyncStatus(QStringLiteral("creating workspace copy..."));
+    runWorkspaceArchiveExport(normalizedOutputPath, workspaceName);
+    return true;
+  }
+
+  Q_INVOKABLE bool openContainingFolder(const QString &filePath) {
+    if (filePath.trimmed().isEmpty()) {
+      return false;
+    }
+    const QFileInfo fileInfo(filePath);
+    const auto containingPath =
+        fileInfo.isDir() ? fileInfo.absoluteFilePath() : fileInfo.absolutePath();
+    if (containingPath.isEmpty() || !QDir(containingPath).exists()) {
+      setSyncStatus(QStringLiteral("folder is no longer available"));
+      return false;
+    }
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(containingPath))) {
+      setSyncStatus(QStringLiteral("folder could not be opened"));
+      return false;
+    }
     return true;
   }
 
@@ -8048,6 +8146,10 @@ signals:
   void syncInFlightChanged();
   void timelineLoadInFlightChanged();
   void workspaceOperationInFlightChanged();
+  void workspaceExportAvailableChanged();
+  void workspaceExportJobChanged();
+  void workspaceExportFinished(bool success, const QString &outputPath,
+                               const QString &message);
   void runtimeUnlockChanged();
   void keyTransferJsonChanged();
   void keyTransferInFlightChanged();
@@ -8085,6 +8187,14 @@ signals:
 private:
   static const char *nullableUtf8(const QByteArray &value) {
     return value.isEmpty() ? nullptr : value.constData();
+  }
+
+  void setWorkspaceExportJob(QVariantMap job) {
+    if (m_workspaceExportJob == job) {
+      return;
+    }
+    m_workspaceExportJob = std::move(job);
+    emit workspaceExportJobChanged();
   }
 
   QString runtimeEventStorePath() const {
@@ -8619,6 +8729,9 @@ private:
       m_saveAttachmentJson =
           reinterpret_cast<RuntimeSaveAttachmentResultJsonFn>(
               m_library.resolve("chaft_runtime_save_attachment_result_json"));
+      m_exportPortableWorkspaceArchiveJson =
+          reinterpret_cast<ExportPortableWorkspaceArchiveResultJsonFn>(
+              m_library.resolve("chaft_export_portable_workspace_archive"));
       m_pruneBlobsJson = reinterpret_cast<RuntimePruneBlobsResultJsonFn>(
           m_library.resolve("chaft_runtime_prune_blobs_result_json"));
       m_editMessageJson = reinterpret_cast<RuntimeEditMessageResultJsonFn>(
@@ -17394,6 +17507,106 @@ private:
     thread->start();
   }
 
+  void runWorkspaceArchiveExport(const QString &outputPath,
+                                 const QString &workspaceName) {
+    const QPointer<ChaftController> guard(this);
+    const auto exportFn = m_exportPortableWorkspaceArchiveJson;
+    const auto freeString = m_freeString;
+    const auto runtimeDir = m_runtimeDir;
+    const auto identityFile = m_identityFile;
+    const auto workspaceId = m_workspaceId;
+    auto *thread = QThread::create(
+        [guard, exportFn, freeString, runtimeDir, identityFile, workspaceId,
+         workspaceName, outputPath]() {
+          const auto runtimeDirBytes = runtimeDir.toUtf8();
+          const auto identityFileBytes = identityFile.toUtf8();
+          const auto workspaceIdBytes = workspaceId.toUtf8();
+          const auto outputPathBytes = outputPath.toUtf8();
+
+          QString error;
+          const auto json = takeWorkerFfiString(
+              exportFn(runtimeDirBytes.constData(),
+                       identityFileBytes.isEmpty()
+                           ? nullptr
+                           : identityFileBytes.constData(),
+                       workspaceIdBytes.constData(),
+                       outputPathBytes.constData()),
+              freeString, &error);
+          const auto value =
+              error.isEmpty() ? resultValueFromJson(json, &error)
+                              : QJsonObject();
+          if (guard.isNull()) {
+            return;
+          }
+          QMetaObject::invokeMethod(
+              guard.data(),
+              [guard, value, error, workspaceId, workspaceName, outputPath]() {
+                if (guard.isNull()) {
+                  return;
+                }
+
+                const auto finishedAtMs = QDateTime::currentMSecsSinceEpoch();
+                if (value.isEmpty()) {
+                  const auto message = friendlyRuntimeStatusText(
+                      error.isEmpty()
+                          ? QStringLiteral("workspace copy could not be created")
+                          : error);
+                  guard->setWorkspaceExportJob(QVariantMap{
+                      {QStringLiteral("state"), QStringLiteral("failed")},
+                      {QStringLiteral("workspaceId"), workspaceId},
+                      {QStringLiteral("workspaceName"), workspaceName},
+                      {QStringLiteral("outputPath"), outputPath},
+                      {QStringLiteral("error"), message},
+                      {QStringLiteral("finishedAtMs"), finishedAtMs}});
+                  guard->setSyncStatus(message);
+                  emit guard->workspaceExportFinished(false, outputPath,
+                                                       message);
+                  return;
+                }
+
+                auto job = value.toVariantMap();
+                job.insert(QStringLiteral("state"),
+                           QStringLiteral("succeeded"));
+                job.insert(QStringLiteral("workspaceId"), workspaceId);
+                job.insert(QStringLiteral("workspaceName"), workspaceName);
+                job.insert(QStringLiteral("outputPath"), outputPath);
+                job.insert(QStringLiteral("finishedAtMs"), finishedAtMs);
+                guard->setWorkspaceExportJob(std::move(job));
+
+                const auto warningCount =
+                    std::max(0, value.value(QStringLiteral("warningCount"))
+                                    .toInt(0));
+                const auto status = warningCount > 0
+                                        ? QStringLiteral(
+                                              "workspace copy saved with %1 "
+                                              "notice%2")
+                                              .arg(warningCount)
+                                              .arg(warningCount == 1
+                                                       ? QString()
+                                                       : QStringLiteral("s"))
+                                        : QStringLiteral(
+                                              "workspace copy saved");
+                const auto notification = warningCount > 0
+                                              ? QStringLiteral(
+                                                    "Workspace copy saved with "
+                                                    "%1 notice%2")
+                                                    .arg(warningCount)
+                                                    .arg(warningCount == 1
+                                                             ? QString()
+                                                             : QStringLiteral(
+                                                                   "s"))
+                                              : QStringLiteral(
+                                                    "Workspace copy saved");
+                guard->setSyncStatus(status);
+                emit guard->workspaceExportFinished(true, outputPath,
+                                                     notification);
+              },
+              Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+  }
+
   void runTimelinePageLoad(qulonglong timelineStart, qulonglong timelineCount,
                            quint64 generation) {
     const auto operationId = beginTimelineLoad();
@@ -18110,6 +18323,8 @@ private:
   RuntimeSendAttachmentResultJsonFn m_sendAttachmentJson = nullptr;
   RuntimeSendAttachmentReplyResultJsonFn m_sendAttachmentReplyJson = nullptr;
   RuntimeSaveAttachmentResultJsonFn m_saveAttachmentJson = nullptr;
+  ExportPortableWorkspaceArchiveResultJsonFn
+      m_exportPortableWorkspaceArchiveJson = nullptr;
   RuntimePruneBlobsResultJsonFn m_pruneBlobsJson = nullptr;
   RuntimeEditMessageResultJsonFn m_editMessageJson = nullptr;
   RuntimeDeleteMessageResultJsonFn m_deleteMessageJson = nullptr;
@@ -18287,6 +18502,8 @@ private:
   QVariantMap m_workspaceSnapshot;
   QVariantMap m_publishQueue;
   QVariantMap m_workspaceStorageHealth;
+  QVariantMap m_workspaceExportJob{
+      {QStringLiteral("state"), QStringLiteral("idle")}};
   QVariantList m_workspaceSummaries;
   QString m_lastCreatedChannelId;
   QVariantList m_messageSearchHits;

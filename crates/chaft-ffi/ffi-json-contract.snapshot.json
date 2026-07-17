@@ -470,6 +470,31 @@
     },
     "workspaceId": "string"
   },
+  "chaft_export_portable_workspace_archive": {
+    "error": "null",
+    "ok": "bool",
+    "value": {
+      "archiveBytes": "number",
+      "archiveSha256": "string",
+      "attachmentCount": "number",
+      "channelCount": "number",
+      "corruptEventCount": "number",
+      "gapCount": "number",
+      "generatedAt": "string",
+      "includedAttachmentCount": "number",
+      "invalidSignatureCount": "number",
+      "kind": "string",
+      "memberCount": "number",
+      "messageCount": "number",
+      "missingAttachmentCount": "number",
+      "outputPath": "string",
+      "schemaVersion": "number",
+      "unavailableMessageBodyCount": "number",
+      "warningCount": "number",
+      "workspaceId": "string",
+      "workspaceName": "string"
+    }
+  },
   "chaft_runtime_ack_join_request_inbox_entry_result_json": {
     "error": "null",
     "ok": "bool",
