@@ -5182,9 +5182,15 @@ fn portable_workspace_export_ffi_writes_archive_directly_to_disk() {
         exported["value"]["outputPath"],
         output_path.to_string_lossy().as_ref()
     );
-    assert_eq!(exported["value"]["schemaVersion"], 1);
+    assert_eq!(exported["value"]["schemaVersion"], 2);
+    assert_eq!(exported["value"]["kind"], "chaft.portable-workspace.v2");
     assert_eq!(exported["value"]["channelCount"], 1);
     assert_eq!(exported["value"]["memberCount"], 1);
+    assert!(exported["value"]["corruptEventCount"].is_null());
+    assert_eq!(
+        exported["value"]["storageIntegrityAssessment"],
+        "not_assessed_for_privacy"
+    );
     assert_eq!(
         exported["value"]["archiveSha256"].as_str().unwrap().len(),
         64

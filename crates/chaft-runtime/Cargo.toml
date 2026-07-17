@@ -31,8 +31,12 @@ time.workspace = true
 x25519-dalek.workspace = true
 zip.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 async-trait.workspace = true
 chaft-net-iroh = { path = "../chaft-net-iroh" }
+jsonschema.workspace = true
 rusqlite.workspace = true
 tokio.workspace = true
