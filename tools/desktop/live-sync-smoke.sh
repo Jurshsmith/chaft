@@ -74,6 +74,19 @@ if not eval(sys.argv[2], {"__builtins__": {}}, scope):
 PY
 }
 
+assert_no_default_peer_config() {
+  config_file="$1"
+  message="$2"
+  # A runtime that has never persisted desktop preferences has no
+  # desktop.json; that is equivalent to an empty default peer endpoint.
+  if [ ! -f "$config_file" ]; then
+    return 0
+  fi
+  assert_json "$config_file" \
+    'not data.get("defaultPeerEndpoint", "").strip()' \
+    "$message"
+}
+
 unused_port() {
   "$python_bin" - <<'PY'
 import socket
@@ -516,8 +529,7 @@ fi
 assert_json "$smoke_dir/host-after.json" \
   'any(item.get("body", "").startswith("desktop hosted external marker ") for item in data["timeline"])' \
   'host runtime did not persist the external marker'
-assert_json "$host_runtime/desktop.json" \
-  'not data.get("defaultPeerEndpoint", "").strip()' \
+assert_no_default_peer_config "$host_runtime/desktop.json" \
   'hosted reconciliation unexpectedly depended on a default peer endpoint'
 
 # Finally exercise the real hosted-peer write path. A distinct member runtime
@@ -659,8 +671,7 @@ fi
 assert_json "$smoke_dir/host-peer-after.json" \
   'any(item.get("body", "").startswith("desktop hosted peer marker ") for item in data["timeline"])' \
   'host runtime did not persist the inbound hosted-peer marker'
-assert_json "$host_runtime/desktop.json" \
-  'not data.get("defaultPeerEndpoint", "").strip()' \
+assert_no_default_peer_config "$host_runtime/desktop.json" \
   'hosted-peer reconciliation unexpectedly stored a default peer endpoint'
 
 printf 'desktop live-sync smoke passed: workspace=%s channel=%s hosted=%s hosted-channel=%s hosted-peer=%s\n' \

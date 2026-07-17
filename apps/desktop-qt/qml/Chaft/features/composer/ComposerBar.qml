@@ -15,12 +15,16 @@ Rectangle {
     property string replyIdentityId: ""
     property string replyDisplayName: ""
     property bool operationPending: false
+    property string blockedReason: ""
+    property string blockedActionLabel: ""
+    readonly property bool blocked: blockedReason.trim().length > 0
     signal sendRequested(string text)
     signal attachRequested(string text)
     signal saveEditRequested(string text)
     signal cancelEditRequested()
     signal cancelReplyRequested()
     signal draftChanged(string text)
+    signal blockedActionRequested()
     readonly property int inputHeight: Math.min(92, Math.max(40, messageField.contentHeight + 12))
 
     function clearDraft() {
@@ -48,7 +52,7 @@ Rectangle {
     }
 
     function submitDraft() {
-        if (!root.enabled || root.operationPending
+        if (!root.enabled || root.blocked || root.operationPending
                 || messageField.text.trim().length === 0) {
             return false
         }
@@ -61,7 +65,7 @@ Rectangle {
     }
 
     function attachDraft() {
-        if (!root.enabled || root.editMode || root.operationPending) {
+        if (!root.enabled || root.blocked || root.editMode || root.operationPending) {
             return false
         }
         root.attachRequested(messageField.text)
@@ -77,6 +81,7 @@ Rectangle {
     }
 
     height: ((root.editMode || root.replyMode) ? 70 : 50) + root.inputHeight
+        + (root.blocked ? 34 : 0)
     color: Tokens.surfaceBase
 
     Rectangle {
@@ -91,6 +96,35 @@ Rectangle {
             anchors.leftMargin: 12
             anchors.rightMargin: 12
             spacing: 4
+
+            RowLayout {
+                visible: root.blocked
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 30 : 0
+                spacing: 8
+
+                Text {
+                    objectName: "composerBlockedReason"
+                    Layout.fillWidth: true
+                    text: root.blockedReason
+                    color: Tokens.warningText
+                    font.pixelSize: Tokens.fontSizeSm
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    Accessible.role: Accessible.AlertMessage
+                    Accessible.name: text
+                }
+
+                Button {
+                    objectName: "composerBlockedAction"
+                    visible: root.blockedActionLabel.length > 0
+                    text: root.blockedActionLabel
+                    implicitWidth: 108
+                    enabled: root.enabled && !root.operationPending
+                    onClicked: root.blockedActionRequested()
+                }
+            }
 
             Text {
                 visible: root.editMode
@@ -147,6 +181,7 @@ Rectangle {
 
                     TextArea {
                         id: messageField
+                        objectName: "composerMessageField"
                         width: messageScroll.availableWidth
                         height: Math.max(root.inputHeight, contentHeight)
                         placeholderText: root.editMode
@@ -154,6 +189,8 @@ Rectangle {
                             : "Message " + (root.directMessage ? "@" : "#") + root.channelName
                         color: Tokens.textStrong
                         placeholderTextColor: Tokens.textMuted
+                        // A missing private-room key blocks delivery, not
+                        // drafting. Keep the local draft fully editable.
                         enabled: root.enabled
                         wrapMode: TextEdit.Wrap
                         selectByMouse: true
@@ -195,7 +232,7 @@ Rectangle {
                     visible: !root.editMode
                     text: "Attach"
                     implicitWidth: 72
-                    enabled: root.enabled && !root.operationPending
+                    enabled: root.enabled && !root.blocked && !root.operationPending
                     Layout.alignment: Qt.AlignBottom
                     Accessible.name: "Attach file"
                     Accessible.description: "Choose a file to attach to this draft"
@@ -210,7 +247,7 @@ Rectangle {
                         ? (root.editMode ? "Saving..." : "Sending...")
                         : (root.editMode ? "Save" : "Send")
                     implicitWidth: root.operationPending ? 92 : 78
-                    enabled: root.enabled && !root.operationPending
+                    enabled: root.enabled && !root.blocked && !root.operationPending
                         && messageField.text.trim().length > 0
                     Layout.alignment: Qt.AlignBottom
                     Accessible.name: root.editMode ? "Save edited message" : "Send message"

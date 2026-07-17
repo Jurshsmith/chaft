@@ -151,6 +151,27 @@ TestCase {
         compare(expansionButton.label, "Show more")
     }
 
+    function test_pending_message_is_visible_without_destructive_actions() {
+        var pending = message("A message that is still being saved", null)
+        pending.eventId = "pending-event-1"
+        pending.messageId = ""
+        pending.pendingLocal = true
+        pending.deliveryState = "Saving on this device..."
+        timelineView.timelineModel = [pending]
+        timelineView.forceLayout()
+        wait(0)
+
+        var row = timelineView.itemAtIndex(0)
+        verify(row !== null)
+        compare(row.pendingLocal, true)
+        var deliveryStatus = findChild(row, "pendingDeliveryStatus")
+        verify(deliveryStatus !== null)
+        compare(deliveryStatus.text, "Saving on this device...")
+        var body = findChild(row, "timelineMessageBody")
+        verify(body !== null)
+        compare(body.text.trim(), pending.body)
+    }
+
     function test_parent_reply_preview_emits_navigation_request() {
         timelineView.timelineModel = [message("Reply body", {
             messageId: "parent-message",

@@ -554,6 +554,7 @@ ListView {
         readonly property bool warningRow: row.historyGapRow || row.invalidSignatureRow
         readonly property bool unreadDividerBefore: Boolean(row.modelData.unreadDividerBefore)
         readonly property bool messageDeleted: Boolean(row.modelData.deleted)
+        readonly property bool pendingLocal: Boolean(row.modelData.pendingLocal)
         readonly property bool dayBoundary: Boolean(row.modelData.dayBoundary)
             && root.dayLabel(row.modelData.physicalMs).length > 0
         readonly property bool grouped: Boolean(row.modelData.groupedWithPrevious)
@@ -578,6 +579,8 @@ ListView {
         visible: !row.pendingDelete
         color: row.warningRow
             ? Tokens.warningSurface
+            : row.pendingLocal
+                ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.08)
             : row.selectedRow
                 ? Qt.rgba(Tokens.accent.r, Tokens.accent.g, Tokens.accent.b, 0.12)
                 : row.rowHovered
@@ -591,7 +594,9 @@ ListView {
         Accessible.name: root.accessibleMessageLabel(row.modelData)
         Accessible.description: row.warningRow
             ? "Timeline warning"
-            : "Press Enter to open message actions. Message text is selectable."
+            : row.pendingLocal
+                ? String(row.modelData.deliveryState || "Saving on this device")
+                : "Press Enter to open message actions. Message text is selectable."
 
         HoverHandler {
             id: rowHover
@@ -901,6 +906,19 @@ ListView {
                     }
                 }
 
+                Text {
+                    objectName: "pendingDeliveryStatus"
+                    Layout.fillWidth: true
+                    visible: row.pendingLocal
+                    text: String(row.modelData.deliveryState
+                                 || "Saving on this device...")
+                    color: Tokens.textMuted
+                    font.family: Tokens.fontMono
+                    font.pixelSize: Tokens.fontSizeXs
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+
                 TimelineActionChip {
                     id: bodyExpansionAction
                     objectName: "messageExpansionButton"
@@ -922,7 +940,7 @@ ListView {
                     id: actionFlow
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible && implicitHeight > 0 ? implicitHeight : 0
-                    visible: !row.warningRow
+                    visible: !row.warningRow && !row.pendingLocal
                     spacing: 6
 
                     Repeater {
@@ -1004,7 +1022,8 @@ ListView {
             color: Tokens.surfaceRaised
             border.width: 1
             border.color: Tokens.borderSubtle
-            readonly property bool shown: !row.warningRow && root.actionsEnabled && !row.pendingDelete
+            readonly property bool shown: !row.warningRow && !row.pendingLocal
+                && root.actionsEnabled && !row.pendingDelete
                 && (row.rowHovered || row.activeFocus
                     || reactionPicker.visible || rowMenu.visible)
             opacity: shown ? 1 : 0

@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -141,6 +142,9 @@ using RuntimePublishPeerEndpointWithReplicaCapabilityResultJsonFn =
               const char *, const char *, bool, bool, qint64, const char *,
               const char *);
 using RuntimeOpenMlsWorkspaceActionResultJsonFn = char *(*)(const char *,
+                                                            const char *,
+                                                            const char *);
+using RuntimeReconcileOpenMlsAccessResultJsonFn = char *(*)(const char *,
                                                             const char *,
                                                             const char *);
 using RuntimeOpenMlsWorkspaceValueResultJsonFn = char *(*)(const char *,
@@ -1189,6 +1193,49 @@ QString defaultRuntimeDir() {
   return desktopPathWithinLimit(fallbackDir) ? fallbackDir : QString();
 }
 
+QString friendlyRuntimeStatusText(const QString &status) {
+  const auto trimmed = status.trimmed();
+  const auto normalized = trimmed.toLower();
+  if (normalized.contains(
+          QStringLiteral("openmlschannelrevocationpending")) ||
+      normalized.contains(
+          QStringLiteral("open_mls_channel_revocation_pending")) ||
+      normalized.contains(
+          QStringLiteral("openmls_channel_revocation_pending")) ||
+      normalized.contains(
+          QStringLiteral("while openmls channel access is active"))) {
+    return QStringLiteral(
+        "Secure room access could not be revoked on this device, so room "
+        "membership was not changed. Retry from an admin device that can "
+        "open this room.");
+  }
+  if (normalized.contains(
+          QStringLiteral("openmlsworkspacerevocationpending")) ||
+      normalized.contains(
+          QStringLiteral("open_mls_workspace_revocation_pending")) ||
+      normalized.contains(
+          QStringLiteral("openmls_workspace_revocation_pending")) ||
+      normalized.contains(
+          QStringLiteral("while openmls workspace access is active"))) {
+    return QStringLiteral(
+        "Secure workspace access could not be revoked on this device, so "
+        "membership was not changed. Retry from an admin device that can "
+        "open this workspace.");
+  }
+  if (normalized.contains(QStringLiteral("channel content key is missing")) ||
+      normalized.contains(QStringLiteral("missing channel content key"))) {
+    return QStringLiteral(
+        "This private room is still waiting for its message key. Check for "
+        "updates from a teammate, then try again.");
+  }
+  if (normalized.contains(QStringLiteral("workspace content key is missing"))) {
+    return QStringLiteral(
+        "This workspace is still waiting for its message key. Check for "
+        "updates from a teammate, then try again.");
+  }
+  return trimmed;
+}
+
 QString desktopConfigPath(const QString &runtimeDir) {
   if (!desktopPathWithinLimit(runtimeDir)) {
     return {};
@@ -1236,6 +1283,10 @@ constexpr int kJoinRequestInboxPollMs = 5000;
 constexpr int kJoinRequestOutboxPollMs = 15000;
 constexpr int kJoinResponseInboxPollMs = 5000;
 constexpr int kJoinResponseOutboxPollMs = 15000;
+constexpr qint64 kOpenMlsAccessRetryInitialMs = 30 * 1000;
+constexpr qint64 kOpenMlsAccessRetryMaximumMs = 5 * 60 * 1000;
+constexpr qint64 kOpenMlsAccessOwnWriteQuietPeriodMs = 1000;
+constexpr qint64 kPeerUpdateFinishedNotifyIntervalMs = 30 * 1000;
 constexpr qsizetype kMaxMutedChannels = 128;
 constexpr qsizetype kMaxMutedChannelKeyBytes = 320;
 constexpr int kMinDesktopWindowWidth = 1040;
@@ -3424,6 +3475,14 @@ class ChaftController : public QObject {
   Q_PROPERTY(QString selectedWorkspaceId READ selectedWorkspaceId NOTIFY
                  selectedWorkspaceChanged)
   Q_PROPERTY(QString syncStatus READ syncStatus NOTIFY syncStatusChanged)
+  Q_PROPERTY(QString peerUpdateState READ peerUpdateState NOTIFY
+                 peerUpdateStateChanged)
+  Q_PROPERTY(QString peerUpdateDetail READ peerUpdateDetail NOTIFY
+                 peerUpdateStateChanged)
+  Q_PROPERTY(qint64 peerUpdateFinishedAtMs READ peerUpdateFinishedAtMs NOTIFY
+                 peerUpdateStateChanged)
+  Q_PROPERTY(bool hostedStoreRefreshPending READ hostedStoreRefreshPending NOTIFY
+                 hostedStoreRefreshPendingChanged)
   Q_PROPERTY(int lastRecoveryImportedChannelCount READ
                  lastRecoveryImportedChannelCount NOTIFY
                      lastRecoveryImportedChannelCountChanged)
@@ -3535,6 +3594,15 @@ public:
         m_workspaceSnapshot(std::move(fallbackSnapshot)) {
     connect(this, &ChaftController::workspaceSnapshotChanged, this,
             [this]() { ++m_workspaceSnapshotRevision; });
+    m_runtimeStoreWatcher = new QFileSystemWatcher(this);
+    m_hostedStoreRefreshTimer = new QTimer(this);
+    m_hostedStoreRefreshTimer->setSingleShot(true);
+    connect(m_runtimeStoreWatcher, &QFileSystemWatcher::fileChanged, this,
+            [this](const QString &) { handleRuntimeStorePathChanged(true); });
+    connect(m_runtimeStoreWatcher, &QFileSystemWatcher::directoryChanged, this,
+            [this](const QString &) { handleRuntimeStorePathChanged(false); });
+    connect(m_hostedStoreRefreshTimer, &QTimer::timeout, this,
+            [this]() { tryHostedStoreRefresh(); });
     m_identityPassphraseFromEnvironment = !m_identityPassphrase.isEmpty();
     m_rawEventStoreMode =
         !m_eventStorePath.isEmpty() &&
@@ -3618,6 +3686,7 @@ public:
     }
     loadFfi();
     if (m_ffiReady) {
+      startRuntimeStoreWatcher();
       if (!m_workspaceId.isEmpty()) {
         applyWorkspaceLoadingSnapshot(m_workspaceId);
       }
@@ -3648,6 +3717,12 @@ public:
   QVariantList workspaceSummaries() const { return m_workspaceSummaries; }
   QString selectedWorkspaceId() const { return m_workspaceId; }
   QString syncStatus() const { return m_syncStatus; }
+  QString peerUpdateState() const { return m_peerUpdateState; }
+  QString peerUpdateDetail() const { return m_peerUpdateDetail; }
+  qint64 peerUpdateFinishedAtMs() const { return m_peerUpdateFinishedAtMs; }
+  bool hostedStoreRefreshPending() const {
+    return m_hostedStoreRefreshPending;
+  }
   int lastRecoveryImportedChannelCount() const {
     return m_lastRecoveryImportedChannelCount;
   }
@@ -3706,7 +3781,8 @@ public:
   bool workspaceOperationInFlight() const {
     return m_syncInFlight || m_timelineLoadInFlight ||
            m_runtimeSnapshotReconcileInFlight ||
-           m_deviceProfileUpdateInFlight || m_keyTransferInFlight;
+           m_deviceProfileUpdateInFlight || m_keyTransferInFlight ||
+           m_localMutationInFlightCount > 0;
   }
   bool runtimeUnlockRequired() const { return m_runtimeUnlockRequired; }
   bool runtimeUnlocked() const { return !m_identityPassphrase.isEmpty(); }
@@ -5613,6 +5689,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("creating room..."));
+    beginLocalMutation();
     runChannelCreate(channelName, isPrivate, generation);
     return true;
   }
@@ -5934,6 +6011,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("sending message..."));
+    beginLocalMutation();
     runMessageSend(normalizedChannelId, QString(), trimmedText, generation);
     return true;
   }
@@ -5974,6 +6052,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("sending reply..."));
+    beginLocalMutation();
     runMessageSend(normalizedChannelId, normalizedReplyTo, trimmedText,
                    generation);
     return true;
@@ -6386,6 +6465,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("editing message..."));
+    beginLocalMutation();
     runMessageEdit(normalizedMessageId, trimmedText, generation);
     return true;
   }
@@ -6415,6 +6495,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("deleting message..."));
+    beginLocalMutation();
     runMessageDelete(normalizedMessageId, generation);
     return true;
   }
@@ -6454,6 +6535,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("adding reaction..."));
+    beginLocalMutation();
     runReactionAdd(normalizedMessageId, normalizedReaction, generation);
     return true;
   }
@@ -6493,6 +6575,7 @@ public:
 
     const auto generation = ++m_runtimeWriteGeneration;
     setSyncStatus(QStringLiteral("removing reaction..."));
+    beginLocalMutation();
     runReactionRemove(normalizedMessageId, normalizedReaction, generation);
     return true;
   }
@@ -7932,6 +8015,9 @@ signals:
   void workspaceSummariesChanged();
   void selectedWorkspaceChanged();
   void syncStatusChanged();
+  void peerUpdateStateChanged();
+  void hostedStoreRefreshPendingChanged();
+  void localWorkspaceMutationCommitted();
   void lastRecoveryImportedChannelCountChanged();
   void defaultPeerEndpointChanged();
   void backupPeerEndpointsChanged();
@@ -7999,6 +8085,258 @@ signals:
 private:
   static const char *nullableUtf8(const QByteArray &value) {
     return value.isEmpty() ? nullptr : value.constData();
+  }
+
+  QString runtimeEventStorePath() const {
+    return m_runtimeDir.trimmed().isEmpty()
+               ? QString()
+               : QDir(m_runtimeDir).filePath(QStringLiteral("events.db"));
+  }
+
+  QString runtimeStoreFingerprint() const {
+    const auto storePath = runtimeEventStorePath();
+    if (storePath.isEmpty()) {
+      return {};
+    }
+    QStringList parts;
+    const QStringList paths = {storePath, storePath + QStringLiteral("-wal"),
+                               storePath + QStringLiteral("-shm")};
+    for (const auto &path : paths) {
+      const QFileInfo info(path);
+      parts.append(QStringLiteral("%1:%2:%3:%4")
+                       .arg(info.fileName())
+                       .arg(info.exists() ? 1 : 0)
+                       .arg(info.exists() ? info.size() : 0)
+                       .arg(info.exists()
+                                ? info.lastModified().toMSecsSinceEpoch()
+                                : 0));
+    }
+    return parts.join(QLatin1Char('|'));
+  }
+
+  void refreshRuntimeStoreWatcherPaths() {
+    if (m_runtimeStoreWatcher == nullptr || m_runtimeDir.trimmed().isEmpty()) {
+      return;
+    }
+    const QFileInfo runtimeInfo(m_runtimeDir);
+    if (runtimeInfo.isDir() &&
+        !m_runtimeStoreWatcher->directories().contains(
+            runtimeInfo.absoluteFilePath())) {
+      m_runtimeStoreWatcher->addPath(runtimeInfo.absoluteFilePath());
+    }
+    const auto storePath = runtimeEventStorePath();
+    const QStringList storePaths = {
+        storePath, storePath + QStringLiteral("-wal"),
+        storePath + QStringLiteral("-shm")};
+    for (const auto &path : storePaths) {
+      const QFileInfo info(path);
+      if (info.isFile() &&
+          !m_runtimeStoreWatcher->files().contains(info.absoluteFilePath())) {
+        m_runtimeStoreWatcher->addPath(info.absoluteFilePath());
+      }
+    }
+  }
+
+  void setHostedStoreRefreshPending(bool pending) {
+    if (m_hostedStoreRefreshPending == pending) {
+      return;
+    }
+    m_hostedStoreRefreshPending = pending;
+    emit hostedStoreRefreshPendingChanged();
+  }
+
+  void startRuntimeStoreWatcher() {
+    if (m_runtimeStoreWatcher == nullptr || m_rawEventStoreMode) {
+      return;
+    }
+    if (!QDir(m_runtimeDir).exists() && !QDir().mkpath(m_runtimeDir)) {
+      return;
+    }
+    refreshRuntimeStoreWatcherPaths();
+    m_lastObservedRuntimeStoreFingerprint = runtimeStoreFingerprint();
+    m_lastRuntimeStoreSnapshotAckMs = QDateTime::currentMSecsSinceEpoch();
+  }
+
+  void stopRuntimeStoreWatcher() {
+    if (m_hostedStoreRefreshTimer != nullptr) {
+      m_hostedStoreRefreshTimer->stop();
+    }
+    // Keep watching the shared event store after hosting stops. Local writes
+    // still need to wake the outbound sync path immediately; only hosted
+    // snapshot reconciliation is disabled here.
+    m_hostedStoreRefreshOperationId = 0;
+    setHostedStoreRefreshPending(false);
+  }
+
+  void scheduleHostedStoreRefresh(int delayMs) {
+    if (m_hostedStoreRefreshTimer == nullptr || !peerHosting()) {
+      return;
+    }
+    m_hostedStoreRefreshTimer->start(std::max(1, delayMs));
+  }
+
+  void handleRuntimeStorePathChanged(bool directFileSignal) {
+    if (m_rawEventStoreMode) {
+      return;
+    }
+    refreshRuntimeStoreWatcherPaths();
+    const auto fingerprint = runtimeStoreFingerprint();
+    const auto nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (fingerprint == m_lastObservedRuntimeStoreFingerprint &&
+        (!directFileSignal ||
+         nowMs - m_lastRuntimeStoreSnapshotAckMs < 750)) {
+      return;
+    }
+    m_lastObservedRuntimeStoreFingerprint = fingerprint;
+    // A file notification does not identify the writer. In particular, a
+    // hosted peer write or a pull lands in this same SQLite store. Treating
+    // every notification as a local commit immediately echoes inbound writes
+    // back to the selected peer. Confirmed latency-sensitive local actions
+    // use noteLocalWorkspaceMutationCommitted(); the periodic inventory sync
+    // is the bounded relay and missed-notification fallback for every other
+    // write.
+    if (!m_runtimeSnapshotReconcileInFlight && !m_syncInFlight &&
+        nowMs - m_lastOpenMlsAccessReconcileAttemptFinishedAtMs >=
+            kOpenMlsAccessOwnWriteQuietPeriodMs) {
+      resetOpenMlsAccessReconcileBackoff();
+    }
+    if (!peerHosting()) {
+      return;
+    }
+    ++m_hostedStoreChangeSerial;
+    setHostedStoreRefreshPending(true);
+    scheduleHostedStoreRefresh(120);
+  }
+
+  void acknowledgeRuntimeStoreSnapshot() {
+    m_lastObservedRuntimeStoreFingerprint = runtimeStoreFingerprint();
+    m_lastRuntimeStoreSnapshotAckMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_hostedStoreRefreshOperationId == 0) {
+      setHostedStoreRefreshPending(false);
+    }
+  }
+
+  void tryHostedStoreRefresh() {
+    if (!peerHosting() || !hasRuntimeWorkspace()) {
+      setHostedStoreRefreshPending(false);
+      return;
+    }
+    refreshRuntimeStoreWatcherPaths();
+    if (!m_hostedStoreRefreshPending) {
+      return;
+    }
+    if (workspaceOperationInFlight() || m_peerHostingInFlight) {
+      scheduleHostedStoreRefresh(250);
+      return;
+    }
+    const auto changeSerial = m_hostedStoreChangeSerial;
+    if (!reconcileRuntimeSnapshotIfIdle()) {
+      scheduleHostedStoreRefresh(500);
+      return;
+    }
+    m_hostedStoreRefreshOperationId =
+        m_runtimeSnapshotReconcileOperationGeneration;
+    m_hostedStoreRefreshStartedSerial = changeSerial;
+  }
+
+  void finishHostedStoreRefreshAttempt(quint64 operationId, bool success) {
+    if (operationId == 0 || operationId != m_hostedStoreRefreshOperationId) {
+      return;
+    }
+    m_hostedStoreRefreshOperationId = 0;
+    if (success &&
+        m_hostedStoreRefreshStartedSerial == m_hostedStoreChangeSerial) {
+      acknowledgeRuntimeStoreSnapshot();
+      setHostedStoreRefreshPending(false);
+      return;
+    }
+    setHostedStoreRefreshPending(true);
+    scheduleHostedStoreRefresh(success ? 120 : 500);
+  }
+
+  void beginLocalMutation() {
+    const auto wasInFlight = workspaceOperationInFlight();
+    ++m_localMutationInFlightCount;
+    if (wasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+  }
+
+  void finishLocalMutation() {
+    if (m_localMutationInFlightCount <= 0) {
+      return;
+    }
+    const auto wasInFlight = workspaceOperationInFlight();
+    --m_localMutationInFlightCount;
+    if (wasInFlight != workspaceOperationInFlight()) {
+      emit workspaceOperationInFlightChanged();
+    }
+    if (m_localMutationInFlightCount == 0 && m_hostedStoreRefreshPending) {
+      scheduleHostedStoreRefresh(120);
+    }
+  }
+
+  void setPeerUpdateState(const QString &state, const QString &detail,
+                          bool finished) {
+    const auto normalizedState = state.trimmed().toLower();
+    const auto normalizedDetail = friendlyRuntimeStatusText(detail);
+    const auto nowMs = QDateTime::currentMSecsSinceEpoch();
+    const auto finishedAt = finished ? nowMs : m_peerUpdateFinishedAtMs;
+    const auto stateChanged = m_peerUpdateState != normalizedState ||
+                              m_peerUpdateDetail != normalizedDetail;
+    if (!stateChanged && !finished) {
+      return;
+    }
+    m_peerUpdateState = normalizedState;
+    m_peerUpdateDetail = normalizedDetail;
+    m_peerUpdateFinishedAtMs = finishedAt;
+    if (!stateChanged &&
+        nowMs - m_peerUpdateLastNotifiedFinishedAtMs <
+            kPeerUpdateFinishedNotifyIntervalMs) {
+      // Keep the timestamp semantically accurate without waking every QML
+      // binding on each no-op recovery sync. At least one freshness update is
+      // still published every 30 seconds while the state remains unchanged.
+      return;
+    }
+    if (finished) {
+      m_peerUpdateLastNotifiedFinishedAtMs = nowMs;
+    }
+    emit peerUpdateStateChanged();
+  }
+
+  void resetOpenMlsAccessReconcileBackoff() {
+    m_openMlsAccessReconcileFailureCount = 0;
+    m_openMlsAccessReconcileRetryNotBeforeMs = 0;
+  }
+
+  bool shouldAttemptOpenMlsAccessReconcile(const QString &workspaceId) {
+    if (m_openMlsAccessReconcileWorkspaceId != workspaceId) {
+      m_openMlsAccessReconcileWorkspaceId = workspaceId;
+      resetOpenMlsAccessReconcileBackoff();
+    }
+    return QDateTime::currentMSecsSinceEpoch() >=
+           m_openMlsAccessReconcileRetryNotBeforeMs;
+  }
+
+  qint64 recordOpenMlsAccessReconcileFailure() {
+    m_openMlsAccessReconcileFailureCount =
+        std::min(m_openMlsAccessReconcileFailureCount + 1, 16);
+    const auto exponent =
+        std::min(m_openMlsAccessReconcileFailureCount - 1, 4);
+    const auto retryDelayMs =
+        std::min(kOpenMlsAccessRetryInitialMs * (1LL << exponent),
+                 kOpenMlsAccessRetryMaximumMs);
+    m_openMlsAccessReconcileRetryNotBeforeMs =
+        QDateTime::currentMSecsSinceEpoch() + retryDelayMs;
+    return retryDelayMs;
+  }
+
+  void noteLocalWorkspaceMutationCommitted() {
+    setPeerUpdateState(
+        QStringLiteral("queued"),
+        QStringLiteral("Saved on this device; waiting to share with a teammate."),
+        false);
+    emit localWorkspaceMutationCommitted();
   }
 
   bool ensureNotificationTrayIcon() {
@@ -8234,6 +8572,10 @@ private:
           reinterpret_cast<RuntimeOpenMlsWorkspaceActionResultJsonFn>(
               m_library.resolve(
                   "chaft_runtime_update_workspace_openmls_groups_result_json"));
+      m_reconcileOpenMlsAccessJson =
+          reinterpret_cast<RuntimeReconcileOpenMlsAccessResultJsonFn>(
+              m_library.resolve(
+                  "chaft_runtime_reconcile_openmls_access_result_json"));
       m_applyOpenMlsWorkspaceGroupCommitsJson =
           reinterpret_cast<RuntimeOpenMlsWorkspaceValueResultJsonFn>(
               m_library.resolve(
@@ -10045,6 +10387,14 @@ private:
 
   void runDirectSync(RuntimeDirectSyncResultJsonFn syncFn,
                      const QString &peerEndpoint, DirectSyncMode mode) {
+    if (mode != DirectSyncMode::Backup) {
+      setPeerUpdateState(
+          QStringLiteral("updating"),
+          mode == DirectSyncMode::Publish
+              ? QStringLiteral("Sharing changes with a teammate...")
+              : QStringLiteral("Sharing changes and checking for updates..."),
+          false);
+    }
     const auto operationId = beginSyncOperation();
     const auto updatesRuntime =
         mode == DirectSyncMode::Pull || mode == DirectSyncMode::Sync;
@@ -10171,6 +10521,16 @@ private:
               guard->queueRuntimeSnapshotRefreshIfCurrent(updatesRuntime,
                                                           workspaceId);
               guard->setSyncStatus(error);
+              if (mode != DirectSyncMode::Backup) {
+                guard->setPeerUpdateState(
+                    QStringLiteral("failed"),
+                    error.trimmed().isEmpty()
+                        ? QStringLiteral(
+                              "Could not reach the teammate address. Changes "
+                              "remain saved on this device and will retry.")
+                        : error,
+                    true);
+              }
               return;
             }
 
@@ -10183,11 +10543,22 @@ private:
               } else if (snapshotValue.isEmpty()) {
                 guard->queueRuntimeSnapshotRefreshIfCurrent(true, workspaceId);
                 guard->setSyncStatus(snapshotError);
+                guard->setPeerUpdateState(
+                    QStringLiteral("up_to_date"),
+                    QStringLiteral(
+                        "Updates were exchanged. The conversation view will "
+                        "refresh again shortly."),
+                    true);
                 return;
               } else if (guard->m_workspaceId != workspaceId) {
                 guard->setSyncStatus(
                     QStringLiteral("sync finished after switching workspaces"));
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
+                guard->setPeerUpdateState(
+                    QStringLiteral("up_to_date"),
+                    QStringLiteral(
+                        "Updates were exchanged before the workspace changed."),
+                    true);
                 return;
               } else {
                 if (!guard->runtimeSnapshotMatchesCurrentView(snapshotValue)) {
@@ -10266,6 +10637,17 @@ private:
             if (updatesRuntime) {
               guard->queueAccessEnvelopePullFromPeer(peerEndpoint, workspaceId,
                                                      false, true, false);
+            }
+            if (mode == DirectSyncMode::Publish) {
+              guard->setPeerUpdateState(
+                  QStringLiteral("shared"),
+                  QStringLiteral("Changes were shared with the teammate address."),
+                  true);
+            } else if (mode == DirectSyncMode::Pull ||
+                       mode == DirectSyncMode::Sync) {
+              guard->setPeerUpdateState(
+                  QStringLiteral("up_to_date"),
+                  QStringLiteral("Up to date with the teammate address."), true);
             }
           },
           Qt::QueuedConnection);
@@ -11253,10 +11635,14 @@ private:
     const auto snapshotFn = m_runtimeSnapshotJson;
     const auto snapshotLatestFn = m_runtimeSnapshotLatestJson;
     const auto channelSnapshotLatestFn = m_runtimeChannelSnapshotLatestJson;
+    const auto reconcileAccessFn = m_reconcileOpenMlsAccessJson;
     const auto freeString = m_freeString;
     const auto runtimeDir = m_runtimeDir;
     const auto identityFile = m_identityFile;
     const auto workspaceId = m_workspaceId;
+    const auto attemptAccessReconcile =
+        reconcileAccessFn != nullptr &&
+        shouldAttemptOpenMlsAccessReconcile(workspaceId);
     const auto timelineChannelId =
         m_workspaceSnapshot.value(QStringLiteral("timelineChannelId"))
             .toString()
@@ -11264,13 +11650,29 @@ private:
     const auto timelineLimit = configuredTimelineLimit();
     auto *thread = QThread::create(
         [guard, snapshotFn, snapshotLatestFn, channelSnapshotLatestFn,
-         freeString, runtimeDir, identityFile, workspaceId, timelineChannelId,
-         timelineLimit, runtimeWriteGeneration, workspaceSnapshotRevision,
-         operationId]() {
+         reconcileAccessFn, freeString, runtimeDir, identityFile, workspaceId,
+         timelineChannelId, timelineLimit, runtimeWriteGeneration,
+         workspaceSnapshotRevision, operationId, attemptAccessReconcile]() {
           const auto runtimeDirBytes = runtimeDir.toUtf8();
           const auto identityFileBytes = identityFile.toUtf8();
           const auto workspaceIdBytes = workspaceId.toUtf8();
           const auto timelineChannelIdBytes = timelineChannelId.toUtf8();
+          QString reconcileAccessError;
+          if (attemptAccessReconcile) {
+            const auto reconcileJson = takeFfiString(
+                reconcileAccessFn(
+                    runtimeDirBytes.constData(),
+                    identityFileBytes.isEmpty()
+                        ? nullptr
+                        : identityFileBytes.constData(),
+                    workspaceIdBytes.constData()),
+                freeString, &reconcileAccessError);
+            if (reconcileAccessError.isEmpty()) {
+              QString resultError;
+              resultValueFromJson(reconcileJson, &resultError);
+              reconcileAccessError = resultError;
+            }
+          }
           QString error;
           const auto value = latestRuntimeSnapshotValuePreservingTimeline(
               snapshotFn, snapshotLatestFn, channelSnapshotLatestFn, freeString,
@@ -11282,30 +11684,64 @@ private:
           }
           QMetaObject::invokeMethod(
               guard.data(),
-              [guard, value, workspaceId, runtimeWriteGeneration,
-               workspaceSnapshotRevision, operationId]() {
+              [guard, value, error, reconcileAccessError, workspaceId,
+               runtimeWriteGeneration, workspaceSnapshotRevision,
+               operationId, attemptAccessReconcile]() {
                 if (guard.isNull()) {
                   return;
                 }
-                [[maybe_unused]] const auto operationCompletion = qScopeGuard(
-                    [guard, operationId]() {
-                      if (!guard.isNull()) {
-                        guard->finishRuntimeSnapshotReconcile(operationId);
-                      }
-                    });
-                if (operationId !=
-                        guard->m_runtimeSnapshotReconcileOperationGeneration ||
-                    guard->m_workspaceId != workspaceId ||
-                    guard->m_runtimeWriteGeneration != runtimeWriteGeneration ||
-                    guard->m_workspaceSnapshotRevision !=
-                        workspaceSnapshotRevision ||
-                    value.isEmpty()) {
-                  return;
+                const auto current =
+                    operationId ==
+                        guard->m_runtimeSnapshotReconcileOperationGeneration &&
+                    guard->m_workspaceId == workspaceId &&
+                    guard->m_runtimeWriteGeneration == runtimeWriteGeneration &&
+                    guard->m_workspaceSnapshotRevision ==
+                        workspaceSnapshotRevision;
+                const auto snapshotAccepted = current && !value.isEmpty();
+                const auto accessRecovered =
+                    current && attemptAccessReconcile &&
+                    reconcileAccessError.isEmpty() &&
+                    guard->m_openMlsAccessReconcileFailureCount > 0;
+                qint64 accessRetryDelayMs = 0;
+                if (current && attemptAccessReconcile) {
+                  guard->m_lastOpenMlsAccessReconcileAttemptFinishedAtMs =
+                      QDateTime::currentMSecsSinceEpoch();
+                  if (reconcileAccessError.isEmpty()) {
+                    guard->resetOpenMlsAccessReconcileBackoff();
+                  } else {
+                    accessRetryDelayMs =
+                        guard->recordOpenMlsAccessReconcileFailure();
+                  }
                 }
-
-                if (!guard->runtimeSnapshotMatchesCurrentView(value)) {
+                if (snapshotAccepted &&
+                    !guard->runtimeSnapshotMatchesCurrentView(value)) {
                   guard->applyRuntimeSnapshot(value, false);
                 }
+                if (snapshotAccepted && !reconcileAccessError.isEmpty()) {
+                  qWarning("Chaft private-room access maintenance failed: %s",
+                           qPrintable(reconcileAccessError));
+                  guard->setSyncStatus(QStringLiteral(
+                      "Messages are up to date, but private-room access is "
+                      "still catching up. Chaft will retry in about %1 "
+                      "seconds.")
+                                           .arg(std::max<qint64>(
+                                               1, accessRetryDelayMs / 1000)));
+                } else if (snapshotAccepted && accessRecovered) {
+                  guard->setSyncStatus(QStringLiteral(
+                      "Messages and private-room access are up to date."));
+                } else if (current && !snapshotAccepted &&
+                    operationId == guard->m_hostedStoreRefreshOperationId) {
+                  const auto detail = friendlyRuntimeStatusText(error);
+                  guard->setSyncStatus(
+                      detail.isEmpty()
+                          ? QStringLiteral(
+                                "New updates arrived, but the conversation "
+                                "could not refresh yet. Retrying.")
+                          : detail);
+                }
+                guard->finishRuntimeSnapshotReconcile(operationId);
+                guard->finishHostedStoreRefreshAttempt(operationId,
+                                                       snapshotAccepted);
               },
               Qt::QueuedConnection);
         });
@@ -11704,6 +12140,8 @@ private:
       return;
     }
 
+    stopRuntimeStoreWatcher();
+
     expireHostedPeerEndpointBlocking();
 
     if (m_stopDirectPeerJson == nullptr || m_freeString == nullptr) {
@@ -11838,6 +12276,7 @@ private:
             guard->m_hostedPeerEndpointId = QStringLiteral("hosted-direct");
             guard->m_hostedPeerTransport = QStringLiteral("direct-tcp");
             emit guard->hostedPeerChanged();
+            guard->startRuntimeStoreWatcher();
             guard->setSyncStatus(
                 QStringLiteral("sharing address %1").arg(endpoint));
             guard->publishHostedPeerEndpoint(
@@ -11948,6 +12387,7 @@ private:
             guard->m_hostedPeerEndpointId = QStringLiteral("hosted-iroh");
             guard->m_hostedPeerTransport = QStringLiteral("iroh");
             emit guard->hostedPeerChanged();
+            guard->startRuntimeStoreWatcher();
             guard->setSyncStatus(
                 QStringLiteral("sharing address %1").arg(endpoint));
             guard->publishHostedPeerEndpoint(
@@ -11992,6 +12432,7 @@ private:
             }
 
             if (guard->m_hostedPeerId == peerId) {
+              guard->stopRuntimeStoreWatcher();
               guard->expireHostedPeerEndpoint(endpointId, endpoint, transport);
               guard->m_hostedPeerId.clear();
               guard->m_hostedPeerEndpoint.clear();
@@ -13256,6 +13697,10 @@ private:
       const auto json = takeFfiString(raw, freeString, &error);
       const auto value =
           error.isEmpty() ? resultValueFromJson(json, &error) : QJsonObject();
+      const auto provisioningState =
+          value.value(QStringLiteral("provisioningState")).toString().trimmed();
+      const auto provisioningError =
+          value.value(QStringLiteral("provisioningError")).toString().trimmed();
       QJsonObject snapshotValue;
       QString snapshotError;
       if (!value.isEmpty()) {
@@ -13270,9 +13715,18 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, snapshotValue, error, snapshotError, workspaceId,
-           generation]() {
+           provisioningState, provisioningError, isPrivate, generation]() {
             if (guard.isNull()) {
               return;
+            }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard]() {
+                  if (!guard.isNull()) {
+                    guard->finishLocalMutation();
+                  }
+                });
+            if (!value.isEmpty()) {
+              guard->noteLocalWorkspaceMutationCommitted();
             }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
@@ -13298,7 +13752,26 @@ private:
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
             guard->setLastCreatedChannelId(
                 value.value(QStringLiteral("channelId")).toString());
-            guard->setSyncStatus(QStringLiteral("room created"));
+            if (!isPrivate || provisioningState.isEmpty() ||
+                provisioningState == QStringLiteral("ready") ||
+                provisioningState == QStringLiteral("mls_welcome_published")) {
+              guard->setSyncStatus(isPrivate
+                                       ? QStringLiteral("private room ready")
+                                       : QStringLiteral("room created"));
+            } else if (provisioningState == QStringLiteral("failed")) {
+              if (!provisioningError.isEmpty()) {
+                qWarning("Chaft private-room provisioning failed: %s",
+                         qPrintable(provisioningError));
+              }
+              guard->setSyncStatus(QStringLiteral(
+                  "Private room created, but secure message access could not "
+                  "be prepared. Keep Chaft open, check for updates, and try "
+                  "again."));
+            } else {
+              guard->setSyncStatus(QStringLiteral(
+                  "Private room created; waiting for its message key. Keep "
+                  "Chaft open while access finishes."));
+            }
           },
           Qt::QueuedConnection);
     });
@@ -13499,6 +13972,14 @@ private:
                                         : QJsonObject();
           const auto channelId =
               createdValue.value(QStringLiteral("channelId")).toString();
+          const auto provisioningState =
+              createdValue.value(QStringLiteral("provisioningState"))
+                  .toString()
+                  .trimmed();
+          const auto provisioningError =
+              createdValue.value(QStringLiteral("provisioningError"))
+                  .toString()
+                  .trimmed();
           QJsonObject snapshotValue;
           QString snapshotError;
           if (error.isEmpty()) {
@@ -13514,7 +13995,8 @@ private:
           QMetaObject::invokeMethod(
               guard.data(),
               [guard, error, snapshotValue, snapshotError, workspaceId,
-               channelId, generation, operationId]() {
+               channelId, provisioningState, provisioningError, generation,
+               operationId]() {
                 if (guard.isNull()) {
                   return;
                 }
@@ -13524,6 +14006,9 @@ private:
                         guard->finishSyncOperation(operationId);
                       }
                     });
+                if (error.isEmpty() && !channelId.isEmpty()) {
+                  guard->noteLocalWorkspaceMutationCommitted();
+                }
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(
                       error.isEmpty(), workspaceId);
@@ -13547,7 +14032,29 @@ private:
                 guard->applyRuntimeSnapshot(snapshotValue, false);
                 guard->m_lastAppliedRuntimeWriteGeneration = generation;
                 guard->setLastCreatedChannelId(channelId);
-                guard->setSyncStatus(QStringLiteral("direct message ready"));
+                if (provisioningState.isEmpty() ||
+                    provisioningState == QStringLiteral("ready")) {
+                  guard->setSyncStatus(
+                      QStringLiteral("direct message ready"));
+                } else if (provisioningState ==
+                           QStringLiteral("mls_welcome_published")) {
+                  guard->setSyncStatus(QStringLiteral(
+                      "Direct message created; secure access is prepared for "
+                      "your teammate."));
+                } else if (provisioningState == QStringLiteral("failed")) {
+                  if (!provisioningError.isEmpty()) {
+                    qWarning("Chaft direct-message provisioning failed: %s",
+                             qPrintable(provisioningError));
+                  }
+                  guard->setSyncStatus(QStringLiteral(
+                      "Direct message created, but secure message access "
+                      "could not be prepared. Keep Chaft open, check for "
+                      "updates, and try again."));
+                } else {
+                  guard->setSyncStatus(QStringLiteral(
+                      "Direct message created; secure access is still "
+                      "preparing. Keep Chaft open while it finishes."));
+                }
               },
               Qt::QueuedConnection);
         });
@@ -15995,6 +16502,10 @@ private:
       const auto json = takeFfiString(raw, freeString, &error);
       const auto value =
           error.isEmpty() ? resultValueFromJson(json, &error) : QJsonObject();
+      const auto provisioningState =
+          value.value(QStringLiteral("provisioningState")).toString().trimmed();
+      const auto provisioningError =
+          value.value(QStringLiteral("provisioningError")).toString().trimmed();
       QJsonObject snapshotValue;
       QString snapshotError;
       if (!value.isEmpty()) {
@@ -16009,7 +16520,7 @@ private:
       QMetaObject::invokeMethod(
           guard.data(),
           [guard, value, snapshotValue, error, snapshotError, workspaceId,
-           generation]() {
+           provisioningState, provisioningError, generation]() {
             if (guard.isNull()) {
               return;
             }
@@ -16035,7 +16546,26 @@ private:
 
             guard->applyRuntimeSnapshot(snapshotValue, false);
             guard->m_lastAppliedRuntimeWriteGeneration = generation;
-            guard->setSyncStatus(QStringLiteral("room access granted"));
+            guard->noteLocalWorkspaceMutationCommitted();
+            if (provisioningState.isEmpty() ||
+                provisioningState == QStringLiteral("ready") ||
+                provisioningState == QStringLiteral("mls_welcome_published")) {
+              guard->setSyncStatus(
+                  QStringLiteral("room access prepared for this teammate"));
+            } else if (provisioningState == QStringLiteral("failed")) {
+              if (!provisioningError.isEmpty()) {
+                qWarning("Chaft room-membership provisioning failed: %s",
+                         qPrintable(provisioningError));
+              }
+              guard->setSyncStatus(QStringLiteral(
+                  "Room membership was saved, but secure access could not be "
+                  "prepared. Ask the teammate to keep Chaft open, then check "
+                  "for updates."));
+            } else {
+              guard->setSyncStatus(QStringLiteral(
+                  "Room membership saved; secure access is still preparing. "
+                  "Keep Chaft open while it finishes."));
+            }
           },
           Qt::QueuedConnection);
     });
@@ -16224,6 +16754,15 @@ private:
                 if (guard.isNull()) {
                   return;
                 }
+                [[maybe_unused]] const auto operationCompletion =
+                    qScopeGuard([guard]() {
+                      if (!guard.isNull()) {
+                        guard->finishLocalMutation();
+                      }
+                    });
+                if (error.isEmpty() && !channelId.isEmpty()) {
+                  guard->noteLocalWorkspaceMutationCommitted();
+                }
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                               workspaceId);
@@ -16231,7 +16770,7 @@ private:
                       value.isEmpty()
                           ? (error.trimmed().isEmpty()
                                  ? QStringLiteral("message was not sent")
-                                 : error)
+                                 : friendlyRuntimeStatusText(error))
                           : QStringLiteral(
                                 "message saved; refreshing the conversation");
                   emit guard->messageSendFinished(
@@ -16243,7 +16782,7 @@ private:
                   const auto message =
                       error.trimmed().isEmpty()
                           ? QStringLiteral("message was not sent")
-                          : error;
+                          : friendlyRuntimeStatusText(error);
                   guard->setSyncStatus(message);
                   emit guard->messageSendFinished(
                       workspaceId, channelId, replyToMessageId, false, message);
@@ -16255,7 +16794,7 @@ private:
                           ? QStringLiteral(
                                 "message saved, but the conversation could not "
                                 "refresh yet")
-                          : snapshotError;
+                          : friendlyRuntimeStatusText(snapshotError);
                   guard->setSyncStatus(message);
                   emit guard->messageSendFinished(
                       workspaceId, channelId, replyToMessageId, true, message);
@@ -16331,6 +16870,15 @@ private:
             if (guard.isNull()) {
               return;
             }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard]() {
+                  if (!guard.isNull()) {
+                    guard->finishLocalMutation();
+                  }
+                });
+            if (!value.isEmpty()) {
+              guard->noteLocalWorkspaceMutationCommitted();
+            }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                           workspaceId);
@@ -16338,7 +16886,7 @@ private:
                   value.isEmpty()
                       ? (error.trimmed().isEmpty()
                              ? QStringLiteral("message was not updated")
-                             : error)
+                             : friendlyRuntimeStatusText(error))
                       : QStringLiteral(
                             "message updated; refreshing the conversation");
               emit guard->messageEditFinished(workspaceId, messageId,
@@ -16349,7 +16897,7 @@ private:
               const auto message =
                   error.trimmed().isEmpty()
                       ? QStringLiteral("message was not updated")
-                      : error;
+                      : friendlyRuntimeStatusText(error);
               guard->setSyncStatus(message);
               emit guard->messageEditFinished(workspaceId, messageId, false,
                                               message);
@@ -16361,7 +16909,7 @@ private:
                       ? QStringLiteral(
                             "message updated, but the conversation could not "
                             "refresh yet")
-                      : snapshotError;
+                      : friendlyRuntimeStatusText(snapshotError);
               guard->setSyncStatus(message);
               emit guard->messageEditFinished(workspaceId, messageId, true,
                                               message);
@@ -16433,6 +16981,15 @@ private:
            generation]() {
             if (guard.isNull()) {
               return;
+            }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard]() {
+                  if (!guard.isNull()) {
+                    guard->finishLocalMutation();
+                  }
+                });
+            if (!value.isEmpty()) {
+              guard->noteLocalWorkspaceMutationCommitted();
             }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
@@ -16512,6 +17069,15 @@ private:
             if (guard.isNull()) {
               return;
             }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard]() {
+                  if (!guard.isNull()) {
+                    guard->finishLocalMutation();
+                  }
+                });
+            if (!value.isEmpty()) {
+              guard->noteLocalWorkspaceMutationCommitted();
+            }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                           workspaceId);
@@ -16589,6 +17155,15 @@ private:
            generation]() {
             if (guard.isNull()) {
               return;
+            }
+            [[maybe_unused]] const auto operationCompletion =
+                qScopeGuard([guard]() {
+                  if (!guard.isNull()) {
+                    guard->finishLocalMutation();
+                  }
+                });
+            if (!value.isEmpty()) {
+              guard->noteLocalWorkspaceMutationCommitted();
             }
             if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
               guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
@@ -16695,6 +17270,9 @@ private:
                         guard->finishSyncOperation(operationId);
                       }
                     });
+                if (!value.isEmpty()) {
+                  guard->noteLocalWorkspaceMutationCommitted();
+                }
                 if (generation < guard->m_lastAppliedRuntimeWriteGeneration) {
                   guard->queueRuntimeSnapshotRefreshIfCurrent(!value.isEmpty(),
                                                               workspaceId);
@@ -16702,7 +17280,7 @@ private:
                       value.isEmpty()
                           ? (error.trimmed().isEmpty()
                                  ? QStringLiteral("file was not sent")
-                                 : error)
+                                 : friendlyRuntimeStatusText(error))
                           : QStringLiteral(
                                 "file sent; refreshing the conversation");
                   emit guard->attachmentSendFinished(
@@ -16714,7 +17292,7 @@ private:
                   const auto message =
                       error.trimmed().isEmpty()
                           ? QStringLiteral("file was not sent")
-                          : error;
+                          : friendlyRuntimeStatusText(error);
                   guard->setSyncStatus(message);
                   emit guard->attachmentSendFinished(
                       workspaceId, channelId, replyToMessageId, filePath, false,
@@ -16727,7 +17305,7 @@ private:
                           ? QStringLiteral(
                                 "file sent, but the conversation could not "
                                 "refresh yet")
-                          : snapshotError;
+                          : friendlyRuntimeStatusText(snapshotError);
                   guard->setSyncStatus(message);
                   emit guard->attachmentSendFinished(
                       workspaceId, channelId, replyToMessageId, filePath, true,
@@ -17409,11 +17987,12 @@ private:
   }
 
   void setSyncStatus(const QString &syncStatus) {
-    handleRuntimeUnlockFailure(syncStatus);
-    if (m_syncStatus == syncStatus) {
+    const auto userFacingStatus = friendlyRuntimeStatusText(syncStatus);
+    handleRuntimeUnlockFailure(userFacingStatus);
+    if (m_syncStatus == userFacingStatus) {
       return;
     }
-    m_syncStatus = syncStatus;
+    m_syncStatus = userFacingStatus;
     emit syncStatusChanged();
   }
 
@@ -17511,6 +18090,8 @@ private:
   RuntimeOpenMlsWorkspaceActionResultJsonFn m_updateOpenMlsWorkspaceGroupJson =
       nullptr;
   RuntimeOpenMlsWorkspaceActionResultJsonFn m_updateWorkspaceOpenMlsGroupsJson =
+      nullptr;
+  RuntimeReconcileOpenMlsAccessResultJsonFn m_reconcileOpenMlsAccessJson =
       nullptr;
   RuntimeOpenMlsWorkspaceValueResultJsonFn
       m_applyOpenMlsWorkspaceGroupCommitsJson = nullptr;
@@ -17645,6 +18226,8 @@ private:
   RuntimeClearIdentityPassphraseFn m_clearIdentityPassphrase = nullptr;
   FreeStringFn m_freeString = nullptr;
   std::unique_ptr<QSystemTrayIcon> m_notificationTrayIcon;
+  QFileSystemWatcher *m_runtimeStoreWatcher = nullptr;
+  QTimer *m_hostedStoreRefreshTimer = nullptr;
   bool m_ffiReady = false;
   bool m_syncInFlight = false;
   bool m_timelineLoadInFlight = false;
@@ -17728,9 +18311,24 @@ private:
   quint64 m_runtimeSnapshotReconcileOperationGeneration = 0;
   quint64 m_workspaceSnapshotRevision = 0;
   bool m_runtimeSnapshotReconcileInFlight = false;
+  bool m_hostedStoreRefreshPending = false;
+  int m_localMutationInFlightCount = 0;
+  quint64 m_hostedStoreChangeSerial = 0;
+  quint64 m_hostedStoreRefreshStartedSerial = 0;
+  quint64 m_hostedStoreRefreshOperationId = 0;
+  QString m_lastObservedRuntimeStoreFingerprint;
+  qint64 m_lastRuntimeStoreSnapshotAckMs = 0;
+  QString m_openMlsAccessReconcileWorkspaceId;
+  int m_openMlsAccessReconcileFailureCount = 0;
+  qint64 m_openMlsAccessReconcileRetryNotBeforeMs = 0;
+  qint64 m_lastOpenMlsAccessReconcileAttemptFinishedAtMs = 0;
   quint64 m_readMarkerGeneration = 0;
   quint64 m_joinRequestInboxGeneration = 0;
   QString m_syncStatus;
+  QString m_peerUpdateState = QStringLiteral("idle");
+  QString m_peerUpdateDetail;
+  qint64 m_peerUpdateFinishedAtMs = 0;
+  qint64 m_peerUpdateLastNotifiedFinishedAtMs = 0;
   QString m_keyTransferJson;
   QString m_keyTransferJoinResponseInboxEntryId;
   qsizetype m_nextBackupPeerIndex = 0;

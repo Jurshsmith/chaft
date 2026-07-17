@@ -154,6 +154,15 @@ endif()
 target_link_libraries(ChaftDesktop PRIVATE Qt6::Network Qt6::Qml Qt6::Quick Qt6::Widgets)
 
 if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME ChaftDesktopReactivityContract
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_reactivity_contract.py"
+        )
+    endif()
+
     find_program(QMLTESTRUNNER_EXECUTABLE
         NAMES qmltestrunner
     )

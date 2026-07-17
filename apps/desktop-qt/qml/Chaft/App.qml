@@ -76,6 +76,27 @@ ApplicationWindow {
     readonly property var selectedChannel: root.channelById(root.selectedChannelId)
     readonly property string selectedChannelKey: String(selectedChannel.channelId || "")
     readonly property bool selectedChannelPrivate: Boolean(selectedChannel.isPrivate)
+    readonly property string selectedChannelAccessState:
+        String(selectedChannel.accessState || "").trim().toLowerCase()
+    readonly property bool selectedChannelContentReadyExplicit:
+        selectedChannel.localContentReady !== undefined
+    readonly property bool selectedChannelKeyPending: {
+        if (!root.selectedChannelPrivate) {
+            return false
+        }
+        if (root.selectedChannelAccessState === "key_pending"
+                || (root.selectedChannelContentReadyExplicit
+                    && !Boolean(root.selectedChannel.localContentReady))) {
+            return true
+        }
+        if (root.selectedChannelAccessState === "ready"
+                || (root.selectedChannelContentReadyExplicit
+                    && Boolean(root.selectedChannel.localContentReady))) {
+            return false
+        }
+        return root.lastKeyPendingWorkspaceId === root.currentWorkspaceId()
+            && root.lastKeyPendingChannelId === root.selectedChannelKey
+    }
     readonly property bool selectedChannelTimelineReady: timelineChannelId.length > 0
         && timelineChannelId === selectedChannelKey
     readonly property bool channelSearchReady: root.runtimeWorkReady
@@ -109,6 +130,7 @@ ApplicationWindow {
     })
     readonly property var decoratedLocalSearchTimeline: root.timelineWithUnreadDivider(localSearchTimeline)
     readonly property var selectedTimeline: runtimeSearchReady ? runtimeSearchTimeline : decoratedLocalSearchTimeline
+    readonly property var visibleSelectedTimeline: root.timelineWithPendingComposerFeedback()
     property string inspectorItemKey: ""
     property var inspectorSelectedItemSnapshot: ({})
     readonly property var inspectorItem: root.currentInspectorItem()
@@ -167,6 +189,9 @@ ApplicationWindow {
     property string pendingComposerOperationMessageId: ""
     property string pendingComposerOperationText: ""
     property string pendingComposerOperationFilePath: ""
+    property int pendingComposerSequence: 0
+    property string lastKeyPendingWorkspaceId: ""
+    property string lastKeyPendingChannelId: ""
     property bool suppressComposerDraftSave: false
     readonly property bool composerOperationPending:
         pendingComposerOperationKind.length > 0
@@ -186,6 +211,7 @@ ApplicationWindow {
     readonly property bool settingsDestination: mainDestination === "settings"
     readonly property bool peopleAccessDestination: mainDestination === "peopleAccess"
     property bool autoSyncEnabled: true
+    property bool immediateSyncPending: false
     property bool autoBackupEnabled: chaftController.autoBackupEnabled
     property bool runtimeUnlockDismissed: false
     property string workspaceEntryMode: "join"
@@ -327,16 +353,33 @@ ApplicationWindow {
         if (chaftController.timelineLoadInFlight) {
             return "Loading messages"
         }
-        if (chaftController.peerHosting) {
-            return "Listening"
+        if (chaftController.hostedStoreRefreshPending) {
+            return "Receiving updates"
         }
-        if (root.preferredSyncPeerEndpoint().length === 0) {
-            return "Local only"
+        var endpoint = root.preferredSyncPeerEndpoint()
+        var state = String(chaftController.peerUpdateState || "idle")
+        if (endpoint.length === 0) {
+            if (state === "queued") {
+                return "Saved locally"
+            }
+            return chaftController.peerHosting ? "Address shared" : "Local only"
         }
-        if (root.autoSyncEnabled) {
-            return "Updates on"
+        if (!root.autoSyncEnabled) {
+            return "Updates paused"
         }
-        return "Updates paused"
+        if (root.immediateSyncPending || state === "queued") {
+            return "Changes queued"
+        }
+        if (state === "failed") {
+            return "Update failed"
+        }
+        if (state === "up_to_date") {
+            return "Up to date"
+        }
+        if (state === "shared") {
+            return "Changes shared"
+        }
+        return "Ready to update"
     }
 
     readonly property color syncPillTone: {
@@ -346,10 +389,35 @@ ApplicationWindow {
         if (root.workspaceOperationInFlight) {
             return Tokens.textMuted
         }
-        if (chaftController.peerHosting) {
-            return Tokens.textMuted
+        if (root.selectedChannelKeyPending
+                || String(chaftController.peerUpdateState || "") === "failed") {
+            return Tokens.warning
+        }
+        if (root.immediateSyncPending
+                || String(chaftController.peerUpdateState || "") === "queued") {
+            return Tokens.accent
+        }
+        if (String(chaftController.peerUpdateState || "") === "up_to_date"
+                || String(chaftController.peerUpdateState || "") === "shared") {
+            return Tokens.success
         }
         return Tokens.textMuted
+    }
+
+    readonly property string syncPillDetail: {
+        if (root.selectedChannelKeyPending) {
+            return "This private room is waiting for its message key. Check for updates from a teammate."
+        }
+        var detail = String(chaftController.peerUpdateDetail || "").trim()
+        if (detail.length > 0) {
+            return detail
+        }
+        if (chaftController.peerHosting
+                && root.preferredSyncPeerEndpoint().length === 0) {
+            return "Your address is available for incoming peer updates. No outbound teammate address is selected."
+        }
+        return String(chaftController.syncStatus
+                      || root.workspaceSnapshot.syncStatus || "")
     }
 
     function syncDrawerSummaryText() {
@@ -583,6 +651,8 @@ ApplicationWindow {
                 root.openAccessRequestsPanel()
             } else if (id === "invite-after-create") {
                 root.openPeopleAccess(true)
+            } else if (id === "check-private-room-key") {
+                root.checkSelectedPrivateRoomKey()
             }
         }
     }
@@ -3677,6 +3747,78 @@ ApplicationWindow {
         root.saveDraftForKey(root.composerDraftKey(workspaceId, channelId), "")
     }
 
+    function pendingAttachmentName(filePath) {
+        var normalized = String(filePath || "").replace(/\\/g, "/")
+        var parts = normalized.split("/")
+        return parts.length > 0 && parts[parts.length - 1].length > 0
+            ? parts[parts.length - 1]
+            : "attachment"
+    }
+
+    function timelineWithPendingComposerFeedback() {
+        var rows = (root.selectedTimeline || []).slice()
+        if (!root.composerOperationPending || root.searchHasTerms
+                || root.pendingComposerOperationWorkspaceId
+                    !== root.currentWorkspaceId()) {
+            return rows
+        }
+        if (root.pendingComposerOperationKind === "edit") {
+            for (var i = 0; i < rows.length; i += 1) {
+                if (String((rows[i] || {}).messageId || "")
+                        === root.pendingComposerOperationMessageId) {
+                    var edited = root.copyTimelineItem(rows[i])
+                    edited.body = root.pendingComposerOperationText
+                    edited.pendingLocal = true
+                    edited.deliveryState = "Saving changes on this device..."
+                    rows[i] = edited
+                    break
+                }
+            }
+            return rows
+        }
+        if ((root.pendingComposerOperationKind !== "message"
+                && root.pendingComposerOperationKind !== "attachment")
+                || root.pendingComposerOperationChannelId
+                    !== root.selectedChannelKey) {
+            return rows
+        }
+        var pendingBody = root.pendingComposerOperationText
+        if (pendingBody.trim().length === 0
+                && root.pendingComposerOperationKind === "attachment") {
+            pendingBody = "Attachment: " + root.pendingAttachmentName(
+                root.pendingComposerOperationFilePath)
+        }
+        rows.push({
+            kind: "message",
+            eventId: "pending-local-" + String(root.pendingComposerSequence),
+            messageId: "",
+            channelId: root.pendingComposerOperationChannelId,
+            channelName: root.selectedChannelDisplayName,
+            authorDeviceId: String(chaftController.deviceId || ""),
+            authorDisplayName: root.localDeviceDisplayName(),
+            authorAvatarId: root.localDeviceAvatarId(),
+            physicalMs: Date.now(),
+            body: pendingBody,
+            encrypted: root.selectedChannelPrivate,
+            bodyDecrypted: true,
+            deleted: false,
+            attachments: [],
+            reactions: ({}),
+            myReactions: [],
+            threadReplyCount: 0,
+            replyPreview: root.pendingComposerOperationReplyToMessageId.length > 0
+                ? root.replyTarget
+                : null,
+            pendingLocal: true,
+            deliveryState: root.pendingComposerOperationKind === "attachment"
+                ? "Saving attachment on this device..."
+                : "Saving on this device...",
+            canEdit: false,
+            canDelete: false
+        })
+        return rows
+    }
+
     function beginComposerOperation(kind, workspaceId, channelId,
                                     replyToMessageId, messageId, text,
                                     filePath) {
@@ -3691,6 +3833,7 @@ ApplicationWindow {
         root.pendingComposerOperationMessageId = String(messageId || "")
         root.pendingComposerOperationText = String(text || "")
         root.pendingComposerOperationFilePath = String(filePath || "")
+        root.pendingComposerSequence += 1
         return root.composerOperationPending
     }
 
@@ -3731,6 +3874,31 @@ ApplicationWindow {
             || root.pendingComposerOperationFilePath === String(filePath || "")
     }
 
+    function isPrivateRoomKeyPendingError(message) {
+        var normalized = String(message || "").trim().toLowerCase()
+        return normalized.indexOf("channel content key is missing") !== -1
+            || normalized.indexOf("missing channel content key") !== -1
+            || normalized.indexOf("private room is still waiting for its message key") !== -1
+    }
+
+    function friendlyComposerFailure(message, fallback) {
+        if (root.isPrivateRoomKeyPendingError(message)) {
+            return "This private room is still waiting for its message key. "
+                + "Check for updates from a teammate, then try again."
+        }
+        var normalized = String(message || "").trim()
+        return normalized.length > 0 ? normalized : String(fallback || "Try again.")
+    }
+
+    function rememberPrivateRoomKeyPending(workspaceId, channelId, message) {
+        if (!root.isPrivateRoomKeyPendingError(message)) {
+            return false
+        }
+        root.lastKeyPendingWorkspaceId = String(workspaceId || "")
+        root.lastKeyPendingChannelId = String(channelId || "")
+        return true
+    }
+
     function completePendingMessageSend(workspaceId, channelId,
                                         replyToMessageId, success, message) {
         if (!root.pendingComposerContextMatches(
@@ -3758,12 +3926,14 @@ ApplicationWindow {
                 }
             }
         } else {
+            var keyPending = root.rememberPrivateRoomKeyPending(
+                workspaceId, channelId, message)
             toastHost.show(
                 "error",
-                String(message || "Message was not sent.")
+                root.friendlyComposerFailure(message, "Message was not sent.")
                     + " Your draft is still here.",
-                "",
-                "",
+                keyPending ? "Check for key" : "",
+                keyPending ? "check-private-room-key" : "",
                 8000)
         }
         root.clearPendingComposerOperation()
@@ -3777,6 +3947,7 @@ ApplicationWindow {
             return
         }
         var editedText = root.pendingComposerOperationText
+        var channelId = root.pendingComposerOperationChannelId
         var visibleEditUnchanged =
             root.currentWorkspaceId() === String(workspaceId || "")
             && root.editingMessageId === String(messageId || "")
@@ -3787,12 +3958,14 @@ ApplicationWindow {
                 root.cancelEditMessage()
             }
         } else {
+            var keyPending = root.rememberPrivateRoomKeyPending(
+                workspaceId, channelId, message)
             toastHost.show(
                 "error",
-                String(message || "Message was not updated.")
+                root.friendlyComposerFailure(message, "Message was not updated.")
                     + " Your edit is still here.",
-                "",
-                "",
+                keyPending ? "Check for key" : "",
+                keyPending ? "check-private-room-key" : "",
                 8000)
         }
     }
@@ -3825,12 +3998,14 @@ ApplicationWindow {
                 }
             }
         } else {
+            var keyPending = root.rememberPrivateRoomKeyPending(
+                workspaceId, channelId, message)
             toastHost.show(
                 "error",
-                String(message || "File was not sent.")
+                root.friendlyComposerFailure(message, "File was not sent.")
                     + " Your message is still here; attach the file again to retry.",
-                "",
-                "",
+                keyPending ? "Check for key" : "",
+                keyPending ? "check-private-room-key" : "",
                 9000)
         }
         root.clearPendingComposerOperation()
@@ -8142,6 +8317,45 @@ ApplicationWindow {
         }
     }
 
+    function scheduleImmediatePeerSync() {
+        if (!root.runtimeWorkReady || !root.autoSyncEnabled
+                || root.preferredSyncPeerEndpoint().length === 0) {
+            root.immediateSyncPending = false
+            return false
+        }
+        root.immediateSyncPending = true
+        immediateSyncDebounce.interval = 180
+        immediateSyncDebounce.restart()
+        return true
+    }
+
+    function flushImmediatePeerSync() {
+        if (!root.immediateSyncPending) {
+            return false
+        }
+        var endpoint = root.preferredSyncPeerEndpoint()
+        if (!root.runtimeWorkReady || !root.autoSyncEnabled
+                || endpoint.length === 0) {
+            root.immediateSyncPending = false
+            return false
+        }
+        if (root.workspaceOperationInFlight
+                || root.pendingEntryDisplayNameUpdateInFlight
+                || root.pendingJoinPeerEndpointTargetsCurrentWorkspace()) {
+            immediateSyncDebounce.interval = 250
+            immediateSyncDebounce.restart()
+            return false
+        }
+        if (chaftController.syncWorkspaceIfIdle(endpoint)) {
+            root.immediateSyncPending = false
+            immediateSyncDebounce.interval = 180
+            return true
+        }
+        immediateSyncDebounce.interval = 750
+        immediateSyncDebounce.restart()
+        return false
+    }
+
     function reconcileHostedRuntimeIfReady() {
         if (root.runtimeWorkReady
                 && chaftController.peerHosting
@@ -8385,6 +8599,26 @@ ApplicationWindow {
             && chaftController.syncWorkspace(endpoint)
     }
 
+    function checkSelectedPrivateRoomKey() {
+        var endpoint = root.preferredSyncPeerEndpoint()
+        if (endpoint.length === 0) {
+            root.syncDrawerOpen = true
+            toastHost.show(
+                "warning",
+                "Add a reachable teammate address from someone who can open this private room.",
+                "",
+                "",
+                6000)
+            return false
+        }
+        if (root.workspaceOperationInFlight) {
+            root.immediateSyncPending = true
+            immediateSyncDebounce.restart()
+            return true
+        }
+        return chaftController.syncWorkspace(endpoint)
+    }
+
     function publishWorkspaceToPreferredPeer() {
         var endpoint = root.preferredSyncPeerEndpoint()
         return root.runtimeWorkReady
@@ -8578,7 +8812,16 @@ ApplicationWindow {
     }
 
     Timer {
+        id: immediateSyncDebounce
+        interval: 180
+        repeat: false
+        onTriggered: root.flushImmediatePeerSync()
+    }
+
+    Timer {
         id: autoSyncTimer
+        // Recovery fallback. Confirmed local mutations sync through the
+        // debounce above instead of waiting for this timer.
         interval: 3000
         repeat: true
         running: root.runtimeWorkReady && root.autoSyncEnabled
@@ -8587,7 +8830,9 @@ ApplicationWindow {
 
     Timer {
         id: hostedRuntimeReconcileTimer
-        interval: 2000
+        // QFileSystemWatcher drives normal hosted refreshes. This protects
+        // against dropped platform notifications and removable WAL files.
+        interval: 30000
         repeat: true
         running: root.runtimeWorkReady && chaftController.peerHosting
         onTriggered: root.reconcileHostedRuntimeIfReady()
@@ -8746,6 +8991,9 @@ ApplicationWindow {
             root.completePendingMessageSend(
                 workspaceId, channelId, replyToMessageId, success, message)
         }
+        function onLocalWorkspaceMutationCommitted() {
+            root.scheduleImmediatePeerSync()
+        }
         function onMessageEditFinished(workspaceId, messageId, success,
                                        message) {
             root.completePendingMessageEdit(
@@ -8835,6 +9083,9 @@ ApplicationWindow {
                 root.applyPendingEntryDisplayName()
                 root.scheduleMarkSelectedChannelRead()
                 root.scheduleControllerIdleWork()
+                if (root.immediateSyncPending) {
+                    immediateSyncDebounce.restart()
+                }
             }
         }
         function onSyncStatusChanged() {
@@ -10451,7 +10702,7 @@ ApplicationWindow {
                                 visible: chaftController.hasRuntimeWorkspace || chaftController.rawEventStoreMode
                                 label: root.syncPillLabel
                                 tone: root.syncPillTone
-                                detail: chaftController.syncStatus || root.workspaceSnapshot.syncStatus || ""
+                                detail: root.syncPillDetail
                                 expanded: root.syncDrawerOpen
                                 onToggled: root.syncDrawerOpen = !root.syncDrawerOpen
                             }
@@ -11518,7 +11769,7 @@ ApplicationWindow {
                     visible: root.hasWorkspaceContent
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    timelineModel: root.selectedTimeline
+                    timelineModel: root.visibleSelectedTimeline
                     workspaceId: root.currentWorkspaceId()
                     emptyText: root.selectedTimelineEmptyText()
                     actionsEnabled: root.runtimeWorkReady
@@ -11594,6 +11845,13 @@ ApplicationWindow {
                     replyDisplayName: root.itemAuthorLabel(root.replyTarget)
                     operationPending: root.composerOperationPending
                     enabled: root.runtimeWorkReady && root.selectedChannelKey.length > 0
+                    blockedReason: root.selectedChannelKeyPending
+                        ? "Waiting for this private room's message key. Your draft stays on this device."
+                        : ""
+                    blockedActionLabel: root.selectedChannelKeyPending
+                        ? "Check for key"
+                        : ""
+                    onBlockedActionRequested: root.checkSelectedPrivateRoomKey()
                     onDraftChanged: function(text) {
                         if (!root.suppressComposerDraftSave) {
                             root.saveSelectedDraftText(text)
@@ -11644,7 +11902,7 @@ ApplicationWindow {
                             root.beginComposerOperation(
                                 "edit",
                                 workspaceId,
-                                "",
+                                root.selectedChannelKey,
                                 "",
                                 messageId,
                                 text,
