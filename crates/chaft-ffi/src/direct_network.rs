@@ -16,7 +16,7 @@ where
 {
     run_on_worker_thread(move || {
         let runtime = crate::open_runtime_from_paths(&data_dir, identity_file)?;
-        let transport = IrohTransport::from_environment();
+        let transport = IrohTransport::shared_from_environment();
         operation(runtime, transport)
     })
 }

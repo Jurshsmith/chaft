@@ -7,7 +7,7 @@ use std::{
 };
 
 use chaft_app::{
-    WorkspaceChannelPage, WorkspaceChannelSearch, WorkspaceMemberPage,
+    ChannelSnapshot, WorkspaceChannelPage, WorkspaceChannelSearch, WorkspaceMemberPage,
     query_has_channel_search_terms,
 };
 use chaft_core::{
@@ -17,14 +17,14 @@ use chaft_core::{
 use chaft_crypto::CryptoError;
 use chaft_identity::{DeviceIdentity, IdentityError, verify_self_contained_event};
 use chaft_media::MediaError;
-use chaft_mls::MlsError;
+use chaft_mls::{MlsError, OPENMLS_KEY_PACKAGE_PROTOCOL};
 use chaft_net::NetError;
 use chaft_search::SearchError;
 use chaft_store::{EventStore, StoreError};
 use chaft_sync::SyncError;
 use chaft_types::{
-    AttachmentRef, ChannelId, DeviceId, DeviceKeyPackageId, EventBody, EventId, MessageId,
-    SignableEvent, SignedEvent, WorkspaceId, WorkspaceRole,
+    AttachmentRef, ChannelId, ContentKeyScope, DeviceId, DeviceKeyPackageId, EventBody, EventId,
+    MessageId, SignableEvent, SignedEvent, WorkspaceId, WorkspaceRole,
 };
 pub use chaft_types::{
     PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES,
@@ -41,6 +41,7 @@ mod content_keys;
 mod local_file_io;
 mod local_secret;
 mod local_secret_store;
+mod materialization_health;
 mod openmls_actions;
 mod openmls_provisioning;
 mod paths;
@@ -96,7 +97,10 @@ pub use content_keys::{
     ChannelKeyExport, ExportedContentKeyMaterial, ImportedChannelKey, ImportedWorkspaceKey,
     RotatedChannelKey, RotatedWorkspaceKey, RotatedWorkspaceManualKeys, WorkspaceKeyExport,
 };
-pub(crate) use local_file_io::{read_local_metadata_file_with_limit, write_secret_file};
+pub(crate) use local_file_io::{
+    read_local_metadata_file_with_limit, remove_secret_file, write_derived_cache_file,
+    write_secret_file,
+};
 #[cfg(test)]
 pub(crate) use local_secret::LOCAL_SECRET_STORAGE;
 pub(crate) use local_secret::{
@@ -105,6 +109,7 @@ pub(crate) use local_secret::{
     LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP, LOCAL_SECRET_KIND_WORKSPACE_KEY,
     encrypt_local_secret, open_serialized_local_secret, openmls_group_secret_kind,
 };
+pub(crate) use openmls_actions::validate_openmls_key_package_for_publisher;
 pub use openmls_actions::{
     AddedOpenMlsChannelGroupMember, AddedOpenMlsWorkspaceGroupMember,
     AppliedOpenMlsChannelGroupCommits, AppliedOpenMlsWorkspaceGroupCommits,
@@ -113,9 +118,11 @@ pub use openmls_actions::{
     RemovedOpenMlsWorkspaceGroupMember, UpdatedOpenMlsChannelGroup, UpdatedOpenMlsWorkspaceGroup,
     UpdatedWorkspaceOpenMlsGroups,
 };
+pub use openmls_provisioning::{ChannelAccessProvisioningOutcome, ChannelAccessProvisioningState};
 pub(crate) use openmls_provisioning::{
     OpenMlsAutoProvisionIndex, ProvisionedOpenMlsChannelMembers,
-    current_private_channel_member_ids_from_events,
+    current_private_channel_member_ids_from_events, private_channel_creator_device_id_from_events,
+    workspace_creator_device_id_from_events,
 };
 pub use paths::RuntimePaths;
 #[cfg(test)]
@@ -343,11 +350,54 @@ pub enum RuntimeError {
         workspace_id: WorkspaceId,
         channel_id: ChannelId,
     },
+    #[error("only the workspace creator can create its initial OpenMLS group in {workspace_id:?}")]
+    OpenMlsWorkspaceGroupCreatorRequired { workspace_id: WorkspaceId },
+    #[error(
+        "only the channel creator can create its initial OpenMLS group for {channel_id:?} in {workspace_id:?}"
+    )]
+    OpenMlsChannelGroupCreatorRequired {
+        workspace_id: WorkspaceId,
+        channel_id: ChannelId,
+    },
+    #[error(
+        "cannot remove {device_id:?} from workspace {workspace_id:?} while OpenMLS workspace access is active; revoke OpenMLS access first"
+    )]
+    OpenMlsWorkspaceRevocationPending {
+        workspace_id: WorkspaceId,
+        device_id: DeviceId,
+    },
+    #[error(
+        "cannot remove {device_id:?} from channel {channel_id:?} while OpenMLS channel access is active; revoke OpenMLS access first"
+    )]
+    OpenMlsChannelRevocationPending {
+        workspace_id: WorkspaceId,
+        channel_id: ChannelId,
+        device_id: DeviceId,
+    },
     #[error("device key package {key_package_id:?} was not found in workspace {workspace_id:?}")]
     DeviceKeyPackageNotFound {
         workspace_id: WorkspaceId,
         key_package_id: DeviceKeyPackageId,
     },
+    #[error(
+        "device key package {key_package_id:?} in workspace {workspace_id:?} uses protocol {actual_protocol}, not the OpenMLS key-package protocol"
+    )]
+    OpenMlsKeyPackageProtocolMismatch {
+        workspace_id: WorkspaceId,
+        key_package_id: DeviceKeyPackageId,
+        actual_protocol: String,
+    },
+    #[error(
+        "OpenMLS key-package credential identity {package_identity} does not match publishing device {publisher_device_id:?}"
+    )]
+    OpenMlsKeyPackagePublisherMismatch {
+        publisher_device_id: DeviceId,
+        package_identity: String,
+    },
+    #[error(
+        "OpenMLS key package {key_package_id:?} did not produce its validated identity and reference"
+    )]
+    OpenMlsKeyPackageValidationMismatch { key_package_id: DeviceKeyPackageId },
     #[error(
         "OpenMLS private key package {key_package_ref} is missing in workspace {workspace_id:?}"
     )]
@@ -431,6 +481,8 @@ pub struct LocalRuntime {
 }
 
 const IROH_ENDPOINT_SECRET_DERIVATION_CONTEXT: &str = "dev.chaft.iroh-endpoint-secret.v1";
+const AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT: usize = 4;
+const AUTO_OPENMLS_KEY_PACKAGE_MAX_UNUSED: usize = 32;
 
 struct WorkspaceWriteContext {
     events: Vec<SignedEvent>,
@@ -550,6 +602,32 @@ fn is_backup_slice_event(event: &SignedEvent) -> bool {
     )
 }
 
+fn latest_manual_content_key_id<'a>(
+    events: &'a [SignedEvent],
+    channel_id: Option<&ChannelId>,
+) -> Option<&'a str> {
+    events
+        .iter()
+        .filter_map(|event| match &event.event.body {
+            EventBody::ContentKeyEpochPublished {
+                scope,
+                epoch,
+                key_id,
+                ..
+            } if matches!(
+                (scope, channel_id),
+                (ContentKeyScope::Workspace, None)
+            ) || matches!(
+                (scope, channel_id),
+                (ContentKeyScope::Channel { channel_id: scope_channel_id }, Some(expected_channel_id))
+                    if scope_channel_id == expected_channel_id
+            ) => Some((*epoch, key_id.as_str())),
+            _ => None,
+        })
+        .max_by_key(|(epoch, _)| *epoch)
+        .map(|(_, key_id)| key_id)
+}
+
 impl LocalRuntime {
     pub fn open(
         data_dir: impl AsRef<Path>,
@@ -654,17 +732,17 @@ impl LocalRuntime {
             &body_override_event_ids,
         )?;
 
-        Ok(
-            WorkspaceChannelPage::from_state_report_for_device_and_body_overrides(
-                &state,
-                &report,
-                &raw_events,
-                self.identity.device_id(),
-                &body_overrides,
-                start_index,
-                limit,
-            ),
-        )
+        let mut page = WorkspaceChannelPage::from_state_report_for_device_and_body_overrides(
+            &state,
+            &report,
+            &raw_events,
+            self.identity.device_id(),
+            &body_overrides,
+            start_index,
+            limit,
+        );
+        self.annotate_channel_content_readiness(&workspace_id, &mut page.channels)?;
+        Ok(page)
     }
 
     pub fn list_workspace_channel_page_containing(
@@ -726,7 +804,7 @@ impl LocalRuntime {
             &body_override_event_ids,
         )?;
 
-        WorkspaceChannelPage::from_state_report_for_device_and_body_overrides_containing_channel(
+        let mut page = WorkspaceChannelPage::from_state_report_for_device_and_body_overrides_containing_channel(
             &state,
             &report,
             &raw_events,
@@ -736,9 +814,11 @@ impl LocalRuntime {
             limit,
         )
         .ok_or(RuntimeError::ChannelNotFound {
-            workspace_id,
+            workspace_id: workspace_id.clone(),
             channel_id,
-        })
+        })?;
+        self.annotate_channel_content_readiness(&workspace_id, &mut page.channels)?;
+        Ok(page)
     }
 
     pub fn search_workspace_channels(
@@ -792,17 +872,145 @@ impl LocalRuntime {
             &body_override_event_ids,
         )?;
 
-        Ok(
-            WorkspaceChannelSearch::from_state_report_for_device_and_body_overrides(
-                &state,
-                &report,
-                &raw_events,
-                self.identity.device_id(),
-                &body_overrides,
-                &query,
-                limit,
-            ),
-        )
+        let mut search = WorkspaceChannelSearch::from_state_report_for_device_and_body_overrides(
+            &state,
+            &report,
+            &raw_events,
+            self.identity.device_id(),
+            &body_overrides,
+            &query,
+            limit,
+        );
+        self.annotate_channel_content_readiness(&workspace_id, &mut search.channels)?;
+        Ok(search)
+    }
+
+    pub(crate) fn annotate_channel_content_readiness(
+        &self,
+        workspace_id: &WorkspaceId,
+        channels: &mut [ChannelSnapshot],
+    ) -> Result<(), RuntimeError> {
+        for channel in channels {
+            if !channel.is_private {
+                channel.local_content_ready = true;
+                channel.access_state = "ready".to_owned();
+                continue;
+            }
+
+            let channel_id = ChannelId(channel.channel_id.clone());
+            let ready = self
+                .openmls_channel_content_key(workspace_id, &channel_id)?
+                .is_some()
+                || self.load_channel_key(workspace_id, &channel_id)?.is_some();
+            channel.local_content_ready = ready;
+            channel.access_state = if ready { "ready" } else { "key_pending" }.to_owned();
+        }
+        Ok(())
+    }
+
+    fn local_openmls_workspace_group_id(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<String>, RuntimeError> {
+        let path = self.openmls_workspace_group_path(workspace_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes =
+            self.read_openmls_secret_file(&path, LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP)?;
+        Ok(Some(
+            chaft_mls::validate_private_workspace_group_state(&bytes)?.group_id,
+        ))
+    }
+
+    fn local_openmls_channel_group_id(
+        &self,
+        workspace_id: &WorkspaceId,
+        channel_id: &ChannelId,
+    ) -> Result<Option<String>, RuntimeError> {
+        let path = self.openmls_channel_group_path(workspace_id, channel_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes =
+            self.read_openmls_secret_file(&path, LOCAL_SECRET_KIND_OPENMLS_CHANNEL_GROUP)?;
+        Ok(Some(
+            chaft_mls::validate_private_workspace_group_state(&bytes)?.group_id,
+        ))
+    }
+
+    pub fn ensure_openmls_device_key_packages(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<PublishedOpenMlsKeyPackage>, RuntimeError> {
+        let events = self.materialized_workspace_events(&workspace_id)?;
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state.apply_batch(&events)?;
+        if !state.members.contains_key(self.identity.device_id()) {
+            return Ok(Vec::new());
+        }
+
+        let index = OpenMlsAutoProvisionIndex::from_events(&events);
+        let pending_private_group_count = state
+            .channels
+            .values()
+            .filter(|channel| {
+                channel.is_private
+                    && state.channel_accessible_to(&channel.channel_id, self.identity.device_id())
+                    && private_channel_creator_device_id_from_events(&events, &channel.channel_id)
+                        .as_ref()
+                        != Some(self.identity.device_id())
+                    && !index
+                        .channel_group_has_device(&channel.channel_id, self.identity.device_id())
+            })
+            .count();
+        let desired_unused = AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT
+            .saturating_add(pending_private_group_count)
+            .min(AUTO_OPENMLS_KEY_PACKAGE_MAX_UNUSED);
+
+        let usable_unused = events
+            .iter()
+            .filter_map(|event| match &event.event.body {
+                EventBody::DeviceKeyPackagePublished {
+                    key_package_id,
+                    protocol,
+                    key_package,
+                } if event.event.author_device_id == *self.identity.device_id()
+                    && protocol == OPENMLS_KEY_PACKAGE_PROTOCOL
+                    && !index.key_package_is_used(key_package_id) =>
+                {
+                    Some(key_package)
+                }
+                _ => None,
+            })
+            .filter(|key_package| {
+                let Ok(public) = chaft_mls::validate_key_package(key_package) else {
+                    return false;
+                };
+                if public.identity != self.identity.device_id().0 {
+                    return false;
+                }
+                let private_bundle_path =
+                    self.openmls_key_package_path(&workspace_id, &public.key_package_ref);
+                let Ok(private_bundle) = self.read_openmls_secret_file(
+                    &private_bundle_path,
+                    LOCAL_SECRET_KIND_OPENMLS_KEY_PACKAGE,
+                ) else {
+                    return false;
+                };
+                let Ok(private) = chaft_mls::validate_private_key_package_bundle(&private_bundle)
+                else {
+                    return false;
+                };
+                private == public
+            })
+            .count();
+
+        let mut published = Vec::with_capacity(desired_unused.saturating_sub(usable_unused));
+        for _ in usable_unused..desired_unused {
+            published.push(self.publish_openmls_device_key_package(workspace_id.clone())?);
+        }
+        Ok(published)
     }
 
     fn auto_add_openmls_workspace_member_if_ready(
@@ -825,10 +1033,14 @@ impl LocalRuntime {
         device_id: &DeviceId,
         index: &mut OpenMlsAutoProvisionIndex,
     ) -> Option<AddedOpenMlsWorkspaceGroupMember> {
-        if device_id == self.identity.device_id()
-            || !self.openmls_workspace_group_path(workspace_id).exists()
-            || index.workspace_group_has_device(device_id)
-        {
+        if device_id == self.identity.device_id() {
+            return None;
+        }
+        if index.workspace_device_is_revoked(device_id) {
+            return None;
+        }
+        let local_group_id = self.local_openmls_workspace_group_id(workspace_id).ok()??;
+        if index.workspace_group_has_device_in_group(&local_group_id, device_id) {
             return None;
         }
 
@@ -837,58 +1049,86 @@ impl LocalRuntime {
             .add_openmls_workspace_group_member(workspace_id.clone(), key_package_id)
             .ok()?;
         index.mark_workspace_group_member_added(
+            &added.group_id,
             &added.invitee_device_id,
             &added.invitee_key_package_id,
         );
         Some(added)
     }
 
-    fn auto_add_openmls_channel_member_if_ready(
-        &self,
-        workspace_id: &WorkspaceId,
-        channel_id: &ChannelId,
-        device_id: &DeviceId,
-    ) -> Option<AddedOpenMlsChannelGroupMember> {
-        let events = self.materialized_workspace_events(workspace_id).ok()?;
-        let mut index = OpenMlsAutoProvisionIndex::from_events(&events);
-        self.auto_add_openmls_channel_member_if_ready_with_index(
-            workspace_id,
-            channel_id,
-            device_id,
-            &mut index,
-        )
-    }
-
-    fn auto_add_openmls_channel_member_if_ready_with_index(
+    fn openmls_channel_member_provisioning_outcome_with_index(
         &self,
         workspace_id: &WorkspaceId,
         channel_id: &ChannelId,
         device_id: &DeviceId,
         index: &mut OpenMlsAutoProvisionIndex,
-    ) -> Option<AddedOpenMlsChannelGroupMember> {
-        if device_id == self.identity.device_id()
-            || !self
-                .openmls_channel_group_path(workspace_id, channel_id)
-                .exists()
-            || index.channel_group_has_device(channel_id, device_id)
+    ) -> ChannelAccessProvisioningOutcome {
+        let mut outcome = ChannelAccessProvisioningOutcome {
+            channel_id: channel_id.0.clone(),
+            member_device_id: device_id.0.clone(),
+            provisioning_state: ChannelAccessProvisioningState::Ready,
+            event_id: None,
+            openmls_epoch: None,
+            openmls_member_count: None,
+            provisioning_error: None,
+        };
+        if device_id == self.identity.device_id() {
+            return outcome;
+        }
+        if index.channel_device_is_revoked(channel_id, device_id) {
+            outcome.provisioning_state = ChannelAccessProvisioningState::RevocationPending;
+            return outcome;
+        }
+        let local_group_id = match self.local_openmls_channel_group_id(workspace_id, channel_id) {
+            Ok(Some(group_id)) => group_id,
+            Ok(None) => {
+                outcome.provisioning_state = ChannelAccessProvisioningState::GroupPending;
+                return outcome;
+            }
+            Err(error) => {
+                outcome.provisioning_state = ChannelAccessProvisioningState::Failed;
+                outcome.provisioning_error = Some(error.to_string());
+                return outcome;
+            }
+        };
+        if index.channel_group_has_device_in_group(channel_id, &local_group_id, device_id) {
+            return outcome;
+        }
+        if !self
+            .openmls_channel_group_path(workspace_id, channel_id)
+            .exists()
         {
-            return None;
+            outcome.provisioning_state = ChannelAccessProvisioningState::GroupPending;
+            return outcome;
         }
 
-        let key_package_id = index.latest_unused_key_package_id_for_device(device_id)?;
-        let added = self
-            .add_openmls_channel_group_member(
-                workspace_id.clone(),
-                channel_id.clone(),
-                key_package_id,
-            )
-            .ok()?;
-        index.mark_channel_group_member_added(
-            &added.channel_id,
-            &added.invitee_device_id,
-            &added.invitee_key_package_id,
-        );
-        Some(added)
+        let Some(key_package_id) = index.latest_unused_key_package_id_for_device(device_id) else {
+            outcome.provisioning_state = ChannelAccessProvisioningState::KeyPackagePending;
+            return outcome;
+        };
+        match self.add_openmls_channel_group_member(
+            workspace_id.clone(),
+            channel_id.clone(),
+            key_package_id,
+        ) {
+            Ok(added) => {
+                index.mark_channel_group_member_added(
+                    &added.channel_id,
+                    &added.group_id,
+                    &added.invitee_device_id,
+                    &added.invitee_key_package_id,
+                );
+                outcome.provisioning_state = ChannelAccessProvisioningState::MlsWelcomePublished;
+                outcome.event_id = Some(added.event_id);
+                outcome.openmls_epoch = Some(added.epoch);
+                outcome.openmls_member_count = Some(added.member_count);
+            }
+            Err(error) => {
+                outcome.provisioning_state = ChannelAccessProvisioningState::Failed;
+                outcome.provisioning_error = Some(error.to_string());
+            }
+        }
+        outcome
     }
 
     fn auto_provision_openmls_workspace_members(&self, workspace_id: &WorkspaceId) -> Vec<String> {
@@ -903,13 +1143,12 @@ impl LocalRuntime {
         if state.apply_batch(&events).is_err() {
             return Vec::new();
         }
-        let Some(local_member) = state.members.get(self.identity.device_id()) else {
+        let Some(_) = state.members.get(self.identity.device_id()) else {
             return Vec::new();
         };
-        if !matches!(
-            local_member.role,
-            WorkspaceRole::Owner | WorkspaceRole::Admin
-        ) {
+        if workspace_creator_device_id_from_events(&events).as_ref()
+            != Some(self.identity.device_id())
+        {
             return Vec::new();
         }
 
@@ -933,46 +1172,149 @@ impl LocalRuntime {
     fn auto_provision_openmls_channel_members(
         &self,
         workspace_id: &WorkspaceId,
-    ) -> Vec<ProvisionedOpenMlsChannelMembers> {
-        let Ok(events) = self.materialized_workspace_events(workspace_id) else {
-            return Vec::new();
-        };
-        let Ok(channel_ids) = self.local_openmls_channel_group_ids(workspace_id) else {
-            return Vec::new();
-        };
+        events: &[SignedEvent],
+    ) -> Result<(Vec<String>, Vec<ProvisionedOpenMlsChannelMembers>), RuntimeError> {
+        let mut state = WorkspaceState::new(workspace_id.clone());
+        state.apply_batch(events)?;
+        let mut provision_index = OpenMlsAutoProvisionIndex::from_events(events);
+        let mut channel_ids = state
+            .channels
+            .values()
+            .filter(|channel| channel.is_private)
+            .map(|channel| channel.channel_id.clone())
+            .filter(|channel_id| {
+                let local_is_creator =
+                    private_channel_creator_device_id_from_events(events, channel_id).as_ref()
+                        == Some(self.identity.device_id());
+                local_is_creator
+                    && state.channel_accessible_to(channel_id, self.identity.device_id())
+            })
+            .collect::<Vec<_>>();
+        channel_ids.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let mut provision_index = OpenMlsAutoProvisionIndex::from_events(&events);
+        let mut created_channel_group_ids = Vec::new();
         let mut provisioned = Vec::new();
         for channel_id in channel_ids {
             let mut device_ids =
-                current_private_channel_member_ids_from_events(&events, &channel_id)
+                current_private_channel_member_ids_from_events(events, &channel_id)
                     .into_iter()
                     .map(DeviceId)
+                    .filter(|device_id| device_id != self.identity.device_id())
                     .collect::<Vec<_>>();
             device_ids.sort_by(|left, right| left.0.cmp(&right.0));
 
-            let event_ids = device_ids
+            let group_path = self.openmls_channel_group_path(workspace_id, &channel_id);
+            if device_ids.is_empty() {
+                if !group_path.exists() && !provision_index.channel_group_has_events(&channel_id) {
+                    self.create_openmls_channel_group(workspace_id.clone(), channel_id.clone())?;
+                    created_channel_group_ids.push(channel_id.0.clone());
+                }
+                continue;
+            }
+
+            if !group_path.exists() {
+                if provision_index.channel_group_has_events(&channel_id) {
+                    provisioned.push(ProvisionedOpenMlsChannelMembers {
+                        channel_id: channel_id.0.clone(),
+                        event_ids: Vec::new(),
+                        outcomes: device_ids
+                            .into_iter()
+                            .map(|device_id| ChannelAccessProvisioningOutcome {
+                                channel_id: channel_id.0.clone(),
+                                member_device_id: device_id.0,
+                                provisioning_state: ChannelAccessProvisioningState::Failed,
+                                event_id: None,
+                                openmls_epoch: None,
+                                openmls_member_count: None,
+                                provisioning_error: Some(
+                                    "local private-room MLS state is missing".to_owned(),
+                                ),
+                            })
+                            .collect(),
+                    });
+                    continue;
+                }
+
+                let missing_package_device_ids = device_ids
+                    .iter()
+                    .filter(|device_id| {
+                        provision_index
+                            .latest_unused_key_package_id_for_device(device_id)
+                            .is_none()
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !missing_package_device_ids.is_empty() {
+                    provisioned.push(ProvisionedOpenMlsChannelMembers {
+                        channel_id: channel_id.0.clone(),
+                        event_ids: Vec::new(),
+                        outcomes: missing_package_device_ids
+                            .into_iter()
+                            .map(|device_id| ChannelAccessProvisioningOutcome {
+                                channel_id: channel_id.0.clone(),
+                                member_device_id: device_id.0,
+                                provisioning_state:
+                                    ChannelAccessProvisioningState::KeyPackagePending,
+                                event_id: None,
+                                openmls_epoch: None,
+                                openmls_member_count: None,
+                                provisioning_error: None,
+                            })
+                            .collect(),
+                    });
+                    continue;
+                }
+
+                if let Err(error) =
+                    self.create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+                {
+                    provisioned.push(ProvisionedOpenMlsChannelMembers {
+                        channel_id: channel_id.0.clone(),
+                        event_ids: Vec::new(),
+                        outcomes: device_ids
+                            .into_iter()
+                            .map(|device_id| ChannelAccessProvisioningOutcome {
+                                channel_id: channel_id.0.clone(),
+                                member_device_id: device_id.0,
+                                provisioning_state: ChannelAccessProvisioningState::Failed,
+                                event_id: None,
+                                openmls_epoch: None,
+                                openmls_member_count: None,
+                                provisioning_error: Some(error.to_string()),
+                            })
+                            .collect(),
+                    });
+                    continue;
+                }
+                created_channel_group_ids.push(channel_id.0.clone());
+            }
+
+            let outcomes = device_ids
                 .into_iter()
-                .filter_map(|device_id| {
-                    self.auto_add_openmls_channel_member_if_ready_with_index(
+                .map(|device_id| {
+                    self.openmls_channel_member_provisioning_outcome_with_index(
                         workspace_id,
                         &channel_id,
                         &device_id,
                         &mut provision_index,
                     )
-                    .map(|added| added.event_id)
                 })
                 .collect::<Vec<_>>();
+            let event_ids = outcomes
+                .iter()
+                .filter_map(|outcome| outcome.event_id.clone())
+                .collect::<Vec<_>>();
 
-            if !event_ids.is_empty() {
+            if !outcomes.is_empty() {
                 provisioned.push(ProvisionedOpenMlsChannelMembers {
                     channel_id: channel_id.0,
                     event_ids,
+                    outcomes,
                 });
             }
         }
 
-        provisioned
+        Ok((created_channel_group_ids, provisioned))
     }
 
     fn materialized_workspace_events(
@@ -1027,6 +1369,7 @@ impl LocalRuntime {
         workspace_id: &WorkspaceId,
         channel_id: &ChannelId,
         state: &WorkspaceState,
+        events: &[SignedEvent],
     ) -> Result<ResolvedContentKey, RuntimeError> {
         let channel = state.channels.get(channel_id).ok_or_else(|| {
             RuntimeError::Authorization(AuthorizationError::ChannelNotFound {
@@ -1046,21 +1389,34 @@ impl LocalRuntime {
             if let Some(content_key) = self.openmls_channel_content_key(workspace_id, channel_id)? {
                 return Ok(content_key);
             }
-            return self
-                .load_channel_key(workspace_id, channel_id)?
-                .ok_or_else(|| RuntimeError::ChannelKeyMissing {
+            let channel_key = self.load_channel_key(workspace_id, channel_id)?;
+            let channel_key = channel_key.ok_or_else(|| RuntimeError::ChannelKeyMissing {
+                workspace_id: workspace_id.clone(),
+                channel_id: channel_id.clone(),
+            })?;
+            if latest_manual_content_key_id(events, Some(channel_id))
+                .is_some_and(|key_id| key_id != channel_key.key_id)
+            {
+                return Err(RuntimeError::ChannelKeyMissing {
                     workspace_id: workspace_id.clone(),
                     channel_id: channel_id.clone(),
-                })
-                .map(ResolvedContentKey::from);
+                });
+            }
+            return Ok(channel_key.into());
         }
 
         if let Some(content_key) = self.openmls_workspace_content_key(workspace_id)? {
             return Ok(content_key);
         }
-        self.load_workspace_key(workspace_id)?
-            .ok_or(RuntimeError::InvalidWorkspaceKey)
-            .map(ResolvedContentKey::from)
+        let workspace_key = self
+            .load_workspace_key(workspace_id)?
+            .ok_or(RuntimeError::InvalidWorkspaceKey)?;
+        if latest_manual_content_key_id(events, None)
+            .is_some_and(|key_id| key_id != workspace_key.key_id)
+        {
+            return Err(RuntimeError::InvalidWorkspaceKey);
+        }
+        Ok(workspace_key.into())
     }
 
     fn content_key_for_materialized_payload(
@@ -7396,7 +7752,12 @@ mod tests {
         let channel_id = ChannelId(created.channel_id.clone());
         let context = runtime.workspace_write_context(&workspace_id).unwrap();
         let content_key = runtime
-            .content_key_for_local_write_in_state(&workspace_id, &channel_id, &context.state)
+            .content_key_for_local_write_in_state(
+                &workspace_id,
+                &channel_id,
+                &context.state,
+                &context.events,
+            )
             .unwrap();
         let forged_message_id = MessageId::new();
         let sealed_markdown = seal_message_markdown(
@@ -9365,7 +9726,21 @@ mod tests {
             .workspace_events(&WorkspaceId(other.workspace_id))
             .unwrap();
         let primary_json = serde_json::to_string(&primary_events).unwrap();
-        assert_eq!(primary_events.len(), 4);
+        assert_eq!(primary_events.len(), 8);
+        assert_eq!(
+            primary_events
+                .iter()
+                .filter(|event| {
+                    event.event.author_device_id == *bob.device_id()
+                        && matches!(
+                            &event.event.body,
+                            EventBody::DeviceKeyPackagePublished { protocol, .. }
+                                if protocol == OPENMLS_KEY_PACKAGE_PROTOCOL
+                        )
+                })
+                .count(),
+            AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT
+        );
         assert!(other_events.is_empty());
         assert!(!primary_json.contains("bob should not receive plaintext"));
 
@@ -12427,13 +12802,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bob_published.workspace_id, workspace_id.0);
-        assert_eq!(bob_published.published_event_ids.len(), 4);
+        assert_eq!(bob_published.published_event_ids.len(), 8);
 
         let inventory = transport.fetch_inventory(&peer).await.unwrap();
         let snapshot = bob
             .decrypted_workspace_snapshot(workspace_id.clone())
             .unwrap();
-        assert_eq!(inventory.len(), 4);
+        assert_eq!(inventory.len(), 8);
         assert_eq!(snapshot.timeline[0].body, "invited member reply");
         assert!(snapshot.timeline[0].encrypted);
 
@@ -12525,7 +12900,21 @@ mod tests {
                 .to_string()
                 .contains("not authorized for private channel")
         );
-        assert_eq!(events.len(), 6);
+        assert_eq!(events.len(), 10);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.event.author_device_id == *bob.device_id()
+                        && matches!(
+                            &event.event.body,
+                            EventBody::DeviceKeyPackagePublished { protocol, .. }
+                                if protocol == OPENMLS_KEY_PACKAGE_PROTOCOL
+                        )
+                })
+                .count(),
+            AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT
+        );
         assert!(
             !serde_json::to_string(&events)
                 .unwrap()
@@ -12688,8 +13077,10 @@ mod tests {
             removed.channel_key_rotations[0].previous_key_id,
             old_channel_key.key_id
         );
-        assert!(removal_index < workspace_rotation_index);
+        // Rekey while the author is still authorized, then remove logical
+        // membership. The removed device never receives the new key bytes.
         assert!(workspace_rotation_index < channel_rotation_index);
+        assert!(channel_rotation_index < removal_index);
         assert_eq!(public_sealed.key_id, removed.workspace_key_rotation.key_id);
         assert_eq!(
             private_sealed.key_id,
@@ -12743,10 +13134,11 @@ mod tests {
         let removed = alice
             .remove_member_with_openmls(workspace_id.clone(), bob.device_id().clone())
             .unwrap();
+        let openmls_event_id = removed.openmls_event_id.clone().unwrap();
         let alice_events = alice.workspace_events(&workspace_id).unwrap();
         let openmls_index = alice_events
             .iter()
-            .position(|event| event.event_id.0 == removed.openmls_event_id)
+            .position(|event| event.event_id.0 == openmls_event_id)
             .unwrap();
         let removal_index = alice_events
             .iter()
@@ -12766,7 +13158,7 @@ mod tests {
         let applied = bob
             .apply_openmls_workspace_group_commits(
                 workspace_id.clone(),
-                Some(EventId(removed.openmls_event_id.clone())),
+                Some(EventId(openmls_event_id.clone())),
             )
             .unwrap();
         let snapshot = bob.workspace_snapshot(workspace_id).unwrap();
@@ -12783,7 +13175,7 @@ mod tests {
         ));
         assert!(send_error.to_string().contains("not a workspace member"));
         assert!(applied.self_removed);
-        assert_eq!(applied.applied_event_ids, vec![removed.openmls_event_id]);
+        assert_eq!(applied.applied_event_ids, vec![openmls_event_id]);
         assert!(
             !snapshot
                 .members
@@ -13061,7 +13453,9 @@ mod tests {
             removed.channel_key_rotation.previous_key_id,
             old_channel_key.key_id
         );
-        assert!(removal_index < rotation_index);
+        // Rekey while the author is still authorized, then remove logical
+        // channel access. The removed device never receives the new key bytes.
+        assert!(rotation_index < removal_index);
         assert_eq!(sealed_markdown.key_id, removed.channel_key_rotation.key_id);
     }
 
@@ -13133,10 +13527,11 @@ mod tests {
                 bob.device_id().clone(),
             )
             .unwrap();
+        let openmls_event_id = removed.openmls_event_id.clone().unwrap();
         let alice_events = alice.workspace_events(&workspace_id).unwrap();
         let openmls_index = alice_events
             .iter()
-            .position(|event| event.event_id.0 == removed.openmls_event_id)
+            .position(|event| event.event_id.0 == openmls_event_id)
             .unwrap();
         let removal_index = alice_events
             .iter()
@@ -13163,7 +13558,7 @@ mod tests {
             .apply_openmls_channel_group_commits(
                 workspace_id.clone(),
                 private_channel_id,
-                Some(EventId(removed.openmls_event_id.clone())),
+                Some(EventId(openmls_event_id.clone())),
             )
             .unwrap();
 
@@ -13183,7 +13578,632 @@ mod tests {
                 .contains("not authorized for private channel")
         );
         assert!(applied.self_removed);
-        assert_eq!(applied.applied_event_ids, vec![removed.openmls_event_id]);
+        assert_eq!(applied.applied_event_ids, vec![openmls_event_id]);
+    }
+
+    #[test]
+    fn member_removal_stays_pending_when_recorded_openmls_state_is_missing() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Pending MLS Revocation", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+        }
+        let packages = bob
+            .ensure_openmls_device_key_packages(workspace_id.clone())
+            .unwrap();
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        alice
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(packages[0].key_package_id.clone()),
+            )
+            .unwrap();
+        alice
+            .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(packages[1].key_package_id.clone()),
+            )
+            .unwrap();
+
+        let openmls_index = OpenMlsAutoProvisionIndex::from_events(
+            &alice.materialized_workspace_events(&workspace_id).unwrap(),
+        );
+        assert!(openmls_index.workspace_group_has_device(alice.device_id()));
+        assert!(openmls_index.workspace_group_has_device(bob.device_id()));
+        assert!(openmls_index.channel_group_has_device(&channel_id, alice.device_id()));
+        assert!(openmls_index.channel_group_has_device(&channel_id, bob.device_id()));
+
+        fs::remove_file(alice.openmls_workspace_group_path(&workspace_id)).unwrap();
+        fs::remove_file(alice.openmls_channel_group_path(&workspace_id, &channel_id)).unwrap();
+
+        assert!(matches!(
+            alice.remove_channel_member_with_key_rotation(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            ),
+            Err(RuntimeError::OpenMlsChannelRevocationPending { .. })
+        ));
+        assert!(matches!(
+            alice.remove_channel_member_with_openmls(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            ),
+            Err(RuntimeError::OpenMlsChannelGroupMissing { .. })
+        ));
+        assert!(matches!(
+            alice.remove_member_with_key_rotation(workspace_id.clone(), bob.device_id().clone(),),
+            Err(RuntimeError::OpenMlsWorkspaceRevocationPending { .. })
+        ));
+        assert!(matches!(
+            alice.remove_member_with_openmls(workspace_id.clone(), bob.device_id().clone()),
+            Err(RuntimeError::OpenMlsWorkspaceGroupMissing { .. })
+        ));
+
+        let snapshot = alice.workspace_snapshot(workspace_id.clone()).unwrap();
+        assert!(
+            snapshot
+                .members
+                .iter()
+                .any(|member| member.device_id == bob.device_id().0)
+        );
+        assert!(
+            snapshot
+                .channels
+                .iter()
+                .find(|channel| channel.channel_id == channel_id.0)
+                .unwrap()
+                .member_device_ids
+                .contains(&bob.device_id().0)
+        );
+        assert!(
+            alice
+                .workspace_events(&workspace_id)
+                .unwrap()
+                .iter()
+                .all(|event| !matches!(
+                    event.event.body,
+                    EventBody::MemberRemoved { .. } | EventBody::ChannelMemberRemoved { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn member_removal_revokes_channel_only_openmls_access_without_workspace_group() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Channel-only MLS Removal", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(workspace_id.clone(), channel_id, bob.device_id().clone())
+            .unwrap();
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+        }
+        bob.ensure_openmls_device_key_packages(workspace_id.clone())
+            .unwrap();
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        let provisioned = alice
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert_eq!(provisioned.created_channel_group_ids.len(), 1);
+        assert!(!alice.openmls_workspace_group_path(&workspace_id).exists());
+
+        let removed = alice
+            .remove_member_with_openmls(workspace_id.clone(), bob.device_id().clone())
+            .unwrap();
+        assert!(removed.openmls_event_id.is_none());
+        assert_eq!(removed.channel_openmls_removal_count, 1);
+        assert_eq!(removed.channel_openmls_event_ids.len(), 1);
+        assert!(removed.manual_key_rotation.is_some());
+        assert!(
+            !alice
+                .workspace_snapshot(workspace_id)
+                .unwrap()
+                .members
+                .iter()
+                .any(|member| member.device_id == bob.device_id().0)
+        );
+    }
+
+    #[test]
+    fn key_pending_channel_member_can_be_removed_without_an_openmls_leaf() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Pending Access Removal", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        let added = alice
+            .add_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            added.provisioning_state,
+            ChannelAccessProvisioningState::KeyPackagePending
+        );
+
+        let removed = alice
+            .remove_channel_member_with_openmls(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+
+        assert!(removed.openmls_event_id.is_none());
+        assert!(removed.manual_key_rotation.is_some());
+        assert!(
+            !alice
+                .workspace_snapshot(workspace_id)
+                .unwrap()
+                .channels
+                .into_iter()
+                .find(|channel| channel.channel_id == channel_id.0)
+                .unwrap()
+                .member_device_ids
+                .contains(&bob.device_id().0)
+        );
+    }
+
+    #[test]
+    fn openmls_member_removal_rotates_manual_keys_and_blocks_stale_hybrid_writes() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let charlie_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let charlie = LocalRuntime::open(charlie_dir.path(), None).unwrap();
+        let created = alice.create_workspace("Hybrid Removal", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let public_channel_id = ChannelId(created.channel_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let private_channel_id = ChannelId(private_channel.channel_id);
+        for device_id in [bob.device_id(), charlie.device_id()] {
+            alice
+                .invite_member(
+                    workspace_id.clone(),
+                    device_id.clone(),
+                    WorkspaceRole::Member,
+                )
+                .unwrap();
+            alice
+                .add_channel_member(
+                    workspace_id.clone(),
+                    private_channel_id.clone(),
+                    device_id.clone(),
+                )
+                .unwrap();
+        }
+        let old_workspace_key = alice.export_workspace_key(workspace_id.clone()).unwrap();
+        let old_channel_key = alice
+            .export_channel_key(workspace_id.clone(), private_channel_id.clone())
+            .unwrap();
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+            charlie.store.append_event(&event).unwrap();
+        }
+        bob.import_workspace_key(old_workspace_key.clone()).unwrap();
+        charlie.import_workspace_key(old_workspace_key).unwrap();
+        charlie.import_channel_key(old_channel_key).unwrap();
+
+        let workspace_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        let channel_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        alice
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(workspace_package.key_package_id),
+            )
+            .unwrap();
+        alice
+            .create_openmls_channel_group(workspace_id.clone(), private_channel_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                private_channel_id.clone(),
+                DeviceKeyPackageId(channel_package.key_package_id),
+            )
+            .unwrap();
+
+        let removed = alice
+            .remove_member_with_openmls(workspace_id.clone(), bob.device_id().clone())
+            .unwrap();
+        let manual_rotation = removed.manual_key_rotation.unwrap();
+        assert_eq!(manual_rotation.channel_key_rotation_count, 1);
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            charlie.store.append_event(&event).unwrap();
+        }
+
+        assert!(matches!(
+            charlie.send_message(
+                workspace_id.clone(),
+                public_channel_id.clone(),
+                "stale public manual key",
+            ),
+            Err(RuntimeError::InvalidWorkspaceKey)
+        ));
+        assert!(matches!(
+            charlie.send_message(
+                workspace_id.clone(),
+                private_channel_id.clone(),
+                "stale private manual key",
+            ),
+            Err(RuntimeError::ChannelKeyMissing { .. })
+        ));
+        alice
+            .send_message(
+                workspace_id.clone(),
+                public_channel_id,
+                "public after complete removal",
+            )
+            .unwrap();
+        alice
+            .send_message(
+                workspace_id,
+                private_channel_id,
+                "private after complete removal",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn membership_removal_fails_closed_across_forked_openmls_groups() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let replica_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Fork-safe MLS Removal", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        let replica = LocalRuntime::open(
+            replica_dir.path(),
+            Some(alice.paths().identity_file.clone()),
+        )
+        .unwrap();
+        assert_eq!(replica.device_id(), alice.device_id());
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            replica.store.append_event(&event).unwrap();
+            bob.store.append_event(&event).unwrap();
+        }
+
+        alice
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        replica
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        alice
+            .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+            .unwrap();
+        replica
+            .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+            .unwrap();
+        let packages = bob
+            .ensure_openmls_device_key_packages(workspace_id.clone())
+            .unwrap();
+        assert!(packages.len() >= 4);
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+            replica.store.append_event(&event).unwrap();
+        }
+
+        alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(packages[0].key_package_id.clone()),
+            )
+            .unwrap();
+        replica
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(packages[1].key_package_id.clone()),
+            )
+            .unwrap();
+        alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(packages[2].key_package_id.clone()),
+            )
+            .unwrap();
+        replica
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(packages[3].key_package_id.clone()),
+            )
+            .unwrap();
+        for event in replica.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+
+        let raw_events = alice
+            .store
+            .list_parseable_events_for_workspace(&workspace_id.0)
+            .unwrap();
+        let index =
+            OpenMlsAutoProvisionIndex::from_events(&verified_local_events_for_runtime(&raw_events));
+        assert_eq!(
+            index.workspace_group_ids_for_device(bob.device_id()).len(),
+            1
+        );
+        let workspace_group_id = index.workspace_group_ids_for_device(bob.device_id())[0].clone();
+        assert!(index.workspace_group_is_forked(&workspace_group_id));
+        assert_eq!(
+            index
+                .channel_group_ids_for_device_in_channel(&channel_id, bob.device_id())
+                .len(),
+            1
+        );
+        let channel_group_id =
+            index.channel_group_ids_for_device_in_channel(&channel_id, bob.device_id())[0].clone();
+        assert!(index.channel_group_is_forked(&channel_id, &channel_group_id));
+        assert!(matches!(
+            alice.remove_channel_member_with_openmls(
+                workspace_id.clone(),
+                channel_id,
+                bob.device_id().clone(),
+            ),
+            Err(RuntimeError::OpenMlsChannelRevocationPending { .. })
+        ));
+        assert!(matches!(
+            alice.remove_member_with_openmls(workspace_id.clone(), bob.device_id().clone()),
+            Err(RuntimeError::OpenMlsWorkspaceRevocationPending { .. })
+        ));
+        assert!(
+            alice
+                .workspace_events(&workspace_id)
+                .unwrap()
+                .iter()
+                .all(|event| !matches!(
+                    event.event.body,
+                    EventBody::MemberRemoved { .. }
+                        | EventBody::ChannelMemberRemoved { .. }
+                        | EventBody::OpenMlsWorkspaceGroupMemberRemoved { .. }
+                        | EventBody::OpenMlsChannelGroupMemberRemoved { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn partial_openmls_revocation_is_not_auto_readded_before_logical_removal() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Partial MLS Revocation", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+        }
+        let packages = bob
+            .ensure_openmls_device_key_packages(workspace_id.clone())
+            .unwrap();
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        alice
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(packages[0].key_package_id.clone()),
+            )
+            .unwrap();
+        alice
+            .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+            .unwrap();
+        alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(packages[1].key_package_id.clone()),
+            )
+            .unwrap();
+
+        alice
+            .remove_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        alice
+            .remove_openmls_workspace_group_member(workspace_id.clone(), bob.device_id().clone())
+            .unwrap();
+        let added_count_before = alice
+            .workspace_events(&workspace_id)
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event.body,
+                    EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
+                        | EventBody::OpenMlsChannelGroupMemberAdded { .. }
+                )
+            })
+            .count();
+
+        let partial = alice
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert!(partial.workspace_provisioned_event_ids.is_empty());
+        assert!(partial.channel_provisioning_outcomes.iter().any(|outcome| {
+            outcome.channel_id == channel_id.0
+                && outcome.member_device_id == bob.device_id().0
+                && outcome.provisioning_state == ChannelAccessProvisioningState::RevocationPending
+        }));
+        let added_count_after = alice
+            .workspace_events(&workspace_id)
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event.body,
+                    EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
+                        | EventBody::OpenMlsChannelGroupMemberAdded { .. }
+                )
+            })
+            .count();
+        assert_eq!(added_count_after, added_count_before);
+
+        alice
+            .remove_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        alice
+            .remove_member(workspace_id.clone(), bob.device_id().clone())
+            .unwrap();
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(workspace_id.clone(), channel_id, bob.device_id().clone())
+            .unwrap();
+        alice
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        let restored_added_count = alice
+            .workspace_events(&workspace_id)
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event.body,
+                    EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
+                        | EventBody::OpenMlsChannelGroupMemberAdded { .. }
+                )
+            })
+            .count();
+        assert_eq!(restored_added_count, added_count_before + 2);
     }
 
     #[test]
@@ -13244,6 +14264,291 @@ mod tests {
         assert_eq!(added.openmls_epoch, Some(1));
         assert_eq!(added.openmls_member_count, Some(2));
         assert_eq!(joined.source_event_id, openmls_event_id);
+    }
+
+    #[test]
+    fn reconcile_openmls_access_converges_private_rooms_and_dm_across_restart() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let mallory_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let mallory = LocalRuntime::open(mallory_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Automatic Private Access", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id.clone());
+        let workspace_key = alice.export_workspace_key(workspace_id.clone()).unwrap();
+
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                mallory.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        let first_room = alice
+            .create_channel(workspace_id.clone(), "strategy", true)
+            .unwrap();
+        let second_room = alice
+            .create_channel(workspace_id.clone(), "launch", true)
+            .unwrap();
+        let first_grant = alice
+            .add_channel_member(
+                workspace_id.clone(),
+                ChannelId(first_room.channel_id.clone()),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        let second_grant = alice
+            .add_channel_member(
+                workspace_id.clone(),
+                ChannelId(second_room.channel_id.clone()),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        let dm = alice
+            .create_direct_message_channel(workspace_id.clone(), "Bob", bob.device_id().clone())
+            .unwrap();
+        assert_eq!(
+            first_grant.provisioning_state,
+            ChannelAccessProvisioningState::KeyPackagePending
+        );
+        assert_eq!(
+            second_grant.provisioning_state,
+            ChannelAccessProvisioningState::KeyPackagePending
+        );
+        assert_eq!(
+            dm.provisioning_state,
+            ChannelAccessProvisioningState::KeyPackagePending
+        );
+
+        let private_channel_ids =
+            vec![first_room.channel_id, second_room.channel_id, dm.channel_id];
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+            mallory.store.append_event(&event).unwrap();
+        }
+        bob.import_workspace_key(workspace_key.clone()).unwrap();
+        mallory.import_workspace_key(workspace_key).unwrap();
+
+        let pending_snapshot = bob
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        for channel_id in &private_channel_ids {
+            let channel = pending_snapshot
+                .channels
+                .iter()
+                .find(|channel| &channel.channel_id == channel_id)
+                .unwrap();
+            assert!(!channel.local_content_ready);
+            assert_eq!(channel.access_state, "key_pending");
+        }
+        assert!(matches!(
+            bob.send_message(
+                workspace_id.clone(),
+                ChannelId(private_channel_ids[0].clone()),
+                "before key readiness",
+            ),
+            Err(RuntimeError::ChannelKeyMissing { .. })
+        ));
+
+        let bob_published = bob.reconcile_openmls_access(workspace_id.clone()).unwrap();
+        assert_eq!(
+            bob_published.published_key_package_event_ids.len(),
+            AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT + private_channel_ids.len()
+        );
+        let mallory_published = mallory
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert_eq!(
+            mallory_published.published_key_package_event_ids.len(),
+            AUTO_OPENMLS_KEY_PACKAGE_SPARE_COUNT
+        );
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        for event in mallory.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+
+        let alice_provisioned = alice
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert!(private_channel_ids.iter().all(|channel_id| {
+            alice
+                .openmls_channel_group_path(&workspace_id, &ChannelId(channel_id.clone()))
+                .exists()
+        }));
+        assert!(
+            alice_provisioned
+                .channel_provisioning_outcomes
+                .iter()
+                .all(|outcome| outcome.member_device_id != mallory.device_id().0)
+        );
+        assert!(
+            alice
+                .workspace_events(&workspace_id)
+                .unwrap()
+                .iter()
+                .all(|event| !matches!(
+                    &event.event.body,
+                    EventBody::OpenMlsChannelGroupMemberAdded {
+                        invitee_device_id,
+                        ..
+                    } if invitee_device_id == mallory.device_id()
+                ))
+        );
+        assert_eq!(
+            alice_provisioned
+                .channel_provisioning_outcomes
+                .iter()
+                .filter(|outcome| {
+                    outcome.member_device_id == bob.device_id().0
+                        && outcome.provisioning_state
+                            == ChannelAccessProvisioningState::MlsWelcomePublished
+                })
+                .count(),
+            private_channel_ids.len()
+        );
+        for event in alice.workspace_events(&workspace_id).unwrap() {
+            bob.store.append_event(&event).unwrap();
+            mallory.store.append_event(&event).unwrap();
+        }
+
+        let bob_joined = bob.reconcile_openmls_access(workspace_id.clone()).unwrap();
+        assert_eq!(
+            bob_joined
+                .channel_groups
+                .iter()
+                .filter(|group| group.joined_event_id.is_some())
+                .count(),
+            private_channel_ids.len()
+        );
+        let ready_snapshot = bob
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        let ready_message_bodies = private_channel_ids
+            .iter()
+            .map(|channel_id| format!("ready in {channel_id}"))
+            .collect::<Vec<_>>();
+        for (channel_id, body) in private_channel_ids.iter().zip(&ready_message_bodies) {
+            let channel = ready_snapshot
+                .channels
+                .iter()
+                .find(|channel| &channel.channel_id == channel_id)
+                .unwrap();
+            assert!(channel.local_content_ready);
+            assert_eq!(channel.access_state, "ready");
+            bob.send_message(workspace_id.clone(), ChannelId(channel_id.clone()), body)
+                .unwrap();
+        }
+
+        for channel_id in &private_channel_ids {
+            assert!(matches!(
+                mallory.send_message(
+                    workspace_id.clone(),
+                    ChannelId(channel_id.clone()),
+                    "unauthorized",
+                ),
+                Err(RuntimeError::Authorization(_))
+            ));
+        }
+
+        for event in bob.workspace_events(&workspace_id).unwrap() {
+            alice.store.append_event(&event).unwrap();
+        }
+        for (channel_id, expected_body) in private_channel_ids.iter().zip(&ready_message_bodies) {
+            let alice_channel = alice
+                .decrypted_workspace_channel_snapshot_latest(
+                    workspace_id.clone(),
+                    ChannelId(channel_id.clone()),
+                    20,
+                )
+                .unwrap();
+            assert!(
+                alice_channel
+                    .timeline
+                    .iter()
+                    .any(|item| item.body == *expected_body)
+            );
+        }
+
+        drop(bob);
+        let reopened = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let after_restart = reopened
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert!(after_restart.published_key_package_event_ids.is_empty());
+        assert!(after_restart.created_channel_group_ids.is_empty());
+        assert!(
+            after_restart
+                .channel_groups
+                .iter()
+                .all(|group| group.joined_event_id.is_none()
+                    && group.applied_event_ids.is_empty()
+                    && group.provisioned_event_ids.is_empty())
+        );
+        let reopened_snapshot = reopened.decrypted_workspace_snapshot(workspace_id).unwrap();
+        assert!(
+            reopened_snapshot
+                .channels
+                .iter()
+                .filter(|channel| private_channel_ids.contains(&channel.channel_id))
+                .all(|channel| channel.local_content_ready && channel.access_state == "ready")
+        );
+    }
+
+    #[test]
+    fn reconcile_openmls_access_repairs_creator_only_private_room_without_manual_key() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Creator-only Access", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private_channel = runtime
+            .create_channel(workspace_id.clone(), "notes", true)
+            .unwrap();
+        let channel_id = ChannelId(private_channel.channel_id.clone());
+        fs::remove_file(runtime.channel_key_path(&workspace_id, &channel_id)).unwrap();
+
+        let pending = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        let pending_channel = pending
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == private_channel.channel_id)
+            .unwrap();
+        assert!(!pending_channel.local_content_ready);
+
+        let reconciled = runtime
+            .reconcile_openmls_access(workspace_id.clone())
+            .unwrap();
+        assert_eq!(
+            reconciled.created_channel_group_ids,
+            vec![private_channel.channel_id.clone()]
+        );
+        let ready = runtime
+            .decrypted_workspace_snapshot(workspace_id.clone())
+            .unwrap();
+        let ready_channel = ready
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == private_channel.channel_id)
+            .unwrap();
+        assert!(ready_channel.local_content_ready);
+        runtime
+            .send_message(workspace_id, channel_id, "creator-only MLS ready")
+            .unwrap();
     }
 
     #[tokio::test]
@@ -13460,7 +14765,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(alice_sync.workspace_id, workspace_id.0);
-        assert_eq!(alice_sync.published.published_event_ids.len(), 3);
+        assert_eq!(alice_sync.published.published_event_ids.len(), 7);
         assert_eq!(alice_sync.pulled.fetched_event_ids.len(), 0);
 
         bob.pull_workspace_from_peer(&transport, &peer, workspace_id.clone())
@@ -13474,15 +14779,19 @@ mod tests {
             .sync_workspace_with_peer(&transport, &peer, workspace_id.clone())
             .await
             .unwrap();
-        assert_eq!(bob_sync.published.published_event_ids.len(), 4);
+        assert_eq!(bob_sync.published.published_event_ids.len(), 5);
         assert_eq!(bob_sync.pulled.fetched_event_ids.len(), 0);
 
         let alice_after = alice
             .sync_workspace_with_peer(&transport, &peer, workspace_id.clone())
             .await
             .unwrap();
-        assert_eq!(alice_after.published.published_event_ids.len(), 3);
-        assert_eq!(alice_after.pulled.fetched_event_ids.len(), 1);
+        // Alice's initial inventory was already published. A later pull-only
+        // delta must not echo those events back to the peer.
+        assert!(alice_after.published.published_event_ids.is_empty());
+        // Bob publishes four spare OpenMLS key packages during catch-up plus
+        // the reply, so Alice receives the complete five-event delta.
+        assert_eq!(alice_after.pulled.fetched_event_ids.len(), 5);
         let snapshot = alice
             .decrypted_workspace_snapshot(workspace_id.clone())
             .unwrap();

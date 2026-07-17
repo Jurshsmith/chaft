@@ -1,3 +1,4 @@
+use chaft_core::DeviceKeyPackageView;
 use chaft_mls::{
     OPENMLS_CHANNEL_GROUP_PROTOCOL, OPENMLS_KEY_PACKAGE_PROTOCOL, OPENMLS_WORKSPACE_GROUP_PROTOCOL,
 };
@@ -8,9 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     LOCAL_SECRET_KIND_OPENMLS_CHANNEL_GROUP, LOCAL_SECRET_KIND_OPENMLS_KEY_PACKAGE,
-    LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP, LocalRuntime, RuntimeError,
-    channel_openmls_commit_event, validate_channel_id_reference,
-    validate_device_key_package_id_reference, validate_workspace_id_reference,
+    LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP, LocalRuntime, OpenMlsAutoProvisionIndex,
+    RuntimeError, channel_openmls_commit_event, private_channel_creator_device_id_from_events,
+    remove_secret_file, validate_channel_id_reference, validate_device_key_package_id_reference,
+    validate_workspace_id_reference, workspace_creator_device_id_from_events,
     workspace_openmls_commit_event,
 };
 
@@ -239,6 +241,35 @@ pub struct AppliedOpenMlsChannelGroupCommits {
     pub private_group_state_path: String,
 }
 
+pub(crate) fn validate_openmls_key_package_for_publisher(
+    publisher_device_id: &DeviceId,
+    key_package: &[u8],
+) -> Result<chaft_mls::ValidatedMlsKeyPackage, RuntimeError> {
+    let validated = chaft_mls::validate_key_package(key_package)?;
+    if validated.identity != publisher_device_id.0 {
+        return Err(RuntimeError::OpenMlsKeyPackagePublisherMismatch {
+            publisher_device_id: publisher_device_id.clone(),
+            package_identity: validated.identity,
+        });
+    }
+    Ok(validated)
+}
+
+fn validate_openmls_key_package_view(
+    workspace_id: &WorkspaceId,
+    key_package_id: &DeviceKeyPackageId,
+    key_package: &DeviceKeyPackageView,
+) -> Result<chaft_mls::ValidatedMlsKeyPackage, RuntimeError> {
+    if key_package.protocol != OPENMLS_KEY_PACKAGE_PROTOCOL {
+        return Err(RuntimeError::OpenMlsKeyPackageProtocolMismatch {
+            workspace_id: workspace_id.clone(),
+            key_package_id: key_package_id.clone(),
+            actual_protocol: key_package.protocol.clone(),
+        });
+    }
+    validate_openmls_key_package_for_publisher(&key_package.device_id, &key_package.key_package)
+}
+
 impl LocalRuntime {
     pub fn publish_openmls_device_key_package(
         &self,
@@ -291,9 +322,18 @@ impl LocalRuntime {
         workspace_id: WorkspaceId,
     ) -> Result<CreatedOpenMlsWorkspaceGroup, RuntimeError> {
         self.require_workspace_admin(&workspace_id, "create_openmls_workspace_group")?;
+        let events = self.materialized_workspace_events(&workspace_id)?;
+        if workspace_creator_device_id_from_events(&events).as_ref()
+            != Some(self.identity.device_id())
+        {
+            return Err(RuntimeError::OpenMlsWorkspaceGroupCreatorRequired { workspace_id });
+        }
         let private_group_state_path = self.openmls_workspace_group_path(&workspace_id);
         if private_group_state_path.exists() {
             return Err(RuntimeError::OpenMlsWorkspaceGroupAlreadyExists { workspace_id });
+        }
+        if OpenMlsAutoProvisionIndex::from_events(&events).workspace_group_has_events() {
+            return Err(RuntimeError::OpenMlsWorkspaceGroupMissing { workspace_id });
         }
 
         let created =
@@ -344,6 +384,8 @@ impl LocalRuntime {
                 workspace_id: workspace_id.clone(),
                 key_package_id: key_package_id.clone(),
             })?;
+        let validated_key_package =
+            validate_openmls_key_package_view(&workspace_id, &key_package_id, key_package)?;
         let private_group_state = self.read_openmls_secret_file(
             &private_group_state_path,
             LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP,
@@ -352,6 +394,13 @@ impl LocalRuntime {
             &private_group_state,
             &key_package.key_package,
         )?;
+        if added.invitee_identity != validated_key_package.identity
+            || added.invitee_key_package_ref != validated_key_package.key_package_ref
+        {
+            return Err(RuntimeError::OpenMlsKeyPackageValidationMismatch {
+                key_package_id: key_package_id.clone(),
+            });
+        }
         debug_assert_eq!(added.protocol, OPENMLS_WORKSPACE_GROUP_PROTOCOL);
 
         let mut event = SignableEvent::new(
@@ -484,7 +533,19 @@ impl LocalRuntime {
         }
 
         let events = self.materialized_workspace_events(&workspace_id)?;
-        let selected = events.iter().rev().find_map(|event| {
+        let last_self_removal_index = events.iter().rposition(|event| {
+            matches!(
+                &event.event.body,
+                EventBody::OpenMlsWorkspaceGroupMemberRemoved {
+                    removed_device_id,
+                    ..
+                } if removed_device_id == self.identity.device_id()
+            )
+        });
+        let selected = events.iter().enumerate().rev().find_map(|(index, event)| {
+            if last_self_removal_index.is_some_and(|removal_index| index <= removal_index) {
+                return None;
+            }
             if source_event_id
                 .as_ref()
                 .is_some_and(|source_event_id| source_event_id != &event.event_id)
@@ -684,7 +745,9 @@ impl LocalRuntime {
             });
         }
 
-        if !applied_event_ids.is_empty() {
+        if self_removed {
+            remove_secret_file(&private_group_state_path)?;
+        } else if !applied_event_ids.is_empty() {
             self.write_openmls_secret_file(
                 &private_group_state_path,
                 LOCAL_SECRET_KIND_OPENMLS_WORKSPACE_GROUP,
@@ -713,9 +776,24 @@ impl LocalRuntime {
         channel_id: ChannelId,
     ) -> Result<CreatedOpenMlsChannelGroup, RuntimeError> {
         self.require_local_channel_access(&workspace_id, &channel_id)?;
+        let events = self.materialized_workspace_events(&workspace_id)?;
+        if private_channel_creator_device_id_from_events(&events, &channel_id).as_ref()
+            != Some(self.identity.device_id())
+        {
+            return Err(RuntimeError::OpenMlsChannelGroupCreatorRequired {
+                workspace_id,
+                channel_id,
+            });
+        }
         let private_group_state_path = self.openmls_channel_group_path(&workspace_id, &channel_id);
         if private_group_state_path.exists() {
             return Err(RuntimeError::OpenMlsChannelGroupAlreadyExists {
+                workspace_id,
+                channel_id,
+            });
+        }
+        if OpenMlsAutoProvisionIndex::from_events(&events).channel_group_has_events(&channel_id) {
+            return Err(RuntimeError::OpenMlsChannelGroupMissing {
                 workspace_id,
                 channel_id,
             });
@@ -772,6 +850,8 @@ impl LocalRuntime {
                 workspace_id: workspace_id.clone(),
                 key_package_id: key_package_id.clone(),
             })?;
+        let validated_key_package =
+            validate_openmls_key_package_view(&workspace_id, &key_package_id, key_package)?;
         let private_group_state = self.read_openmls_secret_file(
             &private_group_state_path,
             LOCAL_SECRET_KIND_OPENMLS_CHANNEL_GROUP,
@@ -780,6 +860,13 @@ impl LocalRuntime {
             &private_group_state,
             &key_package.key_package,
         )?;
+        if added.invitee_identity != validated_key_package.identity
+            || added.invitee_key_package_ref != validated_key_package.key_package_ref
+        {
+            return Err(RuntimeError::OpenMlsKeyPackageValidationMismatch {
+                key_package_id: key_package_id.clone(),
+            });
+        }
         debug_assert_eq!(added.protocol, OPENMLS_CHANNEL_GROUP_PROTOCOL);
 
         let mut event = SignableEvent::new(
@@ -917,7 +1004,21 @@ impl LocalRuntime {
         }
 
         let events = self.materialized_workspace_events(&workspace_id)?;
-        let selected = events.iter().rev().find_map(|event| {
+        let last_self_removal_index = events.iter().rposition(|event| {
+            matches!(
+                &event.event.body,
+                EventBody::OpenMlsChannelGroupMemberRemoved {
+                    channel_id: event_channel_id,
+                    removed_device_id,
+                    ..
+                } if event_channel_id == &channel_id
+                    && removed_device_id == self.identity.device_id()
+            )
+        });
+        let selected = events.iter().enumerate().rev().find_map(|(index, event)| {
+            if last_self_removal_index.is_some_and(|removal_index| index <= removal_index) {
+                return None;
+            }
             if source_event_id
                 .as_ref()
                 .is_some_and(|source_event_id| source_event_id != &event.event_id)
@@ -1173,7 +1274,9 @@ impl LocalRuntime {
             });
         }
 
-        if !applied_event_ids.is_empty() {
+        if self_removed {
+            remove_secret_file(&private_group_state_path)?;
+        } else if !applied_event_ids.is_empty() {
             self.write_openmls_secret_file(
                 &private_group_state_path,
                 LOCAL_SECRET_KIND_OPENMLS_CHANNEL_GROUP,
@@ -1195,5 +1298,458 @@ impl LocalRuntime {
             self_removed,
             private_group_state_path: private_group_state_path.to_string_lossy().into_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use std::{fs, path::Path};
+
+    use chaft_types::WorkspaceRole;
+
+    use super::*;
+
+    fn copy_workspace_events(
+        source: &LocalRuntime,
+        target: &LocalRuntime,
+        workspace_id: &WorkspaceId,
+    ) {
+        for event in source.workspace_events(workspace_id).unwrap() {
+            target.store.append_event(&event).unwrap();
+        }
+    }
+
+    fn record_device_key_package_event(
+        runtime: &LocalRuntime,
+        workspace_id: &WorkspaceId,
+        protocol: &str,
+        key_package: Vec<u8>,
+    ) -> DeviceKeyPackageId {
+        let context = runtime.workspace_write_context(workspace_id).unwrap();
+        let key_package_id = DeviceKeyPackageId::new();
+        let mut event = SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            runtime.device_id().clone(),
+            EventBody::DeviceKeyPackagePublished {
+                key_package_id: key_package_id.clone(),
+                protocol: protocol.to_owned(),
+                key_package,
+            },
+        );
+        event.parents = context.head_event_ids;
+        runtime
+            .sign_authorize_and_append_with_history(event, &context.events)
+            .unwrap();
+        key_package_id
+    }
+
+    fn assert_group_member_count(path: &Path, expected: usize) {
+        let bytes = fs::read(path).unwrap();
+        let validated = chaft_mls::validate_private_workspace_group_state(&bytes).unwrap();
+        assert_eq!(validated.member_count, expected);
+    }
+
+    #[test]
+    fn generic_openmls_publish_rejects_malformed_and_copied_packages() {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        let other_dir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(runtime_dir.path(), None).unwrap();
+        let other = LocalRuntime::open(other_dir.path(), None).unwrap();
+        let created = runtime
+            .create_workspace("Package binding", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let initial_event_count = runtime.workspace_events(&workspace_id).unwrap().len();
+
+        let legacy = runtime
+            .publish_device_key_package(workspace_id.clone(), "openmls/key-package", vec![9, 8, 7])
+            .unwrap();
+        assert_eq!(legacy.protocol, "openmls/key-package");
+
+        assert!(matches!(
+            runtime.publish_device_key_package(
+                workspace_id.clone(),
+                OPENMLS_KEY_PACKAGE_PROTOCOL,
+                vec![1, 2, 3],
+            ),
+            Err(RuntimeError::Mls(_))
+        ));
+
+        let copied = chaft_mls::generate_device_key_package(&other.device_id().0).unwrap();
+        let error = runtime
+            .publish_device_key_package(
+                workspace_id.clone(),
+                OPENMLS_KEY_PACKAGE_PROTOCOL,
+                copied.key_package,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::OpenMlsKeyPackagePublisherMismatch {
+                publisher_device_id,
+                package_identity,
+            } if publisher_device_id == *runtime.device_id()
+                && package_identity == other.device_id().0
+        ));
+        assert_eq!(
+            runtime.workspace_events(&workspace_id).unwrap().len(),
+            initial_event_count + 1
+        );
+    }
+
+    #[test]
+    fn openmls_group_add_revalidates_recorded_package_protocol_identity_and_bytes() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Recorded package", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private = alice
+            .create_channel(workspace_id.clone(), "private", true)
+            .unwrap();
+        let channel_id = ChannelId(private.channel_id);
+        if !alice.openmls_workspace_group_path(&workspace_id).exists() {
+            alice
+                .create_openmls_workspace_group(workspace_id.clone())
+                .unwrap();
+        }
+        if !alice
+            .openmls_channel_group_path(&workspace_id, &channel_id)
+            .exists()
+        {
+            alice
+                .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+                .unwrap();
+        }
+
+        let copied = chaft_mls::generate_device_key_package(&bob.device_id().0).unwrap();
+        let copied_id = record_device_key_package_event(
+            &alice,
+            &workspace_id,
+            OPENMLS_KEY_PACKAGE_PROTOCOL,
+            copied.key_package,
+        );
+        for result in [
+            alice
+                .add_openmls_workspace_group_member(workspace_id.clone(), copied_id.clone())
+                .map(|_| ()),
+            alice
+                .add_openmls_channel_group_member(
+                    workspace_id.clone(),
+                    channel_id.clone(),
+                    copied_id,
+                )
+                .map(|_| ()),
+        ] {
+            assert!(matches!(
+                result,
+                Err(RuntimeError::OpenMlsKeyPackagePublisherMismatch {
+                    publisher_device_id,
+                    package_identity,
+                }) if publisher_device_id == *alice.device_id()
+                    && package_identity == bob.device_id().0
+            ));
+        }
+
+        let valid_but_wrong_protocol =
+            chaft_mls::generate_device_key_package(&alice.device_id().0).unwrap();
+        let wrong_protocol_id = record_device_key_package_event(
+            &alice,
+            &workspace_id,
+            "openmls/key-package",
+            valid_but_wrong_protocol.key_package,
+        );
+        assert!(matches!(
+            alice.add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                wrong_protocol_id.clone(),
+            ),
+            Err(RuntimeError::OpenMlsKeyPackageProtocolMismatch {
+                key_package_id,
+                ..
+            }) if key_package_id == wrong_protocol_id
+        ));
+
+        let malformed_id = record_device_key_package_event(
+            &alice,
+            &workspace_id,
+            OPENMLS_KEY_PACKAGE_PROTOCOL,
+            vec![4, 5, 6],
+        );
+        assert!(matches!(
+            alice.add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                malformed_id,
+            ),
+            Err(RuntimeError::Mls(_))
+        ));
+        assert_group_member_count(&alice.openmls_workspace_group_path(&workspace_id), 1);
+        assert_group_member_count(
+            &alice.openmls_channel_group_path(&workspace_id, &channel_id),
+            1,
+        );
+    }
+
+    #[test]
+    fn package_pool_replenishes_corrupt_and_missing_private_bundles() {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        let runtime = LocalRuntime::open(runtime_dir.path(), None).unwrap();
+        let created = runtime.create_workspace("Package pool", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+
+        let first = runtime
+            .ensure_openmls_device_key_packages(workspace_id.clone())
+            .unwrap();
+        assert!(first.len() >= 4);
+        fs::write(&first[0].private_bundle_path, b"corrupt private bundle").unwrap();
+        fs::remove_file(&first[1].private_bundle_path).unwrap();
+        fs::copy(&first[3].private_bundle_path, &first[2].private_bundle_path).unwrap();
+
+        let replenished = runtime
+            .ensure_openmls_device_key_packages(workspace_id)
+            .unwrap();
+        assert_eq!(replenished.len(), 3);
+        assert!(replenished.iter().all(|package| {
+            package.key_package_ref != first[0].key_package_ref
+                && package.key_package_ref != first[1].key_package_ref
+                && package.key_package_ref != first[2].key_package_ref
+        }));
+    }
+
+    #[test]
+    fn workspace_self_removal_deletes_state_and_rejoin_uses_only_new_welcome() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice
+            .create_workspace("Workspace rejoin", "general")
+            .unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let channel_id = ChannelId(created.channel_id);
+
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let first_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        copy_workspace_events(&bob, &alice, &workspace_id);
+        alice
+            .create_openmls_workspace_group(workspace_id.clone())
+            .unwrap();
+        let first_add = alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(first_package.key_package_id),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        bob.join_openmls_workspace_group(
+            workspace_id.clone(),
+            Some(EventId(first_add.event_id.clone())),
+        )
+        .unwrap();
+
+        let removed = alice
+            .remove_openmls_workspace_group_member(workspace_id.clone(), bob.device_id().clone())
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let applied = bob
+            .apply_openmls_workspace_group_commits(
+                workspace_id.clone(),
+                Some(EventId(removed.event_id)),
+            )
+            .unwrap();
+        let bob_group_path = bob.openmls_workspace_group_path(&workspace_id);
+        assert!(applied.self_removed);
+        assert!(!bob_group_path.exists());
+
+        drop(bob);
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        assert!(!bob_group_path.exists());
+        assert!(matches!(
+            bob.join_openmls_workspace_group(workspace_id.clone(), None),
+            Err(RuntimeError::OpenMlsWorkspaceGroupInviteNotFound { .. })
+        ));
+        assert!(matches!(
+            bob.join_openmls_workspace_group(
+                workspace_id.clone(),
+                Some(EventId(first_add.event_id)),
+            ),
+            Err(RuntimeError::OpenMlsWorkspaceGroupInviteNotFound { .. })
+        ));
+
+        let second_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        copy_workspace_events(&bob, &alice, &workspace_id);
+        let second_add = alice
+            .add_openmls_workspace_group_member(
+                workspace_id.clone(),
+                DeviceKeyPackageId(second_package.key_package_id),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let joined = bob
+            .join_openmls_workspace_group(
+                workspace_id.clone(),
+                Some(EventId(second_add.event_id.clone())),
+            )
+            .unwrap();
+        assert_eq!(joined.source_event_id, second_add.event_id);
+
+        alice
+            .send_message(
+                workspace_id.clone(),
+                channel_id,
+                "readable after workspace rejoin",
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let snapshot = bob.decrypted_workspace_snapshot(workspace_id).unwrap();
+        assert!(
+            snapshot
+                .timeline
+                .iter()
+                .any(|message| message.body == "readable after workspace rejoin")
+        );
+    }
+
+    #[test]
+    fn channel_self_removal_deletes_state_and_rejoin_uses_only_new_welcome() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let bob_dir = tempfile::tempdir().unwrap();
+        let alice = LocalRuntime::open(alice_dir.path(), None).unwrap();
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        let created = alice.create_workspace("Channel rejoin", "general").unwrap();
+        let workspace_id = WorkspaceId(created.workspace_id);
+        let private = alice
+            .create_channel(workspace_id.clone(), "private", true)
+            .unwrap();
+        let channel_id = ChannelId(private.channel_id);
+        alice
+            .invite_member(
+                workspace_id.clone(),
+                bob.device_id().clone(),
+                WorkspaceRole::Member,
+            )
+            .unwrap();
+        alice
+            .add_channel_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let first_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        copy_workspace_events(&bob, &alice, &workspace_id);
+        if !alice
+            .openmls_channel_group_path(&workspace_id, &channel_id)
+            .exists()
+        {
+            alice
+                .create_openmls_channel_group(workspace_id.clone(), channel_id.clone())
+                .unwrap();
+        }
+        let first_add = alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(first_package.key_package_id),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        bob.join_openmls_channel_group(
+            workspace_id.clone(),
+            channel_id.clone(),
+            Some(EventId(first_add.event_id.clone())),
+        )
+        .unwrap();
+
+        let removed = alice
+            .remove_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                bob.device_id().clone(),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let applied = bob
+            .apply_openmls_channel_group_commits(
+                workspace_id.clone(),
+                channel_id.clone(),
+                Some(EventId(removed.event_id)),
+            )
+            .unwrap();
+        let bob_group_path = bob.openmls_channel_group_path(&workspace_id, &channel_id);
+        assert!(applied.self_removed);
+        assert!(!bob_group_path.exists());
+
+        drop(bob);
+        let bob = LocalRuntime::open(bob_dir.path(), None).unwrap();
+        assert!(!bob_group_path.exists());
+        assert!(matches!(
+            bob.join_openmls_channel_group(workspace_id.clone(), channel_id.clone(), None,),
+            Err(RuntimeError::OpenMlsChannelGroupInviteNotFound { .. })
+        ));
+        assert!(matches!(
+            bob.join_openmls_channel_group(
+                workspace_id.clone(),
+                channel_id.clone(),
+                Some(EventId(first_add.event_id)),
+            ),
+            Err(RuntimeError::OpenMlsChannelGroupInviteNotFound { .. })
+        ));
+
+        let second_package = bob
+            .publish_openmls_device_key_package(workspace_id.clone())
+            .unwrap();
+        copy_workspace_events(&bob, &alice, &workspace_id);
+        let second_add = alice
+            .add_openmls_channel_group_member(
+                workspace_id.clone(),
+                channel_id.clone(),
+                DeviceKeyPackageId(second_package.key_package_id),
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let joined = bob
+            .join_openmls_channel_group(
+                workspace_id.clone(),
+                channel_id.clone(),
+                Some(EventId(second_add.event_id.clone())),
+            )
+            .unwrap();
+        assert_eq!(joined.source_event_id, second_add.event_id);
+
+        alice
+            .send_message(
+                workspace_id.clone(),
+                channel_id,
+                "readable after channel rejoin",
+            )
+            .unwrap();
+        copy_workspace_events(&alice, &bob, &workspace_id);
+        let snapshot = bob.decrypted_workspace_snapshot(workspace_id).unwrap();
+        assert!(
+            snapshot
+                .timeline
+                .iter()
+                .any(|message| message.body == "readable after channel rejoin")
+        );
     }
 }

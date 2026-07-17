@@ -20,7 +20,7 @@ use crate::{
     },
     join_response_inbox::{validate_join_response_entry_id, validate_join_response_payload},
     peer_endpoint::direct_peer_address,
-    worker::run_on_worker_thread,
+    worker::{run_network_future, run_on_worker_thread},
 };
 
 const JOIN_RESPONSE_OUTBOX_DIR: &str = "join-response-outbox";
@@ -213,16 +213,12 @@ pub(crate) fn runtime_submit_join_response_outbox_entry_direct_result(
         let response_bytes = entry.response_text.clone().into_bytes();
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            let submit_result = runtime.block_on(transport.submit_join_response(
+            let transport = IrohTransport::shared_from_environment();
+            let submit_result = run_network_future(transport.submit_join_response(
                 &peer,
                 workspace_id.as_ref(),
                 response_bytes,
-            ));
+            ))?;
             let entry = match submit_result {
                 Ok(()) => mark_join_response_outbox_entry(
                     &data_dir,

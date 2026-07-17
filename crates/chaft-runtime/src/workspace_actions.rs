@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use chaft_core::{WorkspaceState, authorize_event_with_history};
 use chaft_crypto::seal_message_markdown;
 use chaft_types::{
@@ -17,11 +19,16 @@ use chaft_types::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DEVICE_KEY_PACKAGE_MAX_LEN, LocalRuntime, PendingAttachment, RuntimeError,
-    content_keys::{ChannelKey, RotatedChannelKey, RotatedWorkspaceKey, WorkspaceKey},
+    ChannelAccessProvisioningOutcome, ChannelAccessProvisioningState, DEVICE_KEY_PACKAGE_MAX_LEN,
+    LocalRuntime, OpenMlsAutoProvisionIndex, PendingAttachment, RuntimeError,
+    content_keys::{
+        ChannelKey, RotatedChannelKey, RotatedWorkspaceKey, RotatedWorkspaceManualKeys,
+        WorkspaceKey,
+    },
     runtime_validation::{validate_device_id_reference, validate_metadata_field_size},
     validate_channel_id_reference, validate_message_id_reference, validate_message_markdown_size,
-    validate_workspace_id_reference,
+    validate_openmls_key_package_for_publisher, validate_workspace_id_reference,
+    verified_local_events_for_runtime,
 };
 
 const PERSONAL_CHANNEL_NAME: &str = "dm-you";
@@ -51,6 +58,10 @@ pub struct CreatedChannel {
     pub workspace_id: String,
     pub channel_id: String,
     pub event_id: String,
+    #[serde(default)]
+    pub provisioning_state: ChannelAccessProvisioningState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provisioning_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -341,11 +352,21 @@ pub struct RemovedMember {
 pub struct RemovedMemberWithOpenMls {
     pub workspace_id: String,
     pub removed_device_id: String,
-    pub openmls_event_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_event_id: Option<String>,
     pub removal_event_id: String,
-    pub openmls_epoch: u64,
-    pub openmls_member_count: usize,
-    pub openmls_private_group_state_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_member_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_private_group_state_path: Option<String>,
+    #[serde(default)]
+    pub channel_openmls_removal_count: usize,
+    #[serde(default)]
+    pub channel_openmls_event_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_key_rotation: Option<RotatedWorkspaceManualKeys>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +391,10 @@ pub struct AddedChannelMember {
     pub openmls_member_add_event_id: Option<String>,
     pub openmls_epoch: Option<u64>,
     pub openmls_member_count: Option<usize>,
+    #[serde(default)]
+    pub provisioning_state: ChannelAccessProvisioningState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provisioning_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,11 +412,17 @@ pub struct RemovedChannelMemberWithOpenMls {
     pub workspace_id: String,
     pub channel_id: String,
     pub member_device_id: String,
-    pub openmls_event_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_event_id: Option<String>,
     pub removal_event_id: String,
-    pub openmls_epoch: u64,
-    pub openmls_member_count: usize,
-    pub openmls_private_group_state_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_member_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openmls_private_group_state_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_key_rotation: Option<RotatedChannelKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +436,128 @@ pub struct RemovedChannelMemberWithKeyRotation {
 }
 
 impl LocalRuntime {
+    fn openmls_removal_index(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<OpenMlsAutoProvisionIndex, RuntimeError> {
+        let raw_events = self
+            .store
+            .list_parseable_events_for_workspace(&workspace_id.0)?;
+        let raw_events = verified_local_events_for_runtime(&raw_events);
+        let mut indexed_events = self.materialized_workspace_events(workspace_id)?;
+        let materialized_ids = indexed_events
+            .iter()
+            .map(|event| event.event_id.0.clone())
+            .collect::<HashSet<_>>();
+        let events_by_id = raw_events
+            .iter()
+            .map(|event| (event.event_id.0.as_str(), event))
+            .collect::<HashMap<_, _>>();
+
+        for candidate in raw_events.iter() {
+            if materialized_ids.contains(candidate.event_id.0.as_str())
+                || !matches!(
+                    candidate.event.body,
+                    EventBody::OpenMlsWorkspaceGroupMemberAdded { .. }
+                        | EventBody::OpenMlsWorkspaceGroupMemberRemoved { .. }
+                        | EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. }
+                        | EventBody::OpenMlsChannelGroupMemberAdded { .. }
+                        | EventBody::OpenMlsChannelGroupMemberRemoved { .. }
+                        | EventBody::OpenMlsChannelGroupSelfUpdated { .. }
+                )
+            {
+                continue;
+            }
+
+            let mut ancestor_ids = HashSet::new();
+            let mut pending = candidate
+                .event
+                .parents
+                .iter()
+                .map(|event_id| event_id.0.as_str())
+                .collect::<Vec<_>>();
+            let mut complete = true;
+            while let Some(event_id) = pending.pop() {
+                if !ancestor_ids.insert(event_id) {
+                    continue;
+                }
+                let Some(ancestor) = events_by_id.get(event_id) else {
+                    complete = false;
+                    break;
+                };
+                pending.extend(
+                    ancestor
+                        .event
+                        .parents
+                        .iter()
+                        .map(|parent_id| parent_id.0.as_str()),
+                );
+            }
+            if !complete {
+                continue;
+            }
+            let causal_history = raw_events
+                .iter()
+                .filter(|event| ancestor_ids.contains(event.event_id.0.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if authorize_event_with_history(&causal_history, candidate).is_ok() {
+                indexed_events.push(candidate.clone());
+            }
+        }
+        Ok(OpenMlsAutoProvisionIndex::from_events(&indexed_events))
+    }
+
+    fn reconcile_channel_provisioning_outcome(
+        &self,
+        workspace_id: &WorkspaceId,
+        channel_id: &ChannelId,
+        member_device_id: &DeviceId,
+    ) -> ChannelAccessProvisioningOutcome {
+        if member_device_id == self.identity.device_id() {
+            return ChannelAccessProvisioningOutcome {
+                channel_id: channel_id.0.clone(),
+                member_device_id: member_device_id.0.clone(),
+                provisioning_state: ChannelAccessProvisioningState::Ready,
+                event_id: None,
+                openmls_epoch: None,
+                openmls_member_count: None,
+                provisioning_error: None,
+            };
+        }
+
+        match self
+            .materialized_workspace_events(workspace_id)
+            .and_then(|events| self.auto_provision_openmls_channel_members(workspace_id, &events))
+        {
+            Ok((_, provisioned)) => provisioned
+                .into_iter()
+                .flat_map(|channel| channel.outcomes)
+                .find(|outcome| {
+                    outcome.channel_id == channel_id.0
+                        && outcome.member_device_id == member_device_id.0
+                })
+                .unwrap_or(ChannelAccessProvisioningOutcome {
+                    channel_id: channel_id.0.clone(),
+                    member_device_id: member_device_id.0.clone(),
+                    provisioning_state: ChannelAccessProvisioningState::GroupPending,
+                    event_id: None,
+                    openmls_epoch: None,
+                    openmls_member_count: None,
+                    provisioning_error: None,
+                }),
+            Err(error) => ChannelAccessProvisioningOutcome {
+                channel_id: channel_id.0.clone(),
+                member_device_id: member_device_id.0.clone(),
+                provisioning_state: ChannelAccessProvisioningState::Failed,
+                event_id: None,
+                openmls_epoch: None,
+                openmls_member_count: None,
+                provisioning_error: Some(error.to_string()),
+            },
+        }
+    }
+
     pub fn create_workspace(
         &self,
         name: impl Into<String>,
@@ -525,6 +678,8 @@ impl LocalRuntime {
             workspace_id: workspace_id.0,
             channel_id: channel_id.0,
             event_id: channel.event_id.0,
+            provisioning_state: ChannelAccessProvisioningState::Ready,
+            provisioning_error: None,
         })
     }
 
@@ -553,6 +708,8 @@ impl LocalRuntime {
                         workspace_id: workspace_id.0.clone(),
                         channel_id: channel_id.0.clone(),
                         event_id: event.event_id.0.clone(),
+                        provisioning_state: ChannelAccessProvisioningState::Ready,
+                        provisioning_error: None,
                     }),
                     _ => None,
                 }
@@ -582,12 +739,16 @@ impl LocalRuntime {
                 workspace_id: workspace_id.0,
                 channel_id: channel_id.0,
                 event_id: channel.event_id.0,
+                provisioning_state: ChannelAccessProvisioningState::Ready,
+                provisioning_error: None,
             });
         }
 
         let channel_id = ChannelId::new();
-        let mut participant_device_ids =
-            vec![self.identity.device_id().clone(), participant_device_id];
+        let mut participant_device_ids = vec![
+            self.identity.device_id().clone(),
+            participant_device_id.clone(),
+        ];
         participant_device_ids.sort_by(|left, right| left.0.cmp(&right.0));
         participant_device_ids.dedup();
         let mut channel = SignableEvent::new(
@@ -607,10 +768,17 @@ impl LocalRuntime {
         self.save_channel_key(&channel_key)?;
         self.store.append_event(&channel)?;
 
+        let provisioning = self.reconcile_channel_provisioning_outcome(
+            &workspace_id,
+            &channel_id,
+            &participant_device_id,
+        );
         Ok(CreatedChannel {
             workspace_id: workspace_id.0,
             channel_id: channel_id.0,
             event_id: channel.event_id.0,
+            provisioning_state: provisioning.provisioning_state,
+            provisioning_error: provisioning.provisioning_error,
         })
     }
 
@@ -979,6 +1147,12 @@ impl LocalRuntime {
         }
         if key_package.len() > DEVICE_KEY_PACKAGE_MAX_LEN {
             return Err(RuntimeError::DeviceKeyPackageTooLarge);
+        }
+        // Only the canonical RFC 9420 marker opts into OpenMLS semantics. The legacy
+        // `openmls/key-package` marker remains an opaque generic access-file protocol and is
+        // deliberately excluded from automatic OpenMLS provisioning.
+        if protocol == chaft_mls::OPENMLS_KEY_PACKAGE_PROTOCOL {
+            validate_openmls_key_package_for_publisher(self.identity.device_id(), &key_package)?;
         }
 
         let key_package_id = DeviceKeyPackageId::new();
@@ -1501,6 +1675,27 @@ impl LocalRuntime {
         removed_device_id: DeviceId,
     ) -> Result<RemovedMember, RuntimeError> {
         validate_device_id_reference(&removed_device_id)?;
+        let openmls_index = self.openmls_removal_index(&workspace_id)?;
+        if openmls_index.has_forked_workspace_group()
+            || openmls_index.workspace_group_has_device(&removed_device_id)
+        {
+            return Err(RuntimeError::OpenMlsWorkspaceRevocationPending {
+                workspace_id,
+                device_id: removed_device_id,
+            });
+        }
+        if let Some(channel_id) = openmls_index.first_forked_channel_id().or_else(|| {
+            openmls_index
+                .channel_group_ids_for_device(&removed_device_id)
+                .into_iter()
+                .next()
+        }) {
+            return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                workspace_id,
+                channel_id,
+                device_id: removed_device_id,
+            });
+        }
         let context = self.workspace_write_context(&workspace_id)?;
         let mut removal = SignableEvent::new(
             workspace_id.clone(),
@@ -1526,20 +1721,98 @@ impl LocalRuntime {
         removed_device_id: DeviceId,
     ) -> Result<RemovedMemberWithOpenMls, RuntimeError> {
         validate_device_id_reference(&removed_device_id)?;
-        let openmls = self.remove_openmls_workspace_group_member(
-            workspace_id.clone(),
-            removed_device_id.clone(),
-        )?;
+        let openmls_index = self.openmls_removal_index(&workspace_id)?;
+        if openmls_index.has_forked_workspace_group() {
+            return Err(RuntimeError::OpenMlsWorkspaceRevocationPending {
+                workspace_id,
+                device_id: removed_device_id,
+            });
+        }
+        if let Some(channel_id) = openmls_index.first_forked_channel_id() {
+            return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                workspace_id,
+                channel_id,
+                device_id: removed_device_id,
+            });
+        }
+        let workspace_group_ids = openmls_index.workspace_group_ids_for_device(&removed_device_id);
+        let has_workspace_openmls_access = !workspace_group_ids.is_empty();
+        let channel_ids = openmls_index.channel_group_ids_for_device(&removed_device_id);
+
+        if has_workspace_openmls_access {
+            let Some(local_group_id) = self.local_openmls_workspace_group_id(&workspace_id)? else {
+                return Err(RuntimeError::OpenMlsWorkspaceGroupMissing { workspace_id });
+            };
+            if workspace_group_ids.len() != 1 || workspace_group_ids[0] != local_group_id {
+                return Err(RuntimeError::OpenMlsWorkspaceRevocationPending {
+                    workspace_id,
+                    device_id: removed_device_id,
+                });
+            }
+        }
+        for channel_id in &channel_ids {
+            let Some(local_group_id) =
+                self.local_openmls_channel_group_id(&workspace_id, channel_id)?
+            else {
+                return Err(RuntimeError::OpenMlsChannelGroupMissing {
+                    workspace_id,
+                    channel_id: channel_id.clone(),
+                });
+            };
+            let active_group_ids = openmls_index
+                .channel_group_ids_for_device_in_channel(channel_id, &removed_device_id);
+            if active_group_ids.len() != 1 || active_group_ids[0] != local_group_id {
+                return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                    workspace_id,
+                    channel_id: channel_id.clone(),
+                    device_id: removed_device_id,
+                });
+            }
+        }
+
+        // A workspace can contain both MLS state and legacy manually shared
+        // keys. Rotate every local manual key before changing logical
+        // membership so a partially replicated removal never leaves the old
+        // encryption path usable for future messages.
+        let manual_key_rotation = self
+            .workspace_key_path(&workspace_id)
+            .exists()
+            .then(|| self.rotate_workspace_manual_keys(workspace_id.clone()))
+            .transpose()?;
+
+        let mut channel_openmls_event_ids = Vec::with_capacity(channel_ids.len());
+        for channel_id in channel_ids {
+            channel_openmls_event_ids.push(
+                self.remove_openmls_channel_group_member(
+                    workspace_id.clone(),
+                    channel_id,
+                    removed_device_id.clone(),
+                )?
+                .event_id,
+            );
+        }
+        let openmls = has_workspace_openmls_access
+            .then(|| {
+                self.remove_openmls_workspace_group_member(
+                    workspace_id.clone(),
+                    removed_device_id.clone(),
+                )
+            })
+            .transpose()?;
         let removal = self.remove_member(workspace_id, removed_device_id)?;
 
         Ok(RemovedMemberWithOpenMls {
             workspace_id: removal.workspace_id,
             removed_device_id: removal.removed_device_id,
-            openmls_event_id: openmls.event_id,
+            openmls_event_id: openmls.as_ref().map(|removed| removed.event_id.clone()),
             removal_event_id: removal.event_id,
-            openmls_epoch: openmls.epoch,
-            openmls_member_count: openmls.member_count,
-            openmls_private_group_state_path: openmls.private_group_state_path,
+            openmls_epoch: openmls.as_ref().map(|removed| removed.epoch),
+            openmls_member_count: openmls.as_ref().map(|removed| removed.member_count),
+            openmls_private_group_state_path: openmls
+                .map(|removed| removed.private_group_state_path),
+            channel_openmls_removal_count: channel_openmls_event_ids.len(),
+            channel_openmls_event_ids,
+            manual_key_rotation,
         })
     }
 
@@ -1549,8 +1822,8 @@ impl LocalRuntime {
         removed_device_id: DeviceId,
     ) -> Result<RemovedMemberWithKeyRotation, RuntimeError> {
         validate_device_id_reference(&removed_device_id)?;
-        let removal = self.remove_member(workspace_id.clone(), removed_device_id)?;
-        let key_rotations = self.rotate_workspace_manual_keys(workspace_id)?;
+        let key_rotations = self.rotate_workspace_manual_keys(workspace_id.clone())?;
+        let removal = self.remove_member(workspace_id, removed_device_id)?;
 
         Ok(RemovedMemberWithKeyRotation {
             workspace_id: removal.workspace_id,
@@ -1581,7 +1854,7 @@ impl LocalRuntime {
         );
         grant.parents = context.head_event_ids.clone();
         let grant = self.sign_authorize_and_append_with_history(grant, &context.events)?;
-        let openmls = self.auto_add_openmls_channel_member_if_ready(
+        let provisioning = self.reconcile_channel_provisioning_outcome(
             &workspace_id,
             &channel_id,
             &member_device_id,
@@ -1592,9 +1865,11 @@ impl LocalRuntime {
             channel_id: channel_id.0,
             member_device_id: member_device_id.0,
             event_id: grant.event_id.0,
-            openmls_member_add_event_id: openmls.as_ref().map(|added| added.event_id.clone()),
-            openmls_epoch: openmls.as_ref().map(|added| added.epoch),
-            openmls_member_count: openmls.as_ref().map(|added| added.member_count),
+            openmls_member_add_event_id: provisioning.event_id,
+            openmls_epoch: provisioning.openmls_epoch,
+            openmls_member_count: provisioning.openmls_member_count,
+            provisioning_state: provisioning.provisioning_state,
+            provisioning_error: provisioning.provisioning_error,
         })
     }
 
@@ -1605,6 +1880,16 @@ impl LocalRuntime {
         member_device_id: DeviceId,
     ) -> Result<RemovedChannelMember, RuntimeError> {
         validate_device_id_reference(&member_device_id)?;
+        let openmls_index = self.openmls_removal_index(&workspace_id)?;
+        if openmls_index.channel_has_forked_group(&channel_id)
+            || openmls_index.channel_group_has_device(&channel_id, &member_device_id)
+        {
+            return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                workspace_id,
+                channel_id,
+                device_id: member_device_id,
+            });
+        }
         let context = self.workspace_write_context(&workspace_id)?;
         let mut removal = SignableEvent::new(
             workspace_id.clone(),
@@ -1633,22 +1918,60 @@ impl LocalRuntime {
         member_device_id: DeviceId,
     ) -> Result<RemovedChannelMemberWithOpenMls, RuntimeError> {
         validate_device_id_reference(&member_device_id)?;
-        let openmls = self.remove_openmls_channel_group_member(
-            workspace_id.clone(),
-            channel_id.clone(),
-            member_device_id.clone(),
-        )?;
+        let openmls_index = self.openmls_removal_index(&workspace_id)?;
+        if openmls_index.channel_has_forked_group(&channel_id) {
+            return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                workspace_id,
+                channel_id,
+                device_id: member_device_id,
+            });
+        }
+        let active_group_ids =
+            openmls_index.channel_group_ids_for_device_in_channel(&channel_id, &member_device_id);
+        if !active_group_ids.is_empty() {
+            let Some(local_group_id) =
+                self.local_openmls_channel_group_id(&workspace_id, &channel_id)?
+            else {
+                return Err(RuntimeError::OpenMlsChannelGroupMissing {
+                    workspace_id,
+                    channel_id,
+                });
+            };
+            if active_group_ids.len() != 1 || active_group_ids[0] != local_group_id {
+                return Err(RuntimeError::OpenMlsChannelRevocationPending {
+                    workspace_id,
+                    channel_id,
+                    device_id: member_device_id,
+                });
+            }
+        }
+        let manual_key_rotation = self
+            .channel_key_path(&workspace_id, &channel_id)
+            .exists()
+            .then(|| self.rotate_channel_key(workspace_id.clone(), channel_id.clone()))
+            .transpose()?;
+        let openmls = (!active_group_ids.is_empty())
+            .then(|| {
+                self.remove_openmls_channel_group_member(
+                    workspace_id.clone(),
+                    channel_id.clone(),
+                    member_device_id.clone(),
+                )
+            })
+            .transpose()?;
         let removal = self.remove_channel_member(workspace_id, channel_id, member_device_id)?;
 
         Ok(RemovedChannelMemberWithOpenMls {
             workspace_id: removal.workspace_id,
             channel_id: removal.channel_id,
             member_device_id: removal.member_device_id,
-            openmls_event_id: openmls.event_id,
+            openmls_event_id: openmls.as_ref().map(|removed| removed.event_id.clone()),
             removal_event_id: removal.event_id,
-            openmls_epoch: openmls.epoch,
-            openmls_member_count: openmls.member_count,
-            openmls_private_group_state_path: openmls.private_group_state_path,
+            openmls_epoch: openmls.as_ref().map(|removed| removed.epoch),
+            openmls_member_count: openmls.as_ref().map(|removed| removed.member_count),
+            openmls_private_group_state_path: openmls
+                .map(|removed| removed.private_group_state_path),
+            manual_key_rotation,
         })
     }
 
@@ -1659,9 +1982,9 @@ impl LocalRuntime {
         member_device_id: DeviceId,
     ) -> Result<RemovedChannelMemberWithKeyRotation, RuntimeError> {
         validate_device_id_reference(&member_device_id)?;
-        let removal =
-            self.remove_channel_member(workspace_id.clone(), channel_id.clone(), member_device_id)?;
-        let channel_key_rotation = self.rotate_channel_key(workspace_id, channel_id)?;
+        let channel_key_rotation =
+            self.rotate_channel_key(workspace_id.clone(), channel_id.clone())?;
+        let removal = self.remove_channel_member(workspace_id, channel_id, member_device_id)?;
 
         Ok(RemovedChannelMemberWithKeyRotation {
             workspace_id: removal.workspace_id,
@@ -1713,8 +2036,12 @@ impl LocalRuntime {
         let markdown = markdown.as_ref().to_owned();
         validate_message_markdown_size(&markdown)?;
         let context = self.workspace_write_context(&workspace_id)?;
-        let content_key =
-            self.content_key_for_local_write_in_state(&workspace_id, &channel_id, &context.state)?;
+        let content_key = self.content_key_for_local_write_in_state(
+            &workspace_id,
+            &channel_id,
+            &context.state,
+            &context.events,
+        )?;
         let message_id = MessageId::new();
         let attachments = self.seal_and_store_attachments(
             &workspace_id,
@@ -1796,8 +2123,12 @@ impl LocalRuntime {
             .find(|event| event.event_id == indexed_event_id)
             .map(|event| event.event.timestamp.physical_ms)
             .unwrap_or_default();
-        let content_key =
-            self.content_key_for_local_write_in_state(&workspace_id, &channel_id, &context.state)?;
+        let content_key = self.content_key_for_local_write_in_state(
+            &workspace_id,
+            &channel_id,
+            &context.state,
+            &context.events,
+        )?;
         let sealed_markdown = seal_message_markdown(
             content_key.key_id(),
             content_key.content_key(),

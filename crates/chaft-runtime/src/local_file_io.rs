@@ -83,6 +83,57 @@ pub(crate) fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), Runtime
     Ok(())
 }
 
+/// Atomically replaces a reconstructible local cache without forcing the
+/// payload and parent directory to stable storage. Derived sync hints are
+/// always validated and fail open, so crash durability here only adds latency
+/// to the user-visible sync path without protecting source-of-truth data.
+pub(crate) fn write_derived_cache_file(path: &Path, bytes: &[u8]) -> Result<(), RuntimeError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let (temp_path, mut file) = create_unique_secret_temp_file(path)?;
+    let result = (|| -> Result<(), RuntimeError> {
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        drop(file);
+        fs::rename(&temp_path, path)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        match fs::remove_file(&temp_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+    result?;
+
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+pub(crate) fn remove_secret_file(path: &Path) -> Result<(), RuntimeError> {
+    match fs::remove_file(path) {
+        Ok(()) => {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                sync_secret_parent_directory(parent)?;
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn create_unique_secret_temp_file(path: &Path) -> Result<(PathBuf, fs::File), RuntimeError> {
     let file_name = path
         .file_name()

@@ -763,8 +763,12 @@ fn ffi_json_contract_snapshot_matches_declared_shapes() {
         "chaft_runtime_start_direct_peer_result_json",
         started_direct_peer.clone(),
     );
-    let hosted_endpoint =
-        CString::new(started_direct_peer["value"]["endpoint"].as_str().unwrap()).unwrap();
+    let hosted_endpoint = CString::new(
+        started_direct_peer["value"]["endpoint"]
+            .as_str()
+            .unwrap_or_else(|| panic!("failed to start contract peer: {started_direct_peer}")),
+    )
+    .unwrap();
     let contract_join_request = CString::new(
         serde_json::to_string(&json!({
             "kind": "chaft.workspace-join-request.v1",
@@ -2312,6 +2316,10 @@ fn direct_result_ffi_samples_arrays_without_changing_counts() {
                 openmls_event_count,
             ),
             workspace_self_removed: false,
+            published_key_package_event_ids: Vec::new(),
+            created_channel_group_ids: Vec::new(),
+            channel_provisioning_outcomes: Vec::new(),
+            provisioning_errors: Vec::new(),
             channel_groups: (0..(MAX_RESULT_OPENMLS_CHANNEL_GROUP_SAMPLE_ROWS + 2))
                 .map(|index| PulledOpenMlsChannelCatchup {
                     channel_id: format!("chn_{index:03}"),
@@ -4642,6 +4650,57 @@ fn runtime_action_ffi_sends_reply_and_projects_context() {
         snapshot["value"]["timeline"][0]["threadReplyPreviews"][0]["body"],
         "ffi reply body"
     );
+}
+
+#[test]
+fn runtime_reconcile_openmls_access_ffi_returns_stable_result_and_error_envelopes() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let runtime = LocalRuntime::open(tempdir.path(), None).unwrap();
+    let created = runtime
+        .create_workspace("FFI OpenMLS Reconcile", "general")
+        .unwrap();
+    drop(runtime);
+
+    let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
+    let workspace_id = CString::new(created.workspace_id).unwrap();
+    let first = parse_ffi_json(unsafe {
+        chaft_runtime_reconcile_openmls_access_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+        )
+    });
+    assert_eq!(first["ok"], true);
+    assert_eq!(
+        first["value"]["publishedKeyPackageEventIds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert!(first["value"]["channelProvisioningOutcomes"].is_array());
+
+    let second = parse_ffi_json(unsafe {
+        chaft_runtime_reconcile_openmls_access_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            workspace_id.as_ptr(),
+        )
+    });
+    assert_eq!(second["ok"], true);
+    assert_eq!(second["value"]["eventCount"], 0);
+    assert_eq!(second["value"]["publishedKeyPackageEventIds"], json!([]));
+
+    let empty_workspace_id = CString::new("").unwrap();
+    let invalid = parse_ffi_json(unsafe {
+        chaft_runtime_reconcile_openmls_access_result_json(
+            data_dir.as_ptr(),
+            std::ptr::null(),
+            empty_workspace_id.as_ptr(),
+        )
+    });
+    assert_eq!(invalid["ok"], false);
+    assert_eq!(invalid["error"]["code"], "workspace_id_required");
 }
 
 #[test]
@@ -8293,13 +8352,15 @@ fn runtime_direct_network_ffi_syncs_workspace() {
     let synced = serde_json::from_str::<Value>(&synced_json).unwrap();
     assert_eq!(synced["ok"], true);
     assert_eq!(synced["value"]["workspaceId"], created.workspace_id);
-    assert_eq!(synced["value"]["published"]["publishedEventCount"], 3);
+    // The first sync publishes the three workspace/message events plus the
+    // four spare OpenMLS key packages created during access reconciliation.
+    assert_eq!(synced["value"]["published"]["publishedEventCount"], 7);
     assert_eq!(
         synced["value"]["published"]["publishedEventIds"]
             .as_array()
             .unwrap()
             .len(),
-        3
+        7
     );
     assert_eq!(synced["value"]["pulled"]["fetchedEventCount"], 0);
     assert_eq!(

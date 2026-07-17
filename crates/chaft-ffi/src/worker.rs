@@ -1,4 +1,4 @@
-use std::{future::Future, thread};
+use std::{future::Future, sync::OnceLock, thread};
 
 use chaft_runtime::RuntimeError;
 
@@ -18,14 +18,30 @@ pub(crate) fn run_runtime_future<T, F>(future: F, failure_code: &'static str) ->
 where
     F: Future<Output = Result<T, RuntimeError>>,
 {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-    runtime.block_on(future).map_err(|error| {
+    run_network_future(future)?.map_err(|error| {
         let message = runtime_error_message(&error);
         ffi_error(runtime_error_code(&error, failure_code), message)
     })
+}
+
+pub(crate) fn run_network_future<F>(future: F) -> Result<F::Output, FfiError>
+where
+    F: Future,
+{
+    static NETWORK_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+
+    let runtime = NETWORK_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("chaft-network")
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+    });
+    match runtime {
+        Ok(runtime) => Ok(runtime.block_on(future)),
+        Err(error) => Err(ffi_error("tokio_runtime_failed", error.clone())),
+    }
 }
 
 fn runtime_error_code(error: &RuntimeError, fallback_code: &'static str) -> &'static str {
@@ -40,4 +56,31 @@ fn runtime_error_message(error: &RuntimeError) -> String {
     error
         .peer_protocol_error_message()
         .unwrap_or_else(|| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_network_runtime_supports_concurrent_blocking_callers() {
+        let callers = (0..8)
+            .map(|value| {
+                thread::spawn(move || {
+                    run_network_future(async move {
+                        tokio::task::yield_now().await;
+                        value * 2
+                    })
+                    .expect("run network future")
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut values = callers
+            .into_iter()
+            .map(|caller| caller.join().expect("join network caller"))
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+
+        assert_eq!(values, vec![0, 2, 4, 6, 8, 10, 12, 14]);
+    }
 }

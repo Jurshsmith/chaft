@@ -903,6 +903,25 @@ pub unsafe extern "C" fn chaft_runtime_publish_openmls_device_key_package_result
     into_c_string(&result)
 }
 
+/// Reconciles this device's OpenMLS access after workspace events have changed.
+///
+/// The operation is idempotent: it replenishes device key packages, joins and
+/// advances available groups, and provisions eligible private-room members.
+///
+/// # Safety
+///
+/// All non-null arguments must be valid pointers to NUL-terminated UTF-8
+/// strings for the duration of this call. `identity_file` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chaft_runtime_reconcile_openmls_access_result_json(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+) -> *mut c_char {
+    let result = runtime_reconcile_openmls_access_result(data_dir, identity_file, workspace_id);
+    into_c_string(&result)
+}
+
 /// Creates the local private OpenMLS workspace group state for a workspace.
 ///
 /// This writes local MLS state only; it does not publish key material or group

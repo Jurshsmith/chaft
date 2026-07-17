@@ -1,7 +1,7 @@
 use chaft_runtime::{
     AppliedOpenMlsChannelGroupCommits, AppliedOpenMlsWorkspaceGroupCommits, BlobTransferAttempt,
     BlobTransferRetryReport, ImportedWorkspaceRecoveryBundle, PrunedBlobCache, PublishedWorkspace,
-    PulledOpenMlsCatchup, PulledWorkspace, RemovedMemberWithKeyRotation,
+    PulledOpenMlsCatchup, PulledWorkspace, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls,
     RotatedWorkspaceForSuspectedCompromise, RotatedWorkspaceManualKeys, SyncedWorkspace,
     UpdatedWorkspaceOpenMlsGroups, WorkspaceCompromiseReport, WorkspaceCompromiseResponse,
 };
@@ -91,13 +91,33 @@ fn truncate_string_bytes(value: &mut String, max_bytes: usize) {
     value.truncate(end);
 }
 
-fn sample_pulled_openmls_catchup_report(catchup: &mut PulledOpenMlsCatchup) {
+pub(crate) fn sample_pulled_openmls_catchup_report(catchup: &mut PulledOpenMlsCatchup) {
+    catchup
+        .published_key_package_event_ids
+        .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
     catchup
         .workspace_applied_event_ids
         .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
     catchup
         .workspace_provisioned_event_ids
         .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
+    catchup
+        .created_channel_group_ids
+        .truncate(MAX_RESULT_CHANNEL_ID_SAMPLE_ROWS);
+    catchup
+        .channel_provisioning_outcomes
+        .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
+    for outcome in &mut catchup.channel_provisioning_outcomes {
+        if let Some(error) = outcome.provisioning_error.as_mut() {
+            truncate_string_bytes(error, MAX_RESULT_PEER_ERROR_MESSAGE_BYTES);
+        }
+    }
+    catchup
+        .provisioning_errors
+        .truncate(MAX_RESULT_PEER_ERROR_SAMPLE_ROWS);
+    for error in &mut catchup.provisioning_errors {
+        truncate_string_bytes(error, MAX_RESULT_PEER_ERROR_MESSAGE_BYTES);
+    }
     catchup
         .channel_groups
         .truncate(MAX_RESULT_OPENMLS_CHANNEL_GROUP_SAMPLE_ROWS);
@@ -169,6 +189,18 @@ pub(crate) fn sample_removed_member_with_key_rotation_report(
     report
         .channel_key_rotations
         .truncate(MAX_RESULT_KEY_ROTATION_SAMPLE_ROWS);
+    report
+}
+
+pub(crate) fn sample_removed_member_with_openmls_report(
+    mut report: RemovedMemberWithOpenMls,
+) -> RemovedMemberWithOpenMls {
+    report
+        .channel_openmls_event_ids
+        .truncate(MAX_RESULT_EVENT_ID_SAMPLE_ROWS);
+    if let Some(manual_key_rotation) = &mut report.manual_key_rotation {
+        sample_rotated_workspace_manual_keys_report_in_place(manual_key_rotation);
+    }
     report
 }
 

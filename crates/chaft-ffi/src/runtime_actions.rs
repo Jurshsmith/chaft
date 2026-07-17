@@ -12,14 +12,15 @@ use chaft_runtime::{
     EditedMessage, ImportedWorkspaceInviteResponse, InvitedMember, JoinedOpenMlsChannelGroup,
     JoinedOpenMlsWorkspaceGroup, MarkedChannelRead, PrunedBlobCache, PublishPeerEndpointRequest,
     PublishedDeviceKeyPackage, PublishedOpenMlsKeyPackage, PublishedPeerEndpoint,
-    RecordedWorkspaceInvite, RecordedWorkspaceJoinRequest, RemovedChannelMember,
-    RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls, RemovedMember,
-    RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls, RemovedOpenMlsChannelGroupMember,
-    RemovedOpenMlsWorkspaceGroupMember, RemovedReaction, ResolvedWorkspaceInvite,
-    ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails, UpdatedDeviceProfile,
-    UpdatedMemberRole, UpdatedOpenMlsChannelGroup, UpdatedOpenMlsWorkspaceGroup,
-    UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy, UpdatedWorkspaceOpenMlsGroups,
-    WorkspaceInviteArtifact, WorkspaceInviteClaim, WorkspaceInviteResponse,
+    PulledOpenMlsCatchup, RecordedWorkspaceInvite, RecordedWorkspaceJoinRequest,
+    RemovedChannelMember, RemovedChannelMemberWithKeyRotation, RemovedChannelMemberWithOpenMls,
+    RemovedMember, RemovedMemberWithKeyRotation, RemovedMemberWithOpenMls,
+    RemovedOpenMlsChannelGroupMember, RemovedOpenMlsWorkspaceGroupMember, RemovedReaction,
+    ResolvedWorkspaceInvite, ResolvedWorkspaceJoinRequest, SavedAttachment, UpdatedChannelDetails,
+    UpdatedDeviceProfile, UpdatedMemberRole, UpdatedOpenMlsChannelGroup,
+    UpdatedOpenMlsWorkspaceGroup, UpdatedPersonProfile, UpdatedWorkspaceAccessPolicy,
+    UpdatedWorkspaceOpenMlsGroups, WorkspaceInviteArtifact, WorkspaceInviteClaim,
+    WorkspaceInviteResponse,
 };
 use chaft_types::{
     ChannelId, DeviceId, DeviceKeyPackageId, MessageId, REPLICA_RETENTION_HINT_MAX_BYTES,
@@ -41,8 +42,8 @@ use crate::{
     result_sampling::{
         sample_applied_openmls_channel_commits_report,
         sample_applied_openmls_workspace_commits_report, sample_pruned_blob_cache_report,
-        sample_removed_member_with_key_rotation_report,
-        sample_updated_workspace_openmls_groups_report,
+        sample_pulled_openmls_catchup_report, sample_removed_member_with_key_rotation_report,
+        sample_removed_member_with_openmls_report, sample_updated_workspace_openmls_groups_report,
     },
 };
 
@@ -397,6 +398,26 @@ pub(crate) fn runtime_publish_openmls_device_key_package_result(
                     "runtime_publish_openmls_device_key_package_failed",
                     error.to_string(),
                 )
+            })
+    })
+}
+
+pub(crate) fn runtime_reconcile_openmls_access_result(
+    data_dir: *const c_char,
+    identity_file: *const c_char,
+    workspace_id: *const c_char,
+) -> FfiResult<PulledOpenMlsCatchup> {
+    result_envelope(|| {
+        let runtime = open_runtime_from_ffi(data_dir, identity_file)?;
+        let workspace_id = ffi_workspace_id_arg(read_c_string(workspace_id, "workspace_id")?)?;
+        runtime
+            .reconcile_openmls_access(WorkspaceId(workspace_id))
+            .map_err(|error| {
+                ffi_error("runtime_reconcile_openmls_access_failed", error.to_string())
+            })
+            .map(|mut report| {
+                sample_pulled_openmls_catchup_report(&mut report);
+                report
             })
     })
 }
@@ -1320,6 +1341,7 @@ pub(crate) fn runtime_remove_member_with_openmls_result(
                     error.to_string(),
                 )
             })
+            .map(sample_removed_member_with_openmls_report)
     })
 }
 

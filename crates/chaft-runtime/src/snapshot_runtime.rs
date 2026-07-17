@@ -35,11 +35,12 @@ impl LocalRuntime {
             .store
             .list_parseable_events_for_workspace(&workspace_id.0)?;
         let mut snapshot = WorkspaceSnapshot::from_events_for_device_with_options(
-            workspace_id,
+            workspace_id.clone(),
             &events,
             self.identity.device_id(),
             options,
         )?;
+        self.annotate_channel_content_readiness(&workspace_id, &mut snapshot.channels)?;
         self.annotate_attachment_availability(&mut snapshot)?;
         Ok(snapshot)
     }
@@ -93,7 +94,7 @@ impl LocalRuntime {
 
         let mut snapshot =
             WorkspaceSnapshot::from_state_report_for_device_and_body_overrides_with_options(
-                workspace_id,
+                workspace_id.clone(),
                 &state,
                 &report,
                 &raw_events,
@@ -101,6 +102,7 @@ impl LocalRuntime {
                 &body_overrides,
                 options,
             );
+        self.annotate_channel_content_readiness(&workspace_id, &mut snapshot.channels)?;
         self.annotate_attachment_availability(&mut snapshot)?;
         Ok(snapshot)
     }
@@ -168,6 +170,10 @@ impl LocalRuntime {
         body_override_event_ids: &BTreeSet<EventId>,
     ) -> Result<HashMap<String, String>, RuntimeError> {
         let mut body_overrides = HashMap::new();
+        // Loading an MLS group decrypts and validates its persisted state.
+        // Reuse the resolved epoch key for every visible message that shares
+        // the same channel/key pair instead of repeating that I/O per row.
+        let mut resolved_content_keys = HashMap::new();
         for message in state.messages.values() {
             if !body_override_event_ids.contains(&message.author_event_id) {
                 continue;
@@ -176,13 +182,20 @@ impl LocalRuntime {
                 continue;
             }
             if let Some(sealed_markdown) = message.sealed_markdown.as_ref() {
-                let Some(content_key) = self.content_key_for_materialized_payload(
-                    workspace_id,
-                    &message.channel_id,
-                    state,
-                    workspace_key,
-                    &sealed_markdown.key_id,
-                )?
+                let cache_key = (message.channel_id.0.clone(), sealed_markdown.key_id.clone());
+                if !resolved_content_keys.contains_key(&cache_key) {
+                    let content_key = self.content_key_for_materialized_payload(
+                        workspace_id,
+                        &message.channel_id,
+                        state,
+                        workspace_key,
+                        &sealed_markdown.key_id,
+                    )?;
+                    resolved_content_keys.insert(cache_key.clone(), content_key);
+                }
+                let Some(content_key) = resolved_content_keys
+                    .get(&cache_key)
+                    .and_then(Option::as_ref)
                 else {
                     continue;
                 };

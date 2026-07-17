@@ -76,10 +76,22 @@ pub struct ChannelSnapshot {
     pub member_device_ids: Vec<String>,
     pub direct_message: bool,
     pub direct_message_participant_device_ids: Vec<String>,
+    #[serde(default = "default_local_content_ready")]
+    pub local_content_ready: bool,
+    #[serde(default = "default_channel_access_state")]
+    pub access_state: String,
     pub unread_count: u32,
     pub latest_activity: Option<ChannelActivitySnapshot>,
     #[serde(default)]
     pub access_history: Vec<ChannelAccessHistorySnapshot>,
+}
+
+fn default_local_content_ready() -> bool {
+    true
+}
+
+fn default_channel_access_state() -> String {
+    "ready".to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1160,6 +1172,15 @@ fn channel_snapshots_from_state_report(
                 .iter()
                 .map(|device_id| device_id.0.clone())
                 .collect(),
+            // The pure event projection cannot inspect device-local key state.
+            // Keep private access unknown/fail-closed until LocalRuntime can
+            // annotate it from this device's actual key material.
+            local_content_ready: !channel.is_private,
+            access_state: if channel.is_private {
+                "unknown".to_owned()
+            } else {
+                default_channel_access_state()
+            },
             unread_count: channel_projection
                 .unread_counts
                 .get(&channel.channel_id)
@@ -1271,9 +1292,9 @@ fn channel_access_history_row_parts(
             channel_id.clone(),
             "added".to_owned(),
             Some(member_device_id.clone()),
-            "Access added".to_owned(),
+            "Room membership added".to_owned(),
             format!(
-                "{} can read new messages in this room.",
+                "{} is allowed to join this room. Message access may still be preparing.",
                 access_history_device_label(state, member_device_id)
             ),
         )),
@@ -1298,9 +1319,9 @@ fn channel_access_history_row_parts(
             channel_id.clone(),
             "secure_group_added".to_owned(),
             Some(invitee_device_id.clone()),
-            "Private-room access prepared".to_owned(),
+            "Room key prepared".to_owned(),
             format!(
-                "{} received updated private-room access.",
+                "A message key was prepared for {}'s device.",
                 access_history_device_label(state, invitee_device_id)
             ),
         )),
@@ -6543,6 +6564,8 @@ mod tests {
             .iter()
             .find(|channel| channel.channel_id == private_channel_id.0)
             .expect("private channel should be visible to owner snapshot");
+        assert!(!private_channel.local_content_ready);
+        assert_eq!(private_channel.access_state, "unknown");
         let titles = private_channel
             .access_history
             .iter()
@@ -6555,8 +6578,8 @@ mod tests {
                 "Message protection refreshed",
                 "Private-room access removed",
                 "Private-room access refreshed",
-                "Private-room access prepared",
-                "Access added",
+                "Room key prepared",
+                "Room membership added",
                 "Private room created",
             ]
         );
@@ -6591,7 +6614,7 @@ mod tests {
         );
         assert_eq!(
             private_channel.access_history[4].detail,
-            "Rina received updated private-room access."
+            "A message key was prepared for Rina's device."
         );
     }
 
@@ -6607,6 +6630,8 @@ mod tests {
                 topic: "Workspace updates and daily coordination".to_owned(),
                 archived: false,
                 is_private: false,
+                local_content_ready: true,
+                access_state: "ready".to_owned(),
                 member_count: 1,
                 member_device_ids: Vec::new(),
                 direct_message: false,
@@ -6623,8 +6648,10 @@ mod tests {
                     target_display_name: Some("Rina".to_owned()),
                     target_avatar_id: "relay-v1:g01:p01:c01".to_owned(),
                     physical_ms: 1_700_000_000_030,
-                    title: "Access added".to_owned(),
-                    detail: "Rina can read new messages in this room.".to_owned(),
+                    title: "Room membership added".to_owned(),
+                    detail:
+                        "Rina is allowed to join this room. Message access may still be preparing."
+                            .to_owned(),
                 }],
             }],
             profiles: vec![DeviceProfileSnapshot {

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BlobTransferAttempt, WorkspaceCompromiseResponse};
+use crate::{BlobTransferAttempt, ChannelAccessProvisioningOutcome, WorkspaceCompromiseResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +47,14 @@ pub struct PulledOpenMlsCatchup {
     pub workspace_applied_event_ids: Vec<String>,
     pub workspace_provisioned_event_ids: Vec<String>,
     pub workspace_self_removed: bool,
+    #[serde(default)]
+    pub published_key_package_event_ids: Vec<String>,
+    #[serde(default)]
+    pub created_channel_group_ids: Vec<String>,
+    #[serde(default)]
+    pub channel_provisioning_outcomes: Vec<ChannelAccessProvisioningOutcome>,
+    #[serde(default)]
+    pub provisioning_errors: Vec<String>,
     pub channel_groups: Vec<PulledOpenMlsChannelCatchup>,
 }
 
@@ -64,7 +72,8 @@ pub struct PulledOpenMlsChannelCatchup {
 
 impl PulledOpenMlsCatchup {
     pub(crate) fn has_provisioned_events(&self) -> bool {
-        !self.workspace_provisioned_event_ids.is_empty()
+        !self.published_key_package_event_ids.is_empty()
+            || !self.workspace_provisioned_event_ids.is_empty()
             || self
                 .channel_groups
                 .iter()
@@ -76,6 +85,7 @@ impl PulledOpenMlsCatchup {
             group.refresh_counts();
         }
         self.event_count = usize::from(self.workspace_joined_event_id.is_some())
+            + self.published_key_package_event_ids.len()
             + self.workspace_applied_event_ids.len()
             + self.workspace_provisioned_event_ids.len()
             + self

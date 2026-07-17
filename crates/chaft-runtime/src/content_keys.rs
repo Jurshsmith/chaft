@@ -97,6 +97,7 @@ pub struct ExportedContentKeyMaterial {
     pub aes_256_gcm_siv_key: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ResolvedContentKey {
     key_id: String,
     content_key: ContentKey,

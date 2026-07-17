@@ -70,6 +70,19 @@ pub enum AuthorizationError {
         channel_id: ChannelId,
         device_id: DeviceId,
     },
+    #[error("device {device_id:?} is not the workspace OpenMLS committer {creator_device_id:?}")]
+    WorkspaceOpenMlsCommitterDenied {
+        device_id: DeviceId,
+        creator_device_id: DeviceId,
+    },
+    #[error(
+        "device {device_id:?} is not the OpenMLS committer {creator_device_id:?} for channel {channel_id:?}"
+    )]
+    ChannelOpenMlsCommitterDenied {
+        channel_id: ChannelId,
+        device_id: DeviceId,
+        creator_device_id: DeviceId,
+    },
     #[error("message {message_id:?} is not authorized by workspace history")]
     MessageNotFound { message_id: MessageId },
     #[error(
@@ -1629,6 +1642,7 @@ impl WorkspaceAccessIndex {
             EventBody::OpenMlsWorkspaceGroupMemberAdded {
                 invitee_device_id, ..
             } => {
+                self.require_workspace_openmls_committer(&event.event.author_device_id)?;
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 self.require_rooted_member(invitee_device_id)?;
                 require_role(author_role, Action::ManageOpenMlsGroup)
@@ -1636,6 +1650,7 @@ impl WorkspaceAccessIndex {
             EventBody::OpenMlsWorkspaceGroupMemberRemoved {
                 removed_device_id, ..
             } => {
+                self.require_workspace_openmls_committer(&event.event.author_device_id)?;
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 let removed_role = self.require_rooted_member(removed_device_id)?;
                 if self.root_device_id.as_ref() == Some(removed_device_id) {
@@ -1654,6 +1669,7 @@ impl WorkspaceAccessIndex {
                 invitee_device_id,
                 ..
             } => {
+                self.require_channel_openmls_committer(channel_id, &event.event.author_device_id)?;
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 self.require_rooted_member(invitee_device_id)?;
                 let actual_channel_id = require_event_channel(event)?;
@@ -1676,6 +1692,7 @@ impl WorkspaceAccessIndex {
                 removed_device_id,
                 ..
             } => {
+                self.require_channel_openmls_committer(channel_id, &event.event.author_device_id)?;
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 self.require_rooted_member(removed_device_id)?;
                 let actual_channel_id = require_event_channel(event)?;
@@ -1694,10 +1711,12 @@ impl WorkspaceAccessIndex {
                 Ok(())
             }
             EventBody::OpenMlsWorkspaceGroupSelfUpdated { .. } => {
+                self.require_workspace_openmls_committer(&event.event.author_device_id)?;
                 self.require_rooted_member(&event.event.author_device_id)?;
                 Ok(())
             }
             EventBody::OpenMlsChannelGroupSelfUpdated { channel_id, .. } => {
+                self.require_channel_openmls_committer(channel_id, &event.event.author_device_id)?;
                 self.require_rooted_member(&event.event.author_device_id)?;
                 let actual_channel_id = require_event_channel(event)?;
                 if actual_channel_id != channel_id {
@@ -2122,6 +2141,46 @@ impl WorkspaceAccessIndex {
         }
     }
 
+    fn require_workspace_openmls_committer(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<(), AuthorizationError> {
+        let creator_device_id = self
+            .root_device_id
+            .as_ref()
+            .ok_or(AuthorizationError::MissingWorkspaceRoot)?;
+        if creator_device_id == device_id {
+            Ok(())
+        } else {
+            Err(AuthorizationError::WorkspaceOpenMlsCommitterDenied {
+                device_id: device_id.clone(),
+                creator_device_id: creator_device_id.clone(),
+            })
+        }
+    }
+
+    fn require_channel_openmls_committer(
+        &self,
+        channel_id: &ChannelId,
+        device_id: &DeviceId,
+    ) -> Result<(), AuthorizationError> {
+        let channel =
+            self.channels
+                .get(channel_id)
+                .ok_or_else(|| AuthorizationError::ChannelNotFound {
+                    channel_id: channel_id.clone(),
+                })?;
+        if channel.creator_device_id == *device_id {
+            Ok(())
+        } else {
+            Err(AuthorizationError::ChannelOpenMlsCommitterDenied {
+                channel_id: channel_id.clone(),
+                device_id: device_id.clone(),
+                creator_device_id: channel.creator_device_id.clone(),
+            })
+        }
+    }
+
     fn require_message(
         &self,
         message_id: &MessageId,
@@ -2236,6 +2295,8 @@ pub fn authorize_event_with_history(
                     | AuthorizationError::WorkspaceRootRoleCannotBeChanged { .. }
                     | AuthorizationError::PrivateChannelAccessDenied { .. }
                     | AuthorizationError::ChannelMemberGrantDenied { .. }
+                    | AuthorizationError::WorkspaceOpenMlsCommitterDenied { .. }
+                    | AuthorizationError::ChannelOpenMlsCommitterDenied { .. }
                     | AuthorizationError::MessageMutationDenied { .. }
                     | AuthorizationError::MessageAuthorUnknown { .. }
                     | AuthorizationError::PersonProfileUpdateDenied { .. }
@@ -5536,6 +5597,128 @@ mod tests {
             ),
             error => panic!("unexpected error: {error}"),
         }
+    }
+
+    #[test]
+    fn only_workspace_and_channel_creators_can_author_openmls_commits() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let admin = DeviceId("dev_admin".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::WorkspaceCreated {
+                name: "Chaft".to_owned(),
+            },
+        ));
+        let admin_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: admin.clone(),
+                role: WorkspaceRole::Admin,
+            },
+        ));
+        let member_invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "strategy".to_owned(),
+                is_private: true,
+            },
+        ));
+        let admin_grant = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelMemberAdded {
+                channel_id: channel_id.clone(),
+                member_device_id: admin.clone(),
+            },
+        ));
+        let member_grant = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelMemberAdded {
+                channel_id: channel_id.clone(),
+                member_device_id: member.clone(),
+            },
+        ));
+        let history = vec![
+            root,
+            admin_invite,
+            member_invite,
+            channel,
+            admin_grant,
+            member_grant,
+        ];
+        let workspace_commit = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            admin.clone(),
+            EventBody::OpenMlsWorkspaceGroupMemberAdded {
+                invitee_device_id: member.clone(),
+                invitee_key_package_id: DeviceKeyPackageId::new(),
+                invitee_key_package_ref: "ref-workspace".to_owned(),
+                protocol: "openmls/workspace-group/rfc9420".to_owned(),
+                ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                group_id: "group-workspace".to_owned(),
+                epoch: 1,
+                commit: vec![1],
+                welcome: vec![2],
+                ratchet_tree: vec![3],
+            },
+        ));
+        let channel_commit = signed(SignableEvent::new(
+            workspace_id,
+            Some(channel_id.clone()),
+            admin.clone(),
+            EventBody::OpenMlsChannelGroupMemberAdded {
+                channel_id: channel_id.clone(),
+                invitee_device_id: member,
+                invitee_key_package_id: DeviceKeyPackageId::new(),
+                invitee_key_package_ref: "ref-channel".to_owned(),
+                protocol: "openmls/channel-group/rfc9420".to_owned(),
+                ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                group_id: "group-channel".to_owned(),
+                epoch: 1,
+                commit: vec![1],
+                welcome: vec![2],
+                ratchet_tree: vec![3],
+            },
+        ));
+
+        assert_eq!(
+            authorize_event_with_history(&history, &workspace_commit),
+            Err(AuthorizationError::WorkspaceOpenMlsCommitterDenied {
+                device_id: admin.clone(),
+                creator_device_id: owner.clone(),
+            })
+        );
+        assert_eq!(
+            authorize_event_with_history(&history, &channel_commit),
+            Err(AuthorizationError::ChannelOpenMlsCommitterDenied {
+                channel_id,
+                device_id: admin,
+                creator_device_id: owner,
+            })
+        );
     }
 
     #[test]

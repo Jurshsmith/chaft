@@ -10,6 +10,7 @@
           "accessHistory": {
             "arrayOf": "empty"
           },
+          "accessState": "string",
           "archived": "bool",
           "channelId": "string",
           "directMessage": "bool",
@@ -26,6 +27,7 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "localContentReady": "bool",
           "memberCount": "number",
           "memberDeviceIds": {
             "arrayOf": "empty"
@@ -176,6 +178,7 @@
           "accessHistory": {
             "arrayOf": "empty"
           },
+          "accessState": "string",
           "archived": "bool",
           "channelId": "string",
           "directMessage": "bool",
@@ -192,6 +195,7 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "localContentReady": "bool",
           "memberCount": "number",
           "memberDeviceIds": {
             "arrayOf": "empty"
@@ -339,6 +343,7 @@
         "accessHistory": {
           "arrayOf": "empty"
         },
+        "accessState": "string",
         "archived": "bool",
         "channelId": "string",
         "directMessage": "bool",
@@ -347,6 +352,7 @@
         },
         "isPrivate": "bool",
         "latestActivity": "null",
+        "localContentReady": "bool",
         "memberCount": "number",
         "memberDeviceIds": {
           "arrayOf": "empty"
@@ -485,6 +491,7 @@
     "value": {
       "channelId": "string",
       "eventId": "string",
+      "provisioningState": "string",
       "workspaceId": "string"
     }
   },
@@ -545,6 +552,7 @@
           "accessHistory": {
             "arrayOf": "empty"
           },
+          "accessState": "string",
           "archived": "bool",
           "channelId": "string",
           "directMessage": "bool",
@@ -561,6 +569,7 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "localContentReady": "bool",
           "memberCount": "number",
           "memberDeviceIds": {
             "arrayOf": "empty"
@@ -741,6 +750,7 @@
           "accessHistory": {
             "arrayOf": "empty"
           },
+          "accessState": "string",
           "archived": "bool",
           "channelId": "string",
           "directMessage": "bool",
@@ -749,6 +759,7 @@
           },
           "isPrivate": "bool",
           "latestActivity": "null",
+          "localContentReady": "bool",
           "memberCount": "number",
           "memberDeviceIds": {
             "arrayOf": "empty"
@@ -989,6 +1000,7 @@
           "accessHistory": {
             "arrayOf": "empty"
           },
+          "accessState": "string",
           "archived": "bool",
           "channelId": "string",
           "directMessage": "bool",
@@ -1005,6 +1017,7 @@
             "physicalMs": "number",
             "preview": "string"
           },
+          "localContentReady": "bool",
           "memberCount": "number",
           "memberDeviceIds": {
             "arrayOf": "empty"

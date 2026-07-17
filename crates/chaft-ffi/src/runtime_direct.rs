@@ -31,7 +31,7 @@ use crate::{
         sample_blob_transfer_retry_report, sample_published_workspace_report,
         sample_pulled_workspace_report, sample_synced_workspace_report,
     },
-    worker::{run_on_worker_thread, run_runtime_future},
+    worker::{run_network_future, run_on_worker_thread, run_runtime_future},
 };
 
 const JOIN_RESPONSE_REQUEST_IDS_JSON_MAX_BYTES: usize =
@@ -295,20 +295,13 @@ pub(crate) fn runtime_submit_join_request_direct_result(
         let result_peer_endpoint = peer_endpoint.trim().to_owned();
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            runtime
-                .block_on(transport.submit_join_request(
-                    &peer,
-                    workspace_id.as_ref(),
-                    request_bytes,
-                ))
-                .map_err(|error| {
-                    ffi_error("runtime_submit_join_request_failed", error.to_string())
-                })?;
+            let transport = IrohTransport::shared_from_environment();
+            run_network_future(transport.submit_join_request(
+                &peer,
+                workspace_id.as_ref(),
+                request_bytes,
+            ))?
+            .map_err(|error| ffi_error("runtime_submit_join_request_failed", error.to_string()))?;
             Ok(SubmittedJoinRequestDirect {
                 peer_endpoint: result_peer_endpoint,
                 workspace_id: result_workspace_id,
@@ -348,16 +341,13 @@ pub(crate) fn runtime_pull_join_requests_direct_result(
         let data_dir = PathBuf::from(data_dir);
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            let requests = runtime
-                .block_on(transport.fetch_join_requests(&peer, &workspace_id, max_entries))
-                .map_err(|error| {
-                    ffi_error("runtime_pull_join_requests_failed", error.to_string())
-                })?;
+            let transport = IrohTransport::shared_from_environment();
+            let requests = run_network_future(transport.fetch_join_requests(
+                &peer,
+                &workspace_id,
+                max_entries,
+            ))?
+            .map_err(|error| ffi_error("runtime_pull_join_requests_failed", error.to_string()))?;
             let request_count = requests.len();
             let inbox = FileJoinRequestInbox::new(data_dir);
             for request in requests {
@@ -406,16 +396,13 @@ pub(crate) fn runtime_pull_join_responses_direct_result(
         let data_dir = PathBuf::from(data_dir);
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            let responses = runtime
-                .block_on(transport.fetch_join_responses(&peer, &workspace_id, max_entries))
-                .map_err(|error| {
-                    ffi_error("runtime_pull_join_responses_failed", error.to_string())
-                })?;
+            let transport = IrohTransport::shared_from_environment();
+            let responses = run_network_future(transport.fetch_join_responses(
+                &peer,
+                &workspace_id,
+                max_entries,
+            ))?
+            .map_err(|error| ffi_error("runtime_pull_join_responses_failed", error.to_string()))?;
             let response_count = responses.len();
             let inbox = FileJoinResponseInbox::new(data_dir);
             for response in responses {
@@ -473,21 +460,14 @@ pub(crate) fn runtime_pull_join_responses_for_requests_direct_result(
         let data_dir = PathBuf::from(data_dir);
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            let responses = runtime
-                .block_on(transport.fetch_join_responses_for_requests(
-                    &peer,
-                    &workspace_id,
-                    request_ids,
-                    max_entries,
-                ))
-                .map_err(|error| {
-                    ffi_error("runtime_pull_join_responses_failed", error.to_string())
-                })?;
+            let transport = IrohTransport::shared_from_environment();
+            let responses = run_network_future(transport.fetch_join_responses_for_requests(
+                &peer,
+                &workspace_id,
+                request_ids,
+                max_entries,
+            ))?
+            .map_err(|error| ffi_error("runtime_pull_join_responses_failed", error.to_string()))?;
             let response_count = responses.len();
             let inbox = FileJoinResponseInbox::new(data_dir);
             for response in responses {

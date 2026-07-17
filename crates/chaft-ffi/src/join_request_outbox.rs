@@ -18,7 +18,7 @@ use crate::{
     id_args::direct_workspace_id_arg,
     input::{optional_c_string, read_c_string, read_c_string_with_max_bytes},
     peer_endpoint::direct_peer_address,
-    worker::run_on_worker_thread,
+    worker::{run_network_future, run_on_worker_thread},
 };
 
 const JOIN_REQUEST_OUTBOX_DIR: &str = "join-request-outbox";
@@ -230,16 +230,12 @@ pub(crate) fn runtime_submit_join_request_outbox_entry_direct_result(
         let request_bytes = entry.request_text.clone().into_bytes();
 
         run_on_worker_thread(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| ffi_error("tokio_runtime_failed", error.to_string()))?;
-            let transport = IrohTransport::from_environment();
-            let submit_result = runtime.block_on(transport.submit_join_request(
+            let transport = IrohTransport::shared_from_environment();
+            let submit_result = run_network_future(transport.submit_join_request(
                 &peer,
                 workspace_id.as_ref(),
                 request_bytes,
-            ));
+            ))?;
             let entry = match submit_result {
                 Ok(()) => mark_join_request_outbox_entry(
                     &data_dir,
