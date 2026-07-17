@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque},
 };
 
 use chaft_types::{
@@ -60,6 +60,8 @@ pub enum AuthorizationError {
     MissingChannelContext,
     #[error("channel {channel_id:?} is not authorized by workspace history")]
     ChannelNotFound { channel_id: ChannelId },
+    #[error("channel {channel_id:?} is already defined by workspace history")]
+    ChannelAlreadyCreated { channel_id: ChannelId },
     #[error("device {device_id:?} is not authorized for private channel {channel_id:?}")]
     PrivateChannelAccessDenied {
         channel_id: ChannelId,
@@ -263,6 +265,18 @@ impl MessageView {
             })
             .cloned()
             .collect()
+    }
+
+    pub fn reaction_author_device_ids(&self, reaction: &str) -> Vec<DeviceId> {
+        let mut authors = self
+            .reaction_authors
+            .get(reaction)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        authors.sort_by(|left, right| left.0.cmp(&right.0));
+        authors
     }
 }
 
@@ -481,6 +495,37 @@ impl WorkspaceState {
         }
 
         let mut report = MaterializationReport::default();
+        // A channel ID is an immutable identity, not a last-write-wins key. If a
+        // replica presents more than one distinct creation event for the same
+        // ID, materializing whichever row happened to arrive first would make
+        // private/public access depend on storage order. Fail closed by keeping
+        // every colliding definition (and therefore its descendants) pending.
+        let mut channel_creation_event_ids = HashMap::<ChannelId, EventId>::new();
+        let mut conflicting_channel_ids = HashSet::<ChannelId>::new();
+        for event in events {
+            let channel_id = match &event.event.body {
+                EventBody::ChannelCreated { channel_id, .. }
+                | EventBody::DirectMessageChannelCreated { channel_id, .. } => channel_id,
+                _ => continue,
+            };
+            if let Some(existing_event_id) = channel_creation_event_ids.get(channel_id) {
+                if existing_event_id != &event.event_id {
+                    conflicting_channel_ids.insert(channel_id.clone());
+                }
+            } else {
+                channel_creation_event_ids.insert(channel_id.clone(), event.event_id.clone());
+            }
+        }
+        let channel_definition_conflicts = events
+            .iter()
+            .map(|event| match &event.event.body {
+                EventBody::ChannelCreated { channel_id, .. }
+                | EventBody::DirectMessageChannelCreated { channel_id, .. } => {
+                    conflicting_channel_ids.contains(channel_id)
+                }
+                _ => false,
+            })
+            .collect::<Vec<_>>();
         // Index causal dependencies once. The heap is ordered by stable-pass round and original
         // input position, so ready events keep the legacy deterministic order without repeatedly
         // scanning every pending event and every applied event ID. Authorization-dependent
@@ -512,7 +557,8 @@ impl WorkspaceState {
                         .push(event_index);
                 }
             }
-            if missing_parent_counts[event_index] == 0 {
+            if missing_parent_counts[event_index] == 0 && !channel_definition_conflicts[event_index]
+            {
                 initially_ready_events.push(event_index);
             }
         }
@@ -558,16 +604,17 @@ impl WorkspaceState {
 
                 let event = &events[event_index];
                 let event_id = &event.event_id;
-                let event_id_was_applied = self.applied_event_ids.contains(event_id);
+                if self.applied_event_ids.contains(event_id) {
+                    pending[event_index] = false;
+                    continue;
+                }
                 match self.apply_ready_event(event) {
                     Ok(()) => {
                         pending[event_index] = false;
                         report.applied_events.push(event.event_id.clone());
                         progressed = true;
 
-                        if !event_id_was_applied
-                            && let Some(waiting_events) = waiting_by_parent.remove(event_id)
-                        {
+                        if let Some(waiting_events) = waiting_by_parent.remove(event_id) {
                             for waiting_event_index in waiting_events {
                                 missing_parent_counts[waiting_event_index] -= 1;
 
@@ -579,7 +626,9 @@ impl WorkspaceState {
                                 earliest_ready_rounds[waiting_event_index] =
                                     earliest_ready_rounds[waiting_event_index].max(ready_round);
 
-                                if missing_parent_counts[waiting_event_index] == 0 {
+                                if missing_parent_counts[waiting_event_index] == 0
+                                    && !channel_definition_conflicts[waiting_event_index]
+                                {
                                     if earliest_ready_rounds[waiting_event_index] == current_round {
                                         dynamically_ready_events.push(Reverse(waiting_event_index));
                                     } else {
@@ -1584,16 +1633,19 @@ impl WorkspaceAccessIndex {
                     require_role(author_role, Action::RemoveMember)
                 }
             }
-            EventBody::ChannelCreated { .. } => {
+            EventBody::ChannelCreated { channel_id, .. } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
-                require_role(author_role, Action::CreateChannel)
+                require_role(author_role, Action::CreateChannel)?;
+                self.require_new_channel_id(channel_id)
             }
             EventBody::DirectMessageChannelCreated {
+                channel_id,
                 participant_device_ids,
                 ..
             } => {
                 let author_role = self.require_rooted_member(&event.event.author_device_id)?;
                 require_role(author_role, Action::CreateChannel)?;
+                self.require_new_channel_id(channel_id)?;
                 if participant_device_ids.len() != 2 {
                     return Err(AuthorizationError::EventItemCountTooLarge {
                         label: "direct message participants",
@@ -2192,6 +2244,16 @@ impl WorkspaceAccessIndex {
             })
     }
 
+    fn require_new_channel_id(&self, channel_id: &ChannelId) -> Result<(), AuthorizationError> {
+        if self.channels.contains_key(channel_id) {
+            Err(AuthorizationError::ChannelAlreadyCreated {
+                channel_id: channel_id.clone(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     fn require_person_profile_update(
         &self,
         person_id: &PersonId,
@@ -2270,17 +2332,131 @@ pub fn authorize_event_with_history(
         .iter()
         .filter(|historical| historical.event.workspace_id == event.event.workspace_id)
         .collect::<Vec<_>>();
+
+    // Isolate channel identity conflicts before replay. Applying whichever
+    // definition happens to arrive first can change a channel's privacy, while
+    // rejecting the whole history lets one conflict deny service to unrelated
+    // workspace and channel activity. Taint only the colliding definitions and
+    // their causal descendants, matching WorkspaceState::apply_batch.
+    let mut channel_creation_event_ids = HashMap::<ChannelId, EventId>::new();
+    let mut conflicting_channel_ids = HashSet::<ChannelId>::new();
+    for historical in &pending {
+        let channel_id = match &historical.event.body {
+            EventBody::ChannelCreated { channel_id, .. }
+            | EventBody::DirectMessageChannelCreated { channel_id, .. } => channel_id,
+            _ => continue,
+        };
+        if let Some(existing_event_id) = channel_creation_event_ids.get(channel_id) {
+            if existing_event_id != &historical.event_id {
+                conflicting_channel_ids.insert(channel_id.clone());
+            }
+        } else {
+            channel_creation_event_ids.insert(channel_id.clone(), historical.event_id.clone());
+        }
+    }
+
+    let mut children_by_parent = HashMap::<EventId, Vec<EventId>>::new();
+    let mut conflict_origin_by_event = HashMap::<EventId, ChannelId>::new();
+    for historical in &pending {
+        for parent_id in &historical.event.parents {
+            children_by_parent
+                .entry(parent_id.clone())
+                .or_default()
+                .push(historical.event_id.clone());
+        }
+        let channel_id = match &historical.event.body {
+            EventBody::ChannelCreated { channel_id, .. }
+            | EventBody::DirectMessageChannelCreated { channel_id, .. }
+                if conflicting_channel_ids.contains(channel_id) =>
+            {
+                channel_id
+            }
+            _ => continue,
+        };
+        conflict_origin_by_event
+            .entry(historical.event_id.clone())
+            .and_modify(|existing| {
+                if channel_id.0 < existing.0 {
+                    *existing = channel_id.clone();
+                }
+            })
+            .or_insert_with(|| channel_id.clone());
+    }
+    let mut conflict_queue = conflict_origin_by_event
+        .keys()
+        .cloned()
+        .collect::<VecDeque<_>>();
+    while let Some(parent_id) = conflict_queue.pop_front() {
+        let Some(origin_channel_id) = conflict_origin_by_event.get(&parent_id).cloned() else {
+            continue;
+        };
+        for child_id in children_by_parent.get(&parent_id).into_iter().flatten() {
+            let should_propagate = match conflict_origin_by_event.get(child_id) {
+                Some(existing) => origin_channel_id.0 < existing.0,
+                None => true,
+            };
+            if should_propagate {
+                conflict_origin_by_event.insert(child_id.clone(), origin_channel_id.clone());
+                conflict_queue.push_back(child_id.clone());
+            }
+        }
+    }
+
+    if let Some(channel_id) = event_declared_channel_id(event)
+        && conflicting_channel_ids.contains(channel_id)
+    {
+        return Err(AuthorizationError::ChannelAlreadyCreated {
+            channel_id: channel_id.clone(),
+        });
+    }
+    if let Some(channel_id) = event
+        .event
+        .parents
+        .iter()
+        .filter_map(|parent_id| conflict_origin_by_event.get(parent_id))
+        .min_by(|left, right| left.0.cmp(&right.0))
+    {
+        return Err(AuthorizationError::ChannelAlreadyCreated {
+            channel_id: channel_id.clone(),
+        });
+    }
+
+    let historical_event_ids = pending
+        .iter()
+        .map(|historical| &historical.event_id)
+        .collect::<HashSet<_>>();
+    let mut applied_historical_event_ids = HashSet::<EventId>::new();
     let mut deferred = Vec::with_capacity(pending.len());
 
     loop {
         let mut progressed = false;
 
         for historical in pending.drain(..) {
+            if conflict_origin_by_event.contains_key(&historical.event_id) {
+                continue;
+            }
+            // Exact event-ID replays are idempotent. A different creation event
+            // that collides with an already-applied workspace/channel identity
+            // is not a replay and must remain an authorization failure.
+            if applied_historical_event_ids.contains(&historical.event_id) {
+                continue;
+            }
+            if historical.event.parents.iter().any(|parent_id| {
+                historical_event_ids.contains(parent_id)
+                    && !applied_historical_event_ids.contains(parent_id)
+            }) {
+                deferred.push(historical);
+                continue;
+            }
             match index.authorize_and_apply(historical) {
                 Ok(()) => {
+                    applied_historical_event_ids.insert(historical.event_id.clone());
                     progressed = true;
                 }
-                Err(AuthorizationError::WorkspaceAlreadyCreated) => {}
+                Err(
+                    error @ (AuthorizationError::WorkspaceAlreadyCreated
+                    | AuthorizationError::ChannelAlreadyCreated { .. }),
+                ) => return Err(error),
                 Err(
                     AuthorizationError::MissingWorkspaceRoot
                     | AuthorizationError::ChannelNotFound { .. }
@@ -2334,6 +2510,26 @@ pub fn authorize_event_with_history(
     }
 
     index.authorize(event)
+}
+
+fn event_declared_channel_id(event: &SignedEvent) -> Option<&ChannelId> {
+    let body_channel_id = match &event.event.body {
+        EventBody::ChannelCreated { channel_id, .. }
+        | EventBody::DirectMessageChannelCreated { channel_id, .. }
+        | EventBody::ChannelDetailsUpdated { channel_id, .. }
+        | EventBody::ChannelMemberAdded { channel_id, .. }
+        | EventBody::ChannelMemberRemoved { channel_id, .. }
+        | EventBody::OpenMlsChannelGroupMemberAdded { channel_id, .. }
+        | EventBody::OpenMlsChannelGroupMemberRemoved { channel_id, .. }
+        | EventBody::OpenMlsChannelGroupSelfUpdated { channel_id, .. }
+        | EventBody::ReadMarkerUpdated { channel_id, .. } => Some(channel_id),
+        EventBody::ContentKeyEpochPublished {
+            scope: ContentKeyScope::Channel { channel_id },
+            ..
+        } => Some(channel_id),
+        _ => None,
+    };
+    body_channel_id.or(event.event.channel_id.as_ref())
 }
 
 pub fn authorize_event_with_trust_snapshot(
@@ -6788,6 +6984,492 @@ mod tests {
             Err(AuthorizationError::InsufficientRole { action, .. })
                 if action == "rotate_content_key"
         ));
+    }
+
+    #[test]
+    fn channel_id_cannot_be_redefined_to_change_privacy() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let private_message_id = MessageId::new();
+        let member_message_id = MessageId::new();
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let private_channel = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "strategy".to_owned(),
+                is_private: true,
+            },
+        ));
+        let private_message = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            owner.clone(),
+            EventBody::MessageCreated {
+                message_id: private_message_id.clone(),
+                markdown: "private roadmap".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let public_redefinition = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let member_message = signed(SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageCreated {
+                message_id: member_message_id.clone(),
+                markdown: "must stay unauthorized".to_owned(),
+                attachments: Vec::new(),
+            },
+        ));
+        let history = [
+            root.clone(),
+            invite.clone(),
+            private_channel.clone(),
+            private_message.clone(),
+        ];
+
+        assert_eq!(
+            authorize_event_with_history(&history, &public_redefinition),
+            Err(AuthorizationError::ChannelAlreadyCreated {
+                channel_id: channel_id.clone(),
+            })
+        );
+
+        let mut state = WorkspaceState::new(workspace_id);
+        for event in history {
+            state.apply(&event).unwrap();
+        }
+        assert_eq!(
+            state.apply(&public_redefinition),
+            Err(CoreError::Authorization(
+                AuthorizationError::ChannelAlreadyCreated {
+                    channel_id: channel_id.clone(),
+                }
+            ))
+        );
+
+        let channel = state.channels.get(&channel_id).unwrap();
+        assert!(channel.is_private);
+        assert_eq!(channel.name, "strategy");
+        assert_eq!(channel.member_device_ids, vec![owner]);
+        assert_eq!(
+            state.messages[&private_message_id].markdown,
+            "private roadmap"
+        );
+        assert!(!state.channel_accessible_to(&channel_id, &member));
+        assert_eq!(
+            state.apply(&member_message),
+            Err(CoreError::Authorization(
+                AuthorizationError::PrivateChannelAccessDenied {
+                    channel_id,
+                    device_id: member,
+                }
+            ))
+        );
+        assert!(!state.messages.contains_key(&member_message_id));
+    }
+
+    #[test]
+    fn channel_ids_share_one_namespace_across_standard_and_direct_channels() {
+        let workspace_id = WorkspaceId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+
+        let standard_first_id = ChannelId::new();
+        let standard_first = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: standard_first_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        ));
+        let duplicate_dm = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: standard_first_id.clone(),
+                name: "Owner and member".to_owned(),
+                participant_device_ids: vec![owner.clone(), member.clone()],
+            },
+        ));
+
+        let mut standard_first_state = WorkspaceState::new(workspace_id.clone());
+        standard_first_state
+            .apply_batch(&[root.clone(), invite.clone(), standard_first])
+            .unwrap();
+        assert_eq!(
+            standard_first_state.apply(&duplicate_dm),
+            Err(CoreError::Authorization(
+                AuthorizationError::ChannelAlreadyCreated {
+                    channel_id: standard_first_id,
+                }
+            ))
+        );
+
+        let dm_first_id = ChannelId::new();
+        let dm_first = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: dm_first_id.clone(),
+                name: "Owner and member".to_owned(),
+                participant_device_ids: vec![owner.clone(), member],
+            },
+        ));
+        let duplicate_standard = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner,
+            EventBody::ChannelCreated {
+                channel_id: dm_first_id.clone(),
+                name: "not a DM".to_owned(),
+                is_private: false,
+            },
+        ));
+
+        let mut dm_first_state = WorkspaceState::new(workspace_id);
+        dm_first_state
+            .apply_batch(&[root, invite, dm_first])
+            .unwrap();
+        assert_eq!(
+            dm_first_state.apply(&duplicate_standard),
+            Err(CoreError::Authorization(
+                AuthorizationError::ChannelAlreadyCreated {
+                    channel_id: dm_first_id,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn authorization_history_tolerates_a_replayed_channel_creation_event() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let channel = public_channel(&workspace_id, &owner, &channel_id);
+        let message = plaintext_message(&workspace_id, &channel_id, &owner, &MessageId::new());
+        let history = vec![channel.clone(), root, channel];
+
+        assert!(authorize_event_with_history(&history, &message).is_ok());
+
+        let mut state = WorkspaceState::new(workspace_id);
+        let report = state.apply_batch(&history).unwrap();
+        assert!(report.gaps.is_empty());
+        assert!(state.channels.contains_key(&channel_id));
+    }
+
+    #[test]
+    fn standard_and_direct_channel_conflicts_fail_closed_in_any_order() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+        let standard = public_channel(&workspace_id, &owner, &channel_id);
+        let direct = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "Owner and member".to_owned(),
+                participant_device_ids: vec![owner.clone(), member],
+            },
+        ));
+        let message = plaintext_message(&workspace_id, &channel_id, &owner, &MessageId::new());
+
+        for history in [
+            vec![
+                root.clone(),
+                invite.clone(),
+                standard.clone(),
+                direct.clone(),
+            ],
+            vec![
+                root.clone(),
+                invite.clone(),
+                direct.clone(),
+                standard.clone(),
+            ],
+        ] {
+            assert_eq!(
+                authorize_event_with_history(&history, &message),
+                Err(AuthorizationError::ChannelAlreadyCreated {
+                    channel_id: channel_id.clone(),
+                })
+            );
+        }
+
+        for batch in [
+            vec![
+                root.clone(),
+                invite.clone(),
+                standard.clone(),
+                direct.clone(),
+            ],
+            vec![
+                root.clone(),
+                invite.clone(),
+                direct.clone(),
+                standard.clone(),
+            ],
+        ] {
+            let mut state = WorkspaceState::new(workspace_id.clone());
+            let report = state.apply_batch(&batch).unwrap();
+            assert!(!state.channels.contains_key(&channel_id));
+            assert!(
+                report
+                    .gaps
+                    .iter()
+                    .any(|gap| gap.event_id == standard.event_id)
+            );
+            assert!(
+                report
+                    .gaps
+                    .iter()
+                    .any(|gap| gap.event_id == direct.event_id)
+            );
+        }
+    }
+
+    #[test]
+    fn channel_conflicts_do_not_block_unrelated_history_authorization() {
+        let workspace_id = WorkspaceId::new();
+        let conflicted_channel_id = ChannelId::new();
+        let unrelated_channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let root = workspace_root(&workspace_id, &owner);
+        let standard = public_channel(&workspace_id, &owner, &conflicted_channel_id);
+        let direct = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DirectMessageChannelCreated {
+                channel_id: conflicted_channel_id.clone(),
+                name: "conflicting direct message".to_owned(),
+                participant_device_ids: vec![owner.clone(), DeviceId("dev_peer".to_owned())],
+            },
+        ));
+        let unrelated_channel = public_channel(&workspace_id, &owner, &unrelated_channel_id);
+        let unrelated_message = plaintext_message(
+            &workspace_id,
+            &unrelated_channel_id,
+            &owner,
+            &MessageId::new(),
+        );
+        let unrelated_profile = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::DeviceProfileUpdated {
+                display_name: "Still authorized".to_owned(),
+                avatar_id: String::new(),
+            },
+        ));
+        let history = vec![direct, unrelated_channel, standard.clone(), root];
+
+        assert!(authorize_event_with_history(&history, &unrelated_message).is_ok());
+        assert!(authorize_event_with_history(&history, &unrelated_profile).is_ok());
+
+        let mut conflict_descendant = SignableEvent::new(
+            workspace_id,
+            None,
+            owner,
+            EventBody::DeviceProfileUpdated {
+                display_name: "Causally conflicted".to_owned(),
+                avatar_id: String::new(),
+            },
+        );
+        conflict_descendant.parents = vec![standard.event_id];
+        let conflict_descendant = signed(conflict_descendant);
+        assert_eq!(
+            authorize_event_with_history(&history, &conflict_descendant),
+            Err(AuthorizationError::ChannelAlreadyCreated {
+                channel_id: conflicted_channel_id,
+            })
+        );
+    }
+
+    #[test]
+    fn conflicting_channel_definitions_fail_closed_in_any_history_order() {
+        let workspace_id = WorkspaceId::new();
+        let channel_id = ChannelId::new();
+        let owner = DeviceId("dev_owner".to_owned());
+        let member = DeviceId("dev_member".to_owned());
+        let owner_message_id = MessageId::new();
+        let member_message_id = MessageId::new();
+        let root = workspace_root(&workspace_id, &owner);
+        let invite = signed(SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::MemberInvited {
+                invitee_device_id: member.clone(),
+                role: WorkspaceRole::Member,
+            },
+        ));
+
+        let mut private_channel = SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "strategy".to_owned(),
+                is_private: true,
+            },
+        );
+        private_channel.parents = vec![root.event_id.clone()];
+        let private_channel = signed(private_channel);
+
+        let mut public_redefinition = SignableEvent::new(
+            workspace_id.clone(),
+            None,
+            owner.clone(),
+            EventBody::ChannelCreated {
+                channel_id: channel_id.clone(),
+                name: "general".to_owned(),
+                is_private: false,
+            },
+        );
+        public_redefinition.parents = vec![private_channel.event_id.clone()];
+        let public_redefinition = signed(public_redefinition);
+
+        let mut owner_message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            owner,
+            EventBody::MessageCreated {
+                message_id: owner_message_id.clone(),
+                markdown: "private history".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        owner_message.parents = vec![private_channel.event_id.clone()];
+        let owner_message = signed(owner_message);
+
+        let mut member_message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            member.clone(),
+            EventBody::MessageCreated {
+                message_id: member_message_id.clone(),
+                markdown: "must stay unauthorized".to_owned(),
+                attachments: Vec::new(),
+            },
+        );
+        member_message.parents = vec![private_channel.event_id.clone(), invite.event_id.clone()];
+        let member_message = signed(member_message);
+
+        for history in [
+            vec![
+                public_redefinition.clone(),
+                invite.clone(),
+                private_channel.clone(),
+                root.clone(),
+            ],
+            vec![
+                root.clone(),
+                private_channel.clone(),
+                invite.clone(),
+                public_redefinition.clone(),
+            ],
+        ] {
+            assert_eq!(
+                authorize_event_with_history(&history, &member_message),
+                Err(AuthorizationError::ChannelAlreadyCreated {
+                    channel_id: channel_id.clone(),
+                })
+            );
+        }
+
+        for batch in [
+            vec![
+                public_redefinition.clone(),
+                member_message.clone(),
+                owner_message.clone(),
+                private_channel.clone(),
+                invite.clone(),
+                root.clone(),
+            ],
+            vec![
+                root.clone(),
+                invite.clone(),
+                private_channel.clone(),
+                owner_message.clone(),
+                member_message.clone(),
+                public_redefinition.clone(),
+            ],
+        ] {
+            let mut state = WorkspaceState::new(workspace_id.clone());
+            let report = state.apply_batch(&batch).unwrap();
+
+            assert!(!state.channels.contains_key(&channel_id));
+            assert!(!state.messages.contains_key(&owner_message_id));
+            assert!(!state.messages.contains_key(&member_message_id));
+            for rejected_event_id in [
+                &private_channel.event_id,
+                &public_redefinition.event_id,
+                &owner_message.event_id,
+                &member_message.event_id,
+            ] {
+                assert!(
+                    report
+                        .gaps
+                        .iter()
+                        .any(|gap| &gap.event_id == rejected_event_id),
+                    "conflicting definition or descendant must stay unapplied"
+                );
+            }
+        }
     }
 
     #[test]
