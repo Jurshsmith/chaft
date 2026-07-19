@@ -96,6 +96,35 @@ The Qt app is scaffolded but requires Qt 6 and CMake to build. Its first paint
 uses a built-in `WorkspaceSnapshot` with the production JSON shape, then the
 controller replaces it with runtime or raw-store data on background workers.
 
+## Run The Website
+
+The public landing and download site lives in `apps/website` as a fully static
+Astro application. Use Node.js 22.12 or newer and activate the package-manager
+version declared in `apps/website/package.json` (for example with Corepack):
+
+```sh
+corepack enable
+corepack install --global pnpm@11.14.0
+make website-install
+make website-dev
+```
+
+Run the complete static-site validation gate with `make website-validate`.
+Production builds must provide the complete public `SITE_URL` so canonical
+URLs, the sitemap, and `robots.txt` use the deployed URL. Both root origins such
+as `https://chaft.example` and path-prefixed URLs such as
+`https://example.com/chaft` are supported. The Website workflow uses the
+`WEBSITE_SITE_URL` repository variable on `main` and uploads a provider-neutral
+`dist/` artifact; configure that variable before the first `main` build. The
+workflow does not deploy or require provider credentials. Desktop
+packages stay in GitHub Releases or dedicated object storage; the site consumes
+their verified release metadata instead of committing installers into the
+monorepo. Publishing an immutable GitHub Release starts the promotion workflow.
+It verifies the complete uploaded asset set, reruns native signature checks on
+Windows, macOS, and (when signed) Linux runners, and opens a descriptive pull
+request for the website manifest. See `apps/website/README.md` for the artifact
+handoff contract and complete repository configuration.
+
 ## Run The Desktop App
 
 For interactive local testing, build the native desktop shell and open a
@@ -242,6 +271,9 @@ tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
 tools/desktop/release-metadata-smoke.sh
+python3 tools/desktop/export-website-release-manifest-test.py
+tools/desktop/platform-verification-receipt-smoke.sh
+python3 tools/desktop/stage-website-release-assets-test.py
 tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
 python3 tools/desktop/release-metadata.py release
@@ -284,14 +316,58 @@ verification sequence used by GitHub Actions.
 CI builds release desktop packages on Linux, macOS, and Windows after the debug
 desktop smoke passes. Linux is expected to produce a CPack TGZ archive
 (`.tar.gz` or `.tgz`), macOS a `.dmg`, and Windows a `.zip`. The uploaded
-artifact bundle for each OS includes the native package, `SHA256SUMS`,
-`chaft-desktop-sbom.cdx.json`, and `chaft-desktop-provenance.json`. Generate the
-same metadata locally after packaging with:
+artifact bundle for each OS includes the native package and platform-qualified
+metadata:
+
+- `chaft-desktop-{platform}-SHA256SUMS`
+- `chaft-desktop-{platform}-sbom.cdx.json`
+- `chaft-desktop-{platform}-provenance.json`
+
+This naming keeps independently uploaded platform bundles collision-free. Generate
+and verify the same metadata locally after packaging with:
 
 ```sh
-python3 tools/desktop/release-metadata.py release
+python3 tools/desktop/release-metadata.py release --platform Linux
 python3 tools/desktop/verify-release-metadata.py release --platform Linux
 ```
+
+Metadata coherence does not prove a native signature. Before publishing, run
+`tools/desktop/generate-platform-verification-receipt.py` on the matching native
+OS. It invokes Authenticode verification on Windows, `codesign`/Gatekeeper/stapler
+on macOS, or OpenPGP detached-signature verification against an explicit trusted
+keyring and fingerprint on Linux. Its platform-qualified receipt is then consumed
+with the three verified package directories by
+`tools/desktop/export-website-release-manifest.py`. For GitHub Releases,
+`tools/desktop/stage-website-release-assets.py` first reconstructs those
+directories from the flat downloaded asset namespace and rejects missing,
+duplicated, stale, or unexpected managed assets. The exporter rehashes the
+packages, resolves the release tag in the matching source checkout, verifies
+that provenance materials and commits match that tag, binds architecture and
+evidence URLs, refuses mutable published versions, and archives the previous
+website manifest before promoting a new one.
+
+`.github/workflows/promote-desktop-release.yml` performs that chain after a
+GitHub Release is published, validates the generated Astro site, and opens a
+`release/v<version>-website-manifest` pull request. Enable immutable releases
+and allow GitHub Actions to create pull requests in the repository settings.
+Configure these Actions secrets before publishing:
+
+- `CHAFT_WINDOWS_SIGNER_THUMBPRINT`
+- `CHAFT_APPLE_TEAM_ID`
+- `CHAFT_LINUX_SIGNING_FINGERPRINT` for signed Linux releases
+- `CHAFT_LINUX_SIGNING_KEYRING_BASE64` for signed Linux releases
+
+The last secret is the base64 encoding of the exact public OpenPGP keyring used
+to produce the Linux receipt; it contains no private key. The workflow is
+fail-closed: Windows and macOS receipts are mandatory, a signed Linux status
+requires a Linux receipt plus detached signatures, and unrelated uploaded
+assets must be removed or explicitly supported by the staging policy before
+promotion. A checksummed-only Linux release must not upload detached signatures.
+Read-only native runner jobs independently regenerate trusted
+receipts, and the exporter requires their security claims to match the public
+release receipts. Dependency installation and site validation also run with
+read-only permissions; only a final, dependency-free job can push the bounded
+manifest payload and open its pull request.
 
 Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is
 non-blank, and compares broad image metrics against

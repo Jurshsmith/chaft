@@ -21,6 +21,8 @@ LAUNCH_ARGS ?=
 
 CARGO ?= cargo
 PYTHON ?= python3
+PNPM ?= pnpm
+WEBSITE_PNPM_VERSION := 11.14.0
 
 .DEFAULT_GOAL := help
 
@@ -81,7 +83,16 @@ help:
 		'  make screenshot-smoke         Run screenshot smoke with PROFILE' \
 		'  make release-metadata         Generate release metadata with PACKAGE_PROFILE' \
 		'  make release-metadata-check   Verify release metadata for PLATFORM' \
-		'  make release-metadata-smoke   Run release metadata smoke'
+		'  make release-metadata-smoke   Run release metadata smoke' \
+		'  make release-promotion-test   Test release staging, native receipts, and website export' \
+		'' \
+		'Website:' \
+		'  make website-install          Install pinned website dependencies' \
+		'  make website-dev              Start the Astro development server' \
+		'  make website-check            Run Astro and TypeScript checks' \
+		'  make website-test             Run website unit tests' \
+		'  make website-build            Generate the static website' \
+		'  make website-validate         Run all website validation gates'
 
 .PHONY: fmt fmt-check check clippy test test-app test-invite-flow bench-check rust-gates
 fmt:
@@ -193,7 +204,7 @@ ci:
 	$(MAKE) ci-rust
 	$(MAKE) ci-desktop
 
-.PHONY: smoke-p2p smoke-access smoke-lifecycle workspace-qa-baseline smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke
+.PHONY: smoke-p2p smoke-access smoke-lifecycle workspace-qa-baseline smoke-visual screenshot-smoke release-metadata release-metadata-check release-metadata-smoke release-promotion-test
 smoke-p2p:
 	tools/smoke/local-p2p.sh $(ARGS)
 
@@ -223,3 +234,34 @@ release-metadata-check:
 
 release-metadata-smoke:
 	tools/desktop/release-metadata-smoke.sh
+
+release-promotion-test:
+	$(PYTHON) tools/desktop/export-website-release-manifest-test.py
+	tools/desktop/platform-verification-receipt-smoke.sh
+	$(PYTHON) tools/desktop/stage-website-release-assets-test.py
+
+.PHONY: website-pnpm-check website-install website-dev website-check website-test website-build website-validate
+website-pnpm-check:
+	@version="$$( $(PNPM) --version 2>/dev/null )"; \
+	if [ "$$version" != "$(WEBSITE_PNPM_VERSION)" ]; then \
+		printf 'website requires pnpm %s (found %s)\n' "$(WEBSITE_PNPM_VERSION)" "$${version:-missing}" >&2; \
+		exit 1; \
+	fi
+
+website-install: website-pnpm-check
+	$(PNPM) --dir apps/website install --frozen-lockfile
+
+website-dev: website-pnpm-check
+	$(PNPM) --dir apps/website dev
+
+website-check: website-pnpm-check
+	$(PNPM) --dir apps/website check
+
+website-test: website-pnpm-check
+	$(PNPM) --dir apps/website test
+
+website-build: website-pnpm-check
+	$(PNPM) --dir apps/website build
+
+website-validate: website-pnpm-check
+	$(PNPM) --dir apps/website validate

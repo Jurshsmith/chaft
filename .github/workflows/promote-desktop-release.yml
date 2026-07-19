@@ -1,0 +1,702 @@
+name: Promote desktop release to website
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published desktop release tag, exactly v<semantic-version>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-desktop-release-to-website
+  cancel-in-progress: false
+
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  prepare:
+    name: Inspect and stage immutable release assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      linux_arch: ${{ steps.stage.outputs.linux_arch }}
+      linux_signed: ${{ steps.stage.outputs.linux_signed }}
+      macos_arch: ${{ steps.stage.outputs.macos_arch }}
+      policy_commit: ${{ steps.release.outputs.policy_commit }}
+      published_at: ${{ steps.release.outputs.published_at }}
+      tag_commit: ${{ steps.release.outputs.tag_commit }}
+      windows_arch: ${{ steps.stage.outputs.windows_arch }}
+    steps:
+      - name: Checkout the current default branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Inspect the published GitHub Release
+        id: release
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! python3 -c 'import os, runpy, sys; values = runpy.run_path("tools/desktop/export-website-release-manifest.py"); tag = os.environ["RELEASE_TAG"]; sys.exit(0 if tag.startswith("v") and values["SEMANTIC_VERSION"].fullmatch(tag[1:]) else 1)'; then
+            echo "::error::Release tag must be v followed by a complete semantic version."
+            exit 1
+          fi
+
+          promotion_branch="release/${RELEASE_TAG}-website-manifest"
+          open_prs="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=open \
+            -f per_page=100)"
+          conflicting_pr="$(jq -r \
+            --arg expected "${promotion_branch}" \
+            --arg base "${DEFAULT_BRANCH}" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            '[.[]
+              | select(.head.repo.full_name == $repository)
+              | select(.head.ref | startswith("release/v") and endswith("-website-manifest"))
+              | select(.head.ref != $expected or .base.ref != $base)
+            ][0].html_url // empty' \
+            <<<"${open_prs}")"
+          if [[ -n "${conflicting_pr}" ]]; then
+            echo "::error::Merge or close the existing website release promotion first: ${conflicting_pr}"
+            exit 1
+          fi
+
+          release_json="${RUNNER_TEMP}/release.json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "${release_json}"
+          if [[ "$(jq -r '.tag_name' "${release_json}")" != "${RELEASE_TAG}" ]]; then
+            echo "::error::GitHub returned a different release tag."
+            exit 1
+          fi
+          if [[ "$(jq -r '.draft' "${release_json}")" != "false" ]]; then
+            echo "::error::Draft releases cannot be promoted."
+            exit 1
+          fi
+          if [[ "$(jq -r '.immutable // false' "${release_json}")" != "true" ]]; then
+            echo "::error::Enable GitHub immutable releases and publish all assets from a draft before promotion."
+            exit 1
+          fi
+          gh release verify "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}"
+
+          published_at="$(jq -er '.published_at | strings | select(length > 0)' "${release_json}")"
+          if [[ "$(jq -r '.prerelease' "${release_json}")" == "true" ]]; then
+            channel="preview"
+          else
+            channel="stable"
+          fi
+
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          policy_commit="$(git rev-parse HEAD)"
+          echo "published_at=${published_at}" >> "${GITHUB_OUTPUT}"
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+          echo "tag_commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
+          echo "policy_commit=${policy_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download and authenticate every uploaded release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/release-assets"
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${RUNNER_TEMP}/release-assets"
+          while IFS= read -r -d '' asset; do
+            gh release verify-asset "${RELEASE_TAG}" "${asset}" \
+              --repo "${GITHUB_REPOSITORY}" >/dev/null
+          done < <(find "${RUNNER_TEMP}/release-assets" -type f -print0)
+
+      - name: Stage the release namespace
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="${RUNNER_TEMP}/release-staged"
+          receipts="${staged}/verification-receipts"
+          python3 tools/desktop/stage-website-release-assets.py \
+            --assets-dir "${RUNNER_TEMP}/release-assets" \
+            --output-dir "${staged}"
+
+          normalize_architecture() {
+            case "${1,,}" in
+              amd64|x64|x86-64|x86_64) printf 'x86_64\n' ;;
+              aarch64|arm64) printf 'arm64\n' ;;
+              universal|universal2) printf 'universal\n' ;;
+              *) return 1 ;;
+            esac
+          }
+
+          windows_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
+            "${receipts}/chaft-desktop-windows-verification.json")")" || {
+            echo "::error::Windows receipt architecture is unsupported."
+            exit 1
+          }
+          if [[ "${windows_arch}" == "universal" ]]; then
+            echo "::error::Windows receipt cannot declare a universal architecture."
+            exit 1
+          fi
+          macos_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
+            "${receipts}/chaft-desktop-macos-verification.json")")" || {
+            echo "::error::macOS receipt architecture is unsupported."
+            exit 1
+          }
+          linux_receipt="${receipts}/chaft-desktop-linux-verification.json"
+          if [[ -f "${linux_receipt}" ]]; then
+            linux_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
+              "${linux_receipt}")")" || {
+              echo "::error::Linux receipt architecture is unsupported."
+              exit 1
+            }
+            linux_signed="true"
+          else
+            linux_arch="$(normalize_architecture "$(jq -er '.platform.machine | strings' \
+              "${staged}/linux-package/chaft-desktop-linux-provenance.json")")" || {
+              echo "::error::Linux provenance architecture is unsupported."
+              exit 1
+            }
+            linux_signed="false"
+          fi
+          if [[ "${linux_arch}" == "universal" ]]; then
+            echo "::error::Linux packages cannot declare a universal architecture."
+            exit 1
+          fi
+
+          echo "windows_arch=${windows_arch}" >> "${GITHUB_OUTPUT}"
+          echo "macos_arch=${macos_arch}" >> "${GITHUB_OUTPUT}"
+          echo "linux_arch=${linux_arch}" >> "${GITHUB_OUTPUT}"
+          echo "linux_signed=${linux_signed}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload staged Windows inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows-input
+          path: ${{ runner.temp }}/release-staged/windows-package
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload staged macOS inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-macos-input
+          path: ${{ runner.temp }}/release-staged/macos-package
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload staged Linux inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-linux-input
+          path: ${{ runner.temp }}/release-staged/linux-package
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload public release receipts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-public-receipts
+          path: ${{ runner.temp }}/release-staged/verification-receipts
+          if-no-files-found: error
+
+  verify_windows:
+    name: Reverify Authenticode on Windows
+    needs: prepare
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted verification code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          persist-credentials: false
+
+      - name: Download the staged Windows package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-windows-input
+          path: ${{ runner.temp }}/windows-package
+
+      - name: Run native Authenticode verification
+        shell: bash
+        env:
+          TRUSTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.CHAFT_WINDOWS_SIGNER_THUMBPRINT }}
+          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.windows_arch }}
+          VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}" ]]; then
+            echo "::error::Configure the CHAFT_WINDOWS_SIGNER_THUMBPRINT Actions secret."
+            exit 1
+          fi
+          mkdir "${RUNNER_TEMP}/trusted-receipts"
+          python3 tools/desktop/generate-platform-verification-receipt.py \
+            --platform windows \
+            --package-dir "${RUNNER_TEMP}/windows-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-windows-verification.json" \
+            --version "${RELEASE_TAG#v}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${VERIFIED_COMMIT}" \
+            --architecture "${VERIFIED_ARCHITECTURE}" \
+            --trusted-windows-signer-thumbprint "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}"
+
+      - name: Upload trusted Windows verification result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trusted-windows-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-windows-verification.json
+          if-no-files-found: error
+
+  verify_macos:
+    name: Reverify notarization and signing on macOS
+    needs: prepare
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted verification code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          persist-credentials: false
+
+      - name: Download the staged macOS package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-macos-input
+          path: ${{ runner.temp }}/macos-package
+
+      - name: Run native Apple verification
+        shell: bash
+        env:
+          TRUSTED_APPLE_TEAM_ID: ${{ secrets.CHAFT_APPLE_TEAM_ID }}
+          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.macos_arch }}
+          VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TRUSTED_APPLE_TEAM_ID}" ]]; then
+            echo "::error::Configure the CHAFT_APPLE_TEAM_ID Actions secret."
+            exit 1
+          fi
+          mkdir "${RUNNER_TEMP}/trusted-receipts"
+          python3 tools/desktop/generate-platform-verification-receipt.py \
+            --platform macos \
+            --package-dir "${RUNNER_TEMP}/macos-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-macos-verification.json" \
+            --version "${RELEASE_TAG#v}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${VERIFIED_COMMIT}" \
+            --architecture "${VERIFIED_ARCHITECTURE}" \
+            --trusted-apple-team-id "${TRUSTED_APPLE_TEAM_ID}"
+
+      - name: Upload trusted macOS verification result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trusted-macos-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-macos-verification.json
+          if-no-files-found: error
+
+  verify_linux:
+    name: Reverify signed Linux packages
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted verification code
+        if: needs.prepare.outputs.linux_signed == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          persist-credentials: false
+
+      - name: Download the staged Linux package
+        if: needs.prepare.outputs.linux_signed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-linux-input
+          path: ${{ runner.temp }}/linux-package
+
+      - name: Run native OpenPGP and ELF verification
+        if: needs.prepare.outputs.linux_signed == 'true'
+        shell: bash
+        env:
+          TRUSTED_KEYRING_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_KEYRING_BASE64 }}
+          TRUSTED_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
+          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.linux_arch }}
+          VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TRUSTED_LINUX_SIGNING_FINGERPRINT}" || -z "${TRUSTED_KEYRING_BASE64}" ]]; then
+            echo "::error::Configure the Linux signing fingerprint and keyring Actions secrets."
+            exit 1
+          fi
+          mkdir "${RUNNER_TEMP}/trusted-receipts"
+          keyring="${RUNNER_TEMP}/chaft-desktop-linux-signing-keyring.gpg"
+          printf '%s' "${TRUSTED_KEYRING_BASE64}" | base64 --decode > "${keyring}"
+          test -s "${keyring}"
+          python3 tools/desktop/generate-platform-verification-receipt.py \
+            --platform linux \
+            --package-dir "${RUNNER_TEMP}/linux-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-linux-verification.json" \
+            --version "${RELEASE_TAG#v}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${VERIFIED_COMMIT}" \
+            --architecture "${VERIFIED_ARCHITECTURE}" \
+            --trusted-keyring "${keyring}" \
+            --trusted-fingerprint "${TRUSTED_LINUX_SIGNING_FINGERPRINT}"
+
+      - name: Upload trusted Linux verification result
+        if: needs.prepare.outputs.linux_signed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trusted-linux-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-linux-verification.json
+          if-no-files-found: error
+
+      - name: Record checksummed-only Linux policy
+        if: needs.prepare.outputs.linux_signed != 'true'
+        run: echo "Linux has no signing receipt; the exporter will verify package architecture directly."
+
+  export:
+    name: Export and validate the static website
+    needs:
+      - prepare
+      - verify_windows
+      - verify_macos
+      - verify_linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the current default branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Download staged platform inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*-input
+          path: ${{ runner.temp }}/release-staged
+
+      - name: Download public release receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-public-receipts
+          path: ${{ runner.temp }}/public-receipts
+
+      - name: Download trusted Windows receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: trusted-windows-receipt
+          path: ${{ runner.temp }}/trusted-receipts
+
+      - name: Download trusted macOS receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: trusted-macos-receipt
+          path: ${{ runner.temp }}/trusted-receipts
+
+      - name: Download trusted Linux receipt
+        if: needs.prepare.outputs.linux_signed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: trusted-linux-receipt
+          path: ${{ runner.temp }}/trusted-receipts
+
+      - name: Export the verified website release manifest
+        shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
+          RELEASE_TAG_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+          TRUSTED_APPLE_TEAM_ID: ${{ secrets.CHAFT_APPLE_TEAM_ID }}
+          TRUSTED_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
+          TRUSTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.CHAFT_WINDOWS_SIGNER_THUMBPRINT }}
+          VERIFIED_LINUX_ARCHITECTURE: ${{ needs.prepare.outputs.linux_arch }}
+          VERIFIED_MACOS_ARCHITECTURE: ${{ needs.prepare.outputs.macos_arch }}
+          VERIFIED_WINDOWS_ARCHITECTURE: ${{ needs.prepare.outputs.windows_arch }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}" || -z "${TRUSTED_APPLE_TEAM_ID}" ]]; then
+            echo "::error::Configure the Windows signer and Apple Team ID Actions secrets."
+            exit 1
+          fi
+
+          git worktree add --detach "${RUNNER_TEMP}/release-source" "${RELEASE_TAG_COMMIT}"
+          staged="${RUNNER_TEMP}/release-staged"
+          public_receipts="${RUNNER_TEMP}/public-receipts"
+          trusted_receipts="${RUNNER_TEMP}/trusted-receipts"
+          linux_receipt_args=()
+          linux_identity_args=()
+          if [[ "${{ needs.prepare.outputs.linux_signed }}" == "true" ]]; then
+            if [[ -z "${TRUSTED_LINUX_SIGNING_FINGERPRINT}" ]]; then
+              echo "::error::Configure the CHAFT_LINUX_SIGNING_FINGERPRINT Actions secret."
+              exit 1
+            fi
+            linux_signing_state="signed"
+            linux_receipt_args=(
+              --linux-verification-receipt "${public_receipts}/chaft-desktop-linux-verification.json"
+              --linux-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-linux-verification.json"
+            )
+            linux_identity_args=(
+              --trusted-linux-signing-fingerprint "${TRUSTED_LINUX_SIGNING_FINGERPRINT}"
+            )
+          else
+            linux_signing_state="checksummed"
+          fi
+
+          python3 tools/desktop/export-website-release-manifest.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --source-root "${RUNNER_TEMP}/release-source" \
+            --published-at "${RELEASE_PUBLISHED_AT}" \
+            --channel "${RELEASE_CHANNEL}" \
+            --trusted-windows-signer-thumbprint "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}" \
+            --trusted-apple-team-id "${TRUSTED_APPLE_TEAM_ID}" \
+            --output apps/website/src/data/release-manifest.json \
+            --history-dir apps/website/src/data/release-history \
+            --windows-package-dir "${staged}/release-windows-input" \
+            --windows-arch "${VERIFIED_WINDOWS_ARCHITECTURE}" \
+            --windows-signing-state signed \
+            --windows-verification-receipt "${public_receipts}/chaft-desktop-windows-verification.json" \
+            --windows-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-windows-verification.json" \
+            --macos-package-dir "${staged}/release-macos-input" \
+            --macos-arch "${VERIFIED_MACOS_ARCHITECTURE}" \
+            --macos-signing-state notarized \
+            --macos-verification-receipt "${public_receipts}/chaft-desktop-macos-verification.json" \
+            --macos-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-macos-verification.json" \
+            --linux-package-dir "${staged}/release-linux-input" \
+            --linux-arch "${VERIFIED_LINUX_ARCHITECTURE}" \
+            --linux-signing-state "${linux_signing_state}" \
+            "${linux_identity_args[@]}" \
+            "${linux_receipt_args[@]}"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install website dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate the promoted static website
+        working-directory: apps/website
+        run: pnpm validate
+
+      - name: Stage the reviewed promotion payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/website-release-data"
+          mkdir -p "${bundle}/release-history"
+          cp -- apps/website/src/data/release-manifest.json "${bundle}/release-manifest.json"
+          find apps/website/src/data/release-history \
+            -maxdepth 1 -type f -name '*.json' \
+            -exec cp -- '{}' "${bundle}/release-history/" ';'
+          (
+            cd "${bundle}"
+            find . -type f -name '*.json' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+          )
+
+      - name: Upload the validated promotion payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-release-data
+          path: ${{ runner.temp }}/website-release-data
+          if-no-files-found: error
+
+  publish:
+    name: Open the website manifest pull request
+    needs:
+      - prepare
+      - export
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout the current default branch without stored credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the validated promotion payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: website-release-data
+          path: ${{ runner.temp }}/website-release-data
+
+      - name: Validate and stage the bounded data payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/website-release-data"
+          if [[ ! -f "${bundle}/release-manifest.json" || ! -f "${bundle}/SHA256SUMS" ]]; then
+            echo "::error::Promotion payload is incomplete."
+            exit 1
+          fi
+          while IFS= read -r -d '' path; do
+            relative="${path#"${bundle}/"}"
+            case "${relative}" in
+              release-manifest.json|SHA256SUMS|release-history/*.json)
+                ;;
+              *)
+                echo "::error::Unexpected promotion payload path: ${relative}"
+                exit 1
+                ;;
+            esac
+          done < <(find "${bundle}" -mindepth 1 \( -type f -o -type l \) -print0)
+          if find "${bundle}" -type l -print -quit | grep -q .; then
+            echo "::error::Promotion payload must not contain symbolic links."
+            exit 1
+          fi
+          (cd "${bundle}" && sha256sum --check SHA256SUMS)
+
+          cp -- "${bundle}/release-manifest.json" \
+            apps/website/src/data/release-manifest.json
+          find "${bundle}/release-history" \
+            -maxdepth 1 -type f -name '*.json' \
+            -exec cp -- '{}' apps/website/src/data/release-history/ ';'
+
+      - name: Publish a descriptive manifest branch
+        id: branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          data_path="apps/website/src/data"
+          branch="release/${RELEASE_TAG}-website-manifest"
+          gh auth setup-git
+          git add -- "${data_path}/release-manifest.json" "${data_path}/release-history"
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "The default branch already contains this immutable release manifest."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            default_commit="$(git rev-parse HEAD)"
+            branch_commit="$(git rev-parse "origin/${branch}")"
+            branch_parents="$(git rev-list --parents -n 1 "${branch_commit}")"
+            read -r -a parent_fields <<<"${branch_parents}"
+            if [[ "${#parent_fields[@]}" -ne 2 || "${parent_fields[1]}" != "${default_commit}" ]]; then
+              echo "::error::Existing promotion branch is not one clean commit on the current default branch."
+              exit 1
+            fi
+            desired_tree="$(git write-tree)"
+            branch_tree="$(git show -s --format=%T "${branch_commit}")"
+            if [[ "${branch_tree}" != "${desired_tree}" ]]; then
+              echo "::error::Existing promotion branch contains unverified or incomplete changes."
+              exit 1
+            fi
+          else
+            git switch -c "${branch}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Publish Chaft ${RELEASE_TAG} website downloads"
+            branch_commit="$(git rev-parse HEAD)"
+            git push --set-upstream origin "${branch}"
+          fi
+
+          remote_commit="$(git ls-remote --heads origin "refs/heads/${branch}" | awk 'NR == 1 { print $1 }')"
+          if [[ "${remote_commit}" != "${branch_commit}" ]]; then
+            echo "::error::Promotion branch changed after its verified tree was selected."
+            exit 1
+          fi
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${branch_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Open the release-manifest pull request
+        if: steps.branch.outputs.changed == 'true'
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_HEAD_OID: ${{ steps.branch.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          qualified_head="${repository_owner}:${PROMOTION_BRANCH}"
+          remote_commit="$(git ls-remote --heads origin \
+            "refs/heads/${PROMOTION_BRANCH}" | awk 'NR == 1 { print $1 }')"
+          if [[ "${remote_commit}" != "${EXPECTED_HEAD_OID}" ]]; then
+            echo "::error::Promotion branch moved before pull-request publication."
+            exit 1
+          fi
+
+          existing="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=all \
+            -f head="${qualified_head}" \
+            -f base="${DEFAULT_BRANCH}" \
+            -f per_page=100)"
+          existing_count="$(jq 'length' <<<"${existing}")"
+          if [[ "${existing_count}" -gt 0 ]]; then
+            if [[ "${existing_count}" -ne 1 ]] || \
+              [[ "$(jq -r '.[0].state' <<<"${existing}")" != "open" ]]; then
+              echo "::error::A closed promotion pull request already exists for ${PROMOTION_BRANCH}."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].head.repo.full_name' <<<"${existing}")" != "${GITHUB_REPOSITORY}" ]] || \
+              [[ "$(jq -r '.[0].base.ref' <<<"${existing}")" != "${DEFAULT_BRANCH}" ]] || \
+              [[ "$(jq -r '.[0].head.sha' <<<"${existing}")" != "${EXPECTED_HEAD_OID}" ]]; then
+              echo "::error::Existing promotion pull request is not bound to the verified branch commit."
+              exit 1
+            fi
+            echo "Promotion pull request already open: $(jq -r '.[0].html_url' <<<"${existing}")"
+            exit 0
+          fi
+
+          created="$(gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f base="${DEFAULT_BRANCH}" \
+            -f head="${qualified_head}" \
+            -f title="Publish Chaft ${RELEASE_TAG} website downloads" \
+            -f body="Promotes the verified, immutable ${RELEASE_TAG} desktop release into the Astro download manifest. Read-only Windows, macOS, and Linux jobs reran native verification against protected publisher identities; the exporter bound those trusted results to the public release receipts, rehashed every package, validated platform metadata and provenance against the Git tag target, and ran the complete website validation suite.")"
+          if [[ "$(jq -r '.head.repo.full_name' <<<"${created}")" != "${GITHUB_REPOSITORY}" ]] || \
+            [[ "$(jq -r '.base.ref' <<<"${created}")" != "${DEFAULT_BRANCH}" ]] || \
+            [[ "$(jq -r '.head.sha' <<<"${created}")" != "${EXPECTED_HEAD_OID}" ]]; then
+            echo "::error::Created pull request is not bound to the verified branch commit."
+            exit 1
+          fi
+          echo "Promotion pull request opened: $(jq -r '.html_url' <<<"${created}")"
