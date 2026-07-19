@@ -1,0 +1,12 @@
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases/*.json
+  Cache-Control: public, max-age=0, must-revalidate

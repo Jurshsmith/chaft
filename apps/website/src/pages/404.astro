@@ -1,0 +1,40 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { sitePath } from "../lib/site-path";
+---
+
+<BaseLayout
+  title="Page not found"
+  description="The requested Chaft page could not be found."
+  noindex
+>
+  <section class="not-found">
+    <div class="shell">
+      <p class="eyebrow">404 · history gap</p>
+      <h1>This page is missing from the local view.</h1>
+      <p class="lede">The link may have moved, or the route has not been published yet.</p>
+      <div class="button-row">
+        <a class="button" href={sitePath("/")}>Return home</a>
+        <a class="button button--secondary" href={sitePath("/download/")}>Open downloads</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .not-found {
+    display: grid;
+    min-height: 67vh;
+    align-items: center;
+    padding-block: 5rem;
+    background: var(--surface-deep);
+  }
+
+  .not-found h1 {
+    max-width: 11ch;
+  }
+
+  .button-row {
+    margin-top: 2rem;
+  }
+</style>

@@ -1,0 +1,138 @@
+---
+import PageHero from "../components/PageHero.astro";
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+const description =
+  "Chaft's current security model, known early-stage limits, and private vulnerability reporting process.";
+---
+
+<BaseLayout title="Security" description={description}>
+  <PageHero
+    eyebrow="Public security posture"
+    title="Security claims should be inspectable."
+    lede="Chaft handles cryptography, signed history, local secret state, and untrusted peer input. The public site reflects the current implementation without treating unfinished release gates as guarantees."
+  >
+    <div class="button-row">
+      <a class="button" href="https://github.com/Jurshsmith/chaft/security/advisories/new">Report privately</a>
+      <a class="button button--secondary" href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md">Full policy</a>
+    </div>
+  </PageHero>
+
+  <section class="section">
+    <div class="shell security-grid">
+      <div>
+        <p class="eyebrow">Current model</p>
+        <h2>The invariants Chaft is being built to preserve.</h2>
+      </div>
+      <ul class="invariant-list">
+        <li><span>01</span><p>No central server is authoritative for workspace history.</p></li>
+        <li><span>02</span><p>Local devices sign events with persistent device identities.</p></li>
+        <li><span>03</span><p>Peers and optional replica nodes are treated as untrusted.</p></li>
+        <li><span>04</span><p>Missing authorization context is rejected and reported as a history gap.</p></li>
+        <li><span>05</span><p>Peer inputs, paths, frames, strings, and item counts remain bounded.</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section section--deep">
+    <div class="shell limits">
+      <div>
+        <span class="status">Early-stage limits</span>
+        <h2>Not yet cleared for sensitive production communication.</h2>
+      </div>
+      <div class="prose">
+        <p>
+          Production desktop builds still need complete OS keychain or user-unlocked
+          vault integration for local identity and secret handling.
+        </p>
+        <p>
+          Public relay and discovery remain default-deny while the native peer transport
+          matures. Packaging, code signing, notarization, and update delivery are not yet
+          production release gates.
+        </p>
+        <p>
+          Security fixes currently target the main branch until tagged, signed releases
+          exist.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section report">
+    <div class="shell report__inner">
+      <div>
+        <p class="eyebrow">Responsible disclosure</p>
+        <h2>Share sensitive findings through a private channel.</h2>
+      </div>
+      <div>
+        <p>
+          Use GitHub Security Advisories for plaintext leakage, key exposure, signature or
+          authorization bypasses, malformed peer acceptance, replica plaintext access, or
+          denial-of-service through unbounded work.
+        </p>
+        <p>Do not open a public issue containing sensitive reproduction details.</p>
+        <a class="button" href="https://github.com/Jurshsmith/chaft/security/advisories/new">Open a private advisory</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .security-grid,
+  .limits,
+  .report__inner {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(22rem, 1fr);
+    gap: clamp(3rem, 9vw, 8rem);
+  }
+
+  .invariant-list {
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border-subtle);
+    list-style: none;
+  }
+
+  .invariant-list li {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 1rem;
+    padding-block: 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .invariant-list span {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .invariant-list p {
+    margin: 0;
+    color: var(--text-soft);
+  }
+
+  .limits h2 {
+    margin-top: 1.4rem;
+  }
+
+  .report {
+    border-top: 3px solid var(--warning);
+  }
+
+  .report p {
+    max-width: 36rem;
+  }
+
+  .report .button {
+    margin-top: 1rem;
+  }
+
+  @media (max-width: 800px) {
+    .security-grid,
+    .limits,
+    .report__inner {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

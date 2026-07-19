@@ -1,0 +1,141 @@
+---
+import PageHero from "../../components/PageHero.astro";
+import { allReleases, currentRelease } from "../../data/releases";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { sitePath } from "../../lib/site-path";
+
+const description = "Chaft desktop release status, artifacts, and integrity metadata.";
+---
+
+<BaseLayout title="Releases" description={description}>
+  <PageHero
+    eyebrow="Release channel"
+    title="Every build should explain where it came from."
+    lede="Chaft release pages come from a validated manifest. An artifact cannot be marked available until its final package metadata and integrity state are present."
+  />
+
+  <section class="section">
+    <div class="shell">
+      <div class="release-list">
+        {allReleases.map((release) => {
+          const isCurrent = release.version === currentRelease.version;
+          return (
+            <article class="release-card">
+              <div class="release-card__heading">
+                <span class="status">
+                  {isCurrent
+                    ? release.status === "published" ? "Current release" : "Builds pending"
+                    : "Archived release"}
+                </span>
+                <span class="mono">{release.channel}</span>
+              </div>
+              <div>
+                <p class="release-card__version">v{release.version}</p>
+                <h2>{isCurrent ? "Current website manifest" : `Chaft ${release.version}`}</h2>
+                <p>
+                  {release.assets.length} platform definitions · Windows, macOS, and Linux
+                </p>
+              </div>
+              <div class="release-card__links">
+                <a class="button" href={sitePath(`/releases/${release.version}/`)}>View release details</a>
+                <a class="button button--secondary" href={sitePath(`/releases/${release.version}.json`)}>
+                  Read version JSON
+                </a>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--deep">
+    <div class="shell pipeline">
+      <div>
+        <p class="eyebrow">Publication contract</p>
+        <h2>The site is the last consumer, not the source of release truth.</h2>
+      </div>
+      <ol>
+        <li><span>01</span>Build and smoke packages on native platform runners.</li>
+        <li><span>02</span>Sign and notarize final operating-system artifacts.</li>
+        <li><span>03</span>Generate SHA-256, SBOM, provenance, and native verification receipts.</li>
+        <li><span>04</span>Publish an immutable GitHub Release.</li>
+        <li><span>05</span>Validate the manifest and rebuild this static site.</li>
+      </ol>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .release-card {
+    display: grid;
+    gap: 2.5rem;
+    padding: clamp(1.5rem, 5vw, 3.5rem);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+  }
+
+  .release-list {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .release-card__heading,
+  .release-card__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .release-card__version {
+    margin: 0 0 0.5rem;
+    color: var(--accent);
+    font-family: var(--font-mono);
+  }
+
+  .release-card h2 {
+    margin-bottom: 0.8rem;
+  }
+
+  .pipeline {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(20rem, 1fr);
+    gap: clamp(3rem, 9vw, 8rem);
+  }
+
+  .pipeline ol {
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border-subtle);
+    list-style: none;
+  }
+
+  .pipeline li {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 1rem;
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-soft);
+  }
+
+  .pipeline li span {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 760px) {
+    .pipeline {
+      grid-template-columns: 1fr;
+    }
+
+    .release-card__links {
+      align-items: stretch;
+      flex-direction: column;
+    }
+  }
+</style>

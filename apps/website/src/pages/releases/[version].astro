@@ -1,0 +1,228 @@
+---
+import PageHero from "../../components/PageHero.astro";
+import {
+  allReleases,
+  formatBytes,
+  type ReleaseManifest,
+} from "../../data/releases";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { sitePath } from "../../lib/site-path";
+
+export function getStaticPaths() {
+  return allReleases.map((release) => ({
+    params: { version: release.version },
+    props: { release },
+  }));
+}
+
+interface Props {
+  release: ReleaseManifest;
+}
+
+const { release } = Astro.props;
+const description = `Chaft ${release.version} ${release.channel} release status and desktop artifact metadata.`;
+---
+
+<BaseLayout title={`Release ${release.version}`} description={description}>
+  <PageHero
+    eyebrow={`${release.channel} · ${release.status}`}
+    title={`Chaft ${release.version}`}
+    lede="This page is generated from the same validated manifest consumed by the download surface. Published artifacts must carry their final filename, byte size, SHA-256, and signing state."
+  >
+    <div class="button-row">
+      <a class="button" href={sitePath("/download/")}>Open downloads</a>
+      <a class="button button--secondary" href={release.releaseUrl}>GitHub Releases</a>
+    </div>
+  </PageHero>
+
+  <section class="section">
+    <div class="shell release-layout">
+      <aside class="release-facts">
+        <div><span>Status</span><strong>{release.status}</strong></div>
+        <div><span>Channel</span><strong>{release.channel}</strong></div>
+        <div><span>Git tag</span><strong class="mono">{release.tag ?? "Pending"}</strong></div>
+        <div><span>Published</span><strong>{release.publishedAt ?? "Pending"}</strong></div>
+        <div><span>Commit</span><strong class="mono">{release.commit ?? "Pending"}</strong></div>
+      </aside>
+
+      <div>
+        <p class="eyebrow">Platform artifacts</p>
+        <div class="asset-list">
+          {release.assets.map((asset) => {
+            const evidenceLinks = [
+              { label: "Checksums", file: asset.evidence.checksums },
+              { label: "SBOM", file: asset.evidence.sbom },
+              { label: "Provenance", file: asset.evidence.provenance },
+              { label: "Detached signature", file: asset.evidence.signature },
+              { label: "Native verification", file: asset.evidence.verification },
+            ].filter((entry) => entry.file !== null);
+
+            return (
+              <article>
+                <div>
+                  <h2>{asset.platformLabel}</h2>
+                  <p class="mono">{asset.arch} · {asset.format.toUpperCase()}</p>
+                </div>
+                <dl>
+                  <div><dt>File</dt><dd>{asset.filename ?? "Pending"}</dd></div>
+                  <div><dt>Size</dt><dd>{formatBytes(asset.sizeBytes)}</dd></div>
+                  <div class="digest">
+                    <dt>SHA-256</dt>
+                    <dd>{asset.sha256 ?? "Pending"}</dd>
+                  </div>
+                  <div><dt>Signing</dt><dd>{asset.signingStatus}</dd></div>
+                </dl>
+                <nav class="evidence-links" aria-label={`Verification evidence for ${asset.platformLabel} ${asset.arch}`}>
+                  <span>Evidence</span>
+                  {evidenceLinks.length > 0
+                    ? evidenceLinks.map(({ label, file }) => (
+                        <a href={file!.url}>{label}</a>
+                      ))
+                    : <span class="evidence-links__pending">Pending</span>}
+                </nav>
+                <a href={asset.url}>{asset.available ? "Download artifact" : "View release status"} →</a>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .release-layout {
+    display: grid;
+    grid-template-columns: minmax(14rem, 0.35fr) minmax(0, 1fr);
+    gap: clamp(3rem, 8vw, 7rem);
+    align-items: start;
+  }
+
+  .release-facts {
+    position: sticky;
+    top: 2rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .release-facts div {
+    display: grid;
+    gap: 0.2rem;
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .release-facts span,
+  dt {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+  }
+
+  .release-facts strong {
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    font-weight: 500;
+  }
+
+  .asset-list {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .asset-list article {
+    display: grid;
+    gap: 1.5rem;
+    padding: clamp(1.4rem, 4vw, 2.2rem);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+  }
+
+  .asset-list h2 {
+    margin-bottom: 0.25rem;
+    font-size: 2rem;
+  }
+
+  .asset-list p {
+    margin: 0;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin: 0;
+  }
+
+  dl div {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  dd {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .digest {
+    grid-column: 1 / -1;
+  }
+
+  .digest dd {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .asset-list a {
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--accent);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .evidence-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 1rem;
+    align-items: center;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+
+  .evidence-links > span:first-child {
+    color: var(--text-soft);
+    text-transform: uppercase;
+  }
+
+  .evidence-links a {
+    padding: 0;
+    border: 0;
+    color: var(--accent);
+    font-weight: 400;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+
+  .evidence-links__pending {
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 760px) {
+    .release-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .release-facts {
+      position: static;
+    }
+
+    dl {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -1,0 +1,58 @@
+---
+import { sitePath } from "../lib/site-path";
+---
+
+<aside class="early-access" aria-labelledby="early-access-title">
+  <div>
+    <span class="status">Early access</span>
+    <h2 id="early-access-title">Built in public. Honest about what is ready.</h2>
+  </div>
+  <div class="early-access__copy">
+    <p>
+      Chaft is early-stage software. Packaging, production signing, notarization, and
+      update delivery are still release gates.
+    </p>
+    <p>
+      Do not use current development builds for sensitive production communication.
+      Follow the public security policy for readiness and responsible disclosure.
+    </p>
+    <a class="button button--secondary" href={sitePath("/security/")}>Read the security posture</a>
+  </div>
+</aside>
+
+<style>
+  .early-access {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.8fr);
+    gap: clamp(2rem, 7vw, 7rem);
+    padding: clamp(2rem, 6vw, 4rem);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--warning-surface);
+  }
+
+  h2 {
+    margin-top: 1.4rem;
+    margin-bottom: 0;
+    font-size: clamp(2rem, 4vw, 3.4rem);
+  }
+
+  .early-access__copy {
+    align-self: end;
+  }
+
+  .early-access__copy p {
+    color: var(--warning-text);
+  }
+
+  .early-access__copy .button {
+    margin-top: 0.8rem;
+    background: color-mix(in srgb, var(--surface-deep) 65%, transparent);
+  }
+
+  @media (max-width: 760px) {
+    .early-access {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

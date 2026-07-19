@@ -1,0 +1,278 @@
+<div
+  class="mesh-visual"
+  role="img"
+  aria-label="A diagram showing a local Chaft workspace synchronizing directly between three teammates"
+>
+  <div class="mesh-visual__topbar">
+    <span class="mesh-visual__label">workspace / studio</span>
+    <span class="mesh-visual__state"><i></i> Listening</span>
+  </div>
+
+  <div class="mesh-plane" aria-hidden="true">
+    <span class="mesh-line mesh-line--one"></span>
+    <span class="mesh-line mesh-line--two"></span>
+    <span class="mesh-line mesh-line--three"></span>
+    <span class="mesh-pulse mesh-pulse--one"></span>
+    <span class="mesh-pulse mesh-pulse--two"></span>
+
+    <span class="peer peer--you">
+      <b>You</b>
+      <small>local ready</small>
+    </span>
+    <span class="peer peer--ayo">
+      <b>Ayo</b>
+      <small>direct</small>
+    </span>
+    <span class="peer peer--mira">
+      <b>Mira</b>
+      <small>reconciling</small>
+    </span>
+
+    <div class="event-stack">
+      <span><i class="event-dot event-dot--local"></i>Local write</span>
+      <span><i class="event-dot event-dot--sync"></i>Direct sync</span>
+      <span><i class="event-dot event-dot--verify"></i>History verified</span>
+    </div>
+  </div>
+
+  <div class="mesh-visual__footer">
+    <span>3 peers</span>
+    <span>no central authority</span>
+  </div>
+</div>
+
+<style>
+  .mesh-visual {
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-deep);
+    box-shadow: var(--shadow-lift);
+  }
+
+  .mesh-visual__topbar,
+  .mesh-visual__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 3rem;
+    padding-inline: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+
+  .mesh-visual__state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .mesh-visual__state i {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: var(--success);
+  }
+
+  .mesh-plane {
+    position: relative;
+    min-height: clamp(24rem, 50vw, 35rem);
+    overflow: hidden;
+    background: var(--surface-base);
+  }
+
+  .mesh-plane::before,
+  .mesh-plane::after {
+    position: absolute;
+    background: var(--border-subtle);
+    opacity: 0.28;
+    content: "";
+  }
+
+  .mesh-plane::before {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+  }
+
+  .mesh-plane::after {
+    top: 50%;
+    right: 0;
+    left: 0;
+    height: 1px;
+  }
+
+  .mesh-line {
+    position: absolute;
+    z-index: 1;
+    height: 1px;
+    transform-origin: 0 50%;
+    background: var(--border-strong);
+  }
+
+  .mesh-line--one {
+    top: 46%;
+    left: 27%;
+    width: 45%;
+    transform: rotate(-29deg);
+  }
+
+  .mesh-line--two {
+    top: 47%;
+    left: 28%;
+    width: 44%;
+    transform: rotate(28deg);
+  }
+
+  .mesh-line--three {
+    top: 25%;
+    left: 67%;
+    width: 42%;
+    transform: rotate(90deg);
+  }
+
+  .mesh-pulse {
+    position: absolute;
+    z-index: 2;
+    width: 0.5rem;
+    height: 0.5rem;
+    border: 2px solid var(--surface-base);
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .mesh-pulse--one {
+    top: 34%;
+    left: 46%;
+  }
+
+  .mesh-pulse--two {
+    top: 60%;
+    left: 49%;
+    background: var(--secure);
+  }
+
+  .peer {
+    position: absolute;
+    z-index: 3;
+    display: grid;
+    min-width: 7rem;
+    gap: 0.18rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    box-shadow: 0 8px 25px rgb(0 0 0 / 16%);
+  }
+
+  .peer::before {
+    position: absolute;
+    top: 50%;
+    left: -0.3rem;
+    width: 0.56rem;
+    height: 0.56rem;
+    transform: translateY(-50%);
+    border: 2px solid var(--surface-raised);
+    border-radius: 50%;
+    background: var(--accent);
+    content: "";
+  }
+
+  .peer b {
+    font-size: 0.88rem;
+    font-weight: 500;
+  }
+
+  .peer small {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+  }
+
+  .peer--you {
+    top: 41%;
+    left: 9%;
+    border-color: var(--accent);
+  }
+
+  .peer--ayo {
+    top: 18%;
+    right: 8%;
+  }
+
+  .peer--mira {
+    right: 8%;
+    bottom: 17%;
+  }
+
+  .peer--mira::before {
+    background: var(--warning);
+  }
+
+  .event-stack {
+    position: absolute;
+    bottom: 1rem;
+    left: 1rem;
+    z-index: 4;
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface-deep) 92%, transparent);
+  }
+
+  .event-stack span {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+  }
+
+  .event-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+
+  .event-dot--local {
+    background: var(--success);
+  }
+
+  .event-dot--sync {
+    background: var(--accent);
+  }
+
+  .event-dot--verify {
+    background: var(--secure);
+  }
+
+  .mesh-visual__footer {
+    min-height: 2.65rem;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 0;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 520px) {
+    .peer {
+      min-width: 5.7rem;
+    }
+
+    .peer--you {
+      left: 5%;
+    }
+
+    .peer--ayo,
+    .peer--mira {
+      right: 5%;
+    }
+  }
+</style>
