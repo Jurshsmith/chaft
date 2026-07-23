@@ -260,6 +260,7 @@ def github_context():
         "GITHUB_RUN_NUMBER",
         "GITHUB_SHA",
         "GITHUB_WORKFLOW",
+        "CHAFT_RELEASE_COMMIT",
     ]
     return {key: os.environ[key] for key in keys if key in os.environ}
 

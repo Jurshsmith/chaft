@@ -1,0 +1,338 @@
+name: Build desktop release inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable tag to build, such as v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-inputs-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CHAFT_QT_VERSION: 6.8.3
+
+jobs:
+  validate:
+    name: Validate tag and version
+    runs-on: ubuntu-22.04
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Validate release context
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p build
+          python3 tools/desktop/release-version.py \
+            --tag "$RELEASE_TAG" \
+            --expected-commit HEAD \
+            --output build/release-context.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Show validated context
+        run: cat build/release-context.json
+
+      - name: Upload validated release context
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-context-${{ steps.release.outputs.version }}-${{ steps.release.outputs.commit }}
+          path: build/release-context.json
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build ${{ matrix.name }} release input
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            qt-host: linux
+            qt-arch: linux_gcc_64
+            package-platform: Linux
+            artifact-prefix: checksummed-linux-x86_64-release-input
+          - name: macOS
+            os: macos-15-intel
+            qt-host: mac
+            qt-arch: clang_64
+            package-platform: macOS
+            artifact-prefix: unsigned-macos-x86_64-release-input
+          - name: Windows
+            os: windows-latest
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+            package-platform: Windows
+            artifact-prefix: unsigned-windows-x86_64-release-input
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Revalidate exact checkout
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "$RELEASE_TAG" \
+            --expected-commit HEAD
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            cmake \
+            desktop-file-utils \
+            ninja-build \
+            patchelf
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ env.CHAFT_QT_VERSION }}
+          host: ${{ matrix.qt-host }}
+          target: desktop
+          arch: ${{ matrix.qt-arch }}
+          cache: true
+
+      - name: Validate Linux desktop metadata
+        if: runner.os == 'Linux'
+        run: |
+          desktop-file-validate \
+            packaging/linux/io.github.jurshsmith.chaft.desktop
+          appstreamcli validate --no-net \
+            packaging/linux/io.github.jurshsmith.chaft.metainfo.xml
+
+      - name: Fetch pinned AppImage tools
+        if: runner.os == 'Linux'
+        run: |
+          tool_dir="${RUNNER_TEMP}/chaft-appimage-tools"
+          tools/desktop/fetch-appimage-tools.sh "$tool_dir"
+          echo "CHAFT_LINUXDEPLOY=$tool_dir/linuxdeploy" >> "$GITHUB_ENV"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=$tool_dir/linuxdeploy-plugin-qt" \
+            >> "$GITHUB_ENV"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=$tool_dir/linuxdeploy-plugin-appimage" \
+            >> "$GITHUB_ENV"
+
+      - name: Build and verify release package
+        env:
+          CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
+        shell: bash
+        run: |
+          tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
+          python3 tools/desktop/verify-release-metadata.py release \
+            --platform "${{ matrix.package-platform }}" \
+            --expected-commit "$EXPECTED_COMMIT" \
+            --require-clean
+
+      - name: Upload non-publishing release input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact-prefix }}-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/desktop-release/package/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  clean-package-smoke:
+    name: Clean ${{ matrix.name }} package smoke
+    needs:
+      - validate
+      - build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            artifact-prefix: checksummed-linux-x86_64-release-input
+          - name: Windows
+            os: windows-latest
+            artifact-prefix: unsigned-windows-x86_64-release-input
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download release input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.artifact-prefix }}-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/clean-package
+
+      - name: Smoke Linux AppImage without build dependencies
+        if: runner.os == 'Linux'
+        run: tools/desktop/appimage-smoke.sh build/clean-package
+
+      - name: Smoke Windows ZIP without build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tools/desktop/windows-zip-smoke.ps1 `
+            -PackageDirectory build/clean-package `
+            -ExpectedVersion "${{ needs.validate.outputs.version }}"
+
+  audit-release-inputs:
+    name: Audit release input set
+    needs:
+      - validate
+      - clean-package-smoke
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Download validated release context
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-context-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/context
+
+      - name: Download Linux release input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: checksummed-linux-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/linux
+
+      - name: Download macOS release input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned-macos-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/macos
+
+      - name: Download Windows release input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned-windows-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/windows
+
+      - name: Verify context and platform metadata
+        env:
+          CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
+          EXPECTED_TAG: ${{ needs.validate.outputs.tag }}
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "$EXPECTED_TAG" \
+            --expected-commit "$EXPECTED_COMMIT" \
+            --output build/revalidated-release-context.json \
+            > /dev/null
+          python3 -c '
+          import json
+          from pathlib import Path
+          context = json.loads(
+              Path("build/release-input-audit/context/release-context.json")
+              .read_text(encoding="utf-8")
+          )
+          revalidated = json.loads(
+              Path("build/revalidated-release-context.json")
+              .read_text(encoding="utf-8")
+          )
+          if context != revalidated:
+              raise SystemExit("release context differs from the audited checkout")
+          '
+          for platform in linux macos windows; do
+            python3 tools/desktop/verify-release-metadata.py release \
+              --package-dir "build/release-input-audit/$platform" \
+              --platform "$platform" \
+              --expected-commit "$EXPECTED_COMMIT" \
+              --require-clean
+          done
+
+      - name: Generate exact input inventory
+        run: |
+          python3 -c '
+          import hashlib
+          import json
+          from pathlib import Path
+          root = Path("build/release-input-audit")
+          def file_sha256(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+          rows = []
+          for path in sorted(item for item in root.rglob("*") if item.is_file()):
+              rows.append({
+                  "path": path.relative_to(root).as_posix(),
+                  "sha256": file_sha256(path),
+                  "sizeBytes": path.stat().st_size,
+              })
+          output = root / "release-input-inventory.json"
+          output.write_text(
+              json.dumps({"schemaVersion": 1, "files": rows}, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          '
+
+      - name: Upload release input audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-release-input-audit-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: |
+            build/release-input-audit/context/release-context.json
+            build/release-input-audit/release-input-inventory.json
+          if-no-files-found: error
+          retention-days: 7

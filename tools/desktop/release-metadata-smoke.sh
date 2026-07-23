@@ -75,6 +75,7 @@ linux_dir="$smoke_dir/linux-package"
 macos_dir="$smoke_dir/macos-package"
 windows_dir="$smoke_dir/windows-package"
 ci_dir="$smoke_dir/ci-package"
+dispatch_dir="$smoke_dir/dispatch-package"
 materials_dir="$smoke_dir/materials-package"
 signature_dir="$smoke_dir/signature-package"
 orphan_signature_dir="$smoke_dir/orphan-signature-package"
@@ -90,6 +91,7 @@ write_artifact "$windows_dir" "Chaft-0.1.0-Windows.msi"
 write_artifact "$windows_dir" "Chaft-0.1.0-Windows.exe"
 write_signature "$windows_dir" "Chaft-0.1.0-Windows.msi" ".sig"
 write_artifact "$ci_dir" "Chaft-0.1.0-CI.tar.gz"
+write_artifact "$dispatch_dir" "Chaft-0.1.0-Dispatch.tar.gz"
 write_artifact "$materials_dir" "Chaft-0.1.0-Materials.tar.gz"
 write_artifact "$signature_dir" "Chaft-0.1.0-Signed.AppImage"
 write_signature "$signature_dir" "Chaft-0.1.0-Signed.AppImage" ".sig"
@@ -303,6 +305,63 @@ expect_failure "CI provenance commit mismatch" \
     python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
       --package-dir "$ci_dir" \
       --platform Linux
+
+GITHUB_ACTIONS=true \
+GITHUB_REPOSITORY=Jurshsmith/chaft \
+GITHUB_RUN_ID=3 \
+GITHUB_SHA="$wrong_ci_sha" \
+CHAFT_RELEASE_COMMIT="$ci_sha" \
+  python3 "$repo_root/tools/desktop/release-metadata.py" release \
+    --package-dir "$dispatch_dir" \
+    --platform Linux
+
+python3 - "$dispatch_dir/chaft-desktop-linux-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+provenance.setdefault("source", {})["dirty"] = False
+path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+env \
+  GITHUB_ACTIONS=true \
+  GITHUB_REPOSITORY=Jurshsmith/chaft \
+  GITHUB_RUN_ID=3 \
+  GITHUB_SHA="$wrong_ci_sha" \
+  CHAFT_RELEASE_COMMIT="$ci_sha" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$dispatch_dir" \
+    --platform Linux \
+    --source-root "$repo_root" \
+    --expected-commit "$ci_sha" \
+    --require-clean
+
+python3 - "$dispatch_dir/chaft-desktop-linux-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+provenance.setdefault("github", {})["CHAFT_RELEASE_COMMIT"] = "0" * 40
+path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+expect_failure "workflow-dispatch release commit mismatch" \
+  env \
+    GITHUB_ACTIONS=true \
+    GITHUB_REPOSITORY=Jurshsmith/chaft \
+    GITHUB_RUN_ID=3 \
+    GITHUB_SHA="$wrong_ci_sha" \
+    CHAFT_RELEASE_COMMIT="$ci_sha" \
+    python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+      --package-dir "$dispatch_dir" \
+      --platform Linux \
+      --source-root "$repo_root" \
+      --expected-commit "$ci_sha" \
+      --require-clean
 
 printf 'tampered package bytes\n' >> "$linux_dir/Chaft-0.1.0-Linux.tar.gz"
 expect_failure "stale checksum/SBOM/provenance after package mutation" \
