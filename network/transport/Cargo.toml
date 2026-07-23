@@ -1,0 +1,13 @@
+[package]
+name = "chaft-net"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chaft-types = { path = "../../domain/types" }
+serde.workspace = true
+thiserror.workspace = true

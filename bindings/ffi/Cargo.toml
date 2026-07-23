@@ -1,28 +1,29 @@
 [package]
-name = "chaft-node"
+name = "chaft-ffi"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
 [dependencies]
-anyhow.workspace = true
+chaft-app = { path = "../../application/view-model" }
 chaft-core = { path = "../../domain/core" }
-chaft-identity = { path = "../../security/identity" }
 chaft-media = { path = "../../storage/media" }
 chaft-net = { path = "../../network/transport" }
 chaft-net-direct = { path = "../../network/direct" }
 chaft-net-iroh = { path = "../../network/iroh" }
+chaft-runtime = { path = "../../runtime" }
 chaft-store = { path = "../../storage/store" }
-chaft-sync = { path = "../../network/sync" }
 chaft-types = { path = "../../domain/types" }
-blake3.workspace = true
-clap.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
-chaft-crypto = { path = "../../security/crypto" }
-rusqlite.workspace = true
-tempfile.workspace = true
+rusqlite = { workspace = true }
+tempfile = { workspace = true }

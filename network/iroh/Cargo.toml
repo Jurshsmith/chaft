@@ -1,0 +1,22 @@
+[package]
+name = "chaft-net-iroh"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chaft-net = { path = "../transport" }
+chaft-net-direct = { path = "../direct" }
+chaft-wire = { path = "../wire" }
+chaft-types = { path = "../../domain/types" }
+chaft-media = { path = "../../storage/media" }
+iroh = "1.0.0"
+tokio.workspace = true
+
+[dev-dependencies]
+chaft-identity = { path = "../../security/identity" }
+chaft-store = { path = "../../storage/store" }
+tempfile.workspace = true

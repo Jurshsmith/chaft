@@ -1,5 +1,5 @@
 [package]
-name = "chaft-node"
+name = "chaft-sync"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -7,22 +7,20 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 chaft-core = { path = "../../domain/core" }
 chaft-identity = { path = "../../security/identity" }
-chaft-media = { path = "../../storage/media" }
-chaft-net = { path = "../../network/transport" }
-chaft-net-direct = { path = "../../network/direct" }
-chaft-net-iroh = { path = "../../network/iroh" }
+chaft-net = { path = "../transport" }
 chaft-store = { path = "../../storage/store" }
-chaft-sync = { path = "../../network/sync" }
 chaft-types = { path = "../../domain/types" }
-blake3.workspace = true
-clap.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 chaft-crypto = { path = "../../security/crypto" }
+chaft-identity = { path = "../../security/identity" }
+chaft-net-direct = { path = "../direct" }
+chaft-store = { path = "../../storage/store" }
 rusqlite.workspace = true
 tempfile.workspace = true
+tokio.workspace = true

@@ -1,0 +1,42 @@
+[package]
+name = "chaft-runtime"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+chaft-app = { path = "../application/view-model" }
+chaft-core = { path = "../domain/core" }
+chaft-crypto = { path = "../security/crypto" }
+chaft-identity = { path = "../security/identity" }
+chaft-media = { path = "../storage/media" }
+chaft-mls = { path = "../security/mls" }
+chaft-net = { path = "../network/transport" }
+chaft-net-direct = { path = "../network/direct" }
+chaft-search = { path = "../storage/search" }
+chaft-store = { path = "../storage/store" }
+chaft-sync = { path = "../network/sync" }
+chaft-types = { path = "../domain/types" }
+argon2.workspace = true
+blake3.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+time.workspace = true
+x25519-dalek.workspace = true
+zip.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+chaft-net-iroh = { path = "../network/iroh" }
+jsonschema.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true

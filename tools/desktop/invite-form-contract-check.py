@@ -16,7 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_QML = REPO_ROOT / "apps/desktop-qt/qml/Chaft/App.qml"
 MAIN_CPP = REPO_ROOT / "apps/desktop-qt/src/main.cpp"
-TYPES_RS = REPO_ROOT / "crates/chaft-types/src/lib.rs"
+TYPES_RS = REPO_ROOT / "domain/types/src/lib.rs"
 ENTRY_QML = (
     REPO_ROOT
     / "apps/desktop-qt/qml/Chaft/features/onboarding/WorkspaceEntryDialog.qml"
