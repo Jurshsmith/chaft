@@ -272,7 +272,9 @@ tools/desktop/smoke.sh debug
 tools/desktop/screenshot-smoke.sh debug
 tools/desktop/release-metadata-smoke.sh
 python3 tools/desktop/export-website-release-manifest-test.py
+python3 tools/desktop/linux-appimage-contract-test.py
 tools/desktop/platform-verification-receipt-smoke.sh
+python3 tools/desktop/release-version-test.py
 python3 tools/desktop/stage-website-release-assets-test.py
 tools/desktop/package.sh release
 tools/desktop/package-smoke.sh release
@@ -283,11 +285,14 @@ cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 
 Desktop build prerequisites by OS:
 
-- Linux: Rust 1.92, CMake 3.28+, Ninja, Qt 6.8+ desktop libraries, and the
-  usual C/C++ build toolchain. CI installs `cmake` and `ninja-build`, then
-  uses Qt `linux_gcc_64`.
+- Linux x86_64: Rust 1.92, CMake 3.28+, Ninja, Qt 6.8+ desktop libraries,
+  `patchelf`, and the usual C/C++ build toolchain. AppImage packaging also
+  needs the three pinned `linuxdeploy` tools fetched by
+  `tools/desktop/fetch-appimage-tools.sh`. CI installs the desktop/AppStream
+  validators and uses Qt `linux_gcc_64`.
 - macOS: Rust 1.92, CMake 3.28+, Ninja, Xcode command line tools, and Qt 6.8+
-  desktop libraries. CI installs CMake/Ninja through Homebrew and uses Qt
+  desktop libraries. CI uses the `macos-15-intel` runner to keep the existing
+  x86_64 download contract, installs CMake/Ninja through Homebrew, and uses Qt
   `clang_64`.
 - Windows: Rust 1.92, CMake 3.28+, Ninja, MSVC x64 build tools, Python 3, and
   Qt 6.8+ desktop libraries. CI runs inside the MSVC developer environment and
@@ -313,11 +318,34 @@ Point `QT_ROOT_DIR` at the installed Qt prefix, or keep `qt-cmake`/`qmake6` on
 QML lint, smoke, Linux screenshot baseline, package smoke, and release metadata
 verification sequence used by GitHub Actions.
 
+For a local Linux x86_64 AppImage build, fetch the checksum-pinned packaging
+tools outside the package output, then pass their exact paths to the packager:
+
+```sh
+appimage_tools_dir="${TMPDIR:-/tmp}/chaft-appimage-tools"
+tools/desktop/fetch-appimage-tools.sh "$appimage_tools_dir"
+export CHAFT_LINUXDEPLOY="$appimage_tools_dir/linuxdeploy"
+export CHAFT_LINUXDEPLOY_PLUGIN_QT="$appimage_tools_dir/linuxdeploy-plugin-qt"
+export CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE="$appimage_tools_dir/linuxdeploy-plugin-appimage"
+tools/desktop/package.sh release
+```
+
+End users normally mark the AppImage executable and launch it directly. On a
+system where FUSE is unavailable, the supported fallback is:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./Chaft-<version>-x86_64.AppImage
+```
+
+The clean CI smoke uses that fallback so the runner does not need FUSE.
+Before public release, also test normal file-manager launch on the supported
+Linux distributions.
+
 CI builds release desktop packages on Linux, macOS, and Windows after the debug
-desktop smoke passes. Linux is expected to produce a CPack TGZ archive
-(`.tar.gz` or `.tgz`), macOS a `.dmg`, and Windows a `.zip`. The uploaded
-artifact bundle for each OS includes the native package and platform-qualified
-metadata:
+desktop smoke passes. Linux produces one portable x86_64 `.AppImage`, macOS a
+`.dmg`, and Windows a `.zip`. Linux no longer emits the old CPack TGZ because it
+did not contain a self-sufficient Qt runtime. The uploaded artifact bundle for
+each OS includes the native package and platform-qualified metadata:
 
 - `chaft-desktop-{platform}-SHA256SUMS`
 - `chaft-desktop-{platform}-sbom.cdx.json`
@@ -330,6 +358,21 @@ and verify the same metadata locally after packaging with:
 python3 tools/desktop/release-metadata.py release --platform Linux
 python3 tools/desktop/verify-release-metadata.py release --platform Linux
 ```
+
+The Linux and Windows packages are downloaded into separate, clean CI runners
+that do not install Qt or Rust. The AppImage is launched from a Unicode path
+with build-time Qt paths removed. The Windows ZIP is checked for unsafe or
+build-only entries, extracted to a Unicode path, checked for its FFI/Qt/QML
+runtime, and launched in the same empty-workspace smoke mode.
+
+`.github/workflows/build-desktop-release-inputs.yml` is the manual,
+non-publishing release build. Give it an existing stable tag such as `v0.1.0`;
+it requires that tag to resolve to the checked-out commit and that the Cargo,
+root CMake, and desktop CMake versions all match. It builds short-lived,
+checksummed workflow artifacts from the immutable commit. It has read-only
+repository permissions and does not create a tag, GitHub Release, signature, or
+website update. A final audit job rechecks all three metadata bundles against
+the same commit and emits an exact filename, size, and SHA-256 inventory.
 
 Metadata coherence does not prove a native signature. Before publishing, run
 `tools/desktop/generate-platform-verification-receipt.py` on the matching native

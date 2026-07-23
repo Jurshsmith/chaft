@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jurshsmith.chaft</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <name>Chaft</name>
+  <summary>A native local-first peer-to-peer chat workspace</summary>
+  <description>
+    <p>
+      Chaft is a private, local-first chat workspace that synchronizes directly
+      between peers.
+    </p>
+  </description>
+  <developer_name>Chaft contributors</developer_name>
+  <launchable type="desktop-id">io.github.jurshsmith.chaft.desktop</launchable>
+  <provides>
+    <binary>ChaftDesktop</binary>
+  </provides>
+  <url type="homepage">https://github.com/Jurshsmith/chaft</url>
+  <content_rating type="oars-1.1" />
+</component>

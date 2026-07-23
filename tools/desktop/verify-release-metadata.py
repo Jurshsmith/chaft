@@ -407,11 +407,29 @@ def verify_provenance(
         for key in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_SHA"):
             if not github.get(key):
                 fail(f"CI provenance is missing {key}")
-        ci_commit = expected_commit or os.environ.get("GITHUB_SHA")
-        if github.get("GITHUB_SHA") != ci_commit:
-            fail("CI provenance GITHUB_SHA does not match the expected CI commit")
-        if source.get("commit") != github.get("GITHUB_SHA"):
-            fail("CI provenance source.commit does not match GITHUB_SHA")
+        release_commit = github.get("CHAFT_RELEASE_COMMIT")
+        if release_commit is not None:
+            if not isinstance(release_commit, str) or re.fullmatch(
+                r"[0-9a-fA-F]{40,64}", release_commit
+            ) is None:
+                fail("CI provenance CHAFT_RELEASE_COMMIT is invalid")
+            release_commit = release_commit.lower()
+            if expected_commit is not None and release_commit != expected_commit:
+                fail(
+                    "CI provenance CHAFT_RELEASE_COMMIT does not match the "
+                    "expected release commit"
+                )
+            if source.get("commit") != release_commit:
+                fail(
+                    "CI provenance source.commit does not match "
+                    "CHAFT_RELEASE_COMMIT"
+                )
+        else:
+            ci_commit = expected_commit or os.environ.get("GITHUB_SHA")
+            if github.get("GITHUB_SHA") != ci_commit:
+                fail("CI provenance GITHUB_SHA does not match the expected CI commit")
+            if source.get("commit") != github.get("GITHUB_SHA"):
+                fail("CI provenance source.commit does not match GITHUB_SHA")
 
     provenance_artifacts = provenance.get("artifacts")
     if not isinstance(provenance_artifacts, list):

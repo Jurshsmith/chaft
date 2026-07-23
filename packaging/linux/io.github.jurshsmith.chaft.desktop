@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chaft
+Comment=Native local-first peer-to-peer chat workspace
+Exec=ChaftDesktop
+Icon=io.github.jurshsmith.chaft
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupNotify=true
+StartupWMClass=ChaftDesktop

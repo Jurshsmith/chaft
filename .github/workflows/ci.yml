@@ -83,7 +83,9 @@ jobs:
       - name: Test release promotion tools
         run: |
           python3 tools/desktop/export-website-release-manifest-test.py
+          python3 tools/desktop/linux-appimage-contract-test.py
           tools/desktop/platform-verification-receipt-smoke.sh
+          python3 tools/desktop/release-version-test.py
           python3 tools/desktop/stage-website-release-assets-test.py
 
   desktop:
@@ -97,12 +99,12 @@ jobs:
       matrix:
         include:
           - name: Linux
-            os: ubuntu-latest
+            os: ubuntu-22.04
             qt-host: linux
             qt-arch: linux_gcc_64
             package-platform: Linux
           - name: macOS
-            os: macos-15
+            os: macos-15-intel
             qt-host: mac
             qt-arch: clang_64
             package-platform: macOS
@@ -131,7 +133,14 @@ jobs:
 
       - name: Install Linux build tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            cmake \
+            desktop-file-utils \
+            ninja-build \
+            patchelf
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -149,6 +158,25 @@ jobs:
           target: desktop
           arch: ${{ matrix.qt-arch }}
           cache: true
+
+      - name: Validate Linux desktop metadata
+        if: runner.os == 'Linux'
+        run: |
+          desktop-file-validate \
+            packaging/linux/io.github.jurshsmith.chaft.desktop
+          appstreamcli validate --no-net \
+            packaging/linux/io.github.jurshsmith.chaft.metainfo.xml
+
+      - name: Fetch pinned AppImage tools
+        if: runner.os == 'Linux'
+        run: |
+          tool_dir="${RUNNER_TEMP}/chaft-appimage-tools"
+          tools/desktop/fetch-appimage-tools.sh "$tool_dir"
+          echo "CHAFT_LINUXDEPLOY=$tool_dir/linuxdeploy" >> "$GITHUB_ENV"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=$tool_dir/linuxdeploy-plugin-qt" \
+            >> "$GITHUB_ENV"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=$tool_dir/linuxdeploy-plugin-appimage" \
+            >> "$GITHUB_ENV"
 
       - name: Run desktop CI gates
         shell: bash
@@ -169,3 +197,48 @@ jobs:
           path: build/desktop-release/package/*
           if-no-files-found: error
           compression-level: 0
+
+  linux-package-smoke:
+    name: Linux package on clean runner
+    needs:
+      - changes
+      - desktop
+    if: needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download Linux package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chaft-Linux-desktop-release
+          path: build/clean-linux-package
+
+      - name: Run portable AppImage smoke
+        run: tools/desktop/appimage-smoke.sh build/clean-linux-package
+
+  windows-package-smoke:
+    name: Windows package on clean runner
+    needs:
+      - changes
+      - desktop
+    if: needs.changes.outputs.core == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download Windows package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chaft-Windows-desktop-release
+          path: build/clean-windows-package
+
+      - name: Run clean ZIP smoke
+        shell: pwsh
+        run: |
+          $version = python tools/desktop/release-version.py --print-version
+          tools/desktop/windows-zip-smoke.ps1 `
+            -PackageDirectory build/clean-windows-package `
+            -ExpectedVersion $version

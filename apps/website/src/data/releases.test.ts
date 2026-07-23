@@ -37,7 +37,7 @@ function publishedRelease({
       const filename = {
         windows: `Chaft-${artifactVersion}-Windows.zip`,
         macos: `Chaft-${artifactVersion}-macOS.dmg`,
-        linux: `Chaft-${artifactVersion}-Linux.tar.gz`,
+        linux: `Chaft-${artifactVersion}-Linux.AppImage`,
       }[asset.os]!;
       const signingStatus = {
         windows: "signed",

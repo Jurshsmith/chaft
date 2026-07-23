@@ -127,3 +127,7 @@ CHAFT_DESKTOP_SMOKE=1 \
 CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
 CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}" \
   "$desktop_launch_binary"
+
+if [ "$(uname -s)" = "Linux" ]; then
+  "$script_dir/appimage-smoke.sh" "$repo_root/build/$preset/package"
+fi

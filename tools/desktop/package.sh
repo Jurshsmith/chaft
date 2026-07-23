@@ -30,7 +30,11 @@ require_tool() {
 
 chaft_desktop_add_tool_paths
 require_tool cmake
-require_tool cpack
+
+case "$(uname -s)" in
+  Linux) ;;
+  *) require_tool cpack ;;
+esac
 
 build_dir="$repo_root/build/$preset"
 install_dir="$build_dir/install"
@@ -40,8 +44,16 @@ package_dir="$build_dir/package"
 
 rm -rf "$install_dir" "$package_dir"
 cmake --install "$build_dir" --prefix "$install_dir"
-cpack --config "$build_dir/CPackConfig.cmake"
-rm -rf "$package_dir/_CPack_Packages"
+
+case "$(uname -s)" in
+  Linux)
+    "$script_dir/package-linux-appimage.sh" "$profile"
+    ;;
+  *)
+    cpack --config "$build_dir/CPackConfig.cmake"
+    rm -rf "$package_dir/_CPack_Packages"
+    ;;
+esac
 
 printf 'install tree: %s\n' "$install_dir"
 printf 'package artifacts:\n'

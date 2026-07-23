@@ -50,11 +50,11 @@
       }
     },
     {
-      "id": "linux-x86_64",
+      "id": "linux-x86_64-appimage",
       "os": "linux",
       "platformLabel": "Linux",
       "arch": "x86_64",
-      "format": "tgz",
+      "format": "appimage",
       "filename": null,
       "url": "https://github.com/Jurshsmith/chaft/releases",
       "available": false,
