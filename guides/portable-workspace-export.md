@@ -307,14 +307,14 @@ A semantic or structural breaking change requires a new kind, schema version,
 schema filename, and compatibility fixture.
 
 Version 1 is frozen as a legacy dispatch fixture at
-`crates/chaft-runtime/tests/fixtures/portable-workspace-v1.json`. It preserves
+`runtime/tests/fixtures/portable-workspace-v1.json`. It preserves
 the original numeric `corruptEventCount`, source attachment IDs used directly
 as `attachmentId`, and the original member shape. Version 2 intentionally
 changed those semantics: corrupt counts may be null for authorization privacy,
 attachment relationships use deterministic export-local IDs with optional
 `sourceAttachmentId`, and actor rows add `active` with a nullable role. The
 representative current fixture is
-`crates/chaft-runtime/tests/fixtures/portable-workspace-v2.json`; tests verify
+`runtime/tests/fixtures/portable-workspace-v2.json`; tests verify
 version dispatch and validate v2 records against its embedded Draft 2020-12
 schema without rewriting the immutable v1 fixture.
 

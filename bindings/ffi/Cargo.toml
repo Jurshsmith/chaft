@@ -1,0 +1,29 @@
+[package]
+name = "chaft-ffi"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+chaft-app = { path = "../../application/view-model" }
+chaft-core = { path = "../../domain/core" }
+chaft-media = { path = "../../storage/media" }
+chaft-net = { path = "../../network/transport" }
+chaft-net-direct = { path = "../../network/direct" }
+chaft-net-iroh = { path = "../../network/iroh" }
+chaft-runtime = { path = "../../runtime" }
+chaft-store = { path = "../../storage/store" }
+chaft-types = { path = "../../domain/types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+rusqlite = { workspace = true }
+tempfile = { workspace = true }

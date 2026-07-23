@@ -1,0 +1,91 @@
+---
+import { sitePath } from "../lib/site-path";
+
+const year = new Date().getUTCFullYear();
+---
+
+<footer class="site-footer">
+  <div class="shell site-footer__inner">
+    <div>
+      <a class="footer-brand" href={sitePath("/")}>chaft</a>
+      <p>Native, local-first, peer-to-peer workspace chat.</p>
+    </div>
+
+    <nav aria-label="Footer navigation">
+      <a href={sitePath("/download/")}>Downloads</a>
+      <a href={sitePath("/releases/")}>Releases</a>
+      <a href={sitePath("/security/")}>Security</a>
+      <a href="https://github.com/Jurshsmith/chaft">Source</a>
+      <a href="https://github.com/Jurshsmith/chaft/blob/main/LICENSE">AGPL-3.0</a>
+      <a href={sitePath("/licenses/OFL-SpaceGrotesk.txt")}>Font license</a>
+    </nav>
+
+    <p class="site-footer__meta">© {year} Chaft. Early-stage software.</p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-deep);
+  }
+
+  .site-footer__inner {
+    display: grid;
+    grid-template-columns: minmax(13rem, 1fr) auto;
+    gap: 2rem 4rem;
+    padding-block: 3.5rem;
+  }
+
+  .footer-brand {
+    display: inline-block;
+    margin-block-end: 0.35rem;
+    color: var(--text-strong);
+    font-size: 1.25rem;
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    text-decoration: none;
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.88rem;
+  }
+
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem 1.4rem;
+    justify-content: flex-end;
+    align-content: start;
+  }
+
+  nav a {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    text-decoration: none;
+  }
+
+  nav a:hover {
+    color: var(--accent);
+  }
+
+  .site-footer__meta {
+    grid-column: 1 / -1;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 680px) {
+    .site-footer__inner {
+      grid-template-columns: 1fr;
+    }
+
+    nav {
+      justify-content: flex-start;
+    }
+  }
+</style>

@@ -1,0 +1,102 @@
+name: Website
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Production HTTPS URL, including an optional base path
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Static website
+    runs-on: ubuntu-latest
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      SITE_URL: https://website-validation.invalid
+    defaults:
+      run:
+        working-directory: apps/website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate static website
+        run: pnpm validate
+
+  artifact:
+    name: Deployable website artifact
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      SITE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.site_url || vars.WEBSITE_SITE_URL }}
+    defaults:
+      run:
+        working-directory: apps/website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require production site URL
+        shell: bash
+        run: |
+          if [[ -z "${SITE_URL}" ]]; then
+            echo "::error::Set the WEBSITE_SITE_URL repository variable or provide the site_url workflow input."
+            exit 1
+          fi
+
+      - name: Build deployable static website
+        run: pnpm build
+
+      - name: Upload deployable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaft-website-${{ github.sha }}
+          path: apps/website/dist/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

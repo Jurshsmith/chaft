@@ -1,0 +1,270 @@
+---
+import { Image } from "astro:assets";
+
+import avatarDark from "../../../desktop-qt/resources/branding/chaft-avatar-dark.png";
+import { sitePath } from "../lib/site-path";
+
+const currentPath = Astro.url.pathname;
+const links = [
+  { href: sitePath("/#why-chaft"), label: "Why Chaft" },
+  { href: sitePath("/#how-it-works"), label: "How it works" },
+  { href: sitePath("/security/"), label: "Security" },
+  { href: "https://github.com/Jurshsmith/chaft", label: "Source", external: true },
+];
+
+const downloadHref = sitePath("/download/");
+---
+
+<header class="site-header">
+  <div class="shell site-header__inner">
+    <a class="brand" href={sitePath("/")} aria-label="Chaft home">
+      <span class="brand-mark" aria-hidden="true">
+        <Image
+          src={avatarDark}
+          alt=""
+          width={68}
+          height={68}
+          format="webp"
+          quality={90}
+          loading="eager"
+        />
+      </span>
+      <span>chaft</span>
+    </a>
+
+    <nav class="desktop-nav" aria-label="Primary navigation">
+      <ul>
+        {links.map((link) => (
+          <li>
+            <a
+              href={link.href}
+              aria-current={!link.external && currentPath === link.href ? "page" : undefined}
+              target={link.external ? "_blank" : undefined}
+              rel={link.external ? "noreferrer" : undefined}
+            >
+              {link.label}
+              {link.external && <span class="sr-only"> (opens in a new tab)</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+
+    <a class="header-download" href={downloadHref} aria-current={currentPath === downloadHref ? "page" : undefined}>
+      Download
+    </a>
+
+    <details class="mobile-nav">
+      <summary>Menu</summary>
+      <nav aria-label="Mobile navigation">
+        {links.map((link) => (
+          <a
+            href={link.href}
+            aria-current={!link.external && currentPath === link.href ? "page" : undefined}
+            target={link.external ? "_blank" : undefined}
+            rel={link.external ? "noreferrer" : undefined}
+          >
+            {link.label}
+            {link.external && <span class="sr-only"> (opens in a new tab)</span>}
+          </a>
+        ))}
+      </nav>
+    </details>
+  </div>
+</header>
+
+<script is:inline>
+  document.querySelectorAll(".mobile-nav").forEach((menu) => {
+    menu.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("a")) {
+        menu.removeAttribute("open");
+      }
+    });
+  });
+</script>
+
+<style>
+  .site-header {
+    position: relative;
+    z-index: 20;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+    background: color-mix(in srgb, var(--surface-base) 94%, transparent);
+  }
+
+  .site-header__inner {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    min-height: 4.5rem;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: var(--text-strong);
+    font-size: 1.28rem;
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    text-decoration: none;
+  }
+
+  .brand-mark {
+    position: relative;
+    display: block;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--brand-night);
+  }
+
+  .brand-mark img {
+    position: absolute;
+    top: -17px;
+    left: -17px;
+    width: 68px;
+    max-width: none;
+    height: 68px;
+  }
+
+  .desktop-nav {
+    justify-self: center;
+  }
+
+  ul {
+    display: flex;
+    gap: clamp(1rem, 2.5vw, 2rem);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .desktop-nav a {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: color var(--motion-quick);
+  }
+
+  .desktop-nav a:hover,
+  .desktop-nav a[aria-current="page"] {
+    color: var(--text-strong);
+  }
+
+  .header-download {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    padding: 0.56rem 0.75rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-strong);
+    font-size: 0.88rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    transition:
+      border-color var(--motion-quick),
+      background-color var(--motion-quick);
+  }
+
+  .header-download:hover {
+    border-color: var(--accent);
+    background: var(--secure-surface);
+  }
+
+  .mobile-nav {
+    position: relative;
+    display: none;
+  }
+
+  .mobile-nav summary {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-soft);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 500;
+    list-style: none;
+  }
+
+  .mobile-nav summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-nav[open] summary {
+    border-color: var(--accent);
+    color: var(--text-strong);
+  }
+
+  .mobile-nav nav {
+    position: absolute;
+    top: calc(100% + 0.65rem);
+    right: 0;
+    display: grid;
+    min-width: 12rem;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-lift);
+  }
+
+  .mobile-nav nav a {
+    min-height: 2.9rem;
+    padding: 0.75rem 0.9rem;
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    text-decoration: none;
+  }
+
+  .mobile-nav nav a + a {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .mobile-nav nav a:hover,
+  .mobile-nav nav a[aria-current="page"] {
+    background: var(--secure-surface);
+    color: var(--text-strong);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 760px) {
+    .site-header__inner {
+      grid-template-columns: 1fr auto auto;
+      gap: 0.5rem;
+    }
+
+    .desktop-nav {
+      display: none;
+    }
+
+    .mobile-nav {
+      display: block;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .brand > span:last-child {
+      display: none;
+    }
+  }
+</style>

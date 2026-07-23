@@ -11,17 +11,62 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-PACKAGE_SUFFIXES = (".dmg", ".zip", ".tgz", ".tar.gz")
+PACKAGE_FORMATS = (
+    (".tar.gz", "linux", "linux-tgz"),
+    (".tgz", "linux", "linux-tgz"),
+    (".appimage", "linux", "linux-appimage"),
+    (".dmg", "macos", "macos-dmg"),
+    (".zip", "windows", "windows-zip"),
+    (".msi", "windows", "windows-msi"),
+    (".exe", "windows", "windows-exe"),
+)
+SIGNATURE_SUFFIXES = (".sig", ".asc")
 
 
 def package_format(name):
-    if name.endswith((".tgz", ".tar.gz")):
-        return "linux-tgz"
-    if name.endswith(".dmg"):
-        return "macos-dmg"
-    if name.endswith(".zip"):
-        return "windows-zip"
+    lowered = name.lower()
+    for suffix, _, format_name in PACKAGE_FORMATS:
+        if lowered.endswith(suffix):
+            return format_name
     return "unknown"
+
+
+def package_platform(name):
+    lowered = name.lower()
+    for suffix, platform_name, _ in PACKAGE_FORMATS:
+        if lowered.endswith(suffix):
+            return platform_name
+    return None
+
+
+def normalized_platform_name(value):
+    normalized = (value or "").strip().lower()
+    if normalized in {"darwin", "mac", "macos", "osx"}:
+        return "macos"
+    if normalized in {"win32", "windows", "msys", "mingw", "cygwin"}:
+        return "windows"
+    if normalized == "linux":
+        return "linux"
+    return normalized
+
+
+def current_platform_name():
+    return normalized_platform_name(os.environ.get("RUNNER_OS") or platform.system())
+
+
+def metadata_names(platform_name):
+    normalized = normalized_platform_name(platform_name)
+    if normalized not in {"linux", "macos", "windows"}:
+        raise SystemExit(
+            "unsupported package metadata platform "
+            f"{platform_name!r}; expected Linux, macOS, or Windows"
+        )
+    prefix = f"chaft-desktop-{normalized}"
+    return {
+        "checksums": f"{prefix}-SHA256SUMS",
+        "sbom": f"{prefix}-sbom.cdx.json",
+        "provenance": f"{prefix}-provenance.json",
+    }
 
 
 def command_output(args):
@@ -57,13 +102,41 @@ def package_files(package_dir):
     files = [
         path
         for path in package_dir.iterdir()
-        if path.is_file() and path.name.endswith(PACKAGE_SUFFIXES)
+        if path.is_file() and package_format(path.name) != "unknown"
     ]
     return sorted(files, key=lambda path: path.name)
 
 
-def artifact_rows(files):
-    return [
+def signature_suffix(name):
+    lowered = name.lower()
+    return next(
+        (suffix for suffix in SIGNATURE_SUFFIXES if lowered.endswith(suffix)),
+        None,
+    )
+
+
+def signature_files(package_dir, packages):
+    package_names = {path.name for path in packages}
+    signatures = []
+    for path in package_dir.iterdir():
+        if not path.is_file():
+            continue
+        suffix = signature_suffix(path.name)
+        if suffix is None:
+            continue
+        signed_artifact = path.name[: -len(suffix)]
+        if signed_artifact not in package_names:
+            raise SystemExit(
+                f"detached signature {path.name} does not correspond to a package file"
+            )
+        if path.stat().st_size <= 0:
+            raise SystemExit(f"detached signature is empty: {path.name}")
+        signatures.append(path)
+    return sorted(signatures, key=lambda path: path.name)
+
+
+def artifact_rows(packages, signatures):
+    package_rows = [
         {
             "name": path.name,
             "packageFormat": package_format(path.name),
@@ -71,8 +144,36 @@ def artifact_rows(files):
             "sizeBytes": path.stat().st_size,
             "sha256": file_sha256(path),
         }
-        for path in files
+        for path in packages
     ]
+    signature_rows = []
+    for path in signatures:
+        suffix = signature_suffix(path.name)
+        signature_rows.append(
+            {
+                "name": path.name,
+                "packageFormat": "detached-signature",
+                "signatureFormat": suffix[1:],
+                "signedArtifact": path.name[: -len(suffix)],
+                "path": path.as_posix(),
+                "sizeBytes": path.stat().st_size,
+                "sha256": file_sha256(path),
+            }
+        )
+    return sorted(package_rows + signature_rows, key=lambda row: row["name"])
+
+
+def verify_platform_packages(packages, platform_name):
+    normalized = normalized_platform_name(platform_name)
+    metadata_names(normalized)
+    unexpected = [
+        path.name for path in packages if package_platform(path.name) != normalized
+    ]
+    if unexpected:
+        raise SystemExit(
+            f"{normalized} package directory contains unexpected package type(s): "
+            + ", ".join(sorted(unexpected))
+        )
 
 
 def write_json(path, data):
@@ -187,8 +288,8 @@ def material_rows(root):
     return rows
 
 
-def write_checksums(package_dir, artifacts):
-    checksum_path = package_dir / "SHA256SUMS"
+def write_checksums(package_dir, artifacts, names):
+    checksum_path = package_dir / names["checksums"]
     checksum_path.write_text(
         "".join(f"{artifact['sha256']}  {artifact['name']}\n" for artifact in artifacts),
         encoding="utf-8",
@@ -196,7 +297,7 @@ def write_checksums(package_dir, artifacts):
     return checksum_path
 
 
-def write_sbom(root, package_dir, version, artifacts, tools):
+def write_sbom(root, package_dir, version, artifacts, tools, platform_name, names):
     metadata = cargo_metadata(root)
     sbom = {
         "bomFormat": "CycloneDX",
@@ -221,6 +322,7 @@ def write_sbom(root, package_dir, version, artifacts, tools):
             "properties": [
                 {"name": "chaft:sourceCommit", "value": source_context(root).get("commit") or ""},
                 {"name": "chaft:platform", "value": platform.platform()},
+                {"name": "chaft:packagePlatform", "value": platform_name},
             ],
         },
         "components": cargo_components(metadata),
@@ -234,20 +336,46 @@ def write_sbom(root, package_dir, version, artifacts, tools):
                 "value": artifact["packageFormat"],
             }
             for artifact in artifacts
+        ]
+        + [
+            {
+                "name": f"chaft:artifact:{artifact['name']}:signedArtifact",
+                "value": artifact["signedArtifact"],
+            }
+            for artifact in artifacts
+            if artifact.get("signedArtifact")
+        ]
+        + [
+            {
+                "name": f"chaft:artifact:{artifact['name']}:signatureFormat",
+                "value": artifact["signatureFormat"],
+            }
+            for artifact in artifacts
+            if artifact.get("signatureFormat")
         ],
     }
-    path = package_dir / "chaft-desktop-sbom.cdx.json"
+    path = package_dir / names["sbom"]
     write_json(path, sbom)
     return path
 
 
-def write_provenance(root, package_dir, profile, version, artifacts, tools):
+def write_provenance(
+    root,
+    package_dir,
+    profile,
+    version,
+    artifacts,
+    tools,
+    platform_name,
+    names,
+):
     provenance = {
         "schemaVersion": "chaft.desktop.provenance.v1",
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "name": "Chaft Desktop release package",
         "version": version,
         "profile": profile,
+        "packagePlatform": platform_name,
         "source": source_context(root),
         "github": github_context(),
         "platform": {
@@ -261,7 +389,7 @@ def write_provenance(root, package_dir, profile, version, artifacts, tools):
         "materials": material_rows(root),
         "artifacts": artifacts,
     }
-    path = package_dir / "chaft-desktop-provenance.json"
+    path = package_dir / names["provenance"]
     write_json(path, provenance)
     return path
 
@@ -272,6 +400,11 @@ def main():
     )
     parser.add_argument("profile", nargs="?", default="release", choices=("debug", "release"))
     parser.add_argument("--package-dir", type=Path)
+    parser.add_argument(
+        "--platform",
+        default=current_platform_name(),
+        help="Package platform: Linux, macOS, or Windows (defaults to the runner OS).",
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -279,18 +412,39 @@ def main():
     if not package_dir.is_dir():
         raise SystemExit(f"package directory not found: {package_dir}")
 
-    files = package_files(package_dir)
-    if not files:
+    packages = package_files(package_dir)
+    if not packages:
         raise SystemExit(f"no package artifacts found in {package_dir}")
+    platform_name = normalized_platform_name(args.platform)
+    names = metadata_names(platform_name)
+    verify_platform_packages(packages, platform_name)
+    signatures = signature_files(package_dir, packages)
 
-    artifacts = artifact_rows(files)
+    artifacts = artifact_rows(packages, signatures)
     tools = tool_versions()
     version = project_version(root)
 
     generated = [
-        write_checksums(package_dir, artifacts),
-        write_sbom(root, package_dir, version, artifacts, tools),
-        write_provenance(root, package_dir, args.profile, version, artifacts, tools),
+        write_checksums(package_dir, artifacts, names),
+        write_sbom(
+            root,
+            package_dir,
+            version,
+            artifacts,
+            tools,
+            platform_name,
+            names,
+        ),
+        write_provenance(
+            root,
+            package_dir,
+            args.profile,
+            version,
+            artifacts,
+            tools,
+            platform_name,
+            names,
+        ),
     ]
 
     print(f"release metadata generated in {package_dir}")

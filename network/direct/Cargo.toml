@@ -1,0 +1,27 @@
+[package]
+name = "chaft-net-direct"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chaft-core = { path = "../../domain/core" }
+chaft-identity = { path = "../../security/identity" }
+chaft-media = { path = "../../storage/media" }
+chaft-net = { path = "../transport" }
+chaft-store = { path = "../../storage/store" }
+chaft-types = { path = "../../domain/types" }
+chaft-wire = { path = "../wire" }
+prost.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+chaft-crypto = { path = "../../security/crypto" }
+chaft-identity = { path = "../../security/identity" }
+chaft-sync = { path = "../sync" }
+rusqlite.workspace = true
+tempfile.workspace = true

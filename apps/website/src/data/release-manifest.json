@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 2,
+  "channel": "preview",
+  "status": "coming-soon",
+  "version": "0.1.0-dev",
+  "tag": null,
+  "publishedAt": null,
+  "commit": null,
+  "releaseUrl": "https://github.com/Jurshsmith/chaft/releases",
+  "sourceUrl": "https://github.com/Jurshsmith/chaft",
+  "assets": [
+    {
+      "id": "windows-x86_64",
+      "os": "windows",
+      "platformLabel": "Windows",
+      "arch": "x86_64",
+      "format": "zip",
+      "filename": null,
+      "url": "https://github.com/Jurshsmith/chaft/releases",
+      "available": false,
+      "sizeBytes": null,
+      "sha256": null,
+      "signingStatus": "pending",
+      "evidence": {
+        "checksums": null,
+        "sbom": null,
+        "provenance": null,
+        "signature": null,
+        "verification": null
+      }
+    },
+    {
+      "id": "macos-x86_64",
+      "os": "macos",
+      "platformLabel": "macOS",
+      "arch": "x86_64",
+      "format": "dmg",
+      "filename": null,
+      "url": "https://github.com/Jurshsmith/chaft/releases",
+      "available": false,
+      "sizeBytes": null,
+      "sha256": null,
+      "signingStatus": "pending",
+      "evidence": {
+        "checksums": null,
+        "sbom": null,
+        "provenance": null,
+        "signature": null,
+        "verification": null
+      }
+    },
+    {
+      "id": "linux-x86_64",
+      "os": "linux",
+      "platformLabel": "Linux",
+      "arch": "x86_64",
+      "format": "tgz",
+      "filename": null,
+      "url": "https://github.com/Jurshsmith/chaft/releases",
+      "available": false,
+      "sizeBytes": null,
+      "sha256": null,
+      "signingStatus": "pending",
+      "evidence": {
+        "checksums": null,
+        "sbom": null,
+        "provenance": null,
+        "signature": null,
+        "verification": null
+      }
+    }
+  ]
+}

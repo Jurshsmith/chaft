@@ -104,7 +104,7 @@ cargo bench -p chaft-benchmarks --bench hot_paths -- --sample-size 10
 ```
 
 FFI JSON response shape is guarded by
-`crates/chaft-ffi/ffi-json-contract.snapshot.json`. Update that snapshot only
+`bindings/ffi/ffi-json-contract.snapshot.json`. Update that snapshot only
 with intentional desktop API changes and keep the focused `chaft-ffi` tests
 green.
 

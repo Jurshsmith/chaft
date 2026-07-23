@@ -8,13 +8,13 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chaft-crypto = { path = "../../crates/chaft-crypto" }
-chaft-identity = { path = "../../crates/chaft-identity" }
-chaft-net = { path = "../../crates/chaft-net" }
-chaft-net-direct = { path = "../../crates/chaft-net-direct" }
-chaft-net-iroh = { path = "../../crates/chaft-net-iroh" }
-chaft-runtime = { path = "../../crates/chaft-runtime" }
-chaft-types = { path = "../../crates/chaft-types" }
+chaft-crypto = { path = "../../security/crypto" }
+chaft-identity = { path = "../../security/identity" }
+chaft-net = { path = "../../network/transport" }
+chaft-net-direct = { path = "../../network/direct" }
+chaft-net-iroh = { path = "../../network/iroh" }
+chaft-runtime = { path = "../../runtime" }
+chaft-types = { path = "../../domain/types" }
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

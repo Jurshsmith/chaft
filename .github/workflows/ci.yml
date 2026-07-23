@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -18,8 +19,29 @@ env:
   CHAFT_QT_VERSION: 6.8.3
 
 jobs:
+  changes:
+    name: Change scope
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect non-website changes
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: every
+          filters: |
+            core:
+              - "**"
+              - "!apps/website/**"
+
   rust:
     name: Rust workspace
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -58,8 +80,16 @@ jobs:
       - name: Run release metadata smoke
         run: tools/desktop/release-metadata-smoke.sh
 
+      - name: Test release promotion tools
+        run: |
+          python3 tools/desktop/export-website-release-manifest-test.py
+          tools/desktop/platform-verification-receipt-smoke.sh
+          python3 tools/desktop/stage-website-release-assets-test.py
+
   desktop:
     name: Desktop ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:

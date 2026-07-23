@@ -1,0 +1,384 @@
+---
+import DownloadGrid from "../components/DownloadGrid.astro";
+import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
+import PeerMeshVisual from "../components/PeerMeshVisual.astro";
+import { currentRelease } from "../data/releases";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { sitePath } from "../lib/site-path";
+
+const description =
+  "Chaft is a native, local-first, peer-to-peer chat workspace for macOS, Windows, and Linux.";
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Chaft",
+  description,
+  applicationCategory: "CommunicationApplication",
+  operatingSystem: ["Windows", "macOS", "Linux"],
+  softwareVersion: currentRelease.version,
+  isAccessibleForFree: true,
+  codeRepository: "https://github.com/Jurshsmith/chaft",
+  license: "https://www.gnu.org/licenses/agpl-3.0.html",
+};
+
+const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
+
+const features = [
+  {
+    title: "Local by default",
+    copy: "Send, search, and browse local history without waiting on a remote service to render your workspace.",
+  },
+  {
+    title: "Direct when reachable",
+    copy: "Conversations reconcile directly between teammates by default, with optional encrypted replicas for recovery.",
+  },
+  {
+    title: "Verifiable history",
+    copy: "Signed events and encrypted message paths help each device verify what it receives before materializing history.",
+  },
+  {
+    title: "Native everywhere",
+    copy: "A Qt desktop surface backed by a deterministic Rust core, targeting macOS, Windows, and Linux.",
+  },
+];
+
+const steps = [
+  { number: "01", title: "Create", copy: "Name a private workspace on your device." },
+  { number: "02", title: "Invite", copy: "Share a one-use or bounded group invite with teammates." },
+  { number: "03", title: "Stay reachable", copy: "Keep Chaft open while trusted devices reconcile directly." },
+];
+---
+
+<BaseLayout title="Chaft" description={description} structuredData={structuredData}>
+  <section class="hero">
+    <div class="shell hero__grid">
+      <div class="hero__copy">
+        <p class="eyebrow">Native · Local-first · Peer-to-peer</p>
+        <h1>Private workspace chat, built local-first.</h1>
+        <p class="lede">
+          Chaft keeps messages, search, and history fast on your device, then syncs
+          conversations directly when teammates are online.
+        </p>
+        <div class="button-row hero__actions">
+          <a class="button" href={sitePath("/download/")}>
+            {hasPublishedDownloads ? "Download Chaft" : "View preview downloads"}
+            <span aria-hidden="true">→</span>
+          </a>
+          <a class="button button--secondary" href="#how-it-works">See how it works</a>
+          <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
+        </div>
+        <p class="hero__note">
+          <span class="status">Early access</span>
+          Not yet recommended for sensitive production communication.
+        </p>
+      </div>
+
+      <div class="hero__visual">
+        <PeerMeshVisual />
+      </div>
+    </div>
+  </section>
+
+  <div class="trust-rail" aria-label="Chaft attributes">
+    <div class="shell trust-rail__inner">
+      <span>Native desktop</span>
+      <span>Local-first</span>
+      <span>Direct peer sync</span>
+      <span>Open source</span>
+    </div>
+  </div>
+
+  <section class="section" id="why-chaft">
+    <div class="shell">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Conversation first</p>
+          <h2>Your workspace should not disappear behind a connection spinner.</h2>
+        </div>
+        <p>
+          Chaft is built around local work and visible network state. Offline, partial,
+          and missing history stay explicit and repairable instead of being silently
+          hidden.
+        </p>
+      </div>
+
+      <div class="card-grid">
+        {features.map((feature, index) => (
+          <article class="feature-card">
+            <span class="feature-card__index">{String(index + 1).padStart(2, "0")}</span>
+            <h3>{feature.title}</h3>
+            <p>{feature.copy}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--deep" id="how-it-works">
+    <div class="shell">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Three calm steps</p>
+          <h2>Create a workspace. Invite your people. Keep talking.</h2>
+        </div>
+        <p>
+          A local device becomes a participant—not a thin window into a central
+          authority. Each teammate keeps their own identity and verified history.
+        </p>
+      </div>
+
+      <ol class="steps">
+        {steps.map((step) => (
+          <li>
+            <span>{step.number}</span>
+            <div>
+              <h3>{step.title}</h3>
+              <p>{step.copy}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" id="downloads">
+    <div class="shell">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Desktop preview</p>
+          <h2>One workspace, across the machines you already use.</h2>
+        </div>
+        <p>
+          Every platform remains visible. Chaft only highlights the likely match and
+          never starts a download automatically.
+        </p>
+      </div>
+      <DownloadGrid compact />
+      <div class="download-footer">
+        <p>
+          {hasPublishedDownloads
+            ? `Chaft ${currentRelease.version} artifacts and verification details are ready.`
+            : "Public verified builds are not published yet. Current source builds remain available in the repository."}
+        </p>
+        <a class="button button--secondary" href={sitePath("/download/")}>All download details</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--compact section--deep">
+    <div class="shell">
+      <EarlyAccessCallout />
+    </div>
+  </section>
+
+  <section class="section open-source">
+    <div class="shell open-source__inner">
+      <p class="eyebrow">Open by construction</p>
+      <h2>Read the code. Run the checks. Help shape what comes next.</h2>
+      <p class="lede">
+        Chaft is free software under AGPL-3.0-or-later. Its Rust core, native shell,
+        protocol contracts, security posture, and release tooling live together in the
+        public repository.
+      </p>
+      <div class="button-row">
+        <a class="button" href="https://github.com/Jurshsmith/chaft">Open on GitHub</a>
+        <a class="button button--secondary" href={sitePath("/releases/")}>Release status</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(4rem, 9vw, 8rem);
+  }
+
+  .hero::after {
+    position: absolute;
+    top: 8%;
+    right: -8rem;
+    z-index: -1;
+    width: 22rem;
+    height: 22rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    background: var(--surface-raised);
+    opacity: 0.32;
+    content: "";
+  }
+
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(23rem, 0.85fr);
+    gap: clamp(3rem, 8vw, 7rem);
+    align-items: center;
+  }
+
+  .hero__copy {
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero__actions {
+    margin-top: 2.25rem;
+  }
+
+  .hero__note {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+  }
+
+  .hero__visual {
+    position: relative;
+  }
+
+  .hero__visual::before {
+    position: absolute;
+    inset: -1rem 1rem 1rem -1rem;
+    z-index: -1;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    content: "";
+  }
+
+  .trust-rail {
+    border-block: 1px solid var(--border-subtle);
+    background: var(--surface-deep);
+  }
+
+  .trust-rail__inner {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+
+  .trust-rail span {
+    padding-block: 1.15rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  .trust-rail span + span {
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin: 0;
+    padding: 0;
+    border-block: 1px solid var(--border-subtle);
+    list-style: none;
+  }
+
+  .steps li {
+    min-height: 18rem;
+    padding: 1.6rem;
+  }
+
+  .steps li + li {
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .steps li > span {
+    display: block;
+    margin-bottom: 6rem;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .steps p {
+    max-width: 17rem;
+    margin-bottom: 0;
+  }
+
+  .download-footer {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .download-footer p {
+    max-width: 38rem;
+    margin: 0;
+    font-size: 0.88rem;
+  }
+
+  .open-source__inner {
+    display: grid;
+    justify-items: start;
+  }
+
+  .open-source h2 {
+    max-width: 20ch;
+  }
+
+  .open-source .button-row {
+    margin-top: 1rem;
+  }
+
+  @media (max-width: 940px) {
+    .hero__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero__visual {
+      width: min(100%, 42rem);
+      margin-inline: auto;
+    }
+  }
+
+  @media (max-width: 680px) {
+    .trust-rail__inner {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .trust-rail span:nth-child(3) {
+      border-left: 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .trust-rail span:nth-child(4) {
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .steps {
+      grid-template-columns: 1fr;
+    }
+
+    .steps li {
+      min-height: auto;
+    }
+
+    .steps li + li {
+      border-top: 1px solid var(--border-subtle);
+      border-left: 0;
+    }
+
+    .steps li > span {
+      margin-bottom: 2rem;
+    }
+
+    .download-footer {
+      align-items: stretch;
+      flex-direction: column;
+    }
+  }
+</style>

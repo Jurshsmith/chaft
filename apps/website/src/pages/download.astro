@@ -1,0 +1,189 @@
+---
+import DownloadGrid from "../components/DownloadGrid.astro";
+import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
+import PageHero from "../components/PageHero.astro";
+import { currentRelease } from "../data/releases";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { sitePath } from "../lib/site-path";
+
+const description =
+  "Download Chaft for Windows, macOS, or Linux and verify each published desktop artifact.";
+---
+
+<BaseLayout title="Download" description={description}>
+  <PageHero
+    eyebrow={`${currentRelease.channel} channel · ${currentRelease.version}`}
+    title="Choose your Chaft desktop build."
+    lede="Every platform stays visible. When release artifacts are published, this page will show the exact version, architecture, size, checksum, and signing state before you leave."
+  >
+    <div class="button-row">
+      <a class="button" href="#platforms">Choose a platform</a>
+      <a class="button button--secondary" href={currentRelease.sourceUrl}>Build from source</a>
+    </div>
+  </PageHero>
+
+  <section class="section" id="platforms">
+    <div class="shell">
+      <div class="release-strip">
+        <span class="status">
+          {currentRelease.status === "published" ? "Release published" : "Release builds pending"}
+        </span>
+        <div>
+          <strong>Current website manifest</strong>
+          <span class="mono">v{currentRelease.version}</span>
+        </div>
+        <a href={sitePath(`/releases/${currentRelease.version}/`)}>Manifest details →</a>
+      </div>
+      <DownloadGrid />
+    </div>
+  </section>
+
+  <section class="section section--deep">
+    <div class="shell">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">What you will receive</p>
+          <h2>Platform-native delivery, with integrity metadata beside it.</h2>
+        </div>
+        <p>
+          The website is designed to consume release output generated in this repository.
+          It does not manufacture checksums or discover “latest” in your browser.
+        </p>
+      </div>
+
+      <div class="delivery-grid">
+        <article>
+          <span class="mono">macOS</span>
+          <h3>Developer ID and notarization</h3>
+          <p>DMG builds will be signed, submitted to Apple, stapled, and verified before publication.</p>
+        </article>
+        <article>
+          <span class="mono">Windows</span>
+          <h3>Trusted code signing</h3>
+          <p>Windows delivery will move beyond the current ZIP into a signed installer path.</p>
+        </article>
+        <article>
+          <span class="mono">Linux</span>
+          <h3>Portable packaging</h3>
+          <p>The current TGZ remains an advanced option; AppImage is the preferred public-download target.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="shell verification">
+      <div>
+        <p class="eyebrow">Verify before opening</p>
+        <h2>Checksums cover the exact package bytes presented here.</h2>
+      </div>
+      <div class="prose">
+        <p>
+          Published releases will include a platform-qualified
+          <strong>SHA256SUMS</strong> file, a CycloneDX SBOM, source and build
+          provenance, and the required native verification receipt. Available download
+          cards will not validate unless all required evidence exists.
+        </p>
+        <pre><code>sha256sum -c chaft-desktop-&lt;platform&gt;-SHA256SUMS</code></pre>
+        <p>
+          Until that release gate is complete, this page links to the public Releases
+          area without presenting development artifacts as production downloads.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--compact section--deep">
+    <div class="shell">
+      <EarlyAccessCallout />
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .release-strip {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 1.5rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-deep);
+  }
+
+  .release-strip div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+  }
+
+  .release-strip a {
+    color: var(--accent);
+    font-size: 0.86rem;
+    text-decoration: none;
+  }
+
+  .delivery-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--border-subtle);
+  }
+
+  .delivery-grid article {
+    min-height: 17rem;
+    padding: 2rem;
+    background: var(--surface-base);
+  }
+
+  .delivery-grid .mono {
+    display: block;
+    margin-bottom: 3.5rem;
+    color: var(--accent);
+  }
+
+  .delivery-grid p {
+    margin-bottom: 0;
+  }
+
+  .verification {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.75fr);
+    gap: clamp(3rem, 8vw, 7rem);
+  }
+
+  pre {
+    overflow-x: auto;
+    padding: 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-deep);
+    color: var(--secure);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  @media (max-width: 800px) {
+    .release-strip {
+      grid-template-columns: 1fr;
+    }
+
+    .delivery-grid,
+    .verification {
+      grid-template-columns: 1fr;
+    }
+
+    .delivery-grid article {
+      min-height: auto;
+    }
+
+    .delivery-grid .mono {
+      margin-bottom: 2rem;
+    }
+  }
+</style>

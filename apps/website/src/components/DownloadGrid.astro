@@ -1,0 +1,241 @@
+---
+import { currentRelease, formatBytes } from "../data/releases";
+
+interface Props {
+  compact?: boolean;
+}
+
+const { compact = false } = Astro.props;
+
+const platformCodes = {
+  windows: "win",
+  macos: "mac",
+  linux: "linux",
+} as const;
+---
+
+<div class:list={["download-grid", { "download-grid--compact": compact }]} data-download-grid>
+  {currentRelease.assets.map((asset) => (
+    <article class="download-card" id={asset.id} data-download-card data-os={asset.os}>
+      <div class="download-card__topline">
+        <span class="platform-code" aria-hidden="true">{platformCodes[asset.os]}</span>
+        <span class="recommended" data-recommended hidden>Your OS</span>
+      </div>
+      <div>
+        <h3>{asset.platformLabel}</h3>
+        <p class="asset-meta">
+          <span>{asset.arch}</span>
+          <span>{asset.format.toUpperCase()}</span>
+          <span>{formatBytes(asset.sizeBytes)}</span>
+          <span>{asset.signingStatus}</span>
+        </p>
+      </div>
+      <p class="availability">
+        {asset.available
+          ? `Chaft ${currentRelease.version}`
+          : "Verified preview build not published yet"}
+      </p>
+      {asset.available && asset.sha256 && (
+        <p class="checksum">
+          <span>SHA-256</span>
+          <code>{asset.sha256}</code>
+        </p>
+      )}
+      <a
+        class:list={["download-action", { "download-action--pending": !asset.available }]}
+        href={asset.url}
+        target={!asset.available ? "_blank" : undefined}
+        rel={!asset.available ? "noreferrer" : undefined}
+        aria-label={
+          asset.available
+            ? `Download Chaft ${currentRelease.version} for ${asset.platformLabel}`
+            : `View Chaft releases for ${asset.platformLabel} (opens in a new tab)`
+        }
+      >
+        {asset.available ? `Download .${asset.format}` : "View releases"}
+        <span aria-hidden="true">→</span>
+      </a>
+    </article>
+  ))}
+</div>
+
+<script>
+  import { detectDesktopOperatingSystem } from "../lib/platform-detection";
+
+  type NavigatorWithUAData = Navigator & {
+    userAgentData?: { mobile?: boolean; platform?: string };
+  };
+
+  const navigatorWithUAData = navigator as NavigatorWithUAData;
+  const userAgentData = navigatorWithUAData.userAgentData;
+  const detectedPlatform = detectDesktopOperatingSystem({
+    ...(userAgentData?.platform === undefined
+      ? {}
+      : { userAgentDataPlatform: userAgentData.platform }),
+    ...(userAgentData?.mobile === undefined
+      ? {}
+      : { userAgentDataMobile: userAgentData.mobile }),
+    navigatorPlatform: navigator.platform,
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints,
+  });
+
+  if (detectedPlatform) {
+    document.querySelectorAll<HTMLElement>("[data-download-grid]").forEach((grid) => {
+      const cards = Array.from(
+        grid.querySelectorAll<HTMLElement>(
+          `[data-download-card][data-os="${detectedPlatform}"]`,
+        ),
+      );
+      if (cards.length === 0) return;
+
+      cards.forEach((card) => {
+        card.dataset.platformMatch = "true";
+        const label = card.querySelector<HTMLElement>("[data-recommended]");
+        if (!label) return;
+        label.textContent = "Your OS";
+        label.removeAttribute("hidden");
+      });
+    });
+  }
+</script>
+
+<style>
+  .download-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .download-card {
+    display: grid;
+    min-height: 21rem;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 1.6rem;
+    padding: clamp(1.3rem, 3vw, 2rem);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    transition:
+      transform var(--motion-quick),
+      border-color var(--motion-quick),
+      background-color var(--motion-quick);
+  }
+
+  .download-card:hover,
+  .download-card[data-platform-match="true"] {
+    border-color: var(--accent);
+    background: var(--secure-surface);
+  }
+
+  .download-card:hover {
+    transform: translateY(-2px);
+  }
+
+  .download-card__topline {
+    display: flex;
+    min-height: 1.8rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .platform-code {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .recommended {
+    padding: 0.3rem 0.45rem;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    line-height: 1;
+  }
+
+  h3 {
+    margin-bottom: 0.8rem;
+    font-size: clamp(1.7rem, 4vw, 2.3rem);
+  }
+
+  .asset-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0;
+  }
+
+  .asset-meta span {
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+  }
+
+  .availability {
+    align-self: end;
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 0.86rem;
+  }
+
+  .checksum {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+  }
+
+  .checksum code {
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .download-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--accent);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .download-action span {
+    transition: transform var(--motion-quick);
+  }
+
+  .download-action:hover span {
+    transform: translateX(3px);
+  }
+
+  .download-action--pending {
+    color: var(--text-soft);
+  }
+
+  .download-grid--compact .download-card {
+    min-height: 18rem;
+  }
+
+  @media (max-width: 900px) {
+    .download-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .download-card {
+      min-height: auto;
+    }
+  }
+</style>
