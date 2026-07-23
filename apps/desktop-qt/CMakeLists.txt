@@ -25,6 +25,32 @@ qt_add_executable(ChaftDesktop
     src/main.cpp
 )
 
+target_compile_definitions(ChaftDesktop PRIVATE
+    CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"
+)
+
+if(WIN32)
+    enable_language(RC)
+    configure_file(
+        resources/windows/chaft.ico
+        "${CMAKE_CURRENT_BINARY_DIR}/chaft.ico"
+        COPYONLY
+    )
+    configure_file(
+        resources/windows/ChaftDesktop.rc.in
+        "${CMAKE_CURRENT_BINARY_DIR}/ChaftDesktop.rc"
+        @ONLY
+    )
+    target_sources(ChaftDesktop PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/ChaftDesktop.rc"
+    )
+    set_source_files_properties(
+        "${CMAKE_CURRENT_BINARY_DIR}/ChaftDesktop.rc"
+        PROPERTIES
+            OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/chaft.ico"
+    )
+endif()
+
 set(CHAFT_QML_MODULE_OPTIONS)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND CHAFT_QML_MODULE_OPTIONS NO_CACHEGEN)
@@ -193,6 +219,10 @@ if(CHAFT_FFI_LIBRARY_PATH)
         install(FILES "${CHAFT_FFI_LIBRARY_PATH}"
             DESTINATION "ChaftDesktop.app/Contents/MacOS"
         )
+    elseif(UNIX)
+        install(FILES "${CHAFT_FFI_LIBRARY_PATH}"
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
     else()
         install(FILES "${CHAFT_FFI_LIBRARY_PATH}"
             DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -200,12 +230,42 @@ if(CHAFT_FFI_LIBRARY_PATH)
     endif()
 endif()
 
-qt_generate_deploy_qml_app_script(
-    TARGET ChaftDesktop
-    OUTPUT_SCRIPT chaft_desktop_deploy_script
-    NO_UNSUPPORTED_PLATFORM_ERROR
-)
-install(SCRIPT ${chaft_desktop_deploy_script})
+if(UNIX AND NOT APPLE)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/packaging/linux/io.github.jurshsmith.chaft.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+    )
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/packaging/linux/io.github.jurshsmith.chaft.metainfo.xml"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo"
+    )
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/packaging/linux/io.github.jurshsmith.chaft.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
+    )
+endif()
+
+if(NOT APPLE)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/Chaft"
+    )
+endif()
+
+if(APPLE OR WIN32)
+    set(CHAFT_DEPLOY_OPTIONS)
+    if(WIN32)
+        list(APPEND CHAFT_DEPLOY_OPTIONS
+            DEPLOY_TOOL_OPTIONS --include-plugins qoffscreen
+        )
+    endif()
+    qt_generate_deploy_qml_app_script(
+        TARGET ChaftDesktop
+        OUTPUT_SCRIPT chaft_desktop_deploy_script
+        ${CHAFT_DEPLOY_OPTIONS}
+    )
+    install(SCRIPT ${chaft_desktop_deploy_script})
+endif()
 
 set(CPACK_PACKAGE_NAME "Chaft")
 set(CPACK_PACKAGE_VENDOR "Chaft")
@@ -218,8 +278,9 @@ if(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
 elseif(WIN32)
     set(CPACK_GENERATOR "ZIP")
-else()
-    set(CPACK_GENERATOR "TGZ")
+    set(CPACK_PACKAGE_FILE_NAME "Chaft-${PROJECT_VERSION}-Windows-x86_64")
 endif()
 
-include(CPack)
+if(APPLE OR WIN32)
+    include(CPack)
+endif()

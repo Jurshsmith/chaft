@@ -19189,6 +19189,15 @@ int main(int argc, char *argv[]) {
   applyDesktopLaunchEnvironment(argc, argv);
   applyDesktopReachabilityDefaults();
 
+  QCoreApplication::setApplicationName(QStringLiteral("ChaftDesktop"));
+  QGuiApplication::setApplicationDisplayName(QStringLiteral("Chaft"));
+  QCoreApplication::setApplicationVersion(
+      QStringLiteral(CHAFT_DESKTOP_VERSION));
+#ifdef Q_OS_LINUX
+  QGuiApplication::setDesktopFileName(
+      QStringLiteral("io.github.jurshsmith.chaft"));
+#endif
+
   if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
     qputenv("QT_QUICK_CONTROLS_STYLE", "ChaftStyle");
   }
