@@ -5246,11 +5246,12 @@ public:
   }
 
   Q_INVOKABLE bool openStartupSettings() {
+    QUrl settingsUrl;
 #if defined(Q_OS_MACOS)
-    const QUrl settingsUrl(QStringLiteral(
+    settingsUrl = QUrl(QStringLiteral(
         "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"));
 #elif defined(Q_OS_WIN)
-    const QUrl settingsUrl(QStringLiteral("ms-settings:startupapps"));
+    settingsUrl = QUrl(QStringLiteral("ms-settings:startupapps"));
 #else
     setSyncStatus(QStringLiteral("add Chaft to your system startup apps"));
     return false;
