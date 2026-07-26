@@ -57,8 +57,9 @@ def write_platform_assets(
     platform: str,
     *,
     with_signature: bool = False,
+    version: str = "1.2.3",
 ) -> None:
-    package_name = PACKAGE_NAMES[platform]
+    package_name = PACKAGE_NAMES[platform].replace("1.2.3", version)
     package_path = assets / package_name
     package_path.write_bytes(f"synthetic {platform} package\n".encode())
     rows = [
@@ -160,6 +161,66 @@ def write_receipt(assets: Path, platform: str) -> None:
                 {"filename": package.name, "sha256": sha256(package)}
             ],
             "signatures": signatures,
+        },
+    )
+
+
+def write_unsigned_canary_receipt(
+    assets: Path,
+    platform: str,
+    *,
+    version: str,
+    asset_id: int,
+) -> None:
+    package = next(
+        path
+        for path in assets.iterdir()
+        if (
+            (description := stager.package_description(path.name)) is not None
+            and description[0] == platform
+        )
+    )
+    write_json(
+        assets / stager.UNSIGNED_CANARY_RECEIPT_FILENAMES[platform],
+        {
+            "schemaVersion": stager.unsigned_canary.SCHEMA_VERSION,
+            "platform": platform,
+            "verificationType": stager.unsigned_canary.VERIFICATION_TYPE,
+            "status": stager.unsigned_canary.STATUS,
+            "signingStatus": stager.unsigned_canary.SIGNING_STATUS,
+            "signatureVerification": stager.unsigned_canary.SIGNATURE_VERIFICATION,
+            "signatureAndNotarization": dict(
+                stager.unsigned_canary.SIGNATURE_AND_NOTARIZATION
+            ),
+            "productionEligible": False,
+            "warning": stager.unsigned_canary.WARNING,
+            "version": version,
+            "tag": f"v{version}",
+            "commit": "a" * 40,
+            "repository": "Jurshsmith/chaft",
+            "architecture": "x86_64",
+            "verifiedAt": "2026-07-18T12:34:56Z",
+            "release": {"id": 4321},
+            "asset": {
+                "id": asset_id,
+                "filename": package.name,
+                "sizeBytes": package.stat().st_size,
+                "sha256": sha256(package),
+            },
+            "runner": {
+                "os": stager.unsigned_canary.RUNNER_OS[platform],
+                "architecture": "x86_64",
+                "workflowRunId": 1234,
+                "workflowRunAttempt": 1,
+            },
+            "smoke": {
+                "status": stager.unsigned_canary.STATUS,
+                "command": f"synthetic {platform} smoke",
+            },
+            "receiptGenerator": {
+                "name": "Chaft unsigned-canary receipt generator",
+                "version": "1",
+            },
         },
     )
 

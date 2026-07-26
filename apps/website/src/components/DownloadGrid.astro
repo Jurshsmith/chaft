@@ -1,11 +1,19 @@
 ---
-import { currentRelease, formatBytes } from "../data/releases";
+import {
+  currentRelease,
+  formatBytes,
+  formatSigningStatus,
+  unsignedCanaryWarning,
+} from "../data/releases";
 
 interface Props {
   compact?: boolean;
 }
 
 const { compact = false } = Astro.props;
+const isUnsignedCanary =
+  currentRelease.channel === "canary" &&
+  currentRelease.status === "published";
 
 const platformCodes = {
   windows: "win",
@@ -13,6 +21,14 @@ const platformCodes = {
   linux: "linux",
 } as const;
 ---
+
+{isUnsignedCanary && (
+  <aside class="canary-warning" role="note">
+    <strong>Unsigned canary</strong>
+    <span>{unsignedCanaryWarning}</span>
+    <span class="mono">{currentRelease.tag}</span>
+  </aside>
+)}
 
 <div class:list={["download-grid", { "download-grid--compact": compact }]} data-download-grid>
   {currentRelease.assets.map((asset) => (
@@ -27,7 +43,7 @@ const platformCodes = {
           <span>{asset.arch}</span>
           <span>{asset.format.toUpperCase()}</span>
           <span>{formatBytes(asset.sizeBytes)}</span>
-          <span>{asset.signingStatus}</span>
+          <span>{formatSigningStatus(asset.signingStatus)}</span>
         </p>
       </div>
       <p class="availability">
@@ -101,6 +117,26 @@ const platformCodes = {
 </script>
 
 <style>
+  .canary-warning {
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--secure-surface);
+    color: var(--text-soft);
+  }
+
+  .canary-warning strong {
+    color: var(--accent);
+  }
+
+  .canary-warning .mono {
+    color: var(--text-faint);
+    font-size: 0.72rem;
+  }
+
   .download-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

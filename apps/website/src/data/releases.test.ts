@@ -16,6 +16,7 @@ interface PublishedReleaseOptions {
   artifactVersion?: string;
   artifactTag?: string;
   publishedAt?: string;
+  channel?: "canary" | "stable";
 }
 
 function publishedRelease({
@@ -24,15 +25,18 @@ function publishedRelease({
   artifactVersion = version,
   artifactTag = tag ?? `v${version}`,
   publishedAt = "2026-07-18T10:00:00Z",
-}: PublishedReleaseOptions = {}) {
+  channel = "stable",
+}: PublishedReleaseOptions = {}): any {
   return {
     ...structuredClone(rawManifest),
+    channel,
     status: "published",
     version,
     tag,
     publishedAt,
     commit: "a".repeat(40),
     releaseUrl: `https://github.com/Jurshsmith/chaft/releases/tag/${tag ?? "missing"}`,
+    releaseEvidence: null,
     assets: rawManifest.assets.map((asset) => {
       const filename = {
         windows: `Chaft-${artifactVersion}-Windows.zip`,
@@ -73,9 +77,50 @@ function publishedRelease({
   };
 }
 
+function publishedCanaryRelease(): any {
+  const version = "0.1.0-canary.1";
+  const tag = `v${version}`;
+  const release = publishedRelease({
+    channel: "canary",
+    version,
+    artifactVersion: version,
+    artifactTag: tag,
+  });
+  const evidenceFile = (filename: string) => ({
+    filename,
+    url: `https://github.com/Jurshsmith/chaft/releases/download/${tag}/${filename}`,
+    sizeBytes: 512,
+    sha256: "d".repeat(64),
+  });
+
+  release.assets = release.assets.map((asset: any) => ({
+    ...asset,
+    signingStatus: "unsigned-canary",
+    evidence: {
+      ...asset.evidence,
+      signature: null,
+      verification: evidenceFile(
+        `chaft-desktop-${asset.os}-verification.json`,
+      ),
+    },
+  }));
+  release.releaseEvidence = {
+    qtSource: evidenceFile("Chaft-Qt-6.8.4-corresponding-source.zip"),
+    qtSourceChecksums: evidenceFile(
+      "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+    ),
+    inventory: evidenceFile("chaft-desktop-release-inventory.json"),
+    aggregateChecksums: evidenceFile(
+      "chaft-desktop-release-SHA256SUMS",
+    ),
+  };
+  return release;
+}
+
 describe("release manifest", () => {
-  it("validates the checked-in preview manifest", () => {
+  it("validates the checked-in canary manifest", () => {
     expect(validateReleaseManifest(rawManifest)).toEqual(currentRelease);
+    expect(currentRelease.channel).toBe("canary");
     expect(currentRelease.tag).toBeNull();
   });
 
@@ -99,12 +144,12 @@ describe("release manifest", () => {
     },
   );
 
-  it("accepts semantic prerelease and build identifiers", () => {
+  it("rejects generic prerelease and build identifiers outside the exact channels", () => {
     const valid = {
       ...structuredClone(rawManifest),
       version: "1.2.3-rc.1+build.7",
     };
-    expect(validateReleaseManifest(valid).version).toBe("1.2.3-rc.1+build.7");
+    expect(() => validateReleaseManifest(valid)).toThrow(/exact X\.Y\.Z-canary\.N/);
   });
 
   it.each(["0", "2026-07-18", "2026-02-30T10:00:00Z", "2026-07-18T10:00:00"])(
@@ -125,7 +170,7 @@ describe("release manifest", () => {
     const invalid = structuredClone(rawManifest);
     Object.assign(invalid.assets[0]!, {
       available: true,
-      filename: "Chaft-0.1.0-dev-Windows.zip",
+      filename: "Chaft-0.1.0-canary.1-Windows.zip",
       sizeBytes: 1024,
       sha256: "a".repeat(64),
     });
@@ -133,14 +178,8 @@ describe("release manifest", () => {
   });
 
   it("rejects a generic release-page URL for an available artifact", () => {
-    const invalid = structuredClone(rawManifest);
-    Object.assign(invalid.assets[0]!, {
-      available: true,
-      filename: "Chaft-0.1.0-dev-Windows.zip",
-      sizeBytes: 1024,
-      sha256: "a".repeat(64),
-      signingStatus: "signed",
-    });
+    const invalid = publishedCanaryRelease();
+    invalid.assets[0]!.url = invalid.releaseUrl;
     expect(() => validateReleaseManifest(invalid)).toThrow(/point directly/);
   });
 
@@ -185,6 +224,9 @@ describe("release manifest", () => {
   it("rejects downloads while the release is still coming soon", () => {
     const invalid = publishedRelease();
     invalid.status = "coming-soon";
+    invalid.publishedAt = null;
+    invalid.tag = null;
+    invalid.commit = null;
     expect(() => validateReleaseManifest(invalid)).toThrow(/status must be published/);
   });
 
@@ -192,7 +234,10 @@ describe("release manifest", () => {
     const invalid = {
       ...structuredClone(rawManifest),
       status: "published",
+      tag: `v${rawManifest.version}`,
       publishedAt: "2026-07-18T10:00:00Z",
+      commit: "a".repeat(40),
+      releaseUrl: `https://github.com/Jurshsmith/chaft/releases/tag/v${rawManifest.version}`,
     };
     expect(() => validateReleaseManifest(invalid)).toThrow(/every platform/);
   });
@@ -210,14 +255,13 @@ describe("release manifest", () => {
     expect(() => validateReleaseManifest(invalid)).toThrow(/release\.releaseUrl.*exact GitHub URL/);
   });
 
-  it("rejects the previously accepted 0.1.0 artifacts advertised as 0.1.0-dev", () => {
-    const invalid = publishedRelease({
-      version: "0.1.0-dev",
-      artifactVersion: "0.1.0",
-      artifactTag: "v0.1.0-dev",
-    });
+  it("rejects stable-looking artifacts advertised as an exact canary", () => {
+    const invalid = publishedCanaryRelease();
+    invalid.assets[0]!.filename = "Chaft-0.1.0-Windows.zip";
+    invalid.assets[0]!.url =
+      "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-0.1.0-Windows.zip";
     expect(() => validateReleaseManifest(invalid)).toThrow(
-      /filename must contain release\.version 0\.1\.0-dev/,
+      /filename must contain release\.version 0\.1\.0-canary\.1/,
     );
   });
 
@@ -230,6 +274,73 @@ describe("release manifest", () => {
     const release = validateReleaseManifest(publishedRelease());
     expect(release.status).toBe("published");
     expect(release.tag).toBe("v0.1.0");
+  });
+
+  it("accepts an exact published unsigned canary with all release evidence", () => {
+    const release = validateReleaseManifest(publishedCanaryRelease());
+    expect(release.channel).toBe("canary");
+    expect(release.version).toBe("0.1.0-canary.1");
+    expect(release.assets.every((asset) => asset.signingStatus === "unsigned-canary")).toBe(true);
+    expect(release.releaseEvidence?.inventory.filename).toBe(
+      "chaft-desktop-release-inventory.json",
+    );
+  });
+
+  it("keeps unsigned-canary outside the stable channel", () => {
+    const invalid = publishedRelease();
+    invalid.assets[0]!.signingStatus = "unsigned-canary";
+    invalid.assets[0]!.evidence.verification = {
+      filename: "chaft-desktop-windows-verification.json",
+      url: "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0/chaft-desktop-windows-verification.json",
+      sizeBytes: 512,
+      sha256: "c".repeat(64),
+    };
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /not sufficient for an available stable windows artifact/,
+    );
+  });
+
+  it("requires every unsigned canary smoke receipt and forbids signatures", () => {
+    const missingReceipt = publishedCanaryRelease();
+    missingReceipt.assets[0]!.evidence.verification = null;
+    expect(() => validateReleaseManifest(missingReceipt)).toThrow(
+      /verification is required for unsigned-canary artifacts/,
+    );
+
+    const signed = publishedCanaryRelease();
+    signed.assets[2]!.evidence.signature = {
+      filename: `${signed.assets[2]!.filename}.sig`,
+      url: `https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/${signed.assets[2]!.filename}.sig`,
+      sizeBytes: 512,
+      sha256: "e".repeat(64),
+      format: "sig",
+    };
+    expect(() => validateReleaseManifest(signed)).toThrow(
+      /signature must be null for an unsigned canary/,
+    );
+  });
+
+  it("requires the exact four release-level evidence files and immutable URLs", () => {
+    const missing = publishedCanaryRelease();
+    missing.releaseEvidence = null;
+    expect(() => validateReleaseManifest(missing)).toThrow(
+      /releaseEvidence is required/,
+    );
+
+    const wrongFilename = publishedCanaryRelease();
+    wrongFilename.releaseEvidence!.inventory.filename = "inventory.json";
+    wrongFilename.releaseEvidence!.inventory.url =
+      "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/inventory.json";
+    expect(() => validateReleaseManifest(wrongFilename)).toThrow(
+      /inventory\.filename must equal chaft-desktop-release-inventory\.json/,
+    );
+
+    const wrongTag = publishedCanaryRelease();
+    wrongTag.releaseEvidence!.aggregateChecksums.url =
+      "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.2/chaft-desktop-release-SHA256SUMS";
+    expect(() => validateReleaseManifest(wrongTag)).toThrow(
+      /releaseEvidence\.aggregateChecksums\.url.*exact GitHub URL/,
+    );
   });
 });
 
@@ -247,14 +358,14 @@ describe("release history", () => {
     });
 
     expect(releases.map((release) => release.version)).toEqual([
-      "0.1.0-dev",
+      "0.1.0-canary.1",
       "0.0.9",
       "0.0.8",
     ]);
   });
 
   it("rejects duplicate versions across current and historical manifests", () => {
-    const duplicate = publishedRelease({ version: rawManifest.version });
+    const duplicate = publishedCanaryRelease();
     expect(() =>
       buildReleaseCollection(rawManifest, {
         [`./release-history/${rawManifest.version}.json`]: duplicate,

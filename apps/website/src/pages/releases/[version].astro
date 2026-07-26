@@ -3,7 +3,9 @@ import PageHero from "../../components/PageHero.astro";
 import {
   allReleases,
   formatBytes,
+  formatSigningStatus,
   type ReleaseManifest,
+  unsignedCanaryWarning,
 } from "../../data/releases";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { sitePath } from "../../lib/site-path";
@@ -22,6 +24,16 @@ interface Props {
 const { release } = Astro.props;
 const description = `Chaft ${release.version} ${release.channel} release status and desktop artifact metadata.`;
 const isPublished = release.status === "published";
+const isUnsignedCanary =
+  release.channel === "canary" && release.status === "published";
+const releaseEvidenceLinks = release.releaseEvidence === null
+  ? []
+  : [
+      { label: "Qt corresponding source", file: release.releaseEvidence.qtSource },
+      { label: "Qt source checksum", file: release.releaseEvidence.qtSourceChecksums },
+      { label: "Release inventory", file: release.releaseEvidence.inventory },
+      { label: "Aggregate checksums", file: release.releaseEvidence.aggregateChecksums },
+    ];
 ---
 
 <BaseLayout title={`Release ${release.version}`} description={description}>
@@ -29,7 +41,7 @@ const isPublished = release.status === "published";
     eyebrow={isPublished
       ? `${release.channel} · ${release.status}`
       : `Canary candidate · ${release.status}`}
-    title={`Chaft ${release.version}`}
+    title={`Chaft v${release.version}`}
     lede="This page is generated from the same validated manifest consumed by the download surface. Published artifacts must carry their final filename, byte size, SHA-256, and signing state."
   >
     <div class="button-row">
@@ -39,6 +51,18 @@ const isPublished = release.status === "published";
       <a class="button button--secondary" href={release.releaseUrl}>GitHub Releases</a>
     </div>
   </PageHero>
+
+  {isUnsignedCanary && (
+    <section class="section section--compact">
+      <div class="shell">
+        <aside class="canary-warning" role="note">
+          <strong>Unsigned canary</strong>
+          <p>{unsignedCanaryWarning}</p>
+          <span class="mono">{release.tag}</span>
+        </aside>
+      </div>
+    </section>
+  )}
 
   <section class="section">
     <div class="shell release-layout">
@@ -51,6 +75,14 @@ const isPublished = release.status === "published";
       </aside>
 
       <div>
+        {releaseEvidenceLinks.length > 0 && (
+          <nav class="release-evidence" aria-label="Release-level evidence">
+            <strong>Release evidence</strong>
+            {releaseEvidenceLinks.map(({ label, file }) => (
+              <a href={file.url}>{label}</a>
+            ))}
+          </nav>
+        )}
         <p class="eyebrow">Platform artifacts</p>
         <div class="asset-list">
           {release.assets.map((asset) => {
@@ -75,7 +107,7 @@ const isPublished = release.status === "published";
                     <dt>SHA-256</dt>
                     <dd>{asset.sha256 ?? "Pending"}</dd>
                   </div>
-                  <div><dt>Signing</dt><dd>{asset.signingStatus}</dd></div>
+                  <div><dt>Signing</dt><dd>{formatSigningStatus(asset.signingStatus)}</dd></div>
                 </dl>
                 <nav class="evidence-links" aria-label={`Verification evidence for ${asset.platformLabel} ${asset.arch}`}>
                   <span>Evidence</span>
@@ -96,6 +128,28 @@ const isPublished = release.status === "published";
 </BaseLayout>
 
 <style>
+  .canary-warning {
+    display: grid;
+    gap: 0.35rem;
+    padding: 1rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--secure-surface);
+  }
+
+  .canary-warning strong {
+    color: var(--accent);
+  }
+
+  .canary-warning p {
+    margin: 0;
+  }
+
+  .canary-warning .mono {
+    color: var(--text-faint);
+    font-size: 0.72rem;
+  }
+
   .release-layout {
     display: grid;
     grid-template-columns: minmax(14rem, 0.35fr) minmax(0, 1fr);
@@ -133,6 +187,27 @@ const isPublished = release.status === "published";
   .asset-list {
     display: grid;
     gap: 1rem;
+  }
+
+  .release-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 1rem;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .release-evidence strong {
+    color: var(--text-soft);
+  }
+
+  .release-evidence a {
+    color: var(--accent);
   }
 
   .asset-list article {

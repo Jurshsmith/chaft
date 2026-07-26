@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 from urllib.parse import quote, urlparse
 
+import unsigned_canary_policy as unsigned_canary
+
 
 PLATFORMS = ("windows", "macos", "linux")
 PLATFORM_LABELS = {
@@ -80,10 +82,27 @@ SECURITY_RELEVANT_RECEIPT_FIELDS = (
     "verificationDetails",
 )
 ALLOWED_SIGNING_STATES = {
+    "windows": {"signed", "unsigned-canary"},
+    "macos": {"notarized", "unsigned-canary"},
+    "linux": {"checksummed", "signed", "unsigned-canary"},
+}
+STABLE_SIGNING_STATES = {
     "windows": {"signed"},
     "macos": {"notarized"},
     "linux": {"checksummed", "signed"},
 }
+CANARY_SIGNING_STATE = "unsigned-canary"
+CANARY_VERSION = unsigned_canary.CANARY_VERSION
+STABLE_VERSION = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"
+)
+RELEASE_EVIDENCE_FILENAMES = {
+    "qtSource": "Chaft-Qt-6.8.4-corresponding-source.zip",
+    "qtSourceChecksums": "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+    "inventory": "chaft-desktop-release-inventory.json",
+    "aggregateChecksums": "chaft-desktop-release-SHA256SUMS",
+}
+CANARY_INVENTORY_SCHEMA = "chaft.desktop.canary-release-assets.v1"
 ARCHITECTURE_ALIASES = {
     "amd64": "x86_64",
     "x64": "x86_64",
@@ -1072,10 +1091,175 @@ def require_matching_security_claims(
             )
 
 
-def validate_signing_state(platform: str, state: str) -> None:
-    if state not in ALLOWED_SIGNING_STATES[platform]:
-        allowed = ", ".join(sorted(ALLOWED_SIGNING_STATES[platform]))
-        fail(f"{platform} signing state must be one of: {allowed}")
+def read_unsigned_canary_receipt(
+    path: Path,
+    platform_release: PlatformRelease,
+    *,
+    repository: str,
+    tag: str,
+    expected_architecture: str,
+) -> ValidatedVerificationReceipt:
+    expected_name = unsigned_canary.RECEIPT_FILENAMES[platform_release.platform]
+    if path.name != expected_name:
+        fail(
+            f"{platform_release.platform} unsigned-canary receipt must be named "
+            f"{expected_name}"
+        )
+    if len(platform_release.artifacts) != 1:
+        fail(
+            f"{platform_release.platform} unsigned canary must contain exactly "
+            "one installable package"
+        )
+    if platform_release.signatures:
+        fail(
+            f"{platform_release.platform} unsigned canary must not include "
+            "detached signatures"
+        )
+    evidence = evidence_file(path)
+    receipt = load_json_object(path, f"{platform_release.platform} unsigned-canary receipt")
+    package = platform_release.artifacts[0]
+    try:
+        unsigned_canary.validate_receipt_document(
+            receipt,
+            expected_platform=platform_release.platform,
+            expected_package=unsigned_canary.FileFingerprint(
+                filename=package.name,
+                size_bytes=package.size_bytes,
+                sha256=package.sha256,
+            ),
+            expected_version=platform_release.version,
+            expected_tag=tag,
+            expected_commit=platform_release.commit,
+            expected_repository=repository,
+        )
+    except unsigned_canary.UnsignedCanaryPolicyError as error:
+        fail(
+            f"{platform_release.platform} unsigned-canary receipt is invalid: "
+            f"{error}"
+        )
+    if receipt.get("architecture") != expected_architecture:
+        fail(
+            f"{platform_release.platform} unsigned-canary receipt architecture "
+            "does not match the requested architecture"
+        )
+    return ValidatedVerificationReceipt(evidence=evidence, document=receipt)
+
+
+def validate_signing_state(platform: str, state: str, channel: str) -> None:
+    if channel == "canary":
+        if state != CANARY_SIGNING_STATE:
+            fail(
+                f"{platform} canary signing state must be "
+                f"{CANARY_SIGNING_STATE!r}"
+            )
+        return
+    if state not in STABLE_SIGNING_STATES[platform]:
+        allowed = ", ".join(sorted(STABLE_SIGNING_STATES[platform]))
+        fail(f"{platform} stable signing state must be one of: {allowed}")
+
+
+def read_release_evidence(
+    directory: Path,
+    *,
+    repository: str,
+    tag: str,
+    version: str,
+    commit: str,
+    expected_assets: Mapping[str, EvidenceFile],
+) -> dict[str, EvidenceFile]:
+    directory = Path(directory).resolve()
+    if directory.is_symlink() or not directory.is_dir():
+        fail(f"canary release evidence directory not found: {directory}")
+    actual_names = {
+        path.name for path in directory.iterdir() if path.is_file() and not path.is_symlink()
+    }
+    expected_names = set(RELEASE_EVIDENCE_FILENAMES.values())
+    if actual_names != expected_names or any(
+        path.is_dir() or path.is_symlink() for path in directory.iterdir()
+    ):
+        fail(
+            "canary release evidence directory must contain exactly the Qt "
+            "source bundle/checksum, inventory, and aggregate checksums"
+        )
+    evidence = {
+        key: evidence_file(directory / filename)
+        for key, filename in RELEASE_EVIDENCE_FILENAMES.items()
+    }
+    qt_checksum_rows = parse_checksums(evidence["qtSourceChecksums"].path)
+    if qt_checksum_rows != {
+        evidence["qtSource"].name: evidence["qtSource"].sha256
+    }:
+        fail("Qt source checksum does not bind the exact corresponding-source bundle")
+
+    inventory = load_json_object(
+        evidence["inventory"].path, "canary release inventory"
+    )
+    required_inventory = {
+        "schemaVersion": CANARY_INVENTORY_SCHEMA,
+        "channel": "canary",
+        "signingStatus": CANARY_SIGNING_STATE,
+        "warning": unsigned_canary.WARNING,
+        "repository": repository,
+        "version": version,
+        "tag": tag,
+        "commit": commit,
+    }
+    for key, expected in required_inventory.items():
+        if inventory.get(key) != expected:
+            fail(f"canary release inventory {key} is incoherent")
+    release_id = inventory.get("releaseId")
+    if (
+        not isinstance(release_id, int)
+        or isinstance(release_id, bool)
+        or release_id <= 0
+    ):
+        fail("canary release inventory releaseId must be a positive integer")
+    rows = inventory.get("assets")
+    if not isinstance(rows, list) or inventory.get("assetCount") != len(rows):
+        fail("canary release inventory assetCount is incoherent")
+    inventory_assets: dict[str, tuple[int, str]] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            fail(f"canary release inventory assets[{index}] must be an object")
+        name = require_plain_filename(
+            row.get("filename"), f"canary release inventory assets[{index}].filename"
+        )
+        size = row.get("sizeBytes")
+        digest = row.get("sha256")
+        if (
+            not isinstance(size, int)
+            or isinstance(size, bool)
+            or size <= 0
+            or not isinstance(digest, str)
+            or SHA256_PATTERN.fullmatch(digest) is None
+        ):
+            fail(f"canary release inventory metadata is invalid for {name}")
+        if name in inventory_assets:
+            fail(f"canary release inventory contains duplicate asset {name}")
+        inventory_assets[name] = (size, digest)
+    expected_inventory_assets = {
+        name: (item.size_bytes, item.sha256)
+        for name, item in expected_assets.items()
+    }
+    expected_inventory_assets[evidence["qtSource"].name] = (
+        evidence["qtSource"].size_bytes,
+        evidence["qtSource"].sha256,
+    )
+    expected_inventory_assets[evidence["qtSourceChecksums"].name] = (
+        evidence["qtSourceChecksums"].size_bytes,
+        evidence["qtSourceChecksums"].sha256,
+    )
+    if inventory_assets != expected_inventory_assets:
+        fail("canary release inventory does not bind the exact 17 release assets")
+
+    aggregate_rows = parse_checksums(evidence["aggregateChecksums"].path)
+    expected_aggregate = {
+        name: digest for name, (_size, digest) in inventory_assets.items()
+    }
+    expected_aggregate[evidence["inventory"].name] = evidence["inventory"].sha256
+    if aggregate_rows != expected_aggregate:
+        fail("aggregate checksums do not bind the exact inventory and release assets")
+    return evidence
 
 
 def build_manifest(
@@ -1091,6 +1275,7 @@ def build_manifest(
     verification_receipts: Mapping[str, Path | None],
     trusted_verification_receipts: Mapping[str, Path | None],
     publisher_identities: Mapping[str, str | None],
+    release_evidence_directory: Path | None = None,
     verifier: Verifier = official_verifier,
     tag_resolver: TagResolver = resolve_git_tag_commit,
 ) -> dict[str, object]:
@@ -1105,8 +1290,12 @@ def build_manifest(
         fail("resolved Git tag commit must be a 40-to-64 character hexadecimal revision")
     requested_version = tag[1:]
     published_at = normalized_timestamp(published_at, "published-at")
-    if channel not in {"preview", "stable"}:
-        fail("channel must be preview or stable")
+    if channel not in {"canary", "stable"}:
+        fail("channel must be canary or stable")
+    if channel == "canary" and CANARY_VERSION.fullmatch(requested_version) is None:
+        fail("canary channel requires an exact vX.Y.Z-canary.N tag")
+    if channel == "stable" and STABLE_VERSION.fullmatch(requested_version) is None:
+        fail("stable channel requires an exact vX.Y.Z tag without a prerelease")
 
     for mapping_name, mapping in (
         ("package directories", package_directories),
@@ -1160,9 +1349,49 @@ def build_manifest(
     receipts: dict[str, EvidenceFile | None] = {}
     for platform, release in releases.items():
         state = signing_states[platform]
-        validate_signing_state(platform, state)
+        validate_signing_state(platform, state, channel)
         public_receipt_path = verification_receipts[platform]
         trusted_receipt_path = trusted_verification_receipts[platform]
+        if channel == "canary":
+            if public_receipt_path is None:
+                fail(
+                    f"{platform} unsigned-canary publication requires a public "
+                    "packaged-smoke receipt"
+                )
+            if trusted_receipt_path is not None:
+                fail(
+                    f"{platform} unsigned-canary publication must not claim a "
+                    "trusted signing receipt"
+                )
+            if publisher_identities[platform] is not None:
+                fail(
+                    f"{platform} unsigned-canary publication must not claim a "
+                    "publisher identity"
+                )
+            if release.signatures:
+                fail(
+                    f"{platform} unsigned-canary publication must not include "
+                    "detached signatures"
+                )
+            if release.provenance_architecture is None:
+                fail(
+                    f"{platform} unsigned-canary publication requires provenance "
+                    "platform.machine"
+                )
+            if release.provenance_architecture != normalized_architectures[platform]:
+                fail(
+                    f"{platform} requested architecture does not match provenance "
+                    "platform.machine"
+                )
+            receipts[platform] = read_unsigned_canary_receipt(
+                Path(public_receipt_path),
+                release,
+                repository=repository,
+                tag=tag,
+                expected_architecture=normalized_architectures[platform],
+            ).evidence
+            continue
+
         requires_receipt = platform in {"windows", "macos"} or state == "signed"
         if requires_receipt and public_receipt_path is None:
             fail(
@@ -1259,6 +1488,11 @@ def build_manifest(
         else:
             receipts[platform] = None
 
+    if channel == "canary" and release_evidence_directory is None:
+        fail("canary publication requires the release-level evidence directory")
+    if channel == "stable" and release_evidence_directory is not None:
+        fail("stable publication must not consume unsigned-canary release evidence")
+
     # GitHub release assets occupy a single filename namespace. Check everything that
     # the generated URLs expect the publisher to upload, not only installer packages.
     upload_owners: dict[str, str] = {}
@@ -1330,6 +1564,37 @@ def build_manifest(
                 }
             )
 
+    release_evidence: dict[str, object] | None = None
+    if channel == "canary":
+        assert release_evidence_directory is not None
+        expected_inventory_assets: dict[str, EvidenceFile] = {}
+        for platform, release in releases.items():
+            for artifact in release.artifacts:
+                expected_inventory_assets[artifact.name] = EvidenceFile(
+                    name=artifact.name,
+                    path=Path(package_directories[platform]) / artifact.name,
+                    size_bytes=artifact.size_bytes,
+                    sha256=artifact.sha256,
+                )
+            expected_inventory_assets.update(
+                {item.name: item for item in release.metadata.values()}
+            )
+            receipt = receipts[platform]
+            assert receipt is not None
+            expected_inventory_assets[receipt.name] = receipt
+        release_evidence_files = read_release_evidence(
+            Path(release_evidence_directory),
+            repository=repository,
+            tag=tag,
+            version=requested_version,
+            commit=commit,
+            expected_assets=expected_inventory_assets,
+        )
+        release_evidence = {
+            key: evidence_json(item, repository, tag)
+            for key, item in release_evidence_files.items()
+        }
+
     return {
         "schemaVersion": 2,
         "channel": channel,
@@ -1340,6 +1605,7 @@ def build_manifest(
         "commit": commit,
         "releaseUrl": f"https://github.com/{repository}/releases/tag/{quote(tag, safe='')}",
         "sourceUrl": f"https://github.com/{repository}",
+        "releaseEvidence": release_evidence,
         "assets": assets,
     }
 
@@ -1380,7 +1646,7 @@ def publish_manifest(
     manifest: Mapping[str, object],
     history_directory: Path | None = None,
 ) -> None:
-    """Publish without downgrading a channel or displacing stable with preview."""
+    """Publish without downgrading a channel or displacing stable with canary."""
 
     output = output.resolve()
     history_directory = (
@@ -1394,7 +1660,7 @@ def publish_manifest(
     if not isinstance(new_version, str) or SEMANTIC_VERSION.fullmatch(new_version) is None:
         fail("new published website manifest has an invalid version")
     new_channel = manifest.get("channel")
-    if new_channel not in {"preview", "stable"}:
+    if new_channel not in {"canary", "stable"}:
         fail("new published website manifest has an invalid channel")
 
     current: dict[str, object] | None = None
@@ -1438,10 +1704,10 @@ def publish_manifest(
     if current_status == "published" and current is not None:
         current_version = current["version"]
         current_channel = current.get("channel")
-        if current_channel not in {"preview", "stable"}:
+        if current_channel not in {"canary", "stable"}:
             fail("current published website manifest has an invalid channel")
 
-        if current_channel == "stable" and new_channel == "preview":
+        if current_channel == "stable" and new_channel == "canary":
             atomic_write_json(existing_new_archive, manifest)
             return
         if current_channel == new_channel and compare_semantic_versions(
@@ -1482,19 +1748,25 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--published-at", required=True, help="Timezone-aware ISO 8601 timestamp")
     parser.add_argument(
         "--trusted-windows-signer-thumbprint",
-        required=True,
-        help="Protected SHA-1 or SHA-256 Authenticode signer thumbprint",
+        help="Protected SHA-1 or SHA-256 Authenticode signer thumbprint; stable only",
     )
     parser.add_argument(
         "--trusted-apple-team-id",
-        required=True,
-        help="Protected 10-character Apple Developer Team ID",
+        help="Protected 10-character Apple Developer Team ID; stable only",
     )
     parser.add_argument(
         "--trusted-linux-signing-fingerprint",
         help="Protected OpenPGP fingerprint; required when Linux is signed",
     )
-    parser.add_argument("--channel", required=True, choices=("preview", "stable"))
+    parser.add_argument("--channel", required=True, choices=("canary", "stable"))
+    parser.add_argument(
+        "--release-evidence-dir",
+        type=Path,
+        help=(
+            "Directory containing exact Qt source, release inventory, and "
+            "aggregate checksum evidence; required for canary"
+        ),
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
         "--history-dir",
@@ -1578,6 +1850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             verification_receipts=verification_receipts,
             trusted_verification_receipts=trusted_verification_receipts,
             publisher_identities=publisher_identities,
+            release_evidence_directory=args.release_evidence_dir,
         )
         publish_manifest(args.output, manifest, args.history_dir)
     except ManifestExportError as error:

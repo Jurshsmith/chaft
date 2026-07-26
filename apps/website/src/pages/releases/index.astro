@@ -1,10 +1,17 @@
 ---
 import PageHero from "../../components/PageHero.astro";
-import { allReleases, currentRelease } from "../../data/releases";
+import {
+  allReleases,
+  currentRelease,
+  unsignedCanaryWarning,
+} from "../../data/releases";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { sitePath } from "../../lib/site-path";
 
 const description = "Chaft canary and desktop release status, artifacts, and integrity metadata.";
+const isUnsignedCanary =
+  currentRelease.channel === "canary" &&
+  currentRelease.status === "published";
 ---
 
 <BaseLayout title="Releases" description={description}>
@@ -13,6 +20,18 @@ const description = "Chaft canary and desktop release status, artifacts, and int
     title="Every canary should explain where it came from."
     lede="Chaft release pages come from a validated manifest. An artifact cannot be marked available until its final package metadata and integrity state are present."
   />
+
+  {isUnsignedCanary && (
+    <section class="section section--compact">
+      <div class="shell">
+        <aside class="canary-warning" role="note">
+          <strong>Unsigned canary</strong>
+          <p>{unsignedCanaryWarning}</p>
+          <span class="mono">{currentRelease.tag}</span>
+        </aside>
+      </div>
+    </section>
+  )}
 
   <section class="section">
     <div class="shell">
@@ -57,8 +76,8 @@ const description = "Chaft canary and desktop release status, artifacts, and int
       </div>
       <ol>
         <li><span>01</span>Build and smoke packages on native platform runners.</li>
-        <li><span>02</span>Sign and notarize final operating-system artifacts.</li>
-        <li><span>03</span>Generate SHA-256, SBOM, provenance, and native verification receipts.</li>
+        <li><span>02</span>For canaries, record signing as not performed; for stable, enforce native signing and notarization.</li>
+        <li><span>03</span>Generate SHA-256, SBOM, provenance, smoke receipts, inventory, and corresponding-source evidence.</li>
         <li><span>04</span>Publish an immutable GitHub Release.</li>
         <li><span>05</span>Validate the manifest and rebuild this static site.</li>
       </ol>
@@ -67,6 +86,28 @@ const description = "Chaft canary and desktop release status, artifacts, and int
 </BaseLayout>
 
 <style>
+  .canary-warning {
+    display: grid;
+    gap: 0.35rem;
+    padding: 1rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--secure-surface);
+  }
+
+  .canary-warning strong {
+    color: var(--accent);
+  }
+
+  .canary-warning p {
+    margin: 0;
+  }
+
+  .canary-warning .mono {
+    color: var(--text-faint);
+    font-size: 0.72rem;
+  }
+
   .release-card {
     display: grid;
     gap: 2.5rem;

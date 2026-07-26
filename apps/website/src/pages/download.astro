@@ -7,7 +7,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Chaft canary builds for Windows, macOS, and Linux. Public packages are being prepared; build from source today.";
+  "Chaft canary builds for Windows, macOS, and Linux, with checksums and explicit unsigned-canary evidence.";
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
 ---
 
@@ -15,10 +15,10 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
   <PageHero
     eyebrow={`Canary stage · ${currentRelease.version}`}
     title={hasPublishedDownloads
-      ? "Choose your Chaft desktop build."
+      ? "Choose an unsigned Chaft canary."
       : "Canary packages are being prepared."}
     lede={hasPublishedDownloads
-      ? "Every platform stays visible, with the exact version, architecture, size, checksum, and signing state shown before you leave."
+      ? "Each native package passed its packaged-app smoke check and includes exact integrity evidence. These canaries are deliberately unsigned and are not production-ready."
       : "Windows, macOS, and Linux are supported targets. Build the current source today; verified public packages will appear here only after their release evidence is complete."}
   >
     <div class="button-row">
@@ -40,10 +40,10 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
     <div class="shell">
       <div class="release-strip">
         <span class="status">
-          {currentRelease.status === "published" ? "Release published" : "Canary packages pending"}
+          {currentRelease.status === "published" ? "Unsigned canary published" : "Canary packages pending"}
         </span>
         <div>
-          <strong>Current canary candidate</strong>
+          <strong>{currentRelease.status === "published" ? "Current canary" : "Current canary candidate"}</strong>
           <span class="mono">v{currentRelease.version}</span>
         </div>
         <a href={sitePath(`/releases/${currentRelease.version}/`)}>Manifest details →</a>
@@ -57,29 +57,29 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
       <div class="section-heading">
         <div>
           <p class="eyebrow">Release standard</p>
-          <h2>Platform-native delivery, with integrity metadata beside it.</h2>
+          <h2>Canary integrity now; stable signing remains a separate gate.</h2>
         </div>
         <p>
           The website is designed to consume release output generated in this repository.
-          It does not manufacture checksums or discover “latest” in your browser.
+          It does not manufacture checksums, infer signing, or discover “latest” in your browser.
         </p>
       </div>
 
       <div class="delivery-grid">
         <article>
           <span class="mono">macOS</span>
-          <h3>Developer ID and notarization</h3>
-          <p>DMG builds will be signed, submitted to Apple, stapled, and verified before publication.</p>
+          <h3>Native DMG canary</h3>
+          <p>The canary is smoke-tested on macOS but unsigned. Developer ID signing and notarization remain mandatory for a stable release.</p>
         </article>
         <article>
           <span class="mono">Windows</span>
-          <h3>Trusted code signing</h3>
-          <p>Windows delivery will move beyond the current ZIP into a signed installer path.</p>
+          <h3>Native ZIP canary</h3>
+          <p>The canary is smoke-tested on Windows but has no Authenticode signature. Stable delivery keeps trusted signing as a hard gate.</p>
         </article>
         <article>
           <span class="mono">Linux</span>
           <h3>Portable packaging</h3>
-          <p>Linux releases use a self-contained AppImage that can run without a system-wide Qt installation.</p>
+          <p>The AppImage is smoke-tested on Linux and ships with checksums, but the canary has no OpenPGP detached signature.</p>
         </article>
       </div>
     </div>
@@ -95,13 +95,14 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
         <p>
           Published releases will include a platform-qualified
           <strong>SHA256SUMS</strong> file, a CycloneDX SBOM, source and build
-          provenance, and the required native verification receipt. Available download
-          cards will not validate unless all required evidence exists.
+          provenance, and a native packaged-app smoke receipt. The receipt explicitly
+          records that signing and notarization were not performed; it is not signature
+          evidence.
         </p>
         <pre><code>sha256sum -c chaft-desktop-&lt;platform&gt;-SHA256SUMS</code></pre>
         <p>
-          Until that release gate is complete, this page links to the public Releases
-          area without presenting source builds as verified downloads.
+          Stable publication remains blocked until its platform-specific signing and
+          notarization policy is satisfied.
         </p>
       </div>
     </div>

@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import unsigned_canary_policy as unsigned_canary
+
 
 PLATFORMS = ("windows", "macos", "linux")
 NATIVE_RECEIPT_PLATFORMS = frozenset(("windows", "macos"))
@@ -50,6 +52,15 @@ VERIFICATION_RECEIPT_FILENAMES = {
     platform: f"chaft-desktop-{platform}-verification.json"
     for platform in PLATFORMS
 }
+UNSIGNED_CANARY_RECEIPT_FILENAMES = unsigned_canary.RECEIPT_FILENAMES
+QT_SOURCE_FILENAMES = (
+    "Chaft-Qt-6.8.4-corresponding-source.zip",
+    "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+)
+CANARY_FINALIZATION_FILENAMES = (
+    "chaft-desktop-release-inventory.json",
+    "chaft-desktop-release-SHA256SUMS",
+)
 PACKAGE_SUFFIXES = (
     (".tar.gz", "linux", "linux-tgz"),
     (".appimage", "linux", "linux-appimage"),
@@ -89,6 +100,7 @@ class PlatformStagePlan:
 class StagePlan:
     source_directory: Path
     platforms: Mapping[str, PlatformStagePlan]
+    release_evidence: tuple[Fingerprint, ...] = ()
 
 
 def fail(message: str) -> None:
@@ -467,7 +479,12 @@ def build_stage_plan(
     assets_directory: Path,
     *,
     allowed_extra_assets: Sequence[str] = (),
+    channel: str = "stable",
+    require_receipts: bool = True,
+    require_finalization: bool = True,
 ) -> StagePlan:
+    if channel not in {"stable", "canary"}:
+        fail("channel must be stable or canary")
     original_source = Path(assets_directory)
     source_directory = original_source.resolve()
     source_files = scan_flat_directory(original_source)
@@ -532,28 +549,64 @@ def build_stage_plan(
                 fail(f"{platform} provenance sizeBytes is stale for {name}")
             artifact_fingerprints[name] = fingerprint
 
-        receipt_name = VERIFICATION_RECEIPT_FILENAMES[platform]
+        receipt_name = (
+            UNSIGNED_CANARY_RECEIPT_FILENAMES[platform]
+            if channel == "canary"
+            else VERIFICATION_RECEIPT_FILENAMES[platform]
+        )
         receipt_path = source_files.get(receipt_name)
-        if receipt_path is None and platform in NATIVE_RECEIPT_PLATFORMS:
+        requires_platform_receipt = require_receipts and (
+            channel == "canary" or platform in NATIVE_RECEIPT_PLATFORMS
+        )
+        if receipt_path is None and requires_platform_receipt:
             fail(f"missing {platform} native verification receipt: {receipt_name}")
         receipt_fingerprint = None
         if receipt_path is not None:
             receipt, receipt_fingerprint = load_json_object(
                 receipt_path, f"{platform} verification receipt"
             )
-            validate_receipt(
-                receipt,
-                platform,
-                {
-                    name: artifact_fingerprints[name]
-                    for name in package_names
-                },
-                {
+            if channel == "canary":
+                if len(package_names) != 1:
+                    fail(
+                        f"{platform} unsigned canary must contain exactly one package"
+                    )
+                signatures = {
                     name: fingerprint
                     for name, fingerprint in artifact_fingerprints.items()
                     if signature_description(name) is not None
-                },
-            )
+                }
+                if signatures:
+                    fail(
+                        f"{platform} unsigned canary must not include detached signatures"
+                    )
+                package_name = next(iter(package_names))
+                package = artifact_fingerprints[package_name]
+                try:
+                    unsigned_canary.validate_receipt_document(
+                        receipt,
+                        expected_platform=platform,
+                        expected_package=unsigned_canary.FileFingerprint(
+                            filename=package.name,
+                            size_bytes=package.size_bytes,
+                            sha256=package.sha256,
+                        ),
+                    )
+                except unsigned_canary.UnsignedCanaryPolicyError as error:
+                    fail(f"{platform} unsigned-canary receipt is invalid: {error}")
+            else:
+                validate_receipt(
+                    receipt,
+                    platform,
+                    {
+                        name: artifact_fingerprints[name]
+                        for name in package_names
+                    },
+                    {
+                        name: fingerprint
+                        for name, fingerprint in artifact_fingerprints.items()
+                        if signature_description(name) is not None
+                    },
+                )
 
         package_files = (
             checksums_fingerprint,
@@ -575,6 +628,21 @@ def build_stage_plan(
             receipt=receipt_fingerprint,
         )
 
+    release_evidence: tuple[Fingerprint, ...] = ()
+    if channel == "canary":
+        release_evidence_names = list(QT_SOURCE_FILENAMES)
+        if require_finalization:
+            release_evidence_names.extend(CANARY_FINALIZATION_FILENAMES)
+        release_evidence = tuple(
+            fingerprint_file(
+                require_source_file(
+                    source_files, name, "canary release-level evidence"
+                )
+            )
+            for name in release_evidence_names
+        )
+        expected_names.update(item.name for item in release_evidence)
+
     allowed = set()
     for raw_name in allowed_extra_assets:
         name = safe_filename(raw_name, "allowed extra asset")
@@ -589,7 +657,11 @@ def build_stage_plan(
     unexpected = sorted(set(source_files) - expected_names - allowed)
     if unexpected:
         fail("unexpected release asset(s): " + ", ".join(unexpected))
-    return StagePlan(source_directory=source_directory, platforms=plans)
+    return StagePlan(
+        source_directory=source_directory,
+        platforms=plans,
+        release_evidence=release_evidence,
+    )
 
 
 def copy_fingerprinted_file(source: Fingerprint, destination: Path) -> None:
@@ -642,6 +714,7 @@ def stage_assets(
     output_directory: Path,
     *,
     allowed_extra_assets: Sequence[str] = (),
+    channel: str = "stable",
 ) -> StagePlan:
     source_directory = Path(assets_directory).resolve()
     requested_output = Path(output_directory)
@@ -654,6 +727,7 @@ def stage_assets(
     plan = build_stage_plan(
         assets_directory,
         allowed_extra_assets=allowed_extra_assets,
+        channel=channel,
     )
     output_directory.parent.mkdir(parents=True, exist_ok=True)
     if os.path.lexists(output_directory):
@@ -669,6 +743,8 @@ def stage_assets(
     try:
         receipts_directory = temporary_directory / "verification-receipts"
         receipts_directory.mkdir(mode=0o755)
+        release_evidence_directory = temporary_directory / "release-evidence"
+        release_evidence_directory.mkdir(mode=0o755)
         for platform in PLATFORMS:
             platform_plan = plan.platforms[platform]
             package_directory = (
@@ -682,6 +758,11 @@ def stage_assets(
                 receipt = platform_plan.receipt
                 copy_fingerprinted_file(receipt, receipts_directory / receipt.name)
 
+        for source in plan.release_evidence:
+            copy_fingerprinted_file(
+                source, release_evidence_directory / source.name
+            )
+        _fsync_directory(release_evidence_directory)
         _fsync_directory(receipts_directory)
         os.chmod(temporary_directory, 0o755)
         _fsync_directory(temporary_directory)
@@ -705,6 +786,12 @@ def argument_parser() -> argparse.ArgumentParser:
             "Stage a flat directory of locally downloaded GitHub Release assets "
             "for export-website-release-manifest.py. No network access is used."
         )
+    )
+    parser.add_argument(
+        "--channel",
+        choices=("stable", "canary"),
+        default="stable",
+        help="Receipt and release-evidence policy (default: stable)",
     )
     parser.add_argument(
         "--assets-dir",
@@ -739,6 +826,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.assets_dir,
             args.output_dir,
             allowed_extra_assets=args.allow_extra_asset,
+            channel=args.channel,
         )
     except AssetStagingError as error:
         parser.exit(2, f"release asset staging failed: {error}\n")
@@ -753,6 +841,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{platform} verification receipt: "
                 f"{output / 'verification-receipts' / receipt.name}"
             )
+    if plan.release_evidence:
+        print(f"release evidence directory: {output / 'release-evidence'}")
     return 0
 
 
