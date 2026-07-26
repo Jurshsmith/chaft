@@ -513,6 +513,8 @@ version = "0.1.0"
 dependencies = [
  "chaft-app",
  "chaft-core",
+ "chaft-crypto",
+ "chaft-identity",
  "chaft-media",
  "chaft-net",
  "chaft-net-direct",
