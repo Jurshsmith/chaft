@@ -912,7 +912,7 @@ jobs:
 
       - name: Install Linux package dependencies
         if: runner.os == 'Linux'
-        run: tools/qt/install-linux-dependencies.sh install desktop-package
+        run: tools/desktop/install-linux-package-dependencies.sh install desktop-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'

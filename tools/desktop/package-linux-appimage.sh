@@ -139,6 +139,12 @@ if [ ! -f "$app_dir/usr/lib/libQt6Quick.so.6" ]; then
   exit 1
 fi
 
+if [ ! -f "$app_dir/usr/lib/libxcb-cursor.so.0" ]; then
+  rm -f "$output_path"
+  printf 'linuxdeploy did not bundle the XCB cursor runtime\n' >&2
+  exit 1
+fi
+
 for host_gl_pattern in \
   'libEGL.so*' \
   'libGL.so*' \

@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import struct
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -216,6 +217,7 @@ for required_contract in (
     'qt_quick_library="$qt_library_dir/libQt6Quick.so.6"',
     'LD_LIBRARY_PATH="$qt_library_dir"',
     'QMAKE="$qt_qmake"',
+    'libxcb-cursor.so.0',
     "EXTRA_PLATFORM_PLUGINS=libqoffscreen.so",
     "QML_SOURCES_PATHS=",
 ):
@@ -299,6 +301,20 @@ try:
     )[1].split("\n)", 1)[0]
 except IndexError:
     fail("Linux dependencies must define an AppImage runtime package set")
+packaging_dependencies_path = (
+    ROOT / "tools" / "desktop" / "install-linux-package-dependencies.sh"
+)
+packaging_dependencies = subprocess.run(
+    [str(packaging_dependencies_path), "list", "desktop-package"],
+    cwd=ROOT,
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE,
+).stdout.splitlines()
+if "libxcb-cursor0" not in packaging_dependencies:
+    fail("Linux packaging hosts must install libxcb-cursor0")
+if "libxcb-cursor0" in appimage_runtime_packages.split():
+    fail("clean AppImage smoke must consume the bundled XCB cursor runtime")
 for package in ("libegl1", "libopengl0"):
     if not re.search(
         rf"^\s*{re.escape(package)}\s*$",

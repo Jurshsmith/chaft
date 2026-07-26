@@ -203,6 +203,7 @@ class PathClassificationTests(unittest.TestCase):
     def test_packaging_and_release_tools_avoid_rust_and_debug_desktop(self) -> None:
         for path in (
             "packaging/linux/appimage-tools.lock",
+            "tools/desktop/install-linux-package-dependencies.sh",
             "tools/desktop/macos-dmg-smoke-test.py",
             "tools/desktop/macos-dmg-smoke.sh",
             "tools/desktop/qt-release-binding-test.py",

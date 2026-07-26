@@ -219,7 +219,7 @@ jobs:
 
       - name: Install Linux build tools
         if: runner.os == 'Linux'
-        run: tools/qt/install-linux-dependencies.sh install release-package
+        run: tools/desktop/install-linux-package-dependencies.sh install release-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'

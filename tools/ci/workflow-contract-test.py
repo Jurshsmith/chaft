@@ -36,6 +36,10 @@ QT_CACHE_RESTORE_ACTION = (
 QT_CACHE_KEY = "chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}"
 LINUX_DEPENDENCIES = "tools/qt/install-linux-dependencies.sh"
 LINUX_DEPENDENCIES_PATH = ROOT / LINUX_DEPENDENCIES
+LINUX_PACKAGE_DEPENDENCIES = (
+    "tools/desktop/install-linux-package-dependencies.sh"
+)
+LINUX_PACKAGE_DEPENDENCIES_PATH = ROOT / LINUX_PACKAGE_DEPENDENCIES
 QT_SOURCE_BUNDLE = "Chaft-Qt-6.8.4-corresponding-source.zip"
 QT_SOURCE_CHECKSUM = f"{QT_SOURCE_BUNDLE}.sha256"
 MAIN_CACHE_WRITER = (
@@ -163,9 +167,12 @@ class WorkflowYamlTests(unittest.TestCase):
         )
 
     def test_linux_qt_dependency_profiles_cover_each_runner_role(self) -> None:
-        def packages(profile: str) -> list[str]:
+        def packages(
+            profile: str,
+            installer: Path = LINUX_DEPENDENCIES_PATH,
+        ) -> list[str]:
             completed = subprocess.run(
-                [str(LINUX_DEPENDENCIES_PATH), "list", profile],
+                [str(installer), "list", profile],
                 cwd=ROOT,
                 check=False,
                 text=True,
@@ -183,8 +190,20 @@ class WorkflowYamlTests(unittest.TestCase):
 
         consumer = set(packages("sdk-consumer"))
         sdk_build = set(packages("sdk-build"))
-        desktop_package = set(packages("desktop-package"))
-        release_package = set(packages("release-package"))
+        base_desktop_package = set(packages("desktop-package"))
+        base_release_package = set(packages("release-package"))
+        desktop_package = set(
+            packages(
+                "desktop-package",
+                LINUX_PACKAGE_DEPENDENCIES_PATH,
+            )
+        )
+        release_package = set(
+            packages(
+                "release-package",
+                LINUX_PACKAGE_DEPENDENCIES_PATH,
+            )
+        )
         runtime = set(packages("appimage-runtime"))
 
         self.assertEqual(
@@ -201,9 +220,22 @@ class WorkflowYamlTests(unittest.TestCase):
             }.issubset(sdk_build)
         )
         packaging = {"appstream", "desktop-file-utils", "patchelf"}
-        self.assertEqual(desktop_package, consumer | packaging)
-        self.assertEqual(release_package, sdk_build | packaging)
+        package_host_libraries = {"libxcb-cursor0"}
+        self.assertEqual(base_desktop_package, consumer | packaging)
+        self.assertEqual(base_release_package, sdk_build | packaging)
+        self.assertEqual(
+            desktop_package,
+            base_desktop_package | package_host_libraries,
+        )
+        self.assertEqual(
+            release_package,
+            base_release_package | package_host_libraries,
+        )
         self.assertEqual(runtime, {"libegl1", "libglx0", "libopengl0"})
+        qt_builder = (ROOT / "tools" / "qt" / "build_qt.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn(LINUX_PACKAGE_DEPENDENCIES, qt_builder)
 
 
 class CiWorkflowContractTests(unittest.TestCase):
@@ -476,38 +508,42 @@ class CiWorkflowContractTests(unittest.TestCase):
             desktop,
         )
         self.assertIn(
-            f"{LINUX_DEPENDENCIES} install desktop-package",
+            f"{LINUX_PACKAGE_DEPENDENCIES} install desktop-package",
             package,
         )
         self.assertIn(
             f"{LINUX_DEPENDENCIES} install appimage-runtime",
             clean,
         )
-        for block, profile, later_step in (
+        for block, installer, profile, later_step in (
             (
                 contracts,
+                LINUX_DEPENDENCIES,
                 "sdk-consumer",
                 "Match consumer toolchain to provisioned Qt SDK",
             ),
             (
                 desktop,
+                LINUX_DEPENDENCIES,
                 "sdk-consumer",
                 "Match consumer toolchain to provisioned Qt SDK",
             ),
             (
                 package,
+                LINUX_PACKAGE_DEPENDENCIES,
                 "desktop-package",
                 "Match consumer toolchain to provisioned Qt SDK",
             ),
             (
                 clean,
+                LINUX_DEPENDENCIES,
                 "appimage-runtime",
                 "tools/desktop/appimage-smoke.sh",
             ),
         ):
             with self.subTest(profile=profile):
                 self.assertLess(
-                    block.index(f"{LINUX_DEPENDENCIES} install {profile}"),
+                    block.index(f"{installer} install {profile}"),
                     block.index(later_step),
                 )
 
@@ -698,11 +734,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("tools/qt/build_qt.py build", build)
         self.assertIn("tools/qt/build_qt.py verify", build)
         self.assertIn(
-            f"{LINUX_DEPENDENCIES} install release-package",
+            f"{LINUX_PACKAGE_DEPENDENCIES} install release-package",
             build,
         )
         self.assertLess(
-            build.index(f"{LINUX_DEPENDENCIES} install release-package"),
+            build.index(
+                f"{LINUX_PACKAGE_DEPENDENCIES} install release-package"
+            ),
             build.index("tools/qt/build_qt.py toolchain-contract"),
         )
         self.assertEqual(
