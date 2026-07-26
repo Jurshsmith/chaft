@@ -17,7 +17,7 @@ that source without commercial Qt credentials.
 | --- | --- | --- |
 | Linux | `ubuntu-22.04` | x86_64, GCC 11 |
 | macOS | `macos-15-intel` | x86_64, Apple Clang, macOS 12.0 deployment target |
-| Windows | `windows-latest` | x86_64, Visual Studio 2022 developer environment |
+| Windows | `windows-2022` | x86_64, Visual Studio 2022 developer environment |
 
 All hosts need Python 3, Git, CMake 3.28 or newer, and Ninja. Linux also needs
 the XCB, desktop OpenGL/EGL, Wayland, font, input, and accessibility development

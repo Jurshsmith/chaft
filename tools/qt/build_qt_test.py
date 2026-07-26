@@ -65,19 +65,23 @@ class ManifestContractTests(unittest.TestCase):
 
     def test_exact_offline_identities_are_checked_in(self) -> None:
         self.assertEqual(
+            self.manifest["platforms"]["windows"]["runner"],
+            "windows-2022",
+        )
+        self.assertEqual(
             self.manifest["sdkIdentities"],
             {
                 "linux": (
                     "qt-6.8.4-r1-linux-x86_64-gcc-11-"
-                    "409b62db9d21fdc757f5"
+                    "ac9f86b615071195d1a8"
                 ),
                 "macos": (
                     "qt-6.8.4-r1-macos-x86_64-apple-clang-"
-                    "409b62db9d21fdc757f5"
+                    "ac9f86b615071195d1a8"
                 ),
                 "windows": (
                     "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-                    "409b62db9d21fdc757f5"
+                    "ac9f86b615071195d1a8"
                 ),
             },
         )
@@ -288,7 +292,7 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual(
             result.stdout,
             "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-            "409b62db9d21fdc757f5\n",
+            "ac9f86b615071195d1a8\n",
         )
         self.assertEqual(result.stderr, "")
 

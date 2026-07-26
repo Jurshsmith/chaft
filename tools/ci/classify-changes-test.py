@@ -274,6 +274,7 @@ class PathClassificationTests(unittest.TestCase):
         for path in (
             ".github/workflows/ci.yml",
             "tools/ci/classify-changes.py",
+            ".gitattributes",
             "Makefile",
         ):
             with self.subTest(path=path):

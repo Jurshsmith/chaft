@@ -175,7 +175,7 @@ jobs:
             artifact-prefix: unsigned-macos-x86_64-release-input
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             qt-platform: windows
             package-platform: Windows
             artifact-prefix: unsigned-windows-x86_64-release-input
@@ -393,7 +393,7 @@ jobs:
             os: ubuntu-22.04
             artifact-prefix: checksummed-linux-x86_64-release-input
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             artifact-prefix: unsigned-windows-x86_64-release-input
     steps:
       - name: Checkout validated commit

@@ -203,7 +203,7 @@ def classify_path(path: str) -> PathImpact:
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
     if path.startswith("tools/ci/") and path != "tools/ci/rust-gates.sh":
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
-    if path == "Makefile":
+    if path in {".gitattributes", "Makefile"}:
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
 
     if (

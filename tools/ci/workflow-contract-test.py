@@ -15,6 +15,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+GIT_ATTRIBUTES_PATH = ROOT / ".gitattributes"
 WORKFLOWS = ROOT / ".github/workflows"
 CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
@@ -93,6 +94,12 @@ def action_inputs(block: str, action: str) -> dict[str, str]:
 
 
 class WorkflowYamlTests(unittest.TestCase):
+    def test_checkout_text_is_canonical_across_runner_platforms(self) -> None:
+        self.assertEqual(
+            GIT_ATTRIBUTES_PATH.read_text(encoding="utf-8"),
+            "* text=auto eol=lf\n",
+        )
+
     def test_every_workflow_parses_without_duplicate_keys(self) -> None:
         paths = sorted(WORKFLOWS.glob("*.yml"))
         completed = subprocess.run(
@@ -393,6 +400,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("libopengl0", clean)
         self.assertIn("libegl1", clean)
 
+    def test_windows_desktop_jobs_are_pinned_to_server_2022(self) -> None:
+        desktop_workflows = "\n".join(
+            (self.ci, self.release_inputs, self.promotion)
+        )
+        self.assertNotIn("windows-latest", desktop_workflows)
+        self.assertEqual(desktop_workflows.count("windows-2022"), 7)
+
     def test_qt_sdk_is_built_once_per_needed_platform_then_restored_only(
         self,
     ) -> None:
@@ -408,7 +422,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         provisioning = {
             "qt_sdk_linux": ("ubuntu-22.04", "linux"),
             "qt_sdk_macos": ("macos-15-intel", "macos"),
-            "qt_sdk_windows": ("windows-latest", "windows"),
+            "qt_sdk_windows": ("windows-2022", "windows"),
         }
         for job, (runner, platform) in provisioning.items():
             with self.subTest(job=job):

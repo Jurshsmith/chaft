@@ -280,7 +280,7 @@ jobs:
   verify_windows:
     name: Reverify Authenticode on Windows
     needs: prepare
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:

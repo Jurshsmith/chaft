@@ -4,9 +4,9 @@
   "qtVersion": "6.8.4",
   "identityHash": "sha256",
   "sdkIdentities": {
-    "linux": "qt-6.8.4-r1-linux-x86_64-gcc-11-409b62db9d21fdc757f5",
-    "macos": "qt-6.8.4-r1-macos-x86_64-apple-clang-409b62db9d21fdc757f5",
-    "windows": "qt-6.8.4-r1-windows-x86_64-msvc-2022-409b62db9d21fdc757f5"
+    "linux": "qt-6.8.4-r1-linux-x86_64-gcc-11-ac9f86b615071195d1a8",
+    "macos": "qt-6.8.4-r1-macos-x86_64-apple-clang-ac9f86b615071195d1a8",
+    "windows": "qt-6.8.4-r1-windows-x86_64-msvc-2022-ac9f86b615071195d1a8"
   },
   "build": {
     "buildType": "Release",
@@ -61,7 +61,7 @@
       ]
     },
     "windows": {
-      "runner": "windows-latest",
+      "runner": "windows-2022",
       "architecture": "x86_64",
       "toolchain": "msvc-2022",
       "cmakeArguments": [

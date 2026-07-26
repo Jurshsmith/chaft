@@ -551,7 +551,7 @@ jobs:
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Checkout exact source
@@ -730,7 +730,7 @@ jobs:
             package-platform: macOS
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             qt-platform: windows
             package-platform: Windows
             # A cold offscreen QML activation can block the hosted runner's
@@ -928,7 +928,7 @@ jobs:
             package-platform: macOS
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             qt-platform: windows
             package-platform: Windows
             smoke-timeout-ms: "60000"
@@ -1105,7 +1105,7 @@ jobs:
             artifact-name: chaft-Linux-desktop-release
             artifact-path: build/clean-linux-package
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             artifact-name: chaft-Windows-desktop-release
             artifact-path: build/clean-windows-package
     steps:
