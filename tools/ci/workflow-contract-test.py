@@ -40,6 +40,34 @@ LINUX_PACKAGE_DEPENDENCIES = (
     "tools/desktop/install-linux-package-dependencies.sh"
 )
 LINUX_PACKAGE_DEPENDENCIES_PATH = ROOT / LINUX_PACKAGE_DEPENDENCIES
+QT_XCB_RUNTIME_PACKAGES = {
+    "libfontconfig1",
+    "libfreetype6",
+    "libglib2.0-0",
+    "libice6",
+    "libsm6",
+    "libx11-6",
+    "libx11-xcb1",
+    "libxcb1",
+    "libxcb-cursor0",
+    "libxcb-glx0",
+    "libxcb-icccm4",
+    "libxcb-image0",
+    "libxcb-keysyms1",
+    "libxcb-randr0",
+    "libxcb-render0",
+    "libxcb-render-util0",
+    "libxcb-shape0",
+    "libxcb-shm0",
+    "libxcb-sync1",
+    "libxcb-util1",
+    "libxcb-xfixes0",
+    "libxcb-xkb1",
+    "libxext6",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "libxrender1",
+}
 QT_SOURCE_BUNDLE = "Chaft-Qt-6.8.4-corresponding-source.zip"
 QT_SOURCE_CHECKSUM = f"{QT_SOURCE_BUNDLE}.sha256"
 MAIN_CACHE_WRITER = (
@@ -220,18 +248,18 @@ class WorkflowYamlTests(unittest.TestCase):
             }.issubset(sdk_build)
         )
         packaging = {"appstream", "desktop-file-utils", "patchelf"}
-        package_host_libraries = {"libxcb-cursor0"}
         self.assertEqual(base_desktop_package, consumer | packaging)
         self.assertEqual(base_release_package, sdk_build | packaging)
         self.assertEqual(
             desktop_package,
-            base_desktop_package | package_host_libraries,
+            base_desktop_package | QT_XCB_RUNTIME_PACKAGES,
         )
         self.assertEqual(
             release_package,
-            base_release_package | package_host_libraries,
+            base_release_package | QT_XCB_RUNTIME_PACKAGES,
         )
         self.assertEqual(runtime, {"libegl1", "libglx0", "libopengl0"})
+        self.assertTrue(QT_XCB_RUNTIME_PACKAGES.isdisjoint(runtime))
         qt_builder = (ROOT / "tools" / "qt" / "build_qt.py").read_text(
             encoding="utf-8"
         )

@@ -31,16 +31,43 @@ case "$profile" in
     ;;
 esac
 
-# These libraries are inputs to linuxdeploy, not the deterministic Qt SDK.
-# They must be present on the packaging host so linuxdeploy can copy them into
-# the AppDir; clean AppImage smoke runners deliberately do not install them.
-package_host_libraries=(
+# Qt 6.8's X11 requirements enumerate the libraries used by the XCB platform
+# plugin. Keep their Ubuntu 22.04 runtime packages explicit here so linuxdeploy
+# can resolve the restored SDK's plugins and copy every non-baseline library
+# into the AppDir. These are packaging-host inputs, not deterministic Qt SDK
+# inputs; clean AppImage smoke runners deliberately do not install them.
+qt_xcb_runtime_packages=(
+  libfontconfig1
+  libfreetype6
+  libglib2.0-0
+  libice6
+  libsm6
+  libx11-6
+  libx11-xcb1
+  libxcb1
   libxcb-cursor0
+  libxcb-glx0
+  libxcb-icccm4
+  libxcb-image0
+  libxcb-keysyms1
+  libxcb-randr0
+  libxcb-render0
+  libxcb-render-util0
+  libxcb-shape0
+  libxcb-shm0
+  libxcb-sync1
+  libxcb-util1
+  libxcb-xfixes0
+  libxcb-xkb1
+  libxext6
+  libxkbcommon0
+  libxkbcommon-x11-0
+  libxrender1
 )
 
 if [[ "$action" == "list" ]]; then
   "$base_installer" list "$profile"
-  printf '%s\n' "${package_host_libraries[@]}"
+  printf '%s\n' "${qt_xcb_runtime_packages[@]}"
   exit 0
 fi
 
@@ -56,7 +83,7 @@ while IFS= read -r package; do
     packages+=("$package")
   fi
 done < <(printf '%s\n' "$base_package_list")
-packages+=("${package_host_libraries[@]}")
+packages+=("${qt_xcb_runtime_packages[@]}")
 
 sudo apt-get update
 sudo apt-get install --no-install-recommends -y "${packages[@]}"

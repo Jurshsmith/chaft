@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -19,6 +21,52 @@ PACKAGE_NOTICE_FILES = (
     "LICENSE.GPL3",
     "QT-CORRESPONDING-SOURCE.json",
 )
+QT_XCB_RUNTIME_PACKAGES = {
+    "libfontconfig1",
+    "libfreetype6",
+    "libglib2.0-0",
+    "libice6",
+    "libsm6",
+    "libx11-6",
+    "libx11-xcb1",
+    "libxcb1",
+    "libxcb-cursor0",
+    "libxcb-glx0",
+    "libxcb-icccm4",
+    "libxcb-image0",
+    "libxcb-keysyms1",
+    "libxcb-randr0",
+    "libxcb-render0",
+    "libxcb-render-util0",
+    "libxcb-shape0",
+    "libxcb-shm0",
+    "libxcb-sync1",
+    "libxcb-util1",
+    "libxcb-xfixes0",
+    "libxcb-xkb1",
+    "libxext6",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "libxrender1",
+}
+BUNDLED_XCB_XKB_SONAMES = {
+    "libxcb-cursor.so.0",
+    "libxcb-glx.so.0",
+    "libxcb-icccm.so.4",
+    "libxcb-image.so.0",
+    "libxcb-keysyms.so.1",
+    "libxcb-randr.so.0",
+    "libxcb-render.so.0",
+    "libxcb-render-util.so.0",
+    "libxcb-shape.so.0",
+    "libxcb-shm.so.0",
+    "libxcb-sync.so.1",
+    "libxcb-util.so.1",
+    "libxcb-xfixes.so.0",
+    "libxcb-xkb.so.1",
+    "libxkbcommon.so.0",
+    "libxkbcommon-x11.so.0",
+}
 
 
 def fail(message):
@@ -217,7 +265,8 @@ for required_contract in (
     'qt_quick_library="$qt_library_dir/libQt6Quick.so.6"',
     'LD_LIBRARY_PATH="$qt_library_dir"',
     'QMAKE="$qt_qmake"',
-    'libxcb-cursor.so.0',
+    'qt_xcb_runtime_check="$script_dir/check-qt-xcb-runtime.sh"',
+    '"$qt_xcb_runtime_check" "$qt_prefix"',
     "EXTRA_PLATFORM_PLUGINS=libqoffscreen.so",
     "QML_SOURCES_PATHS=",
 ):
@@ -235,6 +284,118 @@ for host_gl_pattern in (
             "AppImage packager must reject bundled host GL dispatch library: "
             f"{host_gl_pattern}"
         )
+for soname in BUNDLED_XCB_XKB_SONAMES:
+    if soname not in packaging_script:
+        fail(f"AppImage packager does not require bundled library: {soname}")
+if packaging_script.index('"$qt_xcb_runtime_check" "$qt_prefix"') > (
+    packaging_script.index('"$tool_dir/linuxdeploy"')
+):
+    fail("Qt XCB dependency preflight must run before linuxdeploy")
+
+xcb_runtime_check_path = (
+    ROOT / "tools" / "desktop" / "check-qt-xcb-runtime.sh"
+)
+with tempfile.TemporaryDirectory() as temporary_directory:
+    temporary = Path(temporary_directory)
+    qt_prefix = temporary / "qt"
+    platform_directory = qt_prefix / "plugins" / "platforms"
+    integration_directory = qt_prefix / "plugins" / "xcbglintegrations"
+    fake_bin = temporary / "bin"
+    for directory in (
+        qt_prefix / "lib",
+        platform_directory,
+        integration_directory,
+        fake_bin,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    shared_objects = (
+        platform_directory / "libqxcb.so",
+        integration_directory / "libqxcb-egl-integration.so",
+        integration_directory / "libqxcb-glx-integration.so",
+    )
+    for shared_object in shared_objects:
+        shared_object.touch()
+
+    call_log = temporary / "ldd-calls"
+    fake_ldd = fake_bin / "ldd"
+    fake_ldd.write_text(
+        """#!/usr/bin/env sh
+set -eu
+printf '%s|%s\\n' "$1" "${LD_LIBRARY_PATH:-}" >> "$LDD_CALL_LOG"
+case "$(basename "$1")" in
+  libqxcb.so)
+    printf '%s\\n' \
+      'libxcb-cursor.so.0 => not found' \
+      'libxcb-icccm.so.4 => not found'
+    ;;
+  libqxcb-glx-integration.so)
+    printf '%s\\n' 'libxcb-glx.so.0 => not found'
+    ;;
+  *)
+    printf '%s\\n' 'libxcb.so.1 => /usr/lib/libxcb.so.1 (0x1)'
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_ldd.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+    environment["LDD_CALL_LOG"] = str(call_log)
+    environment["LD_LIBRARY_PATH"] = "/host/runtime"
+    completed = subprocess.run(
+        [str(xcb_runtime_check_path), str(qt_prefix)],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 1:
+        fail("Qt XCB preflight must reject unresolved dependencies")
+    for soname in (
+        "libxcb-cursor.so.0",
+        "libxcb-icccm.so.4",
+        "libxcb-glx.so.0",
+    ):
+        if soname not in completed.stderr:
+            fail(f"Qt XCB preflight did not report unresolved {soname}")
+    expected_library_path = f"{qt_prefix / 'lib'}:/host/runtime"
+    if call_log.read_text(encoding="utf-8").splitlines() != [
+        f"{shared_object}|{expected_library_path}"
+        for shared_object in shared_objects
+    ]:
+        fail(
+            "Qt XCB preflight must inspect every plugin against the exact "
+            "restored Qt library directory"
+        )
+
+    call_log.unlink()
+    fake_ldd.write_text(
+        """#!/usr/bin/env sh
+set -eu
+printf '%s|%s\\n' "$1" "${LD_LIBRARY_PATH:-}" >> "$LDD_CALL_LOG"
+printf '%s\\n' 'libxcb.so.1 => /usr/lib/libxcb.so.1 (0x1)'
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(xcb_runtime_check_path), str(qt_prefix)],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        fail(f"Qt XCB preflight rejected a complete runtime: {completed.stderr}")
+    if call_log.read_text(encoding="utf-8").splitlines() != [
+        f"{shared_object}|{expected_library_path}"
+        for shared_object in shared_objects
+    ]:
+        fail("successful Qt XCB preflight did not inspect every plugin")
 
 cmake = (ROOT / "apps" / "desktop-qt" / "CMakeLists.txt").read_text(
     encoding="utf-8"
@@ -304,17 +465,29 @@ except IndexError:
 packaging_dependencies_path = (
     ROOT / "tools" / "desktop" / "install-linux-package-dependencies.sh"
 )
-packaging_dependencies = subprocess.run(
-    [str(packaging_dependencies_path), "list", "desktop-package"],
-    cwd=ROOT,
-    check=True,
-    text=True,
-    stdout=subprocess.PIPE,
-).stdout.splitlines()
-if "libxcb-cursor0" not in packaging_dependencies:
-    fail("Linux packaging hosts must install libxcb-cursor0")
-if "libxcb-cursor0" in appimage_runtime_packages.split():
-    fail("clean AppImage smoke must consume the bundled XCB cursor runtime")
+for profile in ("desktop-package", "release-package"):
+    packaging_dependencies = subprocess.run(
+        [str(packaging_dependencies_path), "list", profile],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.splitlines()
+    base_dependencies = subprocess.run(
+        [str(linux_dependencies_path), "list", profile],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.splitlines()
+    if len(packaging_dependencies) != len(set(packaging_dependencies)):
+        fail(f"{profile} packaging dependency list contains duplicates")
+    expected_dependencies = set(base_dependencies) | QT_XCB_RUNTIME_PACKAGES
+    if set(packaging_dependencies) != expected_dependencies:
+        fail(f"{profile} does not install the exact Qt XCB runtime closure")
+runtime_package_set = set(appimage_runtime_packages.split())
+if not QT_XCB_RUNTIME_PACKAGES.isdisjoint(runtime_package_set):
+    fail("clean AppImage smoke must consume the bundled Qt XCB runtime")
 for package in ("libegl1", "libopengl0"):
     if not re.search(
         rf"^\s*{re.escape(package)}\s*$",

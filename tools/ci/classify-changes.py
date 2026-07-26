@@ -120,6 +120,7 @@ DESKTOP_SHARED_TOOLS = frozenset(
 RELEASE_TOOLS = frozenset(
     {
         "tools/desktop/appimage-smoke.sh",
+        "tools/desktop/check-qt-xcb-runtime.sh",
         "tools/desktop/export-website-release-manifest-test.py",
         "tools/desktop/export-website-release-manifest.py",
         "tools/desktop/fetch-appimage-tools.sh",
