@@ -219,53 +219,7 @@ jobs:
 
       - name: Install Linux build tools
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            appstream \
-            build-essential \
-            cmake \
-            desktop-file-utils \
-            libatspi2.0-dev \
-            libcups2-dev \
-            libdbus-1-dev \
-            libdrm-dev \
-            libegl1-mesa-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            libgl1-mesa-dev \
-            libinput-dev \
-            libudev-dev \
-            libwayland-dev \
-            libwayland-egl-backend-dev \
-            libx11-dev \
-            libx11-xcb-dev \
-            libxcb-cursor-dev \
-            libxcb-glx0-dev \
-            libxcb-icccm4-dev \
-            libxcb-image0-dev \
-            libxcb-keysyms1-dev \
-            libxcb-randr0-dev \
-            libxcb-render0-dev \
-            libxcb-render-util0-dev \
-            libxcb-shape0-dev \
-            libxcb-shm0-dev \
-            libxcb-sync-dev \
-            libxcb-util-dev \
-            libxcb-xfixes0-dev \
-            libxcb-xkb-dev \
-            libxcb-xinerama0-dev \
-            libxcb1-dev \
-            libxext-dev \
-            libxfixes-dev \
-            libxi-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libxrender-dev \
-            ninja-build \
-            patchelf \
-            perl \
-            wayland-protocols
+        run: tools/qt/install-linux-dependencies.sh install release-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -414,11 +368,7 @@ jobs:
       # omits both libraries even though normal desktop installs provide them.
       - name: Install AppImage host graphics runtime
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libegl1 \
-            libopengl0
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
 
       - name: Smoke Linux AppImage without build dependencies
         if: runner.os == 'Linux'

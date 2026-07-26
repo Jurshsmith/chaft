@@ -24,6 +24,14 @@ the XCB, desktop OpenGL/EGL, Wayland, font, input, and accessibility development
 packages installed by Chaft's desktop jobs. Windows must initialize the VS 2022
 x64 developer environment before invoking the tool.
 
+Ubuntu dependency sets are centralized in
+`tools/qt/install-linux-dependencies.sh`. Provisioning uses `sdk-build`,
+restored SDK consumers use `sdk-consumer`, desktop packaging uses
+`desktop-package`, release-input builds use `release-package`, and clean
+AppImage runners use only `appimage-runtime`. The consumer profiles include
+`libglvnd-dev` because Qt6Gui resolves the native OpenGL, GLX, and EGL CMake
+targets again when a cached SDK is verified or linked on a fresh runner.
+
 ## Commands
 
 Choose one of `linux`, `macos`, or `windows` for `PLATFORM`.

@@ -32,6 +32,10 @@ SUPPORTED_PLATFORMS = ("linux", "macos", "windows")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 RECIPE_FILES = (
     ("tools/qt/build_qt.py", SCRIPT_DIR / "build_qt.py"),
+    (
+        "tools/qt/install-linux-dependencies.sh",
+        SCRIPT_DIR / "install-linux-dependencies.sh",
+    ),
     ("tools/qt/probe/CMakeLists.txt", PROBE_DIR / "CMakeLists.txt"),
     ("tools/qt/probe/main.cpp", PROBE_DIR / "main.cpp"),
     ("tools/qt/probe/tst_QtSdk.qml", PROBE_DIR / "tst_QtSdk.qml"),

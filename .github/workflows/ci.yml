@@ -383,50 +383,7 @@ jobs:
           python-version: "3.13.3"
 
       - name: Install Qt build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential \
-            cmake \
-            libatspi2.0-dev \
-            libcups2-dev \
-            libdbus-1-dev \
-            libdrm-dev \
-            libegl1-mesa-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            libgl1-mesa-dev \
-            libinput-dev \
-            libudev-dev \
-            libwayland-dev \
-            libwayland-egl-backend-dev \
-            libx11-dev \
-            libx11-xcb-dev \
-            libxcb-cursor-dev \
-            libxcb-glx0-dev \
-            libxcb-icccm4-dev \
-            libxcb-image0-dev \
-            libxcb-keysyms1-dev \
-            libxcb-randr0-dev \
-            libxcb-render0-dev \
-            libxcb-render-util0-dev \
-            libxcb-shape0-dev \
-            libxcb-shm0-dev \
-            libxcb-sync-dev \
-            libxcb-util-dev \
-            libxcb-xfixes0-dev \
-            libxcb-xkb-dev \
-            libxcb-xinerama0-dev \
-            libxcb1-dev \
-            libxext-dev \
-            libxfixes-dev \
-            libxi-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libxrender-dev \
-            ninja-build \
-            perl \
-            wayland-protocols
+        run: tools/qt/install-linux-dependencies.sh install sdk-build
 
       - name: Compute exact Qt SDK identity
         id: qt-sdk
@@ -644,10 +601,8 @@ jobs:
         with:
           python-version: "3.13.3"
 
-      - name: Install desktop contract build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y cmake ninja-build
+      - name: Install Linux Qt SDK consumer dependencies
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
 
       - name: Match consumer toolchain to provisioned Qt SDK
         id: qt-sdk
@@ -760,11 +715,9 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Linux build tools
+      - name: Install Linux Qt SDK consumer dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -956,16 +909,9 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Linux build tools
+      - name: Install Linux package dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            appstream \
-            cmake \
-            desktop-file-utils \
-            ninja-build \
-            patchelf
+        run: tools/qt/install-linux-dependencies.sh install desktop-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -1127,11 +1073,7 @@ jobs:
       # omits both libraries even though normal desktop installs provide them.
       - name: Install AppImage host graphics runtime
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libegl1 \
-            libopengl0
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
 
       - name: Run portable AppImage smoke
         if: runner.os == 'Linux'

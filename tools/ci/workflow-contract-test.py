@@ -34,6 +34,8 @@ QT_CACHE_RESTORE_ACTION = (
     "actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae"
 )
 QT_CACHE_KEY = "chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}"
+LINUX_DEPENDENCIES = "tools/qt/install-linux-dependencies.sh"
+LINUX_DEPENDENCIES_PATH = ROOT / LINUX_DEPENDENCIES
 QT_SOURCE_BUNDLE = "Chaft-Qt-6.8.4-corresponding-source.zip"
 QT_SOURCE_CHECKSUM = f"{QT_SOURCE_BUNDLE}.sha256"
 MAIN_CACHE_WRITER = (
@@ -159,6 +161,49 @@ class WorkflowYamlTests(unittest.TestCase):
             f'channel = "{RUST_VERSION}"',
             (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"),
         )
+
+    def test_linux_qt_dependency_profiles_cover_each_runner_role(self) -> None:
+        def packages(profile: str) -> list[str]:
+            completed = subprocess.run(
+                [str(LINUX_DEPENDENCIES_PATH), "list", profile],
+                cwd=ROOT,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            result = completed.stdout.splitlines()
+            self.assertEqual(
+                len(result),
+                len(set(result)),
+                f"{profile} contains duplicate packages",
+            )
+            return result
+
+        consumer = set(packages("sdk-consumer"))
+        sdk_build = set(packages("sdk-build"))
+        desktop_package = set(packages("desktop-package"))
+        release_package = set(packages("release-package"))
+        runtime = set(packages("appimage-runtime"))
+
+        self.assertEqual(
+            consumer,
+            {"build-essential", "cmake", "libglvnd-dev", "ninja-build"},
+        )
+        self.assertTrue(
+            {
+                "libegl1-mesa-dev",
+                "libgl1-mesa-dev",
+                "libwayland-dev",
+                "libx11-dev",
+                "libxcb1-dev",
+            }.issubset(sdk_build)
+        )
+        packaging = {"appstream", "desktop-file-utils", "patchelf"}
+        self.assertEqual(desktop_package, consumer | packaging)
+        self.assertEqual(release_package, sdk_build | packaging)
+        self.assertEqual(runtime, {"libegl1", "libglx0", "libopengl0"})
 
 
 class CiWorkflowContractTests(unittest.TestCase):
@@ -397,8 +442,52 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("compression-level: 0", package)
         self.assertIn("archive: true", package)
         self.assertIn("digest-mismatch: error", clean)
-        self.assertIn("libopengl0", clean)
-        self.assertIn("libegl1", clean)
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install sdk-consumer",
+            contracts,
+        )
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install sdk-consumer",
+            desktop,
+        )
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install desktop-package",
+            package,
+        )
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install appimage-runtime",
+            clean,
+        )
+        for block, profile, later_step in (
+            (
+                contracts,
+                "sdk-consumer",
+                "Match consumer toolchain to provisioned Qt SDK",
+            ),
+            (
+                desktop,
+                "sdk-consumer",
+                "Match consumer toolchain to provisioned Qt SDK",
+            ),
+            (
+                package,
+                "desktop-package",
+                "Match consumer toolchain to provisioned Qt SDK",
+            ),
+            (
+                clean,
+                "appimage-runtime",
+                "tools/desktop/appimage-smoke.sh",
+            ),
+        ):
+            with self.subTest(profile=profile):
+                self.assertLess(
+                    block.index(f"{LINUX_DEPENDENCIES} install {profile}"),
+                    block.index(later_step),
+                )
+
+        self.assertNotIn("sudo apt-get", self.ci)
+        self.assertNotIn("sudo apt-get", self.release_inputs)
 
     def test_windows_desktop_jobs_are_pinned_to_server_2022(self) -> None:
         desktop_workflows = "\n".join(
@@ -456,6 +545,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("desktop_contract", linux)
         self.assertIn("outputs.desktop", linux)
         self.assertIn("outputs.package", linux)
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install sdk-build",
+            linux,
+        )
+        self.assertLess(
+            linux.index(f"{LINUX_DEPENDENCIES} install sdk-build"),
+            linux.index("tools/qt/build_qt.py toolchain-contract"),
+        )
         for job in ("qt_sdk_macos", "qt_sdk_windows"):
             block = job_block(self.ci, job)
             self.assertNotIn("desktop_contract", block)
@@ -575,6 +672,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("tools/qt/build_qt.py build", build)
         self.assertIn("tools/qt/build_qt.py verify", build)
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install release-package",
+            build,
+        )
+        self.assertLess(
+            build.index(f"{LINUX_DEPENDENCIES} install release-package"),
+            build.index("tools/qt/build_qt.py toolchain-contract"),
+        )
         self.assertEqual(
             build.count(
                 'rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}'
@@ -596,6 +701,18 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("actions/cache/save@", self.release_inputs)
         self.assertNotIn("jurplel/install-qt-action", self.release_inputs)
         self.assertNotIn("aqtinstall", self.release_inputs)
+
+        clean = job_block(self.release_inputs, "clean-package-smoke")
+        self.assertIn(
+            f"{LINUX_DEPENDENCIES} install appimage-runtime",
+            clean,
+        )
+        self.assertLess(
+            clean.index(
+                f"{LINUX_DEPENDENCIES} install appimage-runtime"
+            ),
+            clean.index("tools/desktop/appimage-smoke.sh"),
+        )
 
     def test_release_input_provenance_and_security_invariants_are_preserved(
         self,

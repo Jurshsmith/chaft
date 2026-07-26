@@ -242,15 +242,35 @@ for smoke_name in (
         if required_file not in smoke:
             fail(f"{smoke_path} does not verify package notice: {required_file}")
 
+linux_dependencies_path = (
+    ROOT / "tools" / "qt" / "install-linux-dependencies.sh"
+)
+linux_dependencies = linux_dependencies_path.read_text(encoding="utf-8")
+try:
+    appimage_runtime_packages = linux_dependencies.split(
+        "runtime_packages=(\n", 1
+    )[1].split("\n)", 1)[0]
+except IndexError:
+    fail("Linux dependencies must define an AppImage runtime package set")
+for package in ("libegl1", "libopengl0"):
+    if not re.search(
+        rf"^\s*{re.escape(package)}\s*$",
+        appimage_runtime_packages,
+        re.M,
+    ):
+        fail(f"AppImage runtime profile must install {package}")
+
+appimage_runtime_install = (
+    "tools/qt/install-linux-dependencies.sh install appimage-runtime"
+)
 for workflow_name in ("ci.yml", "build-desktop-release-inputs.yml"):
     workflow_path = ROOT / ".github" / "workflows" / workflow_name
     workflow = workflow_path.read_text(encoding="utf-8")
-    for package in ("libegl1", "libopengl0"):
-        if package not in workflow:
-            fail(
-                f"{workflow_path} must install the host GL dispatch runtime "
-                f"{package} before clean AppImage smoke"
-            )
+    if appimage_runtime_install not in workflow:
+        fail(
+            f"{workflow_path} must install the centralized host GL dispatch "
+            "runtime before clean AppImage smoke"
+        )
 
 icon_path = LINUX_PACKAGING / f"{DESKTOP_ID}.png"
 with icon_path.open("rb") as icon:

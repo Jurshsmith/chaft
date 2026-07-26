@@ -73,15 +73,15 @@ class ManifestContractTests(unittest.TestCase):
             {
                 "linux": (
                     "qt-6.8.4-r1-linux-x86_64-gcc-11-"
-                    "ac9f86b615071195d1a8"
+                    "f72a044dc42802a6f940"
                 ),
                 "macos": (
                     "qt-6.8.4-r1-macos-x86_64-apple-clang-"
-                    "ac9f86b615071195d1a8"
+                    "f72a044dc42802a6f940"
                 ),
                 "windows": (
                     "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-                    "ac9f86b615071195d1a8"
+                    "f72a044dc42802a6f940"
                 ),
             },
         )
@@ -131,6 +131,7 @@ class ManifestContractTests(unittest.TestCase):
             [row["path"] for row in materials],
             [
                 "tools/qt/build_qt.py",
+                "tools/qt/install-linux-dependencies.sh",
                 "tools/qt/probe/CMakeLists.txt",
                 "tools/qt/probe/main.cpp",
                 "tools/qt/probe/tst_QtSdk.qml",
@@ -138,12 +139,18 @@ class ManifestContractTests(unittest.TestCase):
         )
         for row in materials:
             self.assertRegex(row["sha256"], r"^[0-9a-f]{64}$")
+        changed_materials = copy.deepcopy(materials)
+        dependency_profile = next(
+            row
+            for row in changed_materials
+            if row["path"] == "tools/qt/install-linux-dependencies.sh"
+        )
+        dependency_profile["sha256"] = "0" * 64
         changed = copy.deepcopy(self.manifest)
         with mock.patch.object(
             qt,
             "recipe_materials",
-            return_value=materials
-            + [{"path": "tools/qt/probe/new-contract", "sha256": "0" * 64}],
+            return_value=changed_materials,
         ):
             with self.assertRaisesRegex(qt.QtSdkError, "identities are stale"):
                 qt.validate_manifest(changed)
@@ -292,7 +299,7 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual(
             result.stdout,
             "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-            "ac9f86b615071195d1a8\n",
+            "f72a044dc42802a6f940\n",
         )
         self.assertEqual(result.stderr, "")
 
