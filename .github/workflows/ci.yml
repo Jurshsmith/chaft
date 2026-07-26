@@ -184,12 +184,12 @@ jobs:
         run: tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
 
       - name: Upload Linux desktop screenshot
-        if: runner.os == 'Linux'
+        if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: chaft-linux-desktop-screenshot
           path: build/desktop-debug/smoke/*.png
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
