@@ -975,6 +975,7 @@ jobs:
       - publish
     runs-on: ubuntu-22.04
     permissions:
+      attestations: read
       contents: read
     steps:
       - name: Checkout trusted release tooling

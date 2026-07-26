@@ -1058,6 +1058,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", self.promotion)
 
         prepare = job_block(self.promotion, "prepare")
+        self.assertIn("attestations: read", prepare)
+        self.assertEqual(self.promotion.count("attestations: read"), 1)
         self.assertIn("github.event.release.prerelease == false", prepare)
         self.assertIn("Prereleases must use the dedicated canary", prepare)
         self.assertNotIn('channel="preview"', prepare)
@@ -1097,6 +1099,29 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("--trusted-apple-team-id", macos)
         self.assertIn("CHAFT_LINUX_SIGNING_FINGERPRINT", linux)
         self.assertIn("--trusted-fingerprint", linux)
+
+    def test_stable_promotion_publishes_an_exact_branch_for_maintainer_review(
+        self,
+    ) -> None:
+        publish = job_block(self.promotion, "publish")
+        self.assertIn("permissions:\n      contents: write", publish)
+        self.assertNotIn("pull-requests: write", publish)
+        self.assertIn("branch: ${{ steps.branch.outputs.branch }}", publish)
+        self.assertIn("changed: ${{ steps.branch.outputs.changed }}", publish)
+        self.assertIn("head_commit: ${{ steps.branch.outputs.commit }}", publish)
+        self.assertIn(
+            'branch="release/${RELEASE_TAG}-website-manifest"',
+            publish,
+        )
+        self.assertIn("git ls-remote --heads origin", publish)
+        self.assertIn("Promotion branch moved before review handoff.", publish)
+        self.assertIn(
+            "An authenticated maintainer or approved GitHub",
+            publish,
+        )
+        self.assertIn("GITHUB_STEP_SUMMARY", publish)
+        self.assertNotIn("--method POST", publish)
+        self.assertNotIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
 
     def test_canary_publisher_mutates_only_after_native_base_validation(
         self,
@@ -1167,6 +1192,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("refusing to reuse it", draft)
 
         published = job_block(self.canary_publish, "verify_published")
+        self.assertIn("attestations: read", published)
+        self.assertEqual(self.canary_publish.count("attestations: read"), 1)
         self.assertIn(".immutable // false", published)
         self.assertIn('refs/tags/${RELEASE_TAG}^{commit}', published)
         self.assertIn("gh release verify", published)
@@ -1208,7 +1235,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("-eq 19", verify_draft)
         self.assertIn("releases/assets/${asset_id}", verify_draft)
 
-    def test_canary_promotion_is_read_only_until_bounded_pr_publication(
+    def test_canary_promotion_is_read_only_until_bounded_branch_publication(
         self,
     ) -> None:
         self.assertEqual(
@@ -1221,6 +1248,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", self.canary_promotion)
 
         prepare = job_block(self.canary_promotion, "prepare")
+        self.assertIn("attestations: read", prepare)
+        self.assertEqual(self.canary_promotion.count("attestations: read"), 1)
         self.assertNotIn("contents: write", prepare)
         self.assertIn('"prerelease": True', prepare)
         self.assertIn('"immutable": True', prepare)
@@ -1238,9 +1267,20 @@ class CiWorkflowContractTests(unittest.TestCase):
 
         publish = job_block(self.canary_promotion, "publish")
         self.assertIn("contents: write", publish)
-        self.assertIn("pull-requests: write", publish)
+        self.assertNotIn("pull-requests: write", publish)
+        self.assertIn("branch: ${{ steps.branch.outputs.branch }}", publish)
+        self.assertIn("changed: ${{ steps.branch.outputs.changed }}", publish)
+        self.assertIn("head_commit: ${{ steps.branch.outputs.commit }}", publish)
         self.assertIn('branch="release/${RELEASE_TAG}-website-manifest"', publish)
-        self.assertIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
+        self.assertIn("git ls-remote --heads origin", publish)
+        self.assertIn("Promotion branch moved before review handoff.", publish)
+        self.assertIn(
+            "An authenticated maintainer or approved GitHub",
+            publish,
+        )
+        self.assertIn("GITHUB_STEP_SUMMARY", publish)
+        self.assertNotIn("--method POST", publish)
+        self.assertNotIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
 
 
 class DesktopGateScriptContractTests(unittest.TestCase):

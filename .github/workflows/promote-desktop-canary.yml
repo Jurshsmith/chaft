@@ -24,6 +24,7 @@ jobs:
     name: Verify the immutable canary and stage website data
     runs-on: ubuntu-22.04
     permissions:
+      attestations: read
       contents: read
       pull-requests: read
     outputs:
@@ -493,12 +494,15 @@ jobs:
           archive: true
 
   publish:
-    name: Open the canary website-manifest pull request
+    name: Publish the canary manifest branch for review
     needs: prepare
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-      pull-requests: write
+    outputs:
+      branch: ${{ steps.branch.outputs.branch }}
+      changed: ${{ steps.branch.outputs.changed }}
+      head_commit: ${{ steps.branch.outputs.commit }}
     steps:
       - name: Checkout the exact reviewed policy commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -630,8 +634,10 @@ jobs:
           branch="release/${RELEASE_TAG}-website-manifest"
           gh auth setup-git
           git add -- "${data_path}/release-manifest.json" "${data_path}/release-history"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
 
           if git diff --cached --quiet; then
+            echo "commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
             echo "changed=false" >> "${GITHUB_OUTPUT}"
             echo "The default branch already contains this immutable canary manifest."
             exit 0
@@ -671,72 +677,56 @@ jobs:
             exit 1
           fi
           echo "changed=true" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
           echo "commit=${branch_commit}" >> "${GITHUB_OUTPUT}"
 
-      - name: Open or confirm the canary manifest pull request
+      - name: Hand the exact branch to an authenticated reviewer
         if: steps.branch.outputs.changed == 'true'
         shell: bash
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXPECTED_HEAD_OID: ${{ steps.branch.outputs.commit }}
-          GH_TOKEN: ${{ github.token }}
           PROMOTION_BRANCH: ${{ steps.branch.outputs.branch }}
         run: |
           set -euo pipefail
-          repository_owner="${GITHUB_REPOSITORY%%/*}"
-          qualified_head="${repository_owner}:${PROMOTION_BRANCH}"
           remote_commit="$(
             git ls-remote --heads origin \
               "refs/heads/${PROMOTION_BRANCH}" \
               | awk 'NR == 1 { print $1 }'
           )"
           if [[ "${remote_commit}" != "${EXPECTED_HEAD_OID}" ]]; then
-            echo "::error::Promotion branch moved before pull-request publication."
+            echo "::error::Promotion branch moved before review handoff."
             exit 1
           fi
 
-          existing="$(
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              --method GET \
-              "repos/${GITHUB_REPOSITORY}/pulls" \
-              -f state=all \
-              -f head="${qualified_head}" \
-              -f base="${DEFAULT_BRANCH}" \
-              -f per_page=100
-          )"
-          existing_count="$(jq 'length' <<<"${existing}")"
-          if [[ "${existing_count}" -gt 0 ]]; then
-            if [[ "${existing_count}" -ne 1 ]] || \
-              [[ "$(jq -r '.[0].state' <<<"${existing}")" != "open" ]]; then
-              echo "::error::A closed promotion pull request already exists for ${PROMOTION_BRANCH}."
-              exit 1
-            fi
-            if [[ "$(jq -r '.[0].head.repo.full_name' <<<"${existing}")" != "${GITHUB_REPOSITORY}" ]] || \
-              [[ "$(jq -r '.[0].base.ref' <<<"${existing}")" != "${DEFAULT_BRANCH}" ]] || \
-              [[ "$(jq -r '.[0].head.sha' <<<"${existing}")" != "${EXPECTED_HEAD_OID}" ]]; then
-              echo "::error::Existing promotion pull request is not bound to the verified branch commit."
-              exit 1
-            fi
-            echo "Canary promotion pull request already open: $(jq -r '.[0].html_url' <<<"${existing}")"
-            exit 0
-          fi
+          {
+            echo "## Canary website-manifest review handoff"
+            echo
+            echo "- Base branch: \`${DEFAULT_BRANCH}\`"
+            echo "- Verified head branch: \`${PROMOTION_BRANCH}\`"
+            echo "- Verified head commit: \`${EXPECTED_HEAD_OID}\`"
+            echo "- Release tag: \`${RELEASE_TAG}\`"
+            echo
+            echo "The workflow intentionally did not create a pull request with"
+            echo "\`GITHUB_TOKEN\`. An authenticated maintainer or approved GitHub"
+            echo "integration must recheck this exact remote head and open the review:"
+            echo
+            echo "\`gh pr create --repo ${GITHUB_REPOSITORY} --base ${DEFAULT_BRANCH} --head ${PROMOTION_BRANCH} --title \"Publish Chaft ${RELEASE_TAG} canary downloads\"\`"
+            echo
+            echo "Compare: https://github.com/${GITHUB_REPOSITORY}/compare/${DEFAULT_BRANCH}...${PROMOTION_BRANCH}?expand=1"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
-          created="$(
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              --method POST \
-              "repos/${GITHUB_REPOSITORY}/pulls" \
-              -f base="${DEFAULT_BRANCH}" \
-              -f head="${qualified_head}" \
-              -f title="Publish Chaft ${RELEASE_TAG} canary downloads" \
-              -f body="Publishes the verified immutable ${RELEASE_TAG} prerelease in the website download manifest. Windows, macOS, and Linux packages remain explicitly unsigned-canary builds: they passed native packaged-app smoke checks and their sizes, SHA-256 digests, SBOMs, provenance, receipts, Qt corresponding source, release inventory, and aggregate checksums were reverified. These canary artifacts are not production-ready and must not be used for sensitive or production communication."
-          )"
-          if [[ "$(jq -r '.head.repo.full_name' <<<"${created}")" != "${GITHUB_REPOSITORY}" ]] || \
-            [[ "$(jq -r '.base.ref' <<<"${created}")" != "${DEFAULT_BRANCH}" ]] || \
-            [[ "$(jq -r '.head.sha' <<<"${created}")" != "${EXPECTED_HEAD_OID}" ]]; then
-            echo "::error::Created pull request is not bound to the verified branch commit."
-            exit 1
-          fi
-          echo "Canary promotion pull request opened: $(jq -r '.html_url' <<<"${created}")"
+      - name: Record an already-published manifest
+        if: steps.branch.outputs.changed != 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VERIFIED_COMMIT: ${{ steps.branch.outputs.commit }}
+        run: |
+          {
+            echo "## Canary website manifest already current"
+            echo
+            echo "- Branch: \`${DEFAULT_BRANCH}\`"
+            echo "- Commit: \`${VERIFIED_COMMIT}\`"
+            echo "- Release tag: \`${RELEASE_TAG}\`"
+            echo
+            echo "No review branch or pull request is required."
+          } >> "${GITHUB_STEP_SUMMARY}"

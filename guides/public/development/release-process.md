@@ -40,8 +40,9 @@ The repository implements these release boundaries:
    Windows, macOS, and Linux, finalizes an exact 19-file namespace, and only
    then publishes it as an immutable prerelease that is never `latest`.
 5. A dedicated canary promotion workflow reverifies the published release and
-   prepares a reviewed website-manifest pull request before any download is
-   advertised.
+   publishes an exact website-manifest branch. An authenticated maintainer or
+   approved GitHub integration opens that branch as a pull request before any
+   download is advertised.
 6. Stable publication remains a separate workflow with Authenticode, Apple
    signing/notarization, and the configured Linux signing policy.
 
@@ -226,9 +227,31 @@ canary tag. Before it can write a manifest branch, its read-only preparation job
 - runs the complete static website validation.
 
 Only a bounded, checksummed JSON payload crosses into the write-enabled job.
-That job creates one descriptive
-`release/<tag>-website-manifest` branch and pull request. It does not merge the
+That job creates one descriptive `release/<tag>-website-manifest` branch,
+rechecks its exact remote head, and writes the branch and commit to the workflow
+summary. It intentionally does not use `GITHUB_TOKEN` to create a pull request.
+An authenticated maintainer or approved GitHub integration must recheck the
+reported head and open the review. The promotion workflow does not merge that
 pull request or deploy Cloudflare.
+
+Use the values from the successful promotion summary for the handoff:
+
+```sh
+tag=v0.1.0-canary.1
+branch="release/${tag}-website-manifest"
+expected_head="<verified head commit from the workflow summary>"
+
+test "$(git ls-remote --heads origin "refs/heads/${branch}" | awk 'NR == 1 { print $1 }')" = "${expected_head}"
+gh pr create \
+  --repo Jurshsmith/chaft \
+  --base main \
+  --head "${branch}" \
+  --title "Publish Chaft ${tag} canary downloads"
+```
+
+After creation, confirm that the pull request's head SHA is still
+`expected_head` before approving or merging it. Do not recreate, force-push, or
+silently update the verified branch during review.
 
 ## Promote a stable release
 
@@ -249,10 +272,12 @@ path above. The stable workflow fails closed unless:
 - unrelated, duplicate, or stale assets are absent.
 
 After stable verification, the workflow stages immutable website release assets,
-generates the release manifest, validates the static website, and prepares a
-reviewable manifest pull request. The website must not show a platform as
-available until the reviewed manifest contains the final direct GitHub Release
-URL, byte size, digest, signing status, and evidence links.
+generates the release manifest, validates the static website, and publishes an
+exact manifest branch with a maintainer/integration review handoff. The
+workflow does not create the pull request with `GITHUB_TOKEN`. The website must
+not show a platform as available until an authenticated reviewer opens and
+merges that branch and the reviewed manifest contains the final direct GitHub
+Release URL, byte size, digest, signing status, and evidence links.
 
 ## Public download policy
 

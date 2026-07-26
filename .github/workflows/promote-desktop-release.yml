@@ -32,6 +32,7 @@ jobs:
     name: Inspect and stage immutable release assets
     runs-on: ubuntu-latest
     permissions:
+      attestations: read
       contents: read
       pull-requests: read
     outputs:
@@ -618,14 +619,17 @@ jobs:
           archive: true
 
   publish:
-    name: Open the website manifest pull request
+    name: Publish the website manifest branch for review
     needs:
       - prepare
       - export
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
+    outputs:
+      branch: ${{ steps.branch.outputs.branch }}
+      changed: ${{ steps.branch.outputs.changed }}
+      head_commit: ${{ steps.branch.outputs.commit }}
     steps:
       - name: Checkout the current default branch without stored credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -684,8 +688,10 @@ jobs:
           branch="release/${RELEASE_TAG}-website-manifest"
           gh auth setup-git
           git add -- "${data_path}/release-manifest.json" "${data_path}/release-history"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
 
           if git diff --cached --quiet; then
+            echo "commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
             echo "changed=false" >> "${GITHUB_OUTPUT}"
             echo "The default branch already contains this immutable release manifest."
             exit 0
@@ -722,61 +728,53 @@ jobs:
             exit 1
           fi
           echo "changed=true" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
           echo "commit=${branch_commit}" >> "${GITHUB_OUTPUT}"
 
-      - name: Open the release-manifest pull request
+      - name: Hand the exact branch to an authenticated reviewer
         if: steps.branch.outputs.changed == 'true'
         shell: bash
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXPECTED_HEAD_OID: ${{ steps.branch.outputs.commit }}
-          GH_TOKEN: ${{ github.token }}
           PROMOTION_BRANCH: ${{ steps.branch.outputs.branch }}
         run: |
           set -euo pipefail
-          repository_owner="${GITHUB_REPOSITORY%%/*}"
-          qualified_head="${repository_owner}:${PROMOTION_BRANCH}"
           remote_commit="$(git ls-remote --heads origin \
             "refs/heads/${PROMOTION_BRANCH}" | awk 'NR == 1 { print $1 }')"
           if [[ "${remote_commit}" != "${EXPECTED_HEAD_OID}" ]]; then
-            echo "::error::Promotion branch moved before pull-request publication."
+            echo "::error::Promotion branch moved before review handoff."
             exit 1
           fi
 
-          existing="$(gh api --method GET \
-            "repos/${GITHUB_REPOSITORY}/pulls" \
-            -f state=all \
-            -f head="${qualified_head}" \
-            -f base="${DEFAULT_BRANCH}" \
-            -f per_page=100)"
-          existing_count="$(jq 'length' <<<"${existing}")"
-          if [[ "${existing_count}" -gt 0 ]]; then
-            if [[ "${existing_count}" -ne 1 ]] || \
-              [[ "$(jq -r '.[0].state' <<<"${existing}")" != "open" ]]; then
-              echo "::error::A closed promotion pull request already exists for ${PROMOTION_BRANCH}."
-              exit 1
-            fi
-            if [[ "$(jq -r '.[0].head.repo.full_name' <<<"${existing}")" != "${GITHUB_REPOSITORY}" ]] || \
-              [[ "$(jq -r '.[0].base.ref' <<<"${existing}")" != "${DEFAULT_BRANCH}" ]] || \
-              [[ "$(jq -r '.[0].head.sha' <<<"${existing}")" != "${EXPECTED_HEAD_OID}" ]]; then
-              echo "::error::Existing promotion pull request is not bound to the verified branch commit."
-              exit 1
-            fi
-            echo "Promotion pull request already open: $(jq -r '.[0].html_url' <<<"${existing}")"
-            exit 0
-          fi
+          {
+            echo "## Stable website-manifest review handoff"
+            echo
+            echo "- Base branch: \`${DEFAULT_BRANCH}\`"
+            echo "- Verified head branch: \`${PROMOTION_BRANCH}\`"
+            echo "- Verified head commit: \`${EXPECTED_HEAD_OID}\`"
+            echo "- Release tag: \`${RELEASE_TAG}\`"
+            echo
+            echo "The workflow intentionally did not create a pull request with"
+            echo "\`GITHUB_TOKEN\`. An authenticated maintainer or approved GitHub"
+            echo "integration must recheck this exact remote head and open the review:"
+            echo
+            echo "\`gh pr create --repo ${GITHUB_REPOSITORY} --base ${DEFAULT_BRANCH} --head ${PROMOTION_BRANCH} --title \"Publish Chaft ${RELEASE_TAG} website downloads\"\`"
+            echo
+            echo "Compare: https://github.com/${GITHUB_REPOSITORY}/compare/${DEFAULT_BRANCH}...${PROMOTION_BRANCH}?expand=1"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
-          created="$(gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/pulls" \
-            -f base="${DEFAULT_BRANCH}" \
-            -f head="${qualified_head}" \
-            -f title="Publish Chaft ${RELEASE_TAG} website downloads" \
-            -f body="Promotes the verified, immutable ${RELEASE_TAG} desktop release into the Astro download manifest. Read-only Windows, macOS, and Linux jobs reran native verification against protected publisher identities; the exporter bound those trusted results to the public release receipts, rehashed every package, validated platform metadata and provenance against the Git tag target, and ran the complete website validation suite.")"
-          if [[ "$(jq -r '.head.repo.full_name' <<<"${created}")" != "${GITHUB_REPOSITORY}" ]] || \
-            [[ "$(jq -r '.base.ref' <<<"${created}")" != "${DEFAULT_BRANCH}" ]] || \
-            [[ "$(jq -r '.head.sha' <<<"${created}")" != "${EXPECTED_HEAD_OID}" ]]; then
-            echo "::error::Created pull request is not bound to the verified branch commit."
-            exit 1
-          fi
-          echo "Promotion pull request opened: $(jq -r '.html_url' <<<"${created}")"
+      - name: Record an already-published manifest
+        if: steps.branch.outputs.changed != 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          VERIFIED_COMMIT: ${{ steps.branch.outputs.commit }}
+        run: |
+          {
+            echo "## Stable website manifest already current"
+            echo
+            echo "- Branch: \`${DEFAULT_BRANCH}\`"
+            echo "- Commit: \`${VERIFIED_COMMIT}\`"
+            echo "- Release tag: \`${RELEASE_TAG}\`"
+            echo
+            echo "No review branch or pull request is required."
+          } >> "${GITHUB_STEP_SUMMARY}"
