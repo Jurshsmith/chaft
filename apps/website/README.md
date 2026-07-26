@@ -6,7 +6,7 @@ without requiring a runtime server.
 
 ## Local development
 
-The website requires Node.js 22.12 or newer and the pnpm version pinned in
+The website requires Node.js 22.13 or newer and the pnpm version pinned in
 `package.json`. Activate that version with Corepack before using the root Make
 targets:
 
@@ -56,8 +56,10 @@ passphrases in command arguments.
 pnpm validate
 ```
 
-This validates the documentation sources, Astro types, release-manifest tests,
-root-domain output, and path-prefixed output against reserved validation URLs.
+This validates the documentation sources, Astro components with the supported
+TypeScript 6 compatibility package, plain TypeScript sources with the native
+TypeScript 7 compiler, release-manifest tests, root-domain output, and
+path-prefixed output against reserved validation URLs.
 It verifies published and draft routes, metadata, headings, navigation, links,
 canonical URLs, sitemap coverage, and the physical Cloudflare asset layout
 before running the exact-pinned Wrangler version in strict dry-run mode against
