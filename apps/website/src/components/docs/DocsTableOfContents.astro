@@ -7,86 +7,51 @@ interface Heading {
 
 interface Props {
   headings: Heading[];
-  variant: "desktop" | "mobile";
 }
 
-const { headings, variant } = Astro.props;
-const visibleHeadings = headings.filter((heading) => heading.depth === 2 || heading.depth === 3);
+const { headings } = Astro.props;
+const visibleHeadings = headings.filter((heading) => heading.depth === 2);
 ---
 
-{visibleHeadings.length > 0 && variant === "desktop" && (
-  <aside class="docs-toc docs-toc--desktop" aria-label="On this page">
-    <p>On this page</p>
+{visibleHeadings.length > 0 && (
+  <nav class="docs-toc" aria-label="On this page">
+    <p>Jump to</p>
     <ol>
       {visibleHeadings.map((heading) => (
-        <li class:list={{ "docs-toc__nested": heading.depth === 3 }}>
+        <li>
           <a href={`#${heading.slug}`}>{heading.text}</a>
         </li>
       ))}
     </ol>
-  </aside>
-)}
-
-{visibleHeadings.length > 0 && variant === "mobile" && (
-  <details class="docs-toc docs-toc--mobile">
-    <summary>On this page</summary>
-    <ol>
-      {visibleHeadings.map((heading) => (
-        <li class:list={{ "docs-toc__nested": heading.depth === 3 }}>
-          <a href={`#${heading.slug}`}>{heading.text}</a>
-        </li>
-      ))}
-    </ol>
-  </details>
+  </nav>
 )}
 
 <style>
-  .docs-toc--desktop {
-    position: sticky;
-    top: 1.5rem;
-    max-height: calc(100vh - 3rem);
-    overflow: auto;
-    padding-left: 1.1rem;
-    border-left: 1px solid var(--border-subtle);
+  .docs-toc {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.7rem 1rem;
+    align-items: start;
+    margin-bottom: 2rem;
+    padding-block: 0.85rem;
+    border-block: 1px solid var(--border-subtle);
   }
 
   .docs-toc > p {
-    margin-bottom: 0.85rem;
-    color: var(--text-soft);
+    margin: 0;
+    padding-top: 0.2rem;
+    color: var(--warning);
     font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: 0.66rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
-  .docs-toc--mobile {
-    display: none;
-    margin-bottom: 1.5rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--surface-raised);
-  }
-
-  .docs-toc--mobile summary {
-    padding: 0.75rem 0.9rem;
-    color: var(--text-soft);
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 500;
-  }
-
-  .docs-toc--mobile[open] summary {
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .docs-toc--mobile ol {
-    padding: 0.9rem;
-  }
-
   .docs-toc ol {
-    display: grid;
-    gap: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 1rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -96,29 +61,21 @@ const visibleHeadings = headings.filter((heading) => heading.depth === 2 || head
     line-height: 1.35;
   }
 
-  .docs-toc__nested {
-    padding-left: 0.85rem;
-  }
-
   .docs-toc a {
     display: block;
     padding-block: 0.18rem;
-    color: var(--text-faint);
-    font-size: 0.78rem;
-    text-decoration: none;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    text-decoration-color: var(--border-strong);
   }
 
   .docs-toc a:hover {
     color: var(--accent);
   }
 
-  @media (max-width: 1120px) {
-    .docs-toc--desktop {
-      display: none;
-    }
-
-    .docs-toc--mobile {
-      display: block;
+  @media (max-width: 560px) {
+    .docs-toc {
+      grid-template-columns: 1fr;
     }
   }
 </style>

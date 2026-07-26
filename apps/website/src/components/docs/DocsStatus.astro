@@ -22,39 +22,39 @@ const audienceLabel = audienceLabels[audience] ?? audience;
 ---
 
 <div class="docs-status" aria-label={`${statusLabel}; ${audienceLabel}`}>
-  <span class:list={["docs-status__badge", `docs-status__badge--${status}`]}>
+  <span>Reference</span>
+  <span class:list={[`docs-status__state`, `docs-status__state--${status}`]}>
     {statusLabel}
   </span>
-  <span class="docs-status__audience">{audienceLabel}</span>
+  <span>{audienceLabel}</span>
 </div>
 
 <style>
   .docs-status {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.55rem;
+    gap: 0.45rem;
     align-items: center;
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: 0.72rem;
   }
 
-  .docs-status__badge,
-  .docs-status__audience {
+  .docs-status span {
     display: inline-flex;
     align-items: center;
-    min-height: 1.75rem;
-    padding: 0.3rem 0.55rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
   }
 
-  .docs-status__badge {
+  .docs-status span + span {
     gap: 0.4rem;
-    color: var(--text-soft);
   }
 
-  .docs-status__badge::before {
+  .docs-status span + span::before {
+    color: var(--border-strong);
+    content: "/";
+  }
+
+  .docs-status__state::after {
     width: 0.42rem;
     height: 0.42rem;
     border-radius: 50%;
@@ -62,11 +62,7 @@ const audienceLabel = audienceLabels[audience] ?? audience;
     content: "";
   }
 
-  .docs-status__badge--stable::before {
+  .docs-status__state--stable::after {
     background: var(--success);
-  }
-
-  .docs-status__audience {
-    color: var(--text-muted);
   }
 </style>

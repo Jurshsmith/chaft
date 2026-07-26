@@ -59,7 +59,7 @@ const steps = [
     <div class="shell hero__grid">
       <div class="hero__copy">
         <p class="eyebrow">Experimental · P2P-first · Canary</p>
-        <h1>Team chat designed to stay free.</h1>
+        <h1>Team chat designed <em>to stay free.</em></h1>
         <p class="lede">
           Chaft is an experimental Slack alternative for small teams. Local-first
           storage, end-to-end encrypted content, and direct peer replication reduce
@@ -85,13 +85,25 @@ const steps = [
     </div>
   </section>
 
-  <div class="trust-rail" aria-label="Chaft attributes">
-    <div class="shell trust-rail__inner">
-      <span>Local-first</span>
-      <span>Direct peer sync</span>
-      <span>Encrypted content</span>
-      <span>Free software</span>
-    </div>
+  <div class="trust-rail">
+    <dl class="shell trust-rail__inner" aria-label="Chaft attributes">
+      <div>
+        <dt>Local-first</dt>
+        <dd>History begins on your device</dd>
+      </div>
+      <div>
+        <dt>Direct peer sync</dt>
+        <dd>Reconcile when reachable</dd>
+      </div>
+      <div>
+        <dt>Encrypted content</dt>
+        <dd>Verified by participating devices</dd>
+      </div>
+      <div>
+        <dt>Free software</dt>
+        <dd>AGPL-3.0-or-later</dd>
+      </div>
+    </dl>
   </div>
 
   <section class="section" id="why-chaft">
@@ -248,20 +260,20 @@ const steps = [
   .hero {
     position: relative;
     overflow: hidden;
-    padding-block: clamp(4rem, 9vw, 8rem);
+    padding-block: clamp(4.5rem, 9vw, 7.5rem);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .hero::after {
     position: absolute;
-    top: 8%;
-    right: -8rem;
+    top: 12%;
+    right: -9rem;
     z-index: -1;
-    width: 22rem;
-    height: 22rem;
-    border: 1px solid var(--border-subtle);
+    width: 27rem;
+    height: 27rem;
+    border: 1px solid var(--brand-coral);
     border-radius: 50%;
-    background: var(--surface-raised);
-    opacity: 0.32;
+    opacity: 0.42;
     content: "";
   }
 
@@ -275,6 +287,21 @@ const steps = [
   .hero__copy {
     position: relative;
     z-index: 2;
+  }
+
+  .hero h1 {
+    max-width: 10.5ch;
+    margin-bottom: 1.8rem;
+    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
+  }
+
+  .hero h1 em {
+    display: block;
+    color: var(--brand-coral);
+    font-family: var(--font-editorial);
+    font-size: 1.04em;
+    font-weight: 400;
+    letter-spacing: -0.045em;
   }
 
   .hero__actions {
@@ -298,35 +325,51 @@ const steps = [
 
   .hero__visual::before {
     position: absolute;
-    inset: -1rem 1rem 1rem -1rem;
+    inset: -0.8rem 0.8rem 0.8rem -0.8rem;
     z-index: -1;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-md);
+    background: var(--brand-coral);
     content: "";
   }
 
   .trust-rail {
-    border-block: 1px solid var(--border-subtle);
-    background: var(--surface-deep);
+    background: var(--surface-raised);
   }
 
   .trust-rail__inner {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
+    margin-block: 0;
+    padding-block: 0;
   }
 
-  .trust-rail span {
-    padding-block: 1.15rem;
+  .trust-rail__inner > div {
+    display: grid;
+    gap: 0.28rem;
+    padding: 1.25rem clamp(0.8rem, 2vw, 1.5rem);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .trust-rail__inner > div:first-child {
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .trust-rail__inner > div {
+    border-right: 1px solid var(--border-subtle);
+  }
+
+  .trust-rail dt {
+    color: var(--text-strong);
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .trust-rail dd {
+    margin: 0;
     color: var(--text-muted);
     font-family: var(--font-mono);
-    font-size: 0.7rem;
-    text-align: center;
-    text-transform: uppercase;
-  }
-
-  .trust-rail span + span {
-    border-left: 1px solid var(--border-subtle);
+    font-size: 0.63rem;
   }
 
   .steps {
@@ -487,15 +530,6 @@ const steps = [
 
     .docs-entry__links {
       grid-template-columns: 1fr;
-    }
-
-    .trust-rail span:nth-child(3) {
-      border-left: 0;
-      border-top: 1px solid var(--border-subtle);
-    }
-
-    .trust-rail span:nth-child(4) {
-      border-top: 1px solid var(--border-subtle);
     }
 
     .steps {

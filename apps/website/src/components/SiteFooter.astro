@@ -34,8 +34,13 @@ const year = new Date().getUTCFullYear();
 
 <style>
   .site-footer {
+    --border-subtle: #34423e;
+    --text-faint: #91a09a;
+    --text-muted: #b5c0bc;
+    --text-soft: #dce4e0;
+    --text-strong: #fffdf7;
     border-top: 1px solid var(--border-subtle);
-    background: var(--surface-deep);
+    background: var(--surface-ink);
   }
 
   .site-footer__inner {
@@ -49,7 +54,9 @@ const year = new Date().getUTCFullYear();
     display: inline-block;
     margin-block-end: 0.35rem;
     color: var(--text-strong);
-    font-size: 1.25rem;
+    font-family: var(--font-editorial);
+    font-size: 1.55rem;
+    font-style: italic;
     font-weight: 500;
     letter-spacing: -0.04em;
     text-decoration: none;
@@ -75,7 +82,7 @@ const year = new Date().getUTCFullYear();
   }
 
   nav a:hover {
-    color: var(--accent);
+    color: var(--accent-bright);
   }
 
   .site-footer__meta {

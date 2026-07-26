@@ -1,7 +1,7 @@
 ---
 import { Image } from "astro:assets";
 
-import avatarDark from "../../../desktop-qt/resources/branding/chaft-avatar-dark.png";
+import mark from "../../../desktop-qt/resources/branding/chaft-mark.png";
 import { currentRelease } from "../data/releases";
 import { sitePath } from "../lib/site-path";
 
@@ -13,6 +13,7 @@ interface HeaderLink {
 }
 
 const currentPath = Astro.url.pathname;
+const isDocs = currentPath.startsWith(sitePath("/docs/"));
 const links: HeaderLink[] = [
   { href: sitePath("/#why-chaft"), label: "Why Chaft" },
   { href: sitePath("/docs/"), label: "Docs", matchPrefix: true },
@@ -37,16 +38,17 @@ function isCurrentLink(link: HeaderLink): boolean {
     <a class="brand" href={sitePath("/")} aria-label="Chaft home">
       <span class="brand-mark" aria-hidden="true">
         <Image
-          src={avatarDark}
+          src={mark}
           alt=""
-          width={68}
-          height={68}
+          width={40}
+          height={40}
           format="webp"
           quality={90}
           loading="eager"
         />
       </span>
-      <span>chaft</span>
+      <span class="brand-name">chaft</span>
+      {isDocs && <span class="brand-context">/ docs</span>}
     </a>
 
     <nav class="desktop-nav" aria-label="Primary navigation">
@@ -105,24 +107,30 @@ function isCurrentLink(link: HeaderLink): boolean {
 
 <style>
   .site-header {
-    position: relative;
+    position: sticky;
+    top: 0;
     z-index: 20;
-    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
-    background: color-mix(in srgb, var(--surface-base) 94%, transparent);
+    padding-block: 0.7rem;
+    background: color-mix(in srgb, var(--surface-base) 96%, transparent);
+    backdrop-filter: blur(12px);
   }
 
   .site-header__inner {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    min-height: 4.5rem;
+    min-height: 3.8rem;
     align-items: center;
     gap: 2rem;
+    padding: 0.38rem 0.45rem 0.38rem 0.7rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
   }
 
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 0.65rem;
+    gap: 0.55rem;
     color: var(--text-strong);
     font-size: 1.28rem;
     font-weight: 500;
@@ -131,23 +139,26 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   .brand-mark {
-    position: relative;
     display: block;
-    width: 34px;
-    height: 34px;
-    flex: 0 0 34px;
-    overflow: hidden;
-    border-radius: 8px;
-    background: var(--brand-night);
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
   }
 
   .brand-mark img {
-    position: absolute;
-    top: -17px;
-    left: -17px;
-    width: 68px;
-    max-width: none;
-    height: 68px;
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+  }
+
+  .brand-context {
+    padding-left: 0.55rem;
+    border-left: 1px solid var(--border-subtle);
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
   .desktop-nav {
@@ -163,6 +174,7 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   .desktop-nav a {
+    position: relative;
     display: inline-flex;
     min-height: 2.75rem;
     align-items: center;
@@ -177,14 +189,25 @@ function isCurrentLink(link: HeaderLink): boolean {
     color: var(--text-strong);
   }
 
+  .desktop-nav a[aria-current="page"]::after {
+    position: absolute;
+    right: 0;
+    bottom: 0.2rem;
+    left: 0;
+    height: 2px;
+    background: var(--brand-coral);
+    content: "";
+  }
+
   .header-download {
     display: inline-flex;
     min-height: 2.75rem;
     align-items: center;
     padding: 0.56rem 0.75rem;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    color: var(--text-strong);
+    background: var(--accent);
+    color: var(--on-accent);
     font-size: 0.88rem;
     font-weight: 500;
     line-height: 1;
@@ -195,8 +218,8 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   .header-download:hover {
-    border-color: var(--accent);
-    background: var(--secure-surface);
+    border-color: var(--text-strong);
+    background: var(--text-strong);
   }
 
   .mobile-nav {
@@ -287,8 +310,13 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   @media (max-width: 360px) {
-    .brand > span:last-child {
+    .brand-name {
       display: none;
+    }
+
+    .brand-context {
+      padding-left: 0;
+      border-left: 0;
     }
   }
 </style>
