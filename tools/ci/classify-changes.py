@@ -120,12 +120,16 @@ DESKTOP_SHARED_TOOLS = frozenset(
 RELEASE_TOOLS = frozenset(
     {
         "tools/desktop/appimage-smoke.sh",
+        "tools/desktop/canary-release-assets-test.py",
+        "tools/desktop/canary-release-assets.py",
         "tools/desktop/check-qt-xcb-runtime.sh",
         "tools/desktop/export-website-release-manifest-test.py",
         "tools/desktop/export-website-release-manifest.py",
         "tools/desktop/fetch-appimage-tools.sh",
         "tools/desktop/generate-platform-verification-receipt-test.py",
         "tools/desktop/generate-platform-verification-receipt.py",
+        "tools/desktop/generate-unsigned-canary-receipt-test.py",
+        "tools/desktop/generate-unsigned-canary-receipt.py",
         "tools/desktop/install-linux-package-dependencies.sh",
         "tools/desktop/linux-appimage-contract-test.py",
         "tools/desktop/macos-dmg-smoke-test.py",
@@ -141,6 +145,7 @@ RELEASE_TOOLS = frozenset(
         "tools/desktop/release-version.py",
         "tools/desktop/stage-website-release-assets-test.py",
         "tools/desktop/stage-website-release-assets.py",
+        "tools/desktop/unsigned_canary_policy.py",
         "tools/desktop/verify-release-metadata.py",
         "tools/desktop/windows-zip-smoke.ps1",
     }

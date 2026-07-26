@@ -24,6 +24,11 @@ env:
 
 jobs:
   prepare:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event.release.prerelease == false
+      }}
     name: Inspect and stage immutable release assets
     runs-on: ubuntu-latest
     permissions:
@@ -55,8 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! python3 -c 'import os, runpy, sys; values = runpy.run_path("tools/desktop/export-website-release-manifest.py"); tag = os.environ["RELEASE_TAG"]; sys.exit(0 if tag.startswith("v") and values["SEMANTIC_VERSION"].fullmatch(tag[1:]) else 1)'; then
-            echo "::error::Release tag must be v followed by a complete semantic version."
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Stable release tag must be exactly v<major>.<minor>.<patch>."
             exit 1
           fi
 
@@ -90,6 +95,10 @@ jobs:
             echo "::error::Draft releases cannot be promoted."
             exit 1
           fi
+          if [[ "$(jq -r '.prerelease' "${release_json}")" != "false" ]]; then
+            echo "::error::Prereleases must use the dedicated canary promotion workflow."
+            exit 1
+          fi
           if [[ "$(jq -r '.immutable // false' "${release_json}")" != "true" ]]; then
             echo "::error::Enable GitHub immutable releases and publish all assets from a draft before promotion."
             exit 1
@@ -97,11 +106,7 @@ jobs:
           gh release verify "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}"
 
           published_at="$(jq -er '.published_at | strings | select(length > 0)' "${release_json}")"
-          if [[ "$(jq -r '.prerelease' "${release_json}")" == "true" ]]; then
-            channel="preview"
-          else
-            channel="stable"
-          fi
+          channel="stable"
 
           tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           policy_commit="$(git rev-parse HEAD)"

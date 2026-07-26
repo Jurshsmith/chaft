@@ -1,0 +1,742 @@
+name: Promote desktop canary to website
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published immutable canary tag, for example v0.1.0-canary.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-desktop-canary-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  prepare:
+    name: Verify the immutable canary and stage website data
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      policy_commit: ${{ steps.release.outputs.policy_commit }}
+      release_version: ${{ steps.release.outputs.release_version }}
+      tag_commit: ${{ steps.release.outputs.tag_commit }}
+    steps:
+      - name: Checkout the current protected default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Inspect the published immutable canary
+        id: release
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-canary\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Tag must be v<major>.<minor>.<patch>-canary.<positive integer>."
+            exit 1
+          fi
+          gh release verify --help >/dev/null
+          gh release verify-asset --help >/dev/null
+          release_version="${RELEASE_TAG#v}"
+
+          promotion_branch="release/${RELEASE_TAG}-website-manifest"
+          open_prs="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f per_page=100
+          )"
+          conflicting_pr="$(
+            jq -r \
+              --arg expected "${promotion_branch}" \
+              --arg base "${DEFAULT_BRANCH}" \
+              --arg repository "${GITHUB_REPOSITORY}" \
+              '[.[]
+                | select(.head.repo.full_name == $repository)
+                | select(.head.ref | startswith("release/v") and endswith("-website-manifest"))
+                | select(.head.ref != $expected or .base.ref != $base)
+              ][0].html_url // empty' \
+              <<<"${open_prs}"
+          )"
+          if [[ -n "${conflicting_pr}" ]]; then
+            echo "::error::Merge or close the existing website release promotion first: ${conflicting_pr}"
+            exit 1
+          fi
+
+          release_json="${RUNNER_TEMP}/release.json"
+          gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "${release_json}"
+
+          RELEASE_JSON="${release_json}" python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          release = json.loads(Path(os.environ["RELEASE_JSON"]).read_text(encoding="utf-8"))
+          tag = os.environ["RELEASE_TAG"]
+          required = {
+              "tag_name": tag,
+              "draft": False,
+              "prerelease": True,
+              "immutable": True,
+          }
+          for key, expected in required.items():
+              if release.get(key) != expected:
+                  raise SystemExit(
+                      f"published canary release {key} must be {expected!r}, "
+                      f"found {release.get(key)!r}"
+                  )
+          if not isinstance(release.get("id"), int) or release["id"] <= 0:
+              raise SystemExit("published canary release ID must be a positive integer")
+          published_at = release.get("published_at")
+          if not isinstance(published_at, str) or not published_at:
+              raise SystemExit("published canary release must have published_at")
+
+          assets = release.get("assets")
+          if not isinstance(assets, list) or len(assets) != 19:
+              count = len(assets) if isinstance(assets, list) else "non-array"
+              raise SystemExit(f"published canary must contain exactly 19 assets, found {count}")
+          names: set[str] = set()
+          folded_names: set[str] = set()
+          asset_ids: set[int] = set()
+          digest_pattern = re.compile(r"^sha256:[0-9a-f]{64}$")
+          for index, asset in enumerate(assets):
+              if not isinstance(asset, dict):
+                  raise SystemExit(f"release asset {index} must be an object")
+              name = asset.get("name")
+              asset_id = asset.get("id")
+              size = asset.get("size")
+              digest = asset.get("digest")
+              if (
+                  not isinstance(name, str)
+                  or not name
+                  or name in {".", ".."}
+                  or Path(name).name != name
+                  or "/" in name
+                  or "\\" in name
+                  or any(ord(character) < 32 or ord(character) == 127 for character in name)
+              ):
+                  raise SystemExit(f"release asset {index} has an unsafe filename")
+              if name in names or name.casefold() in folded_names:
+                  raise SystemExit(f"release asset filename is duplicated: {name}")
+              if (
+                  not isinstance(asset_id, int)
+                  or isinstance(asset_id, bool)
+                  or asset_id <= 0
+                  or asset_id in asset_ids
+              ):
+                  raise SystemExit(f"release asset {name} has an invalid or duplicate ID")
+              if (
+                  not isinstance(size, int)
+                  or isinstance(size, bool)
+                  or size <= 0
+              ):
+                  raise SystemExit(f"release asset {name} has an invalid byte size")
+              if not isinstance(digest, str) or digest_pattern.fullmatch(digest) is None:
+                  raise SystemExit(f"release asset {name} lacks an exact SHA-256 API digest")
+              if asset.get("state") != "uploaded":
+                  raise SystemExit(f"release asset {name} is not in uploaded state")
+              names.add(name)
+              folded_names.add(name.casefold())
+              asset_ids.add(asset_id)
+          PY
+
+          gh release verify "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}"
+
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          policy_commit="$(git rev-parse HEAD)"
+          if [[ ! "${tag_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Release tag did not resolve to a full commit."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${tag_commit}" "${policy_commit}"; then
+            echo "::error::Release tag commit must be an ancestor of the protected default branch."
+            exit 1
+          fi
+
+          echo "policy_commit=${policy_commit}" >> "${GITHUB_OUTPUT}"
+          echo "release_version=${release_version}" >> "${GITHUB_OUTPUT}"
+          echo "tag_commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download every release asset by immutable asset ID
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets="${RUNNER_TEMP}/release-assets"
+          mkdir "${assets}"
+          while IFS=$'\t' read -r asset_id filename _size _digest; do
+            gh api \
+              -H "Accept: application/octet-stream" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "${assets}/${filename}"
+          done < <(
+            jq -r \
+              '.assets[]
+                | [.id, .name, .size, (.digest | sub("^sha256:"; ""))]
+                | @tsv' \
+              "${RUNNER_TEMP}/release.json"
+          )
+
+      - name: Rehash and authenticate the exact local asset set
+        shell: bash
+        env:
+          ASSETS_DIR: ${{ runner.temp }}/release-assets
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_JSON: ${{ runner.temp }}/release.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          assets_dir = Path(os.environ["ASSETS_DIR"])
+          release = json.loads(Path(os.environ["RELEASE_JSON"]).read_text(encoding="utf-8"))
+          expected = {
+              asset["name"]: (asset["size"], asset["digest"].removeprefix("sha256:"))
+              for asset in release["assets"]
+          }
+          remote_by_id = {asset["id"]: asset for asset in release["assets"]}
+          paths = list(assets_dir.iterdir())
+          if (
+              len(paths) != 19
+              or any(path.is_symlink() or not path.is_file() for path in paths)
+              or {path.name for path in paths} != set(expected)
+          ):
+              raise SystemExit("downloaded directory is not the exact 19-asset namespace")
+          for path in paths:
+              digest = hashlib.sha256()
+              size = 0
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      size += len(chunk)
+                      digest.update(chunk)
+              expected_size, expected_digest = expected[path.name]
+              if size != expected_size or digest.hexdigest() != expected_digest:
+                  raise SystemExit(
+                      f"downloaded asset differs from GitHub API metadata: {path.name}"
+                  )
+
+          for platform in ("windows", "macos", "linux"):
+              receipt_path = (
+                  assets_dir / f"chaft-desktop-{platform}-verification.json"
+              )
+              receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+              release_identity = receipt.get("release")
+              asset_identity = receipt.get("asset")
+              if (
+                  not isinstance(release_identity, dict)
+                  or release_identity.get("id") != release.get("id")
+                  or not isinstance(asset_identity, dict)
+              ):
+                  raise SystemExit(
+                      f"{platform} receipt does not bind the published release ID"
+                  )
+              remote = remote_by_id.get(asset_identity.get("id"))
+              if remote is None:
+                  raise SystemExit(
+                      f"{platform} receipt names an unknown release asset ID"
+                  )
+              expected_identity = {
+                  "filename": remote["name"],
+                  "sizeBytes": remote["size"],
+                  "sha256": remote["digest"].removeprefix("sha256:"),
+              }
+              actual_identity = {
+                  key: asset_identity.get(key)
+                  for key in expected_identity
+              }
+              if actual_identity != expected_identity:
+                  raise SystemExit(
+                      f"{platform} receipt asset identity differs from GitHub API metadata"
+                  )
+          PY
+
+          while IFS= read -r -d '' asset; do
+            gh release verify-asset "${RELEASE_TAG}" "${asset}" \
+              --repo "${GITHUB_REPOSITORY}" >/dev/null
+          done < <(find "${ASSETS_DIR}" -maxdepth 1 -type f -print0)
+
+      - name: Verify and stage the exact canary namespace
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          release_id="$(jq -er '.id' "${RUNNER_TEMP}/release.json")"
+          python3 tools/desktop/canary-release-assets.py verify-complete \
+            --assets-dir "${RUNNER_TEMP}/release-assets" \
+            --version "${RELEASE_VERSION}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${RELEASE_COMMIT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${release_id}"
+          python3 tools/desktop/stage-website-release-assets.py \
+            --channel canary \
+            --assets-dir "${RUNNER_TEMP}/release-assets" \
+            --output-dir "${RUNNER_TEMP}/release-staged"
+
+      - name: Export the unsigned-canary website manifest
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          staged="${RUNNER_TEMP}/release-staged"
+          receipts="${staged}/verification-receipts"
+          release_source="${RUNNER_TEMP}/release-source"
+          git worktree add --detach "${release_source}" "${RELEASE_COMMIT}"
+
+          windows_arch="$(
+            jq -er '.architecture | strings | select(length > 0)' \
+              "${receipts}/chaft-desktop-windows-verification.json"
+          )"
+          macos_arch="$(
+            jq -er '.architecture | strings | select(length > 0)' \
+              "${receipts}/chaft-desktop-macos-verification.json"
+          )"
+          linux_arch="$(
+            jq -er '.architecture | strings | select(length > 0)' \
+              "${receipts}/chaft-desktop-linux-verification.json"
+          )"
+          published_at="$(jq -er '.published_at | strings | select(length > 0)' \
+            "${RUNNER_TEMP}/release.json")"
+
+          python3 tools/desktop/export-website-release-manifest.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --source-root "${release_source}" \
+            --published-at "${published_at}" \
+            --channel canary \
+            --release-evidence-dir "${staged}/release-evidence" \
+            --output apps/website/src/data/release-manifest.json \
+            --history-dir apps/website/src/data/release-history \
+            --windows-package-dir "${staged}/windows-package" \
+            --windows-arch "${windows_arch}" \
+            --windows-signing-state unsigned-canary \
+            --windows-verification-receipt \
+              "${receipts}/chaft-desktop-windows-verification.json" \
+            --macos-package-dir "${staged}/macos-package" \
+            --macos-arch "${macos_arch}" \
+            --macos-signing-state unsigned-canary \
+            --macos-verification-receipt \
+              "${receipts}/chaft-desktop-macos-verification.json" \
+            --linux-package-dir "${staged}/linux-package" \
+            --linux-arch "${linux_arch}" \
+            --linux-signing-state unsigned-canary \
+            --linux-verification-receipt \
+              "${receipts}/chaft-desktop-linux-verification.json"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install website dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate the canary website
+        working-directory: apps/website
+        run: pnpm validate
+
+      - name: Build a bounded website data payload
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="${RUNNER_TEMP}/website-release-data" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          data_root = Path("apps/website/src/data")
+          current = data_root / "release-manifest.json"
+          manifest = json.loads(current.read_text(encoding="utf-8"))
+          requested_history = (
+              data_root
+              / "release-history"
+              / f"{os.environ['RELEASE_VERSION']}.json"
+          )
+          if manifest.get("tag") == os.environ["RELEASE_TAG"]:
+              promoted = manifest
+          elif requested_history.is_file():
+              promoted = json.loads(requested_history.read_text(encoding="utf-8"))
+          else:
+              raise SystemExit(
+                  "exporter did not publish the requested canary as current or history"
+              )
+          required = {
+              "schemaVersion": 2,
+              "channel": "canary",
+              "status": "published",
+              "version": os.environ["RELEASE_VERSION"],
+              "tag": os.environ["RELEASE_TAG"],
+              "commit": os.environ["RELEASE_COMMIT"],
+          }
+          for key, expected in required.items():
+              if promoted.get(key) != expected:
+                  raise SystemExit(f"exported manifest {key} is not bound to this canary")
+
+          commands = (
+              ["git", "diff", "--name-only", "-z", "--", str(data_root)],
+              [
+                  "git",
+                  "ls-files",
+                  "--others",
+                  "--exclude-standard",
+                  "-z",
+                  "--",
+                  str(data_root),
+              ],
+          )
+          changed: set[str] = set()
+          for command in commands:
+              output = subprocess.run(
+                  command, check=True, stdout=subprocess.PIPE
+              ).stdout
+              changed.update(
+                  item.decode("utf-8")
+                  for item in output.split(b"\0")
+                  if item
+              )
+
+          current_name = str(current)
+          history_pattern = re.compile(
+              r"^apps/website/src/data/release-history/"
+              r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+              r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.json$"
+          )
+          unexpected = sorted(
+              path
+              for path in changed
+              if path != current_name and history_pattern.fullmatch(path) is None
+          )
+          if unexpected:
+              raise SystemExit(
+                  "exporter changed unexpected website data: " + ", ".join(unexpected)
+              )
+          history = {path for path in changed if path != current_name}
+          if promoted is not manifest:
+              history.add(str(requested_history))
+          history = sorted(history)
+          if len(history) > 2:
+              raise SystemExit("promotion payload may contain at most two history records")
+
+          bundle = Path(os.environ["BUNDLE_DIR"])
+          (bundle / "release-history").mkdir(parents=True)
+          shutil.copy2(current, bundle / "release-manifest.json")
+          for source_name in history:
+              source = Path(source_name)
+              shutil.copy2(source, bundle / "release-history" / source.name)
+
+          json_files = sorted(bundle.rglob("*.json"))
+          if len(json_files) > 3:
+              raise SystemExit("promotion payload exceeds the three-JSON-file limit")
+          lines = []
+          for path in json_files:
+              if path.stat().st_size > 1024 * 1024:
+                  raise SystemExit(f"promotion JSON exceeds one MiB: {path.name}")
+              relative = path.relative_to(bundle).as_posix()
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {relative}\n")
+          (bundle / "SHA256SUMS").write_text("".join(lines), encoding="ascii")
+          PY
+
+      - name: Upload the validated bounded payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-website-release-data-${{ steps.release.outputs.release_version }}
+          path: ${{ runner.temp }}/website-release-data
+          if-no-files-found: error
+          retention-days: 7
+          archive: true
+
+  publish:
+    name: Open the canary website-manifest pull request
+    needs: prepare
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout the exact reviewed policy commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the validated bounded payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-website-release-data-${{ needs.prepare.outputs.release_version }}
+          path: ${{ runner.temp }}/website-release-data
+          digest-mismatch: error
+
+      - name: Revalidate and stage the bounded data payload
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="${RUNNER_TEMP}/website-release-data" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          from pathlib import Path
+
+          bundle = Path(os.environ["BUNDLE_DIR"])
+          if bundle.is_symlink() or not bundle.is_dir():
+              raise SystemExit("promotion payload directory is missing or unsafe")
+          paths = list(bundle.rglob("*"))
+          if any(path.is_symlink() or (not path.is_file() and not path.is_dir()) for path in paths):
+              raise SystemExit("promotion payload contains an unsafe filesystem entry")
+          files = sorted(path for path in paths if path.is_file())
+          allowed_history = re.compile(
+              r"^release-history/"
+              r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+              r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.json$"
+          )
+          relative_files = {path.relative_to(bundle).as_posix() for path in files}
+          if "release-manifest.json" not in relative_files or "SHA256SUMS" not in relative_files:
+              raise SystemExit("promotion payload is incomplete")
+          unexpected = sorted(
+              name
+              for name in relative_files
+              if name not in {"release-manifest.json", "SHA256SUMS"}
+              and allowed_history.fullmatch(name) is None
+          )
+          if unexpected:
+              raise SystemExit("unexpected promotion payload path: " + ", ".join(unexpected))
+          json_names = sorted(name for name in relative_files if name.endswith(".json"))
+          if len(json_names) > 3:
+              raise SystemExit("promotion payload exceeds the three-JSON-file limit")
+          if sum((bundle / name).stat().st_size for name in relative_files) > 4 * 1024 * 1024:
+              raise SystemExit("promotion payload exceeds four MiB")
+
+          expected_rows: dict[str, str] = {}
+          for line_number, line in enumerate(
+              (bundle / "SHA256SUMS").read_text(encoding="ascii").splitlines(), 1
+          ):
+              match = re.fullmatch(r"([0-9a-f]{64})  ([^\s/][^\r\n]*)", line)
+              if match is None:
+                  raise SystemExit(f"invalid SHA256SUMS line {line_number}")
+              digest, name = match.groups()
+              if name in expected_rows:
+                  raise SystemExit(f"duplicate checksum row for {name}")
+              expected_rows[name] = digest
+          if set(expected_rows) != set(json_names):
+              raise SystemExit("SHA256SUMS does not describe the exact JSON payload")
+          for name, expected in expected_rows.items():
+              actual = hashlib.sha256((bundle / name).read_bytes()).hexdigest()
+              if actual != expected:
+                  raise SystemExit(f"promotion payload checksum mismatch: {name}")
+
+          manifest = json.loads((bundle / "release-manifest.json").read_text(encoding="utf-8"))
+          requested_history = (
+              bundle
+              / "release-history"
+              / f"{os.environ['RELEASE_VERSION']}.json"
+          )
+          if manifest.get("tag") == os.environ["RELEASE_TAG"]:
+              promoted = manifest
+          elif requested_history.is_file():
+              promoted = json.loads(requested_history.read_text(encoding="utf-8"))
+          else:
+              raise SystemExit(
+                  "payload does not publish the requested canary as current or history"
+              )
+          required = {
+              "schemaVersion": 2,
+              "channel": "canary",
+              "status": "published",
+              "version": os.environ["RELEASE_VERSION"],
+              "tag": os.environ["RELEASE_TAG"],
+              "commit": os.environ["RELEASE_COMMIT"],
+          }
+          for key, expected in required.items():
+              if promoted.get(key) != expected:
+                  raise SystemExit(f"payload manifest {key} is not bound to this canary")
+
+          destination = Path("apps/website/src/data")
+          shutil.copy2(bundle / "release-manifest.json", destination / "release-manifest.json")
+          for name in json_names:
+              if name == "release-manifest.json":
+                  continue
+              record = json.loads((bundle / name).read_text(encoding="utf-8"))
+              version = Path(name).stem
+              if (
+                  not isinstance(record, dict)
+                  or record.get("schemaVersion") != 2
+                  or record.get("status") != "published"
+                  or record.get("version") != version
+              ):
+                  raise SystemExit(f"history record is incoherent: {name}")
+              shutil.copy2(bundle / name, destination / name)
+          PY
+
+      - name: Publish a descriptive canary manifest branch
+        id: branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          data_path="apps/website/src/data"
+          branch="release/${RELEASE_TAG}-website-manifest"
+          gh auth setup-git
+          git add -- "${data_path}/release-manifest.json" "${data_path}/release-history"
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "The default branch already contains this immutable canary manifest."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            default_commit="$(git rev-parse HEAD)"
+            branch_commit="$(git rev-parse "origin/${branch}")"
+            branch_parents="$(git rev-list --parents -n 1 "${branch_commit}")"
+            read -r -a parent_fields <<<"${branch_parents}"
+            if [[ "${#parent_fields[@]}" -ne 2 || "${parent_fields[1]}" != "${default_commit}" ]]; then
+              echo "::error::Existing promotion branch is not one clean commit on the reviewed default branch."
+              exit 1
+            fi
+            desired_tree="$(git write-tree)"
+            branch_tree="$(git show -s --format=%T "${branch_commit}")"
+            if [[ "${branch_tree}" != "${desired_tree}" ]]; then
+              echo "::error::Existing promotion branch contains unverified or incomplete changes."
+              exit 1
+            fi
+          else
+            git switch -c "${branch}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Publish Chaft ${RELEASE_TAG} canary downloads"
+            branch_commit="$(git rev-parse HEAD)"
+            git push --set-upstream origin "${branch}"
+          fi
+
+          remote_commit="$(
+            git ls-remote --heads origin "refs/heads/${branch}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          if [[ "${remote_commit}" != "${branch_commit}" ]]; then
+            echo "::error::Promotion branch changed after its verified tree was selected."
+            exit 1
+          fi
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${branch_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Open or confirm the canary manifest pull request
+        if: steps.branch.outputs.changed == 'true'
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_HEAD_OID: ${{ steps.branch.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          qualified_head="${repository_owner}:${PROMOTION_BRANCH}"
+          remote_commit="$(
+            git ls-remote --heads origin \
+              "refs/heads/${PROMOTION_BRANCH}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          if [[ "${remote_commit}" != "${EXPECTED_HEAD_OID}" ]]; then
+            echo "::error::Promotion branch moved before pull-request publication."
+            exit 1
+          fi
+
+          existing="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=all \
+              -f head="${qualified_head}" \
+              -f base="${DEFAULT_BRANCH}" \
+              -f per_page=100
+          )"
+          existing_count="$(jq 'length' <<<"${existing}")"
+          if [[ "${existing_count}" -gt 0 ]]; then
+            if [[ "${existing_count}" -ne 1 ]] || \
+              [[ "$(jq -r '.[0].state' <<<"${existing}")" != "open" ]]; then
+              echo "::error::A closed promotion pull request already exists for ${PROMOTION_BRANCH}."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].head.repo.full_name' <<<"${existing}")" != "${GITHUB_REPOSITORY}" ]] || \
+              [[ "$(jq -r '.[0].base.ref' <<<"${existing}")" != "${DEFAULT_BRANCH}" ]] || \
+              [[ "$(jq -r '.[0].head.sha' <<<"${existing}")" != "${EXPECTED_HEAD_OID}" ]]; then
+              echo "::error::Existing promotion pull request is not bound to the verified branch commit."
+              exit 1
+            fi
+            echo "Canary promotion pull request already open: $(jq -r '.[0].html_url' <<<"${existing}")"
+            exit 0
+          fi
+
+          created="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f base="${DEFAULT_BRANCH}" \
+              -f head="${qualified_head}" \
+              -f title="Publish Chaft ${RELEASE_TAG} canary downloads" \
+              -f body="Publishes the verified immutable ${RELEASE_TAG} prerelease in the website download manifest. Windows, macOS, and Linux packages remain explicitly unsigned-canary builds: they passed native packaged-app smoke checks and their sizes, SHA-256 digests, SBOMs, provenance, receipts, Qt corresponding source, release inventory, and aggregate checksums were reverified. These canary artifacts are not production-ready and must not be used for sensitive or production communication."
+          )"
+          if [[ "$(jq -r '.head.repo.full_name' <<<"${created}")" != "${GITHUB_REPOSITORY}" ]] || \
+            [[ "$(jq -r '.base.ref' <<<"${created}")" != "${DEFAULT_BRANCH}" ]] || \
+            [[ "$(jq -r '.head.sha' <<<"${created}")" != "${EXPECTED_HEAD_OID}" ]]; then
+            echo "::error::Created pull request is not bound to the verified branch commit."
+            exit 1
+          fi
+          echo "Canary promotion pull request opened: $(jq -r '.html_url' <<<"${created}")"

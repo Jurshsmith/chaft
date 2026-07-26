@@ -1,0 +1,1097 @@
+name: Publish desktop canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Unused canary tag, for example v0.1.0-canary.1
+        required: true
+        type: string
+      target_commit:
+        description: Exact reviewed main commit to build and tag
+        required: true
+        type: string
+      confirm_unsigned_canary:
+        description: Confirm these artifacts are unsigned canary builds
+        required: true
+        default: false
+        type: boolean
+      confirm_immutable_releases_enabled:
+        description: Confirm immutable GitHub Releases are enabled in repository settings
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+concurrency:
+  group: desktop-canary-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CHAFT_QT_VERSION: 6.8.4
+
+jobs:
+  preflight:
+    name: Validate unused canary identity
+    runs-on: ubuntu-22.04
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      distribution_version: ${{ steps.release.outputs.distribution_version }}
+      source_version: ${{ steps.release.outputs.source_version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Checkout the current protected main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Validate exact reviewed commit and unused tag
+        id: release
+        env:
+          CONFIRM_IMMUTABLE_RELEASES: ${{ inputs.confirm_immutable_releases_enabled }}
+          CONFIRM_UNSIGNED_CANARY: ${{ inputs.confirm_unsigned_canary }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          TARGET_COMMIT: ${{ inputs.target_commit }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM_UNSIGNED_CANARY}" != "true" ]]; then
+            echo "::error::Explicit unsigned-canary confirmation is required."
+            exit 1
+          fi
+          if [[ "${CONFIRM_IMMUTABLE_RELEASES}" != "true" ]]; then
+            echo "::error::Confirm immutable GitHub Releases are enabled before publishing."
+            exit 1
+          fi
+          gh release verify --help >/dev/null
+          gh release verify-asset --help >/dev/null
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-canary\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Tag must be v<major>.<minor>.<patch>-canary.<positive integer>."
+            exit 1
+          fi
+          if [[ ! "${TARGET_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_commit must be a full lowercase 40-character commit."
+            exit 1
+          fi
+          current_main="$(git rev-parse HEAD)"
+          if [[ "${current_main}" != "${TARGET_COMMIT}" ]]; then
+            echo "::error::target_commit must equal the current protected main revision."
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "::error::The requested tag already exists."
+            exit 1
+          fi
+          if gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            >/dev/null 2>&1; then
+            echo "::error::A GitHub Release already exists for the requested tag."
+            exit 1
+          fi
+
+          checks="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/commits/${TARGET_COMMIT}/check-runs?per_page=100"
+          )"
+          trusted_required=0
+          while IFS= read -r details_url; do
+            if [[ ! "${details_url}" =~ ^https://github\.com/${GITHUB_REPOSITORY}/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)$ ]]; then
+              continue
+            fi
+            run_id="${BASH_REMATCH[1]}"
+            run="$(
+              gh api \
+                -H "X-GitHub-Api-Version: 2026-03-10" \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+            )"
+            if jq -e \
+              --arg commit "${TARGET_COMMIT}" \
+              --arg branch "${{ github.event.repository.default_branch }}" \
+              '
+                .name == "CI" and
+                .path == ".github/workflows/ci.yml" and
+                .event == "push" and
+                .head_branch == $branch and
+                .head_sha == $commit and
+                .status == "completed" and
+                .conclusion == "success"
+              ' <<<"${run}" >/dev/null; then
+              trusted_required=$((trusted_required + 1))
+            fi
+          done < <(
+            jq -r '
+              .check_runs[]
+              | select(
+                  .name == "Required" and
+                  .conclusion == "success" and
+                  .app.slug == "github-actions"
+                )
+              | .details_url
+            ' <<<"${checks}"
+          )
+          if [[ "${trusted_required}" -lt 1 ]]; then
+            echo "::error::The exact target commit has no successful trusted Required check from a main-branch CI push."
+            exit 1
+          fi
+
+          mkdir -p build
+          python3 tools/desktop/release-version.py \
+            --tag "${RELEASE_TAG}" \
+            --allow-missing-tag \
+            --expected-commit "${TARGET_COMMIT}" \
+            --output build/canary-release-context.json \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Show validated canary context
+        run: cat build/canary-release-context.json
+
+      - name: Upload validated canary context
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-context-${{ steps.release.outputs.distribution_version }}-${{ steps.release.outputs.commit }}
+          path: build/canary-release-context.json
+          if-no-files-found: error
+          retention-days: 14
+          archive: true
+
+  qt_source:
+    name: Build Qt corresponding source
+    needs: preflight
+    runs-on: ubuntu-22.04
+    outputs:
+      bundle_sha256: ${{ steps.source.outputs.bundle_sha256 }}
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Revalidate canary identity before source generation
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --allow-missing-tag \
+            --expected-commit HEAD >/dev/null
+
+      - name: Create and verify exact corresponding source
+        id: source
+        run: |
+          set -euo pipefail
+          output="build/canary-qt-source"
+          python3 tools/qt/source_bundle.py create --output-dir "${output}"
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${output}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+            --checksum "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          bundle_sha256="$(
+            cut -d ' ' -f 1 \
+              "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          )"
+          test "${#bundle_sha256}" -eq 64
+          echo "bundle_sha256=${bundle_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-qt-source-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: |
+            build/canary-qt-source/Chaft-Qt-6.8.4-corresponding-source.zip
+            build/canary-qt-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          archive: true
+
+  build:
+    name: Build ${{ matrix.name }} canary
+    needs:
+      - preflight
+      - qt_source
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            key: linux
+            os: ubuntu-22.04
+            qt_platform: linux
+            package_platform: Linux
+            smoke_timeout_ms: ""
+          - name: macOS
+            key: macos
+            os: macos-15-intel
+            qt_platform: macos
+            package_platform: macOS
+            smoke_timeout_ms: ""
+          - name: Windows
+            key: windows
+            os: windows-2022
+            qt_platform: windows
+            package_platform: Windows
+            smoke_timeout_ms: "60000"
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Revalidate canary identity
+        shell: bash
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --allow-missing-tag \
+            --expected-commit HEAD >/dev/null
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: "false"
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Linux package dependencies
+        if: runner.os == 'Linux'
+        run: tools/desktop/install-linux-package-dependencies.sh install release-package
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt_platform }}" \
+            --output "${contract}"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform "${{ matrix.qt_platform }}" \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore reviewed Qt SDK
+        id: qt-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build exact Qt SDK on cache miss
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform "${{ matrix.qt_platform }}"
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Activate and verify exact Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "${GITHUB_ENV}" \
+            --github-path "${GITHUB_PATH}"
+          python3 tools/qt/build_qt.py verify \
+            --platform "${{ matrix.qt_platform }}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}/chaft-qt-build"
+
+      - name: Validate Linux desktop metadata
+        if: runner.os == 'Linux'
+        run: |
+          desktop-file-validate \
+            packaging/linux/io.github.jurshsmith.chaft.desktop
+          appstreamcli validate --no-net \
+            packaging/linux/io.github.jurshsmith.chaft.metainfo.xml
+
+      - name: Fetch pinned AppImage tools
+        if: runner.os == 'Linux'
+        run: |
+          tool_dir="${RUNNER_TEMP}/chaft-appimage-tools"
+          tools/desktop/fetch-appimage-tools.sh "${tool_dir}"
+          echo "CHAFT_LINUXDEPLOY=${tool_dir}/linuxdeploy" >> "${GITHUB_ENV}"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=${tool_dir}/linuxdeploy-plugin-qt" \
+            >> "${GITHUB_ENV}"
+          echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=${tool_dir}/linuxdeploy-plugin-appimage" \
+            >> "${GITHUB_ENV}"
+
+      - name: Build, smoke, and verify canary package
+        env:
+          CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
+          CHAFT_RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke_timeout_ms }}
+          CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source.outputs.bundle_sha256 }}
+        shell: bash
+        run: |
+          tools/desktop/ci-gates.sh \
+            --stage package \
+            "${{ matrix.package_platform }}"
+          python3 tools/desktop/verify-release-metadata.py release \
+            --platform "${{ matrix.package_platform }}" \
+            --expected-commit "${CHAFT_RELEASE_COMMIT}" \
+            --expected-source-version "${{ needs.preflight.outputs.source_version }}" \
+            --expected-distribution-version "${CHAFT_DISTRIBUTION_VERSION}" \
+            --require-clean
+
+      - name: Upload non-publishing canary input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-${{ matrix.key }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/desktop-release/package/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          archive: true
+
+  actions_smoke:
+    name: Smoke downloaded ${{ matrix.name }} input
+    needs:
+      - preflight
+      - build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            key: linux
+            os: ubuntu-22.04
+          - name: macOS
+            key: macos
+            os: macos-15-intel
+          - name: Windows
+            key: windows
+            os: windows-2022
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download exact canary input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-${{ matrix.key }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-input
+          digest-mismatch: error
+
+      - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
+
+      - name: Smoke downloaded Linux AppImage
+        if: runner.os == 'Linux'
+        run: tools/desktop/appimage-smoke.sh build/canary-input
+
+      - name: Smoke downloaded macOS DMG
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh build/canary-input
+
+      - name: Smoke downloaded Windows ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tools/desktop/windows-zip-smoke.ps1 `
+            -PackageDirectory build/canary-input `
+            -ExpectedSourceVersion "${{ needs.preflight.outputs.source_version }}" `
+            -ExpectedDistributionVersion "${{ needs.preflight.outputs.distribution_version }}"
+
+  audit_base:
+    name: Audit exact 14-file canary base
+    needs:
+      - preflight
+      - qt_source
+      - actions_smoke
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download Linux canary input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-linux-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/linux
+          digest-mismatch: error
+
+      - name: Download macOS canary input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-macos-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/macos
+          digest-mismatch: error
+
+      - name: Download Windows canary input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-windows-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/windows
+          digest-mismatch: error
+
+      - name: Download Qt corresponding source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-qt-source-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/qt-source
+          digest-mismatch: error
+
+      - name: Assemble exact base namespace
+        run: |
+          set -euo pipefail
+          mkdir -p build/canary-base
+          while IFS= read -r -d '' source; do
+            destination="build/canary-base/$(basename "${source}")"
+            if [[ -e "${destination}" || -L "${destination}" ]]; then
+              echo "::error::Duplicate base asset filename: $(basename "${source}")"
+              exit 1
+            fi
+            cp -- "${source}" "${destination}"
+          done < <(
+            find build/canary-inputs -mindepth 2 -maxdepth 2 -type f \
+              -print0 | sort -z
+          )
+          python3 tools/desktop/canary-release-assets.py verify-base \
+            --assets-dir build/canary-base \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --commit "${{ needs.preflight.outputs.commit }}"
+
+      - name: Upload audited base namespace
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-base-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-base/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          archive: true
+
+  create_draft:
+    name: Create draft prerelease after native validation
+    needs:
+      - preflight
+      - audit_base
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      checks: read
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Checkout exact reviewed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Download audited base namespace
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-base-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-base
+          digest-mismatch: error
+
+      - name: Recheck protected state immediately before tag creation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          TARGET_COMMIT: ${{ needs.preflight.outputs.commit }}
+        run: |
+          set -euo pipefail
+          remote_main="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${{ github.event.repository.default_branch }}" \
+              --jq '.object.sha'
+          )"
+          test "${remote_main}" = "${TARGET_COMMIT}"
+          if gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            >/dev/null 2>&1; then
+            echo "::error::Tag appeared after preflight; refusing to reuse it."
+            exit 1
+          fi
+          if gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            >/dev/null 2>&1; then
+            echo "::error::Release appeared after preflight; refusing to modify it."
+            exit 1
+          fi
+          python3 tools/desktop/canary-release-assets.py verify-base \
+            --assets-dir build/canary-base \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${TARGET_COMMIT}"
+
+      - name: Create one no-clobber draft prerelease
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          TARGET_COMMIT: ${{ needs.preflight.outputs.commit }}
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/canary-notes.md" <<'NOTES'
+          ## Unsigned Chaft canary
+
+          This is an early cross-platform canary for testing and feedback.
+
+          **The Windows, macOS, and Linux packages are unsigned canary builds.**
+          **Unsigned canary. Do not use Chaft canary builds for sensitive or production communication.**
+
+          Windows may show an unknown-publisher warning; macOS may require an
+          explicit user override. Package integrity and repository provenance
+          are documented by the immutable GitHub Release, SHA-256 files, SBOMs,
+          provenance, and native packaged-app verification receipts.
+
+          Stable-release signing and notarization requirements are unchanged.
+          NOTES
+          draft="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="${RELEASE_TAG}" \
+              -f target_commitish="${TARGET_COMMIT}" \
+              -f name="Chaft ${RELEASE_TAG#v} (unsigned canary)" \
+              -f body="$(cat "${RUNNER_TEMP}/canary-notes.md")" \
+              -F draft=true \
+              -F prerelease=true \
+              -f make_latest=false
+          )"
+          release_id="$(jq -er '.id | numbers | select(. > 0)' <<<"${draft}")"
+          test "$(jq -r '.draft' <<<"${draft}")" = true
+          test "$(jq -r '.prerelease' <<<"${draft}")" = true
+          test "$(jq -r '.tag_name' <<<"${draft}")" = "${RELEASE_TAG}"
+          test "$(jq -r '.target_commitish' <<<"${draft}")" = "${TARGET_COMMIT}"
+          test "$(jq '.assets | length' <<<"${draft}")" -eq 0
+
+          while IFS= read -r -d '' asset; do
+            gh release upload "${RELEASE_TAG}" "${asset}" \
+              --repo "${GITHUB_REPOSITORY}"
+          done < <(find build/canary-base -maxdepth 1 -type f -print0 | sort -z)
+
+          release="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          )"
+          test "$(jq -r '.id' <<<"${release}")" = "${release_id}"
+          test "$(jq -r '.draft' <<<"${release}")" = true
+          test "$(jq -r '.prerelease' <<<"${release}")" = true
+          test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
+          test "$(jq -r '.target_commitish' <<<"${release}")" = "${TARGET_COMMIT}"
+          test "$(jq '.assets | length' <<<"${release}")" -eq 14
+          echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
+
+  release_smoke:
+    name: Smoke ${{ matrix.name }} draft download
+    needs:
+      - preflight
+      - create_draft
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
+    permissions:
+      # Draft releases require push-level visibility even for read-only API calls.
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            key: linux
+            os: ubuntu-22.04
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-Linux-x86_64.AppImage
+            smoke_command: tools/desktop/appimage-smoke.sh
+          - name: macOS
+            key: macos
+            os: macos-15-intel
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-macOS-x86_64.dmg
+            smoke_command: tools/desktop/macos-dmg-smoke.sh
+          - name: Windows
+            key: windows
+            os: windows-2022
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-Windows-x86_64.zip
+            smoke_command: tools/desktop/windows-zip-smoke.ps1
+    steps:
+      - name: Checkout trusted canary verification code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up Python for receipt generation
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Download exact package by immutable asset ID
+        id: asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ matrix.package }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/release-download
+          release="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          )"
+          asset="$(
+            jq -cer --arg name "${PACKAGE_NAME}" \
+              '.assets | map(select(.name == $name)) |
+               if length == 1 then .[0] else error("package asset is not unique") end' \
+              <<<"${release}"
+          )"
+          asset_id="$(jq -er '.id | numbers | select(. > 0)' <<<"${asset}")"
+          asset_size="$(jq -er '.size | numbers | select(. > 0)' <<<"${asset}")"
+          asset_digest="$(jq -er '.digest | strings | select(test("^sha256:[a-f0-9]{64}$"))' <<<"${asset}")"
+          destination="build/release-download/${PACKAGE_NAME}"
+          gh api \
+            -H "Accept: application/octet-stream" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+            > "${destination}"
+          local_size="$(wc -c < "${destination}" | tr -d '[:space:]')"
+          local_digest="$(
+            python3 -c '
+          import hashlib
+          import pathlib
+          import sys
+          path = pathlib.Path(sys.argv[1])
+          with path.open("rb") as handle:
+              print("sha256:" + hashlib.file_digest(handle, "sha256").hexdigest())
+          ' "${destination}"
+          )"
+          test "${local_size}" = "${asset_size}"
+          test "${local_digest}" = "${asset_digest}"
+          echo "asset_id=${asset_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
+
+      - name: Smoke Linux release download
+        if: runner.os == 'Linux'
+        run: tools/desktop/appimage-smoke.sh build/release-download
+
+      - name: Smoke macOS release download
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh build/release-download
+
+      - name: Smoke Windows release download
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tools/desktop/windows-zip-smoke.ps1 `
+            -PackageDirectory build/release-download `
+            -ExpectedSourceVersion "${{ needs.preflight.outputs.source_version }}" `
+            -ExpectedDistributionVersion "${{ needs.preflight.outputs.distribution_version }}"
+
+      - name: Generate explicit unsigned-canary receipt
+        shell: bash
+        run: |
+          mkdir -p build/canary-receipt
+          python3 tools/desktop/generate-unsigned-canary-receipt.py \
+            --platform "${{ matrix.key }}" \
+            --package "build/release-download/${{ matrix.package }}" \
+            --output "build/canary-receipt/chaft-desktop-${{ matrix.key }}-verification.json" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${{ needs.create_draft.outputs.release_id }}" \
+            --asset-id "${{ steps.asset.outputs.asset_id }}" \
+            --workflow-run-id "${GITHUB_RUN_ID}" \
+            --workflow-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --runner-os "${{ runner.os }}" \
+            --runner-arch "${{ runner.arch }}" \
+            --smoke-command "${{ matrix.smoke_command }}"
+
+      - name: Upload native draft-download receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-${{ matrix.key }}-receipt-${{ needs.preflight.outputs.distribution_version }}
+          path: build/canary-receipt/chaft-desktop-${{ matrix.key }}-verification.json
+          if-no-files-found: error
+          archive: true
+          retention-days: 14
+
+  finalize_draft:
+    name: Finalize exact 19-file draft
+    needs:
+      - preflight
+      - create_draft
+      - release_smoke
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download native verification receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: canary-*-receipt-${{ needs.preflight.outputs.distribution_version }}
+          path: build/canary-receipts
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Redownload, bind, and finalize the draft namespace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          assets="build/canary-final"
+          mkdir -p "${assets}"
+          release="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          )"
+          test "$(jq '.assets | length' <<<"${release}")" -eq 14
+          while IFS=$'\t' read -r asset_id name size digest; do
+            if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
+              "${name}" == */* || "${name}" == *\\* ]]; then
+              echo "::error::Release API returned an unsafe asset filename."
+              exit 1
+            fi
+            [[ "${asset_id}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${size}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+            gh api \
+              -H "Accept: application/octet-stream" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "${assets}/${name}"
+            test "$(wc -c < "${assets}/${name}" | tr -d '[:space:]')" = "${size}"
+            test "sha256:$(sha256sum "${assets}/${name}" | awk '{print $1}')" = "${digest}"
+          done < <(
+            jq -r '.assets[] | [.id, .name, .size, .digest] | @tsv' <<<"${release}"
+          )
+          cp -- build/canary-receipts/*.json "${assets}/"
+          python3 tools/desktop/canary-release-assets.py finalize \
+            --assets-dir "${assets}" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${RELEASE_ID}"
+          python3 tools/desktop/canary-release-assets.py verify-complete \
+            --assets-dir "${assets}" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${RELEASE_ID}"
+
+          for receipt in "${assets}"/chaft-desktop-*-verification.json; do
+            gh release upload "${RELEASE_TAG}" "${receipt}" \
+              --repo "${GITHUB_REPOSITORY}"
+          done
+          gh release upload "${RELEASE_TAG}" \
+            "${assets}/chaft-desktop-release-inventory.json" \
+            "${assets}/chaft-desktop-release-SHA256SUMS" \
+            --repo "${GITHUB_REPOSITORY}"
+
+  verify_draft:
+    name: Redownload and verify complete draft
+    needs:
+      - preflight
+      - create_draft
+      - finalize_draft
+    runs-on: ubuntu-22.04
+    permissions:
+      # Draft releases require push-level visibility even for read-only API calls.
+      contents: write
+    steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Verify the exact remote draft namespace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          assets="build/canary-draft-verification"
+          mkdir -p "${assets}"
+          release="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          )"
+          test "$(jq -r '.draft' <<<"${release}")" = true
+          test "$(jq -r '.prerelease' <<<"${release}")" = true
+          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+          while IFS=$'\t' read -r asset_id name size digest; do
+            if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
+              "${name}" == */* || "${name}" == *\\* ]]; then
+              echo "::error::Release API returned an unsafe asset filename."
+              exit 1
+            fi
+            [[ "${asset_id}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${size}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+            gh api \
+              -H "Accept: application/octet-stream" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "${assets}/${name}"
+            test "$(wc -c < "${assets}/${name}" | tr -d '[:space:]')" = "${size}"
+            test "sha256:$(sha256sum "${assets}/${name}" | awk '{print $1}')" = "${digest}"
+          done < <(
+            jq -r '.assets[] | [.id, .name, .size, .digest] | @tsv' <<<"${release}"
+          )
+          python3 tools/desktop/canary-release-assets.py verify-complete \
+            --assets-dir "${assets}" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${RELEASE_ID}"
+
+  publish:
+    name: Publish immutable prerelease
+    needs:
+      - preflight
+      - create_draft
+      - verify_draft
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish without changing prerelease or latest state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          )"
+          test "$(jq -r '.draft' <<<"${release}")" = true
+          test "$(jq -r '.prerelease' <<<"${release}")" = true
+          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+          published="$(
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false \
+              -F prerelease=true \
+              -f make_latest=false
+          )"
+          test "$(jq -r '.id' <<<"${published}")" = "${RELEASE_ID}"
+          test "$(jq -r '.tag_name' <<<"${published}")" = "${RELEASE_TAG}"
+          test "$(jq -r '.draft' <<<"${published}")" = false
+          test "$(jq -r '.prerelease' <<<"${published}")" = true
+
+  verify_published:
+    name: Verify immutable published release
+    needs:
+      - preflight
+      - create_draft
+      - publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Verify release immutability, assets, and attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release=""
+          for attempt in {1..12}; do
+            release="$(
+              gh api \
+                -H "X-GitHub-Api-Version: 2026-03-10" \
+                "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+            )"
+            if [[ "$(jq -r '.immutable // false' <<<"${release}")" == "true" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$(jq -r '.immutable // false' <<<"${release}")" = true
+          test "$(jq -r '.draft' <<<"${release}")" = false
+          test "$(jq -r '.prerelease' <<<"${release}")" = true
+          test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
+          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+
+          if latest="$(gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/releases/latest" 2>/dev/null)"; then
+            test "$(jq -r '.tag_name' <<<"${latest}")" != "${RELEASE_TAG}"
+          fi
+
+          git fetch --force --tags origin
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = \
+            "${{ needs.preflight.outputs.commit }}"
+
+          assets="build/canary-published-verification"
+          mkdir -p "${assets}"
+          while IFS=$'\t' read -r asset_id name size digest; do
+            if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
+              "${name}" == */* || "${name}" == *\\* ]]; then
+              echo "::error::Release API returned an unsafe asset filename."
+              exit 1
+            fi
+            [[ "${asset_id}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${size}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+            gh api \
+              -H "Accept: application/octet-stream" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "${assets}/${name}"
+            test "$(wc -c < "${assets}/${name}" | tr -d '[:space:]')" = "${size}"
+            test "sha256:$(sha256sum "${assets}/${name}" | awk '{print $1}')" = "${digest}"
+          done < <(
+            jq -r '.assets[] | [.id, .name, .size, .digest] | @tsv' <<<"${release}"
+          )
+          python3 tools/desktop/canary-release-assets.py verify-complete \
+            --assets-dir "${assets}" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --release-id "${RELEASE_ID}"
+
+          for attempt in {1..12}; do
+            if gh release verify "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}"; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "${verified:-false}" = true
+          while IFS= read -r -d '' asset; do
+            gh release verify-asset "${RELEASE_TAG}" "${asset}" \
+              --repo "${GITHUB_REPOSITORY}" >/dev/null
+          done < <(find "${assets}" -maxdepth 1 -type f -print0 | sort -z)
+
+      - name: Write release verification summary
+        run: |
+          {
+            echo "## Published unsigned canary"
+            echo
+            echo "- Tag: \`${{ needs.preflight.outputs.tag }}\`"
+            echo "- Commit: \`${{ needs.preflight.outputs.commit }}\`"
+            echo "- Release ID: \`${{ needs.create_draft.outputs.release_id }}\`"
+            echo "- State: immutable prerelease, never latest"
+            echo "- Assets: 19 verified files"
+            echo "- Signing: unsigned-canary; stable gates unchanged"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  promote_website:
+    name: Dispatch exact canary website promotion
+    needs:
+      - preflight
+      - verify_published
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start the canary-only promotion workflow
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run promote-desktop-canary.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${DEFAULT_BRANCH}" \
+            -f tag="${RELEASE_TAG}"
+          {
+            echo "## Website promotion dispatched"
+            echo
+            echo "- Workflow: \`promote-desktop-canary.yml\`"
+            echo "- Tag: \`${RELEASE_TAG}\`"
+            echo "- Branch: \`${DEFAULT_BRANCH}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

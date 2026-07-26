@@ -203,7 +203,9 @@ class PathClassificationTests(unittest.TestCase):
     def test_packaging_and_release_tools_avoid_rust_and_debug_desktop(self) -> None:
         for path in (
             "packaging/linux/appimage-tools.lock",
+            "tools/desktop/canary-release-assets.py",
             "tools/desktop/check-qt-xcb-runtime.sh",
+            "tools/desktop/generate-unsigned-canary-receipt.py",
             "tools/desktop/install-linux-package-dependencies.sh",
             "tools/desktop/linux-appimage-contract-test.py",
             "tools/desktop/macos-dmg-smoke-test.py",
@@ -211,6 +213,7 @@ class PathClassificationTests(unittest.TestCase):
             "tools/desktop/package-linux-appimage.sh",
             "tools/desktop/qt-release-binding-test.py",
             "tools/desktop/release-metadata.py",
+            "tools/desktop/unsigned_canary_policy.py",
             "tools/desktop/windows-zip-smoke.ps1",
         ):
             with self.subTest(path=path):

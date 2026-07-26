@@ -1,9 +1,30 @@
+import { createHash } from "node:crypto";
+
 const COMMON_HEADERS = {
   "cross-origin-opener-policy": "same-origin",
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
 };
+
+const CANARY_VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.([1-9]\d*)$/;
+const RELEASE_STATUSES = new Set(["coming-soon", "published"]);
+const RELEASE_FILE_TIMEOUT_MS = 120_000;
+const REQUIRED_ASSET_EVIDENCE = [
+  "checksums",
+  "sbom",
+  "provenance",
+  "verification",
+];
+const REQUIRED_RELEASE_EVIDENCE = [
+  "qtSource",
+  "qtSourceChecksums",
+  "inventory",
+  "aggregateChecksums",
+];
+const SENSITIVE_USE_WARNING =
+  "Do not use Chaft canary builds for sensitive or production communication.";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -37,6 +58,366 @@ function staticAssetHref(html) {
   return match?.[2] ?? null;
 }
 
+function visibleText(html) {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function assertCanaryWarnings(html, label) {
+  const text = visibleText(html).toLowerCase();
+  assert(
+    text.includes("unsigned canary"),
+    `${label} must identify the unsigned canary`,
+  );
+  assert(
+    text.includes(SENSITIVE_USE_WARNING.toLowerCase()),
+    `${label} must include the sensitive-use warning`,
+  );
+}
+
+function decodedPathSegments(url, label) {
+  try {
+    return url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+  } catch {
+    throw new Error(`${label} contains invalid percent encoding`);
+  }
+}
+
+function assertExactGitHubUrl(value, expectedSegments, label) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a valid URL`);
+  }
+  const actualSegments = decodedPathSegments(url, label);
+  assert(
+    url.origin === "https://github.com" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      actualSegments.length === expectedSegments.length &&
+      actualSegments.every((segment, index) => segment === expectedSegments[index]),
+    `${label} must be the exact immutable GitHub URL for ${expectedSegments.join("/")}`,
+  );
+  return url;
+}
+
+function releaseFile(file, { expectedTag, label, repository }) {
+  assert(
+    file && typeof file === "object" && !Array.isArray(file),
+    `${label} must be an object`,
+  );
+  assert(
+    typeof file.filename === "string" &&
+      file.filename.length > 0 &&
+      !file.filename.includes("/") &&
+      !file.filename.includes("\\"),
+    `${label}.filename must be a file name`,
+  );
+  assert(
+    Number.isSafeInteger(file.sizeBytes) && file.sizeBytes > 0,
+    `${label}.sizeBytes must be a positive integer`,
+  );
+  assert(
+    typeof file.sha256 === "string" && /^[a-f0-9]{64}$/i.test(file.sha256),
+    `${label}.sha256 must be a SHA-256 digest`,
+  );
+  const repositorySegments = repository.split("/");
+  assertExactGitHubUrl(
+    file.url,
+    [
+      ...repositorySegments,
+      "releases",
+      "download",
+      expectedTag,
+      file.filename,
+    ],
+    `${label}.url`,
+  );
+  return {
+    filename: file.filename,
+    url: file.url,
+    sizeBytes: file.sizeBytes,
+    sha256: file.sha256.toLowerCase(),
+    references: [label],
+  };
+}
+
+function collectCanaryReleaseFiles(
+  manifest,
+  {
+    expectedReleaseStatus,
+    expectedReleaseTag,
+    expectedReleaseVersion,
+    repository,
+  },
+) {
+  assert(
+    manifest && typeof manifest === "object" && !Array.isArray(manifest),
+    "release JSON must be an object",
+  );
+  assert(manifest.schemaVersion === 2, "release schemaVersion must be 2");
+  assert(manifest.channel === "canary", "release channel must be canary");
+  assert(
+    manifest.status === expectedReleaseStatus,
+    "release status does not match the deployment artifact",
+  );
+  assert(manifest.version === expectedReleaseVersion, "release version does not match");
+
+  const repositorySegments = repository.split("/");
+  assertExactGitHubUrl(manifest.sourceUrl, repositorySegments, "release source URL");
+  assert(
+    Array.isArray(manifest.assets) && manifest.assets.length === 3,
+    "release assets must contain exactly one Windows, macOS, and Linux entry",
+  );
+
+  if (expectedReleaseStatus === "coming-soon") {
+    assert(expectedReleaseTag === null, "coming-soon release tag must be null");
+    assert(manifest.tag === null, "coming-soon manifest tag must be null");
+    assert(manifest.publishedAt === null, "coming-soon publishedAt must be null");
+    assert(manifest.commit === null, "coming-soon commit must be null");
+    assert(
+      manifest.releaseEvidence === null,
+      "coming-soon releaseEvidence must be null",
+    );
+    assertExactGitHubUrl(
+      manifest.releaseUrl,
+      [...repositorySegments, "releases"],
+      "release URL",
+    );
+
+    const operatingSystems = new Set();
+    const evidenceKeys = [
+      "checksums",
+      "sbom",
+      "provenance",
+      "signature",
+      "verification",
+    ];
+    for (const [index, asset] of manifest.assets.entries()) {
+      const label = `release.assets[${index}]`;
+      assert(
+        asset && typeof asset === "object" && !Array.isArray(asset),
+        `${label} must be an object`,
+      );
+      assert(
+        ["windows", "macos", "linux"].includes(asset.os),
+        `${label}.os must be windows, macos, or linux`,
+      );
+      assert(!operatingSystems.has(asset.os), `${label}.os is duplicated`);
+      operatingSystems.add(asset.os);
+      assert(asset.available === false, `${label}.available must be false`);
+      assert(asset.filename === null, `${label}.filename must be null`);
+      assert(asset.sizeBytes === null, `${label}.sizeBytes must be null`);
+      assert(asset.sha256 === null, `${label}.sha256 must be null`);
+      assert(asset.signingStatus === "pending", `${label}.signingStatus must be pending`);
+      assertExactGitHubUrl(
+        asset.url,
+        [...repositorySegments, "releases"],
+        `${label}.url`,
+      );
+      assert(
+        asset.evidence &&
+          typeof asset.evidence === "object" &&
+          !Array.isArray(asset.evidence),
+        `${label}.evidence must be an object`,
+      );
+      assert(
+        JSON.stringify(Object.keys(asset.evidence).sort()) ===
+          JSON.stringify([...evidenceKeys].sort()),
+        `${label}.evidence keys changed`,
+      );
+      assert(
+        evidenceKeys.every((key) => asset.evidence[key] === null),
+        `${label}.evidence must remain entirely null`,
+      );
+    }
+    return [];
+  }
+
+  assert(manifest.tag === expectedReleaseTag, "release tag does not match");
+  assert(
+    typeof manifest.publishedAt === "string" && manifest.publishedAt.length > 0,
+    "published canary must include publishedAt",
+  );
+  assert(
+    typeof manifest.commit === "string" && /^[a-f0-9]{40}$/.test(manifest.commit),
+    "published canary must include a full lowercase commit",
+  );
+  assertExactGitHubUrl(
+    manifest.releaseUrl,
+    [...repositorySegments, "releases", "tag", expectedReleaseTag],
+    "release URL",
+  );
+
+  const operatingSystems = new Set();
+  const declarations = [];
+  for (const [index, asset] of manifest.assets.entries()) {
+    const label = `release.assets[${index}]`;
+    assert(
+      asset && typeof asset === "object" && !Array.isArray(asset),
+      `${label} must be an object`,
+    );
+    assert(
+      ["windows", "macos", "linux"].includes(asset.os),
+      `${label}.os must be windows, macos, or linux`,
+    );
+    assert(!operatingSystems.has(asset.os), `${label}.os is duplicated`);
+    operatingSystems.add(asset.os);
+    assert(asset.available === true, `${label} must be available`);
+    assert(
+      asset.signingStatus === "unsigned-canary",
+      `${label}.signingStatus must be unsigned-canary`,
+    );
+    assert(
+      typeof asset.filename === "string" && asset.filename.includes(expectedReleaseVersion),
+      `${label}.filename must contain ${expectedReleaseVersion}`,
+    );
+    declarations.push(
+      releaseFile(asset, {
+        expectedTag: expectedReleaseTag,
+        label: `${label}.package`,
+        repository,
+      }),
+    );
+
+    assert(
+      asset.evidence && typeof asset.evidence === "object" && !Array.isArray(asset.evidence),
+      `${label}.evidence must be an object`,
+    );
+    assert(
+      JSON.stringify(Object.keys(asset.evidence).sort()) ===
+        JSON.stringify(
+          [
+            "checksums",
+            "sbom",
+            "provenance",
+            "signature",
+            "verification",
+          ].sort(),
+        ),
+      `${label}.evidence keys changed`,
+    );
+    assert(
+      asset.evidence.signature === null,
+      `${label}.evidence.signature must be null`,
+    );
+    for (const key of REQUIRED_ASSET_EVIDENCE) {
+      assert(
+        asset.evidence[key] !== null && asset.evidence[key] !== undefined,
+        `${label}.evidence.${key} is required`,
+      );
+    }
+    for (const [key, evidence] of Object.entries(asset.evidence)) {
+      if (evidence === null) continue;
+      declarations.push(
+        releaseFile(evidence, {
+          expectedTag: expectedReleaseTag,
+          label: `${label}.evidence.${key}`,
+          repository,
+        }),
+      );
+    }
+  }
+  for (const os of ["windows", "macos", "linux"]) {
+    assert(operatingSystems.has(os), `canary release must include an available ${os} package`);
+  }
+
+  assert(
+    manifest.releaseEvidence &&
+      typeof manifest.releaseEvidence === "object" &&
+      !Array.isArray(manifest.releaseEvidence),
+    "releaseEvidence must be an object",
+  );
+  assert(
+    JSON.stringify(Object.keys(manifest.releaseEvidence).sort()) ===
+      JSON.stringify([...REQUIRED_RELEASE_EVIDENCE].sort()),
+    "releaseEvidence keys changed",
+  );
+  for (const key of REQUIRED_RELEASE_EVIDENCE) {
+    assert(
+      manifest.releaseEvidence[key] !== null &&
+        manifest.releaseEvidence[key] !== undefined,
+      `releaseEvidence.${key} is required`,
+    );
+  }
+  for (const [key, evidence] of Object.entries(manifest.releaseEvidence)) {
+    if (evidence === null) continue;
+    declarations.push(
+      releaseFile(evidence, {
+        expectedTag: expectedReleaseTag,
+        label: `releaseEvidence.${key}`,
+        repository,
+      }),
+    );
+  }
+
+  const uniqueFiles = new Map();
+  for (const declaration of declarations) {
+    const existing = uniqueFiles.get(declaration.url);
+    if (!existing) {
+      uniqueFiles.set(declaration.url, declaration);
+      continue;
+    }
+    assert(
+      existing.filename === declaration.filename &&
+        existing.sizeBytes === declaration.sizeBytes &&
+        existing.sha256 === declaration.sha256,
+      `release URL ${declaration.url} has conflicting manifest metadata`,
+    );
+    existing.references.push(...declaration.references);
+  }
+  assert(uniqueFiles.size === 19, "published canary must expose exactly 19 release files");
+  return [...uniqueFiles.values()];
+}
+
+async function verifyReleaseFile(file, fetchImpl) {
+  const response = await fetchImpl(file.url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(RELEASE_FILE_TIMEOUT_MS),
+  });
+  assert(response.status === 200, `${file.filename} must download with status 200`);
+  assert(response.body, `${file.filename} response body is missing`);
+
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+  for await (const chunk of response.body) {
+    const bytes =
+      chunk instanceof Uint8Array
+        ? chunk
+        : new Uint8Array(chunk);
+    sizeBytes += bytes.byteLength;
+    assert(
+      sizeBytes <= file.sizeBytes,
+      `${file.filename} exceeds manifest size ${file.sizeBytes}`,
+    );
+    hash.update(bytes);
+  }
+  assert(
+    sizeBytes === file.sizeBytes,
+    `${file.filename} size ${sizeBytes} does not match manifest size ${file.sizeBytes}`,
+  );
+  const sha256 = hash.digest("hex");
+  assert(
+    sha256 === file.sha256,
+    `${file.filename} SHA-256 ${sha256} does not match manifest ${file.sha256}`,
+  );
+  return { response, sizeBytes, sha256 };
+}
+
 function headerIncludes(headers, name, expected) {
   return (headers.get(name) ?? "").toLowerCase().includes(expected.toLowerCase());
 }
@@ -62,11 +443,36 @@ async function body(response, label) {
 export async function verifyPublicDeployment({
   alternateSiteUrl,
   expectedCommit,
+  expectedReleaseManifestSha256,
+  expectedReleaseStatus,
+  expectedReleaseTag,
+  expectedReleaseVersion,
   fetchImpl = fetch,
   repository,
   siteUrl,
 }) {
   assert(/^[a-f0-9]{40}$/.test(expectedCommit), "expected commit must be a full SHA-1");
+  assert(
+    typeof expectedReleaseVersion === "string" &&
+      CANARY_VERSION_PATTERN.test(expectedReleaseVersion),
+    "expected release version must be a canary semantic version without a leading v",
+  );
+  assert(
+    RELEASE_STATUSES.has(expectedReleaseStatus),
+    "expected release status must be coming-soon or published",
+  );
+  assert(
+    /^[a-f0-9]{64}$/.test(expectedReleaseManifestSha256),
+    "expected release manifest SHA-256 must be a lowercase digest",
+  );
+  assert(
+    expectedReleaseStatus === "published"
+      ? expectedReleaseTag === `v${expectedReleaseVersion}`
+      : expectedReleaseTag === null || expectedReleaseTag === undefined,
+    expectedReleaseStatus === "published"
+      ? `expected release tag must equal v${expectedReleaseVersion}`
+      : "coming-soon release tag must be omitted",
+  );
   assert(repository === "Jurshsmith/chaft", "unexpected source repository");
   const origin = normalizedOrigin(siteUrl);
   const alternateOrigin = alternateSiteUrl ? normalizedOrigin(alternateSiteUrl) : null;
@@ -109,6 +515,13 @@ export async function verifyPublicDeployment({
     ["/", 200, "home", "/"],
     ["/download/", 200, "download", "/download/"],
     ["/security/", 200, "security", "/security/"],
+    ["/releases/", 200, "releases", "/releases/"],
+    [
+      `/releases/${expectedReleaseVersion}/`,
+      200,
+      "release-version",
+      `/releases/${expectedReleaseVersion}/`,
+    ],
     ["/definitely-not-a-page-chaft-verification", 404, "not-found", null],
   ];
   let homeHtml = "";
@@ -124,6 +537,20 @@ export async function verifyPublicDeployment({
       assert(
         canonicalHref(html) === `${origin}${expectedCanonical}`,
         `${label} canonical URL does not match ${origin}${expectedCanonical}`,
+      );
+    }
+    if (
+      expectedReleaseStatus === "published" &&
+      ["download", "releases", "release-version"].includes(label)
+    ) {
+      assertCanaryWarnings(html, label);
+    }
+    if (["download", "releases", "release-version"].includes(label)) {
+      const visibleReleaseIdentity =
+        expectedReleaseTag ?? `v${expectedReleaseVersion}`;
+      assert(
+        visibleText(html).includes(visibleReleaseIdentity),
+        `${label} must identify ${visibleReleaseIdentity}`,
       );
     }
     if (label === "home") homeHtml = html;
@@ -146,19 +573,86 @@ export async function verifyPublicDeployment({
     record(label, response, expectedLocation);
   }
 
-  const currentRelease = await fetchImpl(`${origin}/releases/current.json`, {
-    redirect: "manual",
-    signal: AbortSignal.timeout(10_000),
-  });
-  assert(currentRelease.status === 200, "current release JSON must return 200");
-  assertCommonHeaders(currentRelease, "current release JSON");
+  const currentReleaseResponse = await fetchImpl(
+    `${origin}/releases/current.json`,
+    {
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
   assert(
-    headerIncludes(currentRelease.headers, "cache-control", "max-age=0") &&
-      headerIncludes(currentRelease.headers, "cache-control", "must-revalidate"),
+    currentReleaseResponse.status === 200,
+    "current release JSON must return 200",
+  );
+  assertCommonHeaders(currentReleaseResponse, "current release JSON");
+  assert(
+    headerIncludes(currentReleaseResponse.headers, "cache-control", "max-age=0") &&
+      headerIncludes(currentReleaseResponse.headers, "cache-control", "must-revalidate"),
     "current release JSON must revalidate",
   );
-  JSON.parse(await body(currentRelease, "current release JSON"));
-  record("current-release", currentRelease, "/releases/current.json");
+  assert(
+    headerIncludes(currentReleaseResponse.headers, "content-type", "application/json"),
+    "current release JSON must use application/json",
+  );
+  const currentReleaseText = await body(
+    currentReleaseResponse,
+    "current release JSON",
+  );
+  const currentReleaseSha256 = createHash("sha256")
+    .update(currentReleaseText)
+    .digest("hex");
+  assert(
+    currentReleaseSha256 === expectedReleaseManifestSha256,
+    "current release JSON does not match the deployment artifact SHA-256",
+  );
+  const currentRelease = JSON.parse(currentReleaseText);
+  record("current-release", currentReleaseResponse, "/releases/current.json");
+
+  const versionReleasePath = `/releases/${expectedReleaseVersion}.json`;
+  const versionReleaseResponse = await fetchImpl(
+    `${origin}${versionReleasePath}`,
+    {
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  assert(
+    versionReleaseResponse.status === 200,
+    "version release JSON must return 200",
+  );
+  assertCommonHeaders(versionReleaseResponse, "version release JSON");
+  assert(
+    headerIncludes(versionReleaseResponse.headers, "cache-control", "max-age=0") &&
+      headerIncludes(versionReleaseResponse.headers, "cache-control", "must-revalidate"),
+    "version release JSON must revalidate",
+  );
+  assert(
+    headerIncludes(versionReleaseResponse.headers, "content-type", "application/json"),
+    "version release JSON must use application/json",
+  );
+  const versionRelease = JSON.parse(
+    await body(versionReleaseResponse, "version release JSON"),
+  );
+  assert(
+    JSON.stringify(versionRelease) === JSON.stringify(currentRelease),
+    "current and version release JSON must be identical",
+  );
+  record("version-release", versionReleaseResponse, versionReleasePath);
+
+  const releaseFiles = collectCanaryReleaseFiles(currentRelease, {
+    expectedReleaseStatus,
+    expectedReleaseTag,
+    expectedReleaseVersion,
+    repository,
+  });
+  for (const file of releaseFiles) {
+    const verified = await verifyReleaseFile(file, fetchImpl);
+    checks.push({
+      name: `release-file:${file.filename}`,
+      status: verified.response.status,
+      detail: `${file.sizeBytes} bytes sha256:${file.sha256}`,
+    });
+  }
 
   for (const [pathname, label] of [
     ["/robots.txt", "robots"],
@@ -219,6 +713,11 @@ export async function verifyPublicDeployment({
     alternateSiteUrl: alternateOrigin,
     repository,
     expectedCommit,
+    expectedReleaseManifestSha256,
+    expectedReleaseStatus,
+    expectedReleaseTag: expectedReleaseTag ?? null,
+    expectedReleaseVersion,
+    releaseFilesVerified: releaseFiles.length,
     checks,
     result: "passed",
   };
