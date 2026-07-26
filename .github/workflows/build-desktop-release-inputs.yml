@@ -142,8 +142,8 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install 1.92.0 --profile minimal
-          rustup default 1.92.0
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1

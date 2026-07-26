@@ -29,6 +29,7 @@ MAIN_CACHE_WRITER = (
     "${{ github.event_name != 'pull_request' && "
     "github.ref == 'refs/heads/main' }}"
 )
+RUST_VERSION = "1.97.1"
 
 
 def load_required_check() -> types.ModuleType:
@@ -122,6 +123,25 @@ class WorkflowYamlTests(unittest.TestCase):
                 if immutable.fullmatch(action) is None:
                     violations.append(f"{path.name}: {action}")
         self.assertEqual(violations, [])
+
+    def test_exact_rust_toolchain_is_consistent(self) -> None:
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(WORKFLOWS.glob("*.yml"))
+        )
+        installs = re.findall(r"rustup toolchain install ([0-9.]+)", workflows)
+        defaults = re.findall(r"rustup default ([0-9.]+)", workflows)
+        self.assertGreater(len(installs), 0)
+        self.assertEqual(set(installs), {RUST_VERSION})
+        self.assertEqual(defaults, installs)
+        self.assertIn(
+            f'rust-version = "{RUST_VERSION}"',
+            (ROOT / "Cargo.toml").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            f'channel = "{RUST_VERSION}"',
+            (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"),
+        )
 
 
 class CiWorkflowContractTests(unittest.TestCase):
