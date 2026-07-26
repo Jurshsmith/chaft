@@ -7,8 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 
-find_package(Qt6 REQUIRED COMPONENTS Network Qml Quick Widgets)
-qt_standard_project_setup(REQUIRES 6.8)
+find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
+qt_standard_project_setup(REQUIRES 6.8.4)
 
 if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)

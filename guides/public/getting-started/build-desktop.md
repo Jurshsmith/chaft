@@ -28,7 +28,7 @@ Install these on every platform:
 - CMake 3.28 or newer;
 - Ninja;
 - Python 3;
-- Qt 6.8 or newer with the Network, QML, Quick, and Widgets components.
+- Qt 6.8.4 with the Network, QML, Quick, and Widgets components.
 
 The automated builds use the open-source Qt 6.8.4 source release with pinned
 security patches. Keep `qt-cmake` or `qmake6` on `PATH`, or set `QT_ROOT_DIR`
@@ -158,7 +158,7 @@ by that manifest.
 
 ### Qt cannot be found
 
-Confirm that `qmake6 --version` reports Qt 6.8 or newer. Put the matching Qt
+Confirm that `qmake6 --version` reports exactly Qt 6.8.4. Put the matching Qt
 `bin` directory on `PATH` or set `QT_ROOT_DIR` to its installation prefix, then
 rerun `tools/desktop/preflight.sh`.
 

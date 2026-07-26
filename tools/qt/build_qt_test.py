@@ -20,6 +20,7 @@ from unittest import mock
 SCRIPT = Path(__file__).with_name("build_qt.py")
 MANIFEST = Path(__file__).with_name("qt-6.8.4.json")
 PROBE = Path(__file__).with_name("probe")
+ROOT = SCRIPT.parents[2]
 
 
 def load_script() -> types.ModuleType:
@@ -35,6 +36,29 @@ def load_script() -> types.ModuleType:
 qt = load_script()
 
 
+def synthetic_toolchain(platform_name: str, image_version: str = "20260726.1"):
+    return {
+        "schemaVersion": 1,
+        "platform": platform_name,
+        "runner": {
+            "os": {
+                "linux": "Linux",
+                "macos": "macOS",
+                "windows": "Windows",
+            }[platform_name],
+            "architecture": "X64",
+            "imageOS": f"synthetic-{platform_name}",
+            "imageVersion": image_version,
+        },
+        "tools": {
+            "cmake": "cmake version 4.1.0",
+            "ninja": "1.13.1",
+            "compiler": f"synthetic {platform_name} compiler 1.0",
+            "python": "3.13.3",
+        },
+    }
+
+
 class ManifestContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = qt.load_manifest(MANIFEST)
@@ -45,15 +69,15 @@ class ManifestContractTests(unittest.TestCase):
             {
                 "linux": (
                     "qt-6.8.4-r1-linux-x86_64-gcc-11-"
-                    "6f80a75407c0c2914d84"
+                    "409b62db9d21fdc757f5"
                 ),
                 "macos": (
                     "qt-6.8.4-r1-macos-x86_64-apple-clang-"
-                    "6f80a75407c0c2914d84"
+                    "409b62db9d21fdc757f5"
                 ),
                 "windows": (
                     "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-                    "6f80a75407c0c2914d84"
+                    "409b62db9d21fdc757f5"
                 ),
             },
         )
@@ -66,6 +90,36 @@ class ManifestContractTests(unittest.TestCase):
         changed["modules"][0]["sha256"] = "0" * 64
         with self.assertRaisesRegex(qt.QtSdkError, "identities are stale"):
             qt.validate_manifest(changed)
+
+    def test_manifest_rejects_coerced_integer_and_boolean_types(self) -> None:
+        mutations = (
+            (
+                lambda value: value.__setitem__("schemaVersion", True),
+                "schemaVersion",
+            ),
+            (
+                lambda value: value.__setitem__("sdkRevision", 1.0),
+                "sdkRevision",
+            ),
+            (
+                lambda value: value["build"].__setitem__("parallel", 4.0),
+                "build configuration",
+            ),
+            (
+                lambda value: value["build"].__setitem__("shared", 1),
+                "build configuration",
+            ),
+            (
+                lambda value: value["modules"][0].__setitem__("order", True),
+                "positive integer order",
+            ),
+        )
+        for mutate, message in mutations:
+            with self.subTest(message=message):
+                changed = copy.deepcopy(self.manifest)
+                mutate(changed)
+                with self.assertRaisesRegex(qt.QtSdkError, message):
+                    qt.validate_manifest(changed)
 
     def test_identity_covers_build_driver_and_verification_probes(self) -> None:
         materials = qt.recipe_materials()
@@ -234,9 +288,39 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual(
             result.stdout,
             "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-            "6f80a75407c0c2914d84\n",
+            "409b62db9d21fdc757f5\n",
         )
         self.assertEqual(result.stderr, "")
+
+    def test_toolchain_fingerprint_invalidates_dynamic_cache_identity(self) -> None:
+        linux = synthetic_toolchain("linux")
+        updated_image = synthetic_toolchain("linux", "20260727.1")
+        first = qt.toolchain_fingerprint(linux, "linux")
+        second = qt.toolchain_fingerprint(updated_image, "linux")
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(
+            qt.sdk_identity(self.manifest, "linux", first),
+            qt.sdk_identity(self.manifest, "linux", second),
+        )
+        self.assertTrue(
+            qt.sdk_identity(self.manifest, "linux", first).endswith(
+                f"-tc-{first[:20]}"
+            )
+        )
+
+    def test_toolchain_contract_rejects_platform_and_multiline_versions(self) -> None:
+        contract = synthetic_toolchain("macos")
+        contract["schemaVersion"] = True
+        with self.assertRaisesRegex(qt.QtSdkError, "schemaVersion"):
+            qt.toolchain_fingerprint(contract, "macos")
+        contract = synthetic_toolchain("macos")
+        contract["platform"] = "windows"
+        with self.assertRaisesRegex(qt.QtSdkError, "platform mismatch"):
+            qt.toolchain_fingerprint(contract, "macos")
+        contract = synthetic_toolchain("macos")
+        contract["tools"]["compiler"] = "line one\nline two"
+        with self.assertRaisesRegex(qt.QtSdkError, "one non-empty line"):
+            qt.toolchain_fingerprint(contract, "macos")
 
 
 class MaterialSafetyTests(unittest.TestCase):
@@ -313,6 +397,24 @@ class MaterialSafetyTests(unittest.TestCase):
 
 
 class VerificationContractTests(unittest.TestCase):
+    def test_desktop_build_and_preflight_require_exact_qt_6_8_4(self) -> None:
+        cmake = (ROOT / "apps" / "desktop-qt" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS "
+            "Network Qml Quick Widgets)",
+            cmake,
+        )
+        self.assertIn("qt_standard_project_setup(REQUIRES 6.8.4)", cmake)
+
+        preflight = (
+            ROOT / "tools" / "desktop" / "preflight.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('[ "$qt_version" != "6.8.4" ]', preflight)
+        self.assertIn("requires exactly Qt 6.8.4", preflight)
+        self.assertNotIn("Qt 6.8+", preflight)
+
     def test_probe_requires_exact_quick_qml_and_desktop_components(self) -> None:
         cmake = (PROBE / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn(
@@ -330,15 +432,29 @@ class VerificationContractTests(unittest.TestCase):
 
     def test_provenance_identity_and_manifest_are_enforced(self) -> None:
         manifest = qt.load_manifest(MANIFEST)
+        toolchain = synthetic_toolchain("linux")
+        fingerprint = qt.toolchain_fingerprint(toolchain, "linux")
         expected = {
-            "identity": qt.sdk_identity(manifest, "linux"),
+            "schemaVersion": 1,
+            "identity": qt.sdk_identity(manifest, "linux", fingerprint),
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
             "sdkRevision": 1,
             "platform": "linux",
+            "platformSpecification": manifest["platforms"]["linux"],
+            "buildConfiguration": manifest["build"],
+            "generatedAt": "2026-07-26T00:00:00Z",
+            "host": {
+                "system": "Linux",
+                "release": "synthetic",
+                "machine": "x86_64",
+            },
+            "toolchainContract": toolchain,
+            "toolchainFingerprint": fingerprint,
             "sourceMaterials": qt.expected_source_materials(manifest, "linux"),
             "recipeMaterials": qt.recipe_materials(),
+            "commands": [],
             "verification": {
                 "completed": True,
                 "completedAt": "2026-07-26T00:00:00Z",
@@ -351,6 +467,38 @@ class VerificationContractTests(unittest.TestCase):
                 qt.load_and_validate_provenance(path, manifest, "linux"),
                 expected,
             )
+            changed = copy.deepcopy(expected)
+            changed["schemaVersion"] = True
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(qt.QtSdkError, "schemaVersion"):
+                qt.load_and_validate_provenance(
+                    path, manifest, "linux"
+                )
+            changed = copy.deepcopy(expected)
+            changed["sdkRevision"] = True
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(qt.QtSdkError, "sdkRevision mismatch"):
+                qt.load_and_validate_provenance(
+                    path, manifest, "linux"
+                )
+            changed = copy.deepcopy(expected)
+            changed["buildConfiguration"]["shared"] = 1
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(
+                qt.QtSdkError, "buildConfiguration mismatch"
+            ):
+                qt.load_and_validate_provenance(
+                    path, manifest, "linux"
+                )
+            changed = copy.deepcopy(expected)
+            changed["verification"]["completed"] = 1
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(
+                qt.QtSdkError, "completed verification"
+            ):
+                qt.load_and_validate_provenance(
+                    path, manifest, "linux"
+                )
             expected["manifestSha256"] = "0" * 64
             path.write_text(json.dumps(expected), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "manifestSha256 mismatch"):
@@ -358,15 +506,29 @@ class VerificationContractTests(unittest.TestCase):
 
     def test_restore_rejects_incomplete_or_wrong_source_provenance(self) -> None:
         manifest = qt.load_manifest(MANIFEST)
+        toolchain = synthetic_toolchain("macos")
+        fingerprint = qt.toolchain_fingerprint(toolchain, "macos")
         provenance = {
-            "identity": qt.sdk_identity(manifest, "macos"),
+            "schemaVersion": 1,
+            "identity": qt.sdk_identity(manifest, "macos", fingerprint),
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
             "sdkRevision": 1,
             "platform": "macos",
+            "platformSpecification": manifest["platforms"]["macos"],
+            "buildConfiguration": manifest["build"],
+            "generatedAt": "2026-07-26T00:00:00Z",
+            "host": {
+                "system": "macOS",
+                "release": "synthetic",
+                "machine": "x86_64",
+            },
+            "toolchainContract": toolchain,
+            "toolchainFingerprint": fingerprint,
             "sourceMaterials": qt.expected_source_materials(manifest, "macos"),
             "recipeMaterials": qt.recipe_materials(),
+            "commands": [],
             "verification": {"completed": False, "completedAt": None},
         }
         with tempfile.TemporaryDirectory() as temporary:
@@ -385,6 +547,55 @@ class VerificationContractTests(unittest.TestCase):
             path.write_text(json.dumps(provenance), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "sourceMaterials mismatch"):
                 qt.load_and_validate_provenance(path, manifest, "macos")
+
+    def test_restore_rejects_a_different_runner_toolchain_fingerprint(self) -> None:
+        manifest = qt.load_manifest(MANIFEST)
+        toolchain = synthetic_toolchain("windows")
+        fingerprint = qt.toolchain_fingerprint(toolchain, "windows")
+        provenance = {
+            "schemaVersion": 1,
+            "identity": qt.sdk_identity(manifest, "windows", fingerprint),
+            "manifestSha256": qt.manifest_digest(manifest),
+            "contractSha256": qt.contract_digest(manifest),
+            "qtVersion": "6.8.4",
+            "sdkRevision": 1,
+            "platform": "windows",
+            "platformSpecification": manifest["platforms"]["windows"],
+            "buildConfiguration": manifest["build"],
+            "generatedAt": "2026-07-26T00:00:00Z",
+            "host": {
+                "system": "Windows",
+                "release": "synthetic",
+                "machine": "x86_64",
+            },
+            "toolchainContract": toolchain,
+            "toolchainFingerprint": fingerprint,
+            "sourceMaterials": qt.expected_source_materials(
+                manifest, "windows"
+            ),
+            "recipeMaterials": qt.recipe_materials(),
+            "commands": [],
+            "verification": {
+                "completed": True,
+                "completedAt": "2026-07-26T00:00:00Z",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "provenance.json"
+            path.write_text(json.dumps(provenance), encoding="utf-8")
+            stale = qt.toolchain_fingerprint(
+                synthetic_toolchain("windows", "20260727.1"),
+                "windows",
+            )
+            with self.assertRaisesRegex(
+                qt.QtSdkError, "toolchainFingerprint mismatch"
+            ):
+                qt.load_and_validate_provenance(
+                    path,
+                    manifest,
+                    "windows",
+                    expected_toolchain_fingerprint=stale,
+                )
 
     def test_activation_writes_github_environment_and_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

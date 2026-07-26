@@ -88,7 +88,12 @@ See the [testing guide](testing.md) for the complete gate selection.
 The `Build desktop release inputs` workflow is manually dispatched with an
 existing tag formatted as `v<semantic-version>`. It:
 
-- resolves the tag to an exact commit and checks that the version agrees;
+- checks out the current protected default branch first, then uses that trusted
+  policy code to resolve and validate the requested tag;
+- requires the tag commit to be an ancestor of the current default-branch
+  commit, rejecting tags on unreviewed or detached history;
+- treats the validated tag checkout as data until those checks finish, then
+  checks that the tag and source versions agree;
 - checks out that immutable commit on Windows, macOS, and Linux runners;
 - runs the platform desktop gates;
 - creates package metadata and verifies it against the exact source commit;
@@ -98,6 +103,12 @@ existing tag formatted as `v<semantic-version>`. It:
 - verifies the corresponding-source bundle again on a clean runner;
 - includes it in the release-input audit; and
 - uploads non-publishing workflow artifacts with seven-day retention.
+
+The combined Qt and package job allows 180 minutes only for an exceptional
+cold-cache build. After the exact Qt SDK verifies, it deletes the transient Qt
+source/build tree and retains only the verified SDK before Rust, CMake, and
+packaging continue. Cache-hit runs remain expected to complete on their normal,
+shorter path.
 
 The workflow has read-only repository permissions. Its output is intentionally
 insufficient to become a public release by itself: Windows and macOS inputs
@@ -142,7 +153,9 @@ The `Promote desktop release to website` workflow runs when a GitHub Release is
 published and can also be dispatched for an existing published tag. It fails
 closed unless:
 
-- the tag, release, commit, and reviewed source history agree;
+- the tag, release, commit, and reviewed source history agree, including an
+  independent check that the tag commit is an ancestor of the current protected
+  default branch;
 - all expected platform packages and evidence files are present;
 - filenames, sizes, and SHA-256 values match;
 - the mandatory Qt corresponding-source bundle and checksum are present and

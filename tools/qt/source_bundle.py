@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import sys
 import tempfile
 from typing import Any, BinaryIO
@@ -43,6 +44,13 @@ PLATFORM_LABELS = {
     "macos": "macOS",
     "windows": "Windows",
 }
+LOCAL_FILE_HEADER = struct.Struct("<IHHHHHIIIHH")
+CENTRAL_DIRECTORY_HEADER = struct.Struct("<I6H3I5H2I")
+END_OF_CENTRAL_DIRECTORY = struct.Struct("<IHHHHIIH")
+LOCAL_FILE_HEADER_SIGNATURE = 0x04034B50
+CENTRAL_DIRECTORY_SIGNATURE = 0x02014B50
+END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054B50
+CANONICAL_CREATE_VERSION = (3 << 8) | 20
 
 
 EntryValue = bytes | Path
@@ -58,6 +66,30 @@ def _read_json(path: Path, description: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         qt.fail(f"{description} root must be an object")
     return value
+
+
+def _authoritative_file(
+    path: Path,
+    description: str,
+    recipe_root: Path | None,
+) -> Path:
+    if recipe_root is not None:
+        return qt.trusted_source_file(recipe_root, path, description)
+    if not path.is_file():
+        qt.fail(f"{description} not found: {path}")
+    return path
+
+
+def _package_file(
+    package_dir: Path,
+    name: str,
+    recipe_root: Path | None,
+) -> Path:
+    return _authoritative_file(
+        package_dir / name,
+        f"Qt corresponding-source package input {name}",
+        recipe_root,
+    )
 
 
 def _expected_package_modules(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -118,7 +150,10 @@ def validate_corresponding_source(
         },
         "Qt corresponding-source manifest",
     )
-    if source_manifest["schemaVersion"] != 1:
+    if (
+        type(source_manifest["schemaVersion"]) is not int
+        or source_manifest["schemaVersion"] != 1
+    ):
         qt.fail("Qt corresponding-source schemaVersion must be 1")
     if source_manifest["component"] != "Qt":
         qt.fail("Qt corresponding-source component must be Qt")
@@ -131,7 +166,9 @@ def validate_corresponding_source(
         "bundle": BUNDLE_NAME,
         "checksum": CHECKSUM_NAME,
     }
-    if source_manifest["releaseAssets"] != expected_assets:
+    if not qt.json_exact_equal(
+        source_manifest["releaseAssets"], expected_assets
+    ):
         qt.fail(
             "Qt corresponding-source releaseAssets must remain exactly "
             f"{expected_assets}"
@@ -140,18 +177,24 @@ def validate_corresponding_source(
         {"spdx": "LGPL-3.0-only", "packageFile": "LICENSE.LGPL3"},
         {"spdx": "GPL-3.0-only", "packageFile": "LICENSE.GPL3"},
     ]
-    if source_manifest["licenses"] != expected_licenses:
+    if not qt.json_exact_equal(
+        source_manifest["licenses"], expected_licenses
+    ):
         qt.fail(
             "Qt corresponding-source license records must remain exactly "
             f"{expected_licenses}"
         )
     expected_modules = _expected_package_modules(sdk_manifest)
-    if source_manifest["sourceModules"] != expected_modules:
+    if not qt.json_exact_equal(
+        source_manifest["sourceModules"], expected_modules
+    ):
         qt.fail(
             "Qt corresponding-source modules differ from the SDK manifest"
         )
     expected_patches = _expected_package_patches(sdk_manifest)
-    if source_manifest["securityPatches"] != expected_patches:
+    if not qt.json_exact_equal(
+        source_manifest["securityPatches"], expected_patches
+    ):
         qt.fail(
             "Qt corresponding-source security patches differ from the SDK "
             "manifest or its required order"
@@ -161,14 +204,67 @@ def validate_corresponding_source(
 def load_contracts(
     manifest_path: Path = QT_MANIFEST_PATH,
     package_dir: Path = PACKAGE_QT_DIR,
+    recipe_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    sdk_manifest = qt.load_manifest(manifest_path)
+    manifest_path = _authoritative_file(
+        manifest_path, "Qt SDK manifest", recipe_root
+    )
+    sdk_manifest = qt.load_manifest(
+        manifest_path, recipe_root=recipe_root
+    )
     source_manifest = _read_json(
-        package_dir / CORRESPONDING_SOURCE_NAME,
+        _package_file(
+            package_dir, CORRESPONDING_SOURCE_NAME, recipe_root
+        ),
         "Qt corresponding-source manifest",
     )
     validate_corresponding_source(source_manifest, sdk_manifest)
     return sdk_manifest, source_manifest
+
+
+def release_contract(
+    manifest_path: Path = QT_MANIFEST_PATH,
+    package_dir: Path = PACKAGE_QT_DIR,
+    bundle_recipe_path: Path | None = None,
+    recipe_root: Path | None = None,
+) -> dict[str, Any]:
+    """Return the offline contract that every desktop provenance must bind."""
+    sdk_manifest, source_manifest = load_contracts(
+        manifest_path, package_dir, recipe_root
+    )
+    compliance_materials = []
+    for name in PACKAGE_FILES:
+        path = _package_file(package_dir, name, recipe_root)
+        compliance_materials.append(
+            {"path": f"packaging/qt/{name}", "sha256": qt.sha256_file(path)}
+        )
+    payload = {
+        "schemaVersion": 1,
+        "bundleName": BUNDLE_NAME,
+        "checksumName": CHECKSUM_NAME,
+        "qtVersion": sdk_manifest["qtVersion"],
+        "sdkManifestSha256": qt.manifest_digest(
+            sdk_manifest, recipe_root=recipe_root
+        ),
+        "sdkContractSha256": qt.contract_digest(
+            sdk_manifest, recipe_root=recipe_root
+        ),
+        "sourceManifestSha256": qt.sha256_bytes(
+            qt.canonical_json(source_manifest)
+        ),
+        "bundleRecipeSha256": qt.sha256_file(
+            _authoritative_file(
+                bundle_recipe_path or Path(__file__).resolve(),
+                "Qt corresponding-source bundle recipe",
+                recipe_root,
+            )
+        ),
+        "complianceMaterials": compliance_materials,
+    }
+    return {
+        **payload,
+        "contractSha256": qt.sha256_bytes(qt.canonical_json(payload)),
+    }
 
 
 def _source_material_rows(
@@ -204,9 +300,12 @@ def _source_material_rows(
     return rows
 
 
-def _recipe_entries() -> dict[str, Path]:
-    materials = {row["path"]: row["sha256"] for row in qt.recipe_materials()}
-    recipe_files = dict(qt.RECIPE_FILES)
+def _recipe_entries(recipe_root: Path | None = None) -> dict[str, Path]:
+    materials = {
+        row["path"]: row["sha256"]
+        for row in qt.recipe_materials(recipe_root)
+    }
+    recipe_files = dict(qt.recipe_file_paths(recipe_root))
     if set(materials) != set(recipe_files):
         qt.fail("Qt SDK recipe file list differs from recipe_materials()")
     entries: dict[str, Path] = {}
@@ -360,9 +459,15 @@ def build_bundle(
     *,
     manifest_path: Path = QT_MANIFEST_PATH,
     package_dir: Path = PACKAGE_QT_DIR,
+    recipe_root: Path | None = None,
 ) -> tuple[Path, Path]:
     """Download verified materials and build the deterministic release assets."""
-    sdk_manifest, source_manifest = load_contracts(manifest_path, package_dir)
+    manifest_path = _authoritative_file(
+        manifest_path, "Qt SDK manifest", recipe_root
+    )
+    sdk_manifest, source_manifest = load_contracts(
+        manifest_path, package_dir, recipe_root
+    )
     del sdk_manifest  # Validation parity is the only build-time use.
     checksum_path = _assert_release_paths(bundle_path, source_manifest)
 
@@ -371,11 +476,9 @@ def build_bundle(
         "tools/qt/qt-6.8.4.json": manifest_path,
     }
     for filename in PACKAGE_FILES:
-        path = package_dir / filename
-        if not path.is_file():
-            qt.fail(f"Qt package compliance input not found: {path}")
+        path = _package_file(package_dir, filename, recipe_root)
         entries[f"packaging/qt/{filename}"] = path
-    entries.update(_recipe_entries())
+    entries.update(_recipe_entries(recipe_root))
 
     for logical_path, row in _source_material_rows(source_manifest):
         material = qt.download_verified(row, download_dir)
@@ -448,16 +551,29 @@ def _validate_zip_info(info: zipfile.ZipInfo) -> None:
         qt.fail(f"bundle entry has a non-deterministic timestamp: {info.filename}")
     if info.compress_type != zipfile.ZIP_STORED:
         qt.fail(f"bundle entry must use stored compression: {info.filename}")
+    if info.compress_size != info.file_size:
+        qt.fail(
+            f"bundle stored entry sizes must be identical: {info.filename}"
+        )
+    if info.comment:
+        qt.fail(f"bundle entry comment must be empty: {info.filename}")
+    if info.extra:
+        qt.fail(f"bundle entry extra metadata must be empty: {info.filename}")
     if info.create_system != 3:
         qt.fail(f"bundle entry must use normalized Unix metadata: {info.filename}")
-    mode = info.external_attr >> 16
-    if stat.S_IFMT(mode) != stat.S_IFREG or stat.S_IMODE(mode) != 0o644:
+    if info.create_version != 20:
+        qt.fail(f"bundle entry create_version must be 20: {info.filename}")
+    if info.extract_version != 20:
+        qt.fail(f"bundle entry extract_version must be 20: {info.filename}")
+    if info.internal_attr != 0:
+        qt.fail(f"bundle entry internal_attr must be zero: {info.filename}")
+    if info.external_attr != REGULAR_FILE_MODE << 16:
         qt.fail(
             f"bundle entry must be a regular 0644 file (no symlinks): "
             f"{info.filename}"
         )
-    if info.flag_bits & 0x1:
-        qt.fail(f"bundle entry must not be encrypted: {info.filename}")
+    if info.flag_bits != 0:
+        qt.fail(f"bundle entry flag_bits must be zero: {info.filename}")
     path_parts = Path(info.filename).parts
     if (
         not path_parts
@@ -466,6 +582,322 @@ def _validate_zip_info(info: zipfile.ZipInfo) -> None:
         or "\\" in info.filename
     ):
         qt.fail(f"bundle contains an unsafe path: {info.filename}")
+
+
+def _read_exact(
+    handle: BinaryIO,
+    size: int,
+    description: str,
+) -> bytes:
+    content = handle.read(size)
+    if len(content) != size:
+        qt.fail(f"bundle has a truncated {description}")
+    return content
+
+
+def _dos_timestamp(
+    value: tuple[int, int, int, int, int, int]
+) -> tuple[int, int]:
+    year, month, day, hour, minute, second = value
+    dos_time = (hour << 11) | (minute << 5) | (second // 2)
+    dos_date = ((year - 1980) << 9) | (month << 5) | day
+    return dos_time, dos_date
+
+
+def _validate_raw_zip_layout(
+    bundle_path: Path,
+    archive: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+) -> None:
+    """Reject hidden bytes and require canonical local/central ZIP records."""
+    file_size = bundle_path.stat().st_size
+    if file_size < END_OF_CENTRAL_DIRECTORY.size:
+        qt.fail("corresponding-source ZIP is too small for a canonical EOCD")
+    eocd_offset = file_size - END_OF_CENTRAL_DIRECTORY.size
+    expected_time, expected_date = _dos_timestamp(FIXED_ZIP_TIMESTAMP)
+
+    with bundle_path.open("rb") as handle:
+        handle.seek(eocd_offset)
+        eocd = END_OF_CENTRAL_DIRECTORY.unpack(
+            _read_exact(
+                handle,
+                END_OF_CENTRAL_DIRECTORY.size,
+                "end-of-central-directory record",
+            )
+        )
+        (
+            signature,
+            disk_number,
+            central_disk,
+            disk_entries,
+            total_entries,
+            central_size,
+            central_offset,
+            comment_length,
+        ) = eocd
+        if signature != END_OF_CENTRAL_DIRECTORY_SIGNATURE:
+            qt.fail(
+                "corresponding-source ZIP EOCD must end exactly at EOF"
+            )
+        if (
+            disk_number != 0
+            or central_disk != 0
+            or disk_entries != len(infos)
+            or total_entries != len(infos)
+            or comment_length != 0
+        ):
+            qt.fail(
+                "corresponding-source ZIP EOCD must be single-disk, "
+                "comment-free, and contain the exact entry count"
+            )
+        if (
+            disk_entries == 0xFFFF
+            or total_entries == 0xFFFF
+            or central_size == 0xFFFFFFFF
+            or central_offset == 0xFFFFFFFF
+        ):
+            qt.fail(
+                "corresponding-source ZIP must not use ZIP64 metadata"
+            )
+        if central_offset + central_size != eocd_offset:
+            qt.fail(
+                "corresponding-source ZIP central directory must end "
+                "immediately before the EOCD"
+            )
+        if archive.start_dir != central_offset:
+            qt.fail(
+                "corresponding-source ZIP must not contain prepended or "
+                "concatenated data"
+            )
+
+        physical_infos = sorted(infos, key=lambda info: info.header_offset)
+        if [info.filename for info in physical_infos] != [
+            info.filename for info in infos
+        ]:
+            qt.fail(
+                "corresponding-source ZIP local record order must match "
+                "the sorted central directory"
+            )
+        if not physical_infos or physical_infos[0].header_offset != 0:
+            qt.fail(
+                "corresponding-source ZIP first local header must start "
+                "at byte zero"
+            )
+        previous_end = 0
+        for info in physical_infos:
+            if info.header_offset != previous_end:
+                qt.fail(
+                    "corresponding-source ZIP local records must be "
+                    f"contiguous before {info.filename}"
+                )
+            if (
+                info.file_size > 0xFFFFFFFF
+                or info.compress_size > 0xFFFFFFFF
+                or info.header_offset > 0xFFFFFFFF
+            ):
+                qt.fail(
+                    "corresponding-source ZIP entries must not use ZIP64"
+                )
+            handle.seek(info.header_offset)
+            local = LOCAL_FILE_HEADER.unpack(
+                _read_exact(
+                    handle,
+                    LOCAL_FILE_HEADER.size,
+                    f"local header for {info.filename}",
+                )
+            )
+            (
+                signature,
+                extract_version,
+                flag_bits,
+                compress_type,
+                modified_time,
+                modified_date,
+                crc,
+                compressed_size,
+                uncompressed_size,
+                filename_length,
+                extra_length,
+            ) = local
+            expected_filename = info.filename.encode("ascii")
+            if signature != LOCAL_FILE_HEADER_SIGNATURE:
+                qt.fail(
+                    f"bundle entry has an invalid local header: {info.filename}"
+                )
+            local_contract = (
+                (
+                    extract_version,
+                    info.extract_version,
+                    "extract_version",
+                ),
+                (flag_bits, info.flag_bits, "flag_bits"),
+                (compress_type, info.compress_type, "compression method"),
+                (modified_time, expected_time, "DOS time"),
+                (modified_date, expected_date, "DOS date"),
+                (crc, info.CRC, "CRC"),
+                (
+                    compressed_size,
+                    info.compress_size,
+                    "compressed size",
+                ),
+                (
+                    uncompressed_size,
+                    info.file_size,
+                    "uncompressed size",
+                ),
+                (
+                    filename_length,
+                    len(expected_filename),
+                    "filename length",
+                ),
+                (extra_length, 0, "extra length"),
+            )
+            for actual, expected, field in local_contract:
+                if actual != expected:
+                    qt.fail(
+                        f"bundle entry local header {field} is "
+                        f"non-canonical: {info.filename}"
+                    )
+            filename = _read_exact(
+                handle,
+                filename_length,
+                f"local filename for {info.filename}",
+            )
+            extra = _read_exact(
+                handle,
+                extra_length,
+                f"local extra metadata for {info.filename}",
+            )
+            if filename != expected_filename:
+                qt.fail(
+                    f"bundle entry local filename differs: {info.filename}"
+                )
+            if extra:
+                qt.fail(
+                    f"bundle entry local extra metadata must be empty: "
+                    f"{info.filename}"
+                )
+            data_start = handle.tell()
+            data_end = data_start + info.compress_size
+            if data_end > central_offset:
+                qt.fail(
+                    f"bundle entry payload is out of bounds: {info.filename}"
+                )
+            previous_end = data_end
+        if previous_end != central_offset:
+            qt.fail(
+                "corresponding-source ZIP central directory must begin "
+                "immediately after the final payload"
+            )
+
+        handle.seek(central_offset)
+        central_end = central_offset + central_size
+        for info in infos:
+            record = CENTRAL_DIRECTORY_HEADER.unpack(
+                _read_exact(
+                    handle,
+                    CENTRAL_DIRECTORY_HEADER.size,
+                    f"central directory header for {info.filename}",
+                )
+            )
+            (
+                signature,
+                create_version,
+                extract_version,
+                flag_bits,
+                compress_type,
+                modified_time,
+                modified_date,
+                crc,
+                compressed_size,
+                uncompressed_size,
+                filename_length,
+                extra_length,
+                comment_length,
+                disk_start,
+                internal_attr,
+                external_attr,
+                local_offset,
+            ) = record
+            expected_filename = info.filename.encode("ascii")
+            expected_central = (
+                (signature, CENTRAL_DIRECTORY_SIGNATURE, "signature"),
+                (
+                    create_version,
+                    CANONICAL_CREATE_VERSION,
+                    "create_version",
+                ),
+                (
+                    extract_version,
+                    info.extract_version,
+                    "extract_version",
+                ),
+                (flag_bits, info.flag_bits, "flag_bits"),
+                (compress_type, info.compress_type, "compression method"),
+                (modified_time, expected_time, "DOS time"),
+                (modified_date, expected_date, "DOS date"),
+                (crc, info.CRC, "CRC"),
+                (
+                    compressed_size,
+                    info.compress_size,
+                    "compressed size",
+                ),
+                (
+                    uncompressed_size,
+                    info.file_size,
+                    "uncompressed size",
+                ),
+                (
+                    filename_length,
+                    len(expected_filename),
+                    "filename length",
+                ),
+                (extra_length, 0, "extra length"),
+                (comment_length, 0, "comment length"),
+                (disk_start, 0, "disk number"),
+                (internal_attr, info.internal_attr, "internal attributes"),
+                (external_attr, info.external_attr, "external attributes"),
+                (
+                    local_offset,
+                    info.header_offset,
+                    "local header offset",
+                ),
+            )
+            for actual, expected, field in expected_central:
+                if actual != expected:
+                    qt.fail(
+                        f"bundle entry central directory {field} is "
+                        f"non-canonical: {info.filename}"
+                    )
+            filename = _read_exact(
+                handle,
+                filename_length,
+                f"central filename for {info.filename}",
+            )
+            extra = _read_exact(
+                handle,
+                extra_length,
+                f"central extra metadata for {info.filename}",
+            )
+            comment = _read_exact(
+                handle,
+                comment_length,
+                f"central comment for {info.filename}",
+            )
+            if filename != expected_filename:
+                qt.fail(
+                    f"bundle entry central filename differs: {info.filename}"
+                )
+            if extra or comment:
+                qt.fail(
+                    f"bundle entry central extra/comment must be empty: "
+                    f"{info.filename}"
+                )
+        if handle.tell() != central_end:
+            qt.fail(
+                "corresponding-source ZIP central directory size is "
+                "non-canonical"
+            )
 
 
 def _parse_sha256sums(
@@ -516,9 +948,15 @@ def verify_bundle(
     *,
     manifest_path: Path = QT_MANIFEST_PATH,
     package_dir: Path = PACKAGE_QT_DIR,
+    recipe_root: Path | None = None,
 ) -> None:
     """Verify a bundle and sidecar entirely offline against checked contracts."""
-    sdk_manifest, source_manifest = load_contracts(manifest_path, package_dir)
+    manifest_path = _authoritative_file(
+        manifest_path, "Qt SDK manifest", recipe_root
+    )
+    sdk_manifest, source_manifest = load_contracts(
+        manifest_path, package_dir, recipe_root
+    )
     expected_checksum_path = _assert_release_paths(bundle_path, source_manifest)
     if checksum_path is None:
         checksum_path = expected_checksum_path
@@ -552,6 +990,7 @@ def verify_bundle(
             )
         for info in infos:
             _validate_zip_info(info)
+        _validate_raw_zip_layout(bundle_path, archive, infos)
 
         payload_names = sorted(expected_names - {"SHA256SUMS"})
         sums = _parse_sha256sums(
@@ -574,14 +1013,14 @@ def verify_bundle(
         embedded_sdk = json.loads(
             _read_small_entry(archive, manifest_entry).decode("utf-8")
         )
-        qt.validate_manifest(embedded_sdk)
+        qt.validate_manifest(embedded_sdk, recipe_root=recipe_root)
         if embedded_sdk != sdk_manifest:
             qt.fail("bundled Qt SDK manifest is not the current contract")
 
         for filename in PACKAGE_FILES:
             logical = f"packaging/qt/{filename}"
-            if _read_small_entry(archive, logical) != (
-                package_dir / filename
+            if _read_small_entry(archive, logical) != _package_file(
+                package_dir, filename, recipe_root
             ).read_bytes():
                 qt.fail(f"bundled Qt compliance file differs from checkout: {logical}")
         embedded_source = json.loads(
@@ -600,9 +1039,10 @@ def verify_bundle(
             qt.fail("bundled README differs from the deterministic contract")
 
         recipe_materials = {
-            row["path"]: row["sha256"] for row in qt.recipe_materials()
+            row["path"]: row["sha256"]
+            for row in qt.recipe_materials(recipe_root)
         }
-        recipe_files = dict(qt.RECIPE_FILES)
+        recipe_files = dict(qt.recipe_file_paths(recipe_root))
         if set(recipe_materials) != set(recipe_files):
             qt.fail("current Qt SDK recipe file set is internally inconsistent")
         for logical, expected_digest in recipe_materials.items():
@@ -654,6 +1094,19 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         type=Path,
         help=f"checksum path (must be the adjacent {CHECKSUM_NAME})",
     )
+    verify.add_argument(
+        "--source-root",
+        type=Path,
+        help=(
+            "Release checkout whose manifest, compliance files, and recipe "
+            "bytes are authoritative (the verifier code remains current)."
+        ),
+    )
+    contract = subparsers.add_parser(
+        "contract",
+        help="print the exact offline corresponding-source contract",
+    )
+    contract.add_argument("--source-root", type=Path)
     return parser.parse_args(arguments)
 
 
@@ -671,14 +1124,65 @@ def main(arguments: list[str] | None = None) -> int:
             bundle, checksum = build_bundle(output, download_dir)
             print(bundle)
             print(checksum)
-        else:
+        elif options.command == "verify":
             checksum = (
                 options.checksum.resolve()
                 if options.checksum is not None
                 else None
             )
-            verify_bundle(options.bundle.resolve(), checksum)
+            source_root = (
+                qt.trusted_source_root(options.source_root)
+                if options.source_root is not None
+                else None
+            )
+            verify_bundle(
+                options.bundle.resolve(),
+                checksum,
+                manifest_path=(
+                    source_root / "tools" / "qt" / "qt-6.8.4.json"
+                    if source_root is not None
+                    else QT_MANIFEST_PATH
+                ),
+                package_dir=(
+                    source_root / "packaging" / "qt"
+                    if source_root is not None
+                    else PACKAGE_QT_DIR
+                ),
+                recipe_root=source_root,
+            )
             print(f"verified {options.bundle.resolve()}")
+        else:
+            source_root = (
+                qt.trusted_source_root(options.source_root)
+                if options.source_root is not None
+                else None
+            )
+            print(
+                json.dumps(
+                    release_contract(
+                        manifest_path=(
+                            source_root
+                            / "tools"
+                            / "qt"
+                            / "qt-6.8.4.json"
+                            if source_root is not None
+                            else QT_MANIFEST_PATH
+                        ),
+                        package_dir=(
+                            source_root / "packaging" / "qt"
+                            if source_root is not None
+                            else PACKAGE_QT_DIR
+                        ),
+                        bundle_recipe_path=(
+                            source_root / "tools" / "qt" / "source_bundle.py"
+                            if source_root is not None
+                            else None
+                        ),
+                        recipe_root=source_root,
+                    ),
+                    sort_keys=True,
+                )
+            )
     except (OSError, ValueError, zipfile.BadZipFile, qt.QtSdkError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

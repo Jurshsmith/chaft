@@ -361,6 +361,9 @@ jobs:
   qt_sdk_linux:
     name: Provision Qt SDK Linux
     needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
     if: >-
       needs.classify.outputs.desktop_contract == 'true' ||
       needs.classify.outputs.desktop == 'true' ||
@@ -429,8 +432,22 @@ jobs:
         id: qt-sdk
         shell: bash
         run: |
-          identity="$(python3 tools/qt/build_qt.py identity --platform linux)"
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform linux \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve Linux Qt SDK cache
         id: qt-cache
@@ -446,16 +463,21 @@ jobs:
           --platform linux
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
       - name: Verify Linux Qt SDK
         run: >-
           python3 tools/qt/build_qt.py verify
           --platform linux
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
   qt_sdk_macos:
     name: Provision Qt SDK macOS
     needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
@@ -480,8 +502,22 @@ jobs:
         id: qt-sdk
         shell: bash
         run: |
-          identity="$(python3 tools/qt/build_qt.py identity --platform macos)"
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform macos \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform macos \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform macos \
+              --toolchain-contract "${contract}"
+          )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve macOS Qt SDK cache
         id: qt-cache
@@ -497,16 +533,21 @@ jobs:
           --platform macos
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
       - name: Verify macOS Qt SDK
         run: >-
           python3 tools/qt/build_qt.py verify
           --platform macos
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
   qt_sdk_windows:
     name: Provision Qt SDK Windows
     needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
@@ -536,8 +577,22 @@ jobs:
         id: qt-sdk
         shell: bash
         run: |
-          identity="$(python3 tools/qt/build_qt.py identity --platform windows)"
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform windows \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform windows \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform windows \
+              --toolchain-contract "${contract}"
+          )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve Windows Qt SDK cache
         id: qt-cache
@@ -554,6 +609,7 @@ jobs:
           --platform windows
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
       - name: Verify Windows Qt SDK
         shell: bash
@@ -561,6 +617,7 @@ jobs:
           python3 tools/qt/build_qt.py verify
           --platform windows
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
   desktop_contracts:
     name: Linux desktop contracts
@@ -592,11 +649,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y cmake ninja-build
 
-      - name: Compute exact Qt SDK identity
+      - name: Match consumer toolchain to provisioned Qt SDK
         id: qt-sdk
+        shell: bash
+        env:
+          PROVISIONED_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          PROVISIONED_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
         run: |
-          identity="$(python3 tools/qt/build_qt.py identity --platform linux)"
-          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform linux \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${PROVISIONED_IDENTITY}" || \
+                -z "${PROVISIONED_TOOLCHAIN}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is missing."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${PROVISIONED_TOOLCHAIN}" ]]; then
+            echo "::error::Linux consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${PROVISIONED_TOOLCHAIN}; refusing the cache."
+            exit 1
+          fi
+          echo "identity=${PROVISIONED_IDENTITY}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${PROVISIONED_TOOLCHAIN}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Restore provisioned Linux Qt SDK
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -613,7 +693,9 @@ jobs:
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
             --platform linux \
-            --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Run platform-independent desktop contracts
         run: tools/desktop/ci-gates.sh --stage contracts Linux
@@ -697,15 +779,54 @@ jobs:
         with:
           python-version: "3.13.3"
 
-      - name: Compute exact Qt SDK identity
+      - name: Match consumer toolchain to provisioned Qt SDK
         id: qt-sdk
         shell: bash
+        env:
+          LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
+          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
+          WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
         run: |
-          identity="$(
-            python3 tools/qt/build_qt.py identity \
-              --platform "${{ matrix.qt-platform }}"
+          case "${{ matrix.qt-platform }}" in
+            linux)
+              identity="${LINUX_IDENTITY}"
+              fingerprint="${LINUX_TOOLCHAIN}"
+              ;;
+            macos)
+              identity="${MACOS_IDENTITY}"
+              fingerprint="${MACOS_TOOLCHAIN}"
+              ;;
+            windows)
+              identity="${WINDOWS_IDENTITY}"
+              fingerprint="${WINDOWS_TOOLCHAIN}"
+              ;;
+            *)
+              echo "::error::Unsupported Qt SDK platform."
+              exit 1
+              ;;
+          esac
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
           )"
+          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
+            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+            exit 1
+          fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Restore provisioned Qt SDK
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -723,7 +844,9 @@ jobs:
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
             --platform "${{ matrix.qt-platform }}" \
-            --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Run cross-platform desktop debug smoke
         env:
@@ -763,7 +886,9 @@ jobs:
           rustup default 1.97.1
 
       - name: Run release metadata smoke
-        run: tools/desktop/release-metadata-smoke.sh
+        run: |
+          tools/desktop/release-metadata-smoke.sh
+          python3 tools/desktop/qt-release-binding-test.py
 
       - name: Test release promotion tools
         run: |
@@ -855,15 +980,54 @@ jobs:
         with:
           python-version: "3.13.3"
 
-      - name: Compute exact Qt SDK identity
+      - name: Match consumer toolchain to provisioned Qt SDK
         id: qt-sdk
         shell: bash
+        env:
+          LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
+          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
+          WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
         run: |
-          identity="$(
-            python3 tools/qt/build_qt.py identity \
-              --platform "${{ matrix.qt-platform }}"
+          case "${{ matrix.qt-platform }}" in
+            linux)
+              identity="${LINUX_IDENTITY}"
+              fingerprint="${LINUX_TOOLCHAIN}"
+              ;;
+            macos)
+              identity="${MACOS_IDENTITY}"
+              fingerprint="${MACOS_TOOLCHAIN}"
+              ;;
+            windows)
+              identity="${WINDOWS_IDENTITY}"
+              fingerprint="${WINDOWS_TOOLCHAIN}"
+              ;;
+            *)
+              echo "::error::Unsupported Qt SDK platform."
+              exit 1
+              ;;
+          esac
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
           )"
+          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
+            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+            exit 1
+          fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
       - name: Restore provisioned Qt SDK
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -881,7 +1045,9 @@ jobs:
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
             --platform "${{ matrix.qt-platform }}" \
-            --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Validate Linux desktop metadata
         if: runner.os == 'Linux'

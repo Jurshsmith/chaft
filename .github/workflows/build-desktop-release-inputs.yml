@@ -28,23 +28,44 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout requested ref
+      - name: Checkout the current default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
 
-      - name: Validate release context
+      - name: Validate requested tag with current policy
         id: release
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release tag must be a stable v<major>.<minor>.<patch> tag."
+            exit 1
+          fi
+
+          policy_commit="$(git rev-parse HEAD)"
+          tag_commit="$(
+            git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"
+          )" || {
+            echo "::error::Release tag does not resolve to a commit."
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "${tag_commit}" "${policy_commit}"; then
+            echo "::error::Release tag commit must be an ancestor of the current protected default branch."
+            exit 1
+          fi
+
+          release_source="${RUNNER_TEMP}/release-source"
+          git worktree add --detach "${release_source}" "${tag_commit}"
           mkdir -p build
           python3 tools/desktop/release-version.py \
+            --root "${release_source}" \
             --tag "$RELEASE_TAG" \
-            --expected-commit HEAD \
+            --expected-commit "${tag_commit}" \
             --output build/release-context.json \
             --github-output "$GITHUB_OUTPUT"
 
@@ -66,6 +87,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      bundle_sha256: ${{ steps.source.outputs.bundle_sha256 }}
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +106,7 @@ jobs:
             --expected-commit HEAD
 
       - name: Create and verify exact Qt corresponding source
+        id: source
         run: |
           set -euo pipefail
           output="build/qt-corresponding-source"
@@ -91,6 +114,15 @@ jobs:
           python3 tools/qt/source_bundle.py verify \
             --bundle "${output}/Chaft-Qt-6.8.4-corresponding-source.zip" \
             --checksum "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          bundle_sha256="$(
+            cut -d ' ' -f 1 \
+              "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          )"
+          if [[ ! "${bundle_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Qt corresponding-source checksum is malformed."
+            exit 1
+          fi
+          echo "bundle_sha256=${bundle_sha256}" >> "${GITHUB_OUTPUT}"
           expected="$(
             printf '%s\n' \
               Chaft-Qt-6.8.4-corresponding-source.zip \
@@ -119,9 +151,13 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }} release input
-    needs: validate
+    needs:
+      - validate
+      - qt_source_bundle
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # A cache miss compiles Qt and the release package on one runner. Cache-hit
+    # runs retain their normal target; 180 minutes is the exceptional cold path.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -248,9 +284,14 @@ jobs:
         id: qt-sdk
         shell: bash
         run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform "${{ matrix.qt-platform }}"
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
 
@@ -269,6 +310,7 @@ jobs:
           --platform "${{ matrix.qt-platform }}"
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
       - name: Activate and verify exact Qt SDK
         shell: bash
@@ -279,7 +321,14 @@ jobs:
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
             --platform "${{ matrix.qt-platform }}" \
-            --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Remove transient Qt build tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}/chaft-qt-build"
 
       - name: Run platform-independent desktop contracts once
         if: runner.os == 'Linux'
@@ -308,6 +357,7 @@ jobs:
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
+          CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source_bundle.outputs.bundle_sha256 }}
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
         shell: bash
         run: |
@@ -477,6 +527,7 @@ jobs:
       - name: Verify context and platform metadata
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source_bundle.outputs.bundle_sha256 }}
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
           EXPECTED_TAG: ${{ needs.validate.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
@@ -505,7 +556,11 @@ jobs:
               --package-dir "build/release-input-audit/$platform" \
               --platform "$platform" \
               --expected-commit "$EXPECTED_COMMIT" \
-              --require-clean
+              --require-clean \
+              --qt-source-bundle \
+                build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip \
+              --qt-source-checksum \
+                build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
           done
           python3 tools/qt/source_bundle.py verify \
             --bundle build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip \

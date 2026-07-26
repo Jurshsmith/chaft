@@ -71,6 +71,72 @@ require_tool python3
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-release-metadata-smoke.XXXXXX")"
 trap cleanup EXIT INT TERM
 
+qt_provenance_dir="$smoke_dir/qt-provenance"
+mkdir "$qt_provenance_dir"
+python3 - "$repo_root" "$qt_provenance_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+sys.path.insert(0, str(root / "tools" / "qt"))
+import build_qt as qt
+
+manifest = qt.load_manifest(root / "tools" / "qt" / "qt-6.8.4.json")
+runner_os = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
+for platform in qt.SUPPORTED_PLATFORMS:
+    contract = {
+        "schemaVersion": 1,
+        "platform": platform,
+        "runner": {
+            "os": runner_os[platform],
+            "architecture": "X64",
+            "imageOS": f"synthetic-{platform}",
+            "imageVersion": "20260726.1",
+        },
+        "tools": {
+            "cmake": "cmake version 4.1.0",
+            "ninja": "1.13.1",
+            "compiler": f"synthetic {platform} compiler 1.0",
+            "python": "3.13.3",
+        },
+    }
+    fingerprint = qt.toolchain_fingerprint(contract, platform)
+    provenance = {
+        "schemaVersion": 1,
+        "identity": qt.sdk_identity(manifest, platform, fingerprint),
+        "manifestSha256": qt.manifest_digest(manifest),
+        "contractSha256": qt.contract_digest(manifest),
+        "qtVersion": manifest["qtVersion"],
+        "sdkRevision": manifest["sdkRevision"],
+        "platform": platform,
+        "platformSpecification": manifest["platforms"][platform],
+        "buildConfiguration": manifest["build"],
+        "generatedAt": "2026-07-26T00:00:00Z",
+        "host": {
+            "system": runner_os[platform],
+            "release": "synthetic",
+            "machine": "x86_64",
+        },
+        "toolchainFingerprint": fingerprint,
+        "toolchainContract": contract,
+        "sourceMaterials": qt.expected_source_materials(manifest, platform),
+        "recipeMaterials": qt.recipe_materials(),
+        "commands": [],
+        "verification": {
+            "completed": True,
+            "completedAt": "2026-07-26T00:01:00Z",
+        },
+    }
+    path = output / f"chaft-qt-sdk-{platform}.json"
+    path.write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+PY
+export CHAFT_QT_SDK_PROVENANCE_DIR="$qt_provenance_dir"
+
 linux_dir="$smoke_dir/linux-package"
 macos_dir="$smoke_dir/macos-package"
 windows_dir="$smoke_dir/windows-package"
@@ -80,6 +146,7 @@ materials_dir="$smoke_dir/materials-package"
 signature_dir="$smoke_dir/signature-package"
 orphan_signature_dir="$smoke_dir/orphan-signature-package"
 platform_mismatch_dir="$smoke_dir/platform-mismatch-package"
+qt_binding_dir="$smoke_dir/qt-binding-package"
 
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.tar.gz"
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.AppImage"
@@ -97,6 +164,7 @@ write_artifact "$signature_dir" "Chaft-0.1.0-Signed.AppImage"
 write_signature "$signature_dir" "Chaft-0.1.0-Signed.AppImage" ".sig"
 write_artifact "$orphan_signature_dir" "Chaft-0.1.0-Orphan.AppImage"
 write_artifact "$platform_mismatch_dir" "Chaft-0.1.0-Wrong-Platform.tar.gz"
+write_artifact "$qt_binding_dir" "Chaft-0.1.0-Qt-Binding.tar.gz"
 
 for row in \
   "Linux:$linux_dir" \
@@ -127,6 +195,48 @@ do
   assert_not_file "$package_dir/chaft-desktop-sbom.cdx.json"
   assert_not_file "$package_dir/chaft-desktop-provenance.json"
 done
+
+python3 "$repo_root/tools/desktop/release-metadata.py" release \
+  --package-dir "$qt_binding_dir" \
+  --platform Linux
+python3 - "$qt_binding_dir/chaft-desktop-linux-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+provenance["qt"]["sdk"]["identity"] = "stale-qt-sdk-identity"
+path.write_text(
+    json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+expect_failure "stale Qt SDK release identity" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$qt_binding_dir" \
+    --platform Linux
+
+python3 "$repo_root/tools/desktop/release-metadata.py" release \
+  --package-dir "$qt_binding_dir" \
+  --platform Linux
+python3 - "$qt_binding_dir/chaft-desktop-linux-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+provenance = json.loads(path.read_text(encoding="utf-8"))
+provenance["qt"]["correspondingSource"]["contractSha256"] = "0" * 64
+path.write_text(
+    json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+expect_failure "stale Qt corresponding-source contract" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$qt_binding_dir" \
+    --platform Linux
 
 python3 - "$macos_dir/chaft-desktop-macos-provenance.json" <<'PY'
 import json

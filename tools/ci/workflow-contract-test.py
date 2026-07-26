@@ -416,9 +416,12 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn(f"runs-on: {runner}", block)
                 self.assertIn("timeout-minutes: 120", block)
                 self.assertIn(
-                    f"identity --platform {platform}",
+                    "tools/qt/build_qt.py toolchain-contract",
                     block,
                 )
+                self.assertIn("tools/qt/build_qt.py toolchain-fingerprint", block)
+                self.assertIn("tools/qt/build_qt.py identity", block)
+                self.assertIn("--toolchain-contract", block)
                 self.assertIn(
                     f"--platform {platform}",
                     block,
@@ -477,6 +480,31 @@ class CiWorkflowContractTests(unittest.TestCase):
                     },
                 )
                 self.assertNotIn(f"uses: {QT_CACHE_ACTION}", block)
+                self.assertIn(
+                    "Match consumer toolchain to provisioned Qt SDK",
+                    block,
+                )
+                self.assertIn("toolchain_fingerprint", block)
+                self.assertIn(
+                    "tools/qt/build_qt.py toolchain-contract",
+                    block,
+                )
+                self.assertIn(
+                    "tools/qt/build_qt.py toolchain-fingerprint",
+                    block,
+                )
+                self.assertIn("consumer_fingerprint", block)
+                self.assertIn("refusing the cache", block)
+                self.assertIn(
+                    "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json",
+                    block,
+                )
+                self.assertIn("--toolchain-contract", block)
+                self.assertNotIn("--toolchain-fingerprint", block)
+                self.assertLess(
+                    block.index("consumer_fingerprint"),
+                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
+                )
 
         self.assertNotIn("jurplel/install-qt-action", self.ci)
         self.assertNotIn("aqtinstall", self.ci)
@@ -504,7 +532,8 @@ class CiWorkflowContractTests(unittest.TestCase):
             "desktop_contracts",
             workflow_job_ids(self.release_inputs),
         )
-        self.assertIn("needs: validate", build)
+        self.assertIn("      - validate", build)
+        self.assertIn("      - qt_source_bundle", build)
         self.assertEqual(build.count("--stage contracts Linux"), 1)
         self.assertIn("if: runner.os == 'Linux'", build)
         self.assertIn("--stage package", build)
@@ -518,7 +547,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self,
     ) -> None:
         build = job_block(self.release_inputs, "build")
-        self.assertIn("timeout-minutes: 120", build)
+        self.assertIn("timeout-minutes: 180", build)
         self.assertEqual(
             action_inputs(build, QT_CACHE_RESTORE_ACTION),
             {
@@ -532,6 +561,23 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("tools/qt/build_qt.py build", build)
         self.assertIn("tools/qt/build_qt.py verify", build)
+        self.assertEqual(
+            build.count(
+                'rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}'
+                '/chaft-qt-build"'
+            ),
+            1,
+        )
+        self.assertLess(
+            build.index("tools/qt/build_qt.py verify"),
+            build.index("Remove transient Qt build tree"),
+        )
+        self.assertLess(
+            build.index("Remove transient Qt build tree"),
+            build.index("Run platform-independent desktop contracts once"),
+        )
+        self.assertIn("tools/qt/build_qt.py toolchain-contract", build)
+        self.assertIn("--toolchain-contract", build)
         self.assertNotIn(f"uses: {QT_CACHE_ACTION}", self.release_inputs)
         self.assertNotIn("actions/cache/save@", self.release_inputs)
         self.assertNotIn("jurplel/install-qt-action", self.release_inputs)
@@ -541,10 +587,47 @@ class CiWorkflowContractTests(unittest.TestCase):
         self,
     ) -> None:
         trigger = self.release_inputs.split("\npermissions:\n", 1)[0]
+        validate = job_block(self.release_inputs, "validate")
         build = job_block(self.release_inputs, "build")
         self.assertIn("  workflow_dispatch:\n", trigger)
         self.assertIn("  contents: read\n", self.release_inputs)
         self.assertIn("  cancel-in-progress: false\n", self.release_inputs)
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}",
+            validate,
+        )
+        self.assertNotIn("ref: ${{ inputs.tag }}", validate)
+        self.assertIn(
+            'git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"',
+            validate,
+        )
+        self.assertIn(
+            'git merge-base --is-ancestor "${tag_commit}" '
+            '"${policy_commit}"',
+            validate,
+        )
+        self.assertIn(
+            'git worktree add --detach "${release_source}" '
+            '"${tag_commit}"',
+            validate,
+        )
+        self.assertIn(
+            "python3 tools/desktop/release-version.py",
+            validate,
+        )
+        self.assertIn('--root "${release_source}"', validate)
+        self.assertNotIn(
+            '"${release_source}/tools/desktop/release-version.py"',
+            validate,
+        )
+        self.assertLess(
+            validate.index("git merge-base --is-ancestor"),
+            validate.index("git worktree add --detach"),
+        )
+        self.assertLess(
+            validate.index("git worktree add --detach"),
+            validate.index("python3 tools/desktop/release-version.py"),
+        )
         self.assertIn("ref: ${{ needs.validate.outputs.commit }}", build)
         self.assertIn(
             "CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}",
@@ -552,6 +635,11 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn(
             "EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}",
+            build,
+        )
+        self.assertIn(
+            "CHAFT_QT_SOURCE_BUNDLE_SHA256: "
+            "${{ needs.qt_source_bundle.outputs.bundle_sha256 }}",
             build,
         )
         self.assertIn("--expected-commit \"$EXPECTED_COMMIT\"", build)
@@ -578,7 +666,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             1,
         )
         self.assertIn("tools/qt/source_bundle.py verify", source)
-        self.assertEqual(source.count(QT_SOURCE_CHECKSUM), 3)
+        self.assertEqual(source.count(QT_SOURCE_CHECKSUM), 4)
         self.assertEqual(
             source.count(QT_SOURCE_BUNDLE)
             - source.count(QT_SOURCE_CHECKSUM),
@@ -586,6 +674,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn(
             "artifact_digest: ${{ steps.upload.outputs.artifact-digest }}",
+            source,
+        )
+        self.assertIn(
+            "bundle_sha256: ${{ steps.source.outputs.bundle_sha256 }}",
+            source,
+        )
+        self.assertIn(
+            'echo "bundle_sha256=${bundle_sha256}" >> "${GITHUB_OUTPUT}"',
             source,
         )
         self.assertIn(
@@ -632,6 +728,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn(QT_SOURCE_BUNDLE, audit)
         self.assertIn(QT_SOURCE_CHECKSUM, audit)
         self.assertIn("tools/qt/source_bundle.py verify", audit)
+        self.assertIn("for platform in linux macos windows", audit)
+        self.assertIn("--qt-source-bundle", audit)
+        self.assertIn("--qt-source-checksum", audit)
+        self.assertIn(
+            "CHAFT_QT_SOURCE_BUNDLE_SHA256: "
+            "${{ needs.qt_source_bundle.outputs.bundle_sha256 }}",
+            audit,
+        )
         self.assertIn(
             "path: build/release-input-audit/qt-source\n"
             "          digest-mismatch: error",
@@ -656,14 +760,24 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn('for filename in "${bundle}" "${checksum}"', prepare)
         self.assertIn(f'bundle="{QT_SOURCE_BUNDLE}"', prepare)
         self.assertIn(f'checksum="{QT_SOURCE_CHECKSUM}"', prepare)
-        self.assertIn("tools/qt/source_bundle.py verify", prepare)
+        self.assertIn(
+            "python3 tools/qt/source_bundle.py verify",
+            prepare,
+        )
+        self.assertIn('--source-root "${release_source}"', prepare)
+        self.assertIn(
+            'git worktree add --detach "${release_source}"',
+            prepare,
+        )
         self.assertIn(
             'source_assets="${RUNNER_TEMP}/qt-corresponding-source"',
             prepare,
         )
         self.assertEqual(prepare.count('mv -- "${assets}/'), 2)
         authenticate_position = prepare.index("gh release verify-asset")
-        verify_position = prepare.index("tools/qt/source_bundle.py verify")
+        verify_position = prepare.index(
+            "python3 tools/qt/source_bundle.py verify"
+        )
         isolate_position = prepare.index('mv -- "${assets}/${bundle}"')
         stage_position = prepare.index(
             "tools/desktop/stage-website-release-assets.py"
@@ -671,6 +785,21 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertLess(authenticate_position, verify_position)
         self.assertLess(verify_position, isolate_position)
         self.assertLess(isolate_position, stage_position)
+        self.assertIn("for platform in linux macos windows", prepare)
+        self.assertIn(
+            "tools/desktop/verify-release-metadata.py release",
+            prepare,
+        )
+        self.assertIn("--qt-source-bundle", prepare)
+        self.assertIn("--qt-source-checksum", prepare)
+        self.assertIn(
+            '--package-dir "${staged}/${platform}-package"',
+            prepare,
+        )
+        cross_check_position = prepare.index(
+            "tools/desktop/verify-release-metadata.py release"
+        )
+        self.assertLess(stage_position, cross_check_position)
         for mutation in (
             "gh release upload",
             "gh release delete",
@@ -701,6 +830,19 @@ class CiWorkflowContractTests(unittest.TestCase):
             prepare,
         )
         self.assertIn('policy_commit="$(git rev-parse HEAD)"', prepare)
+        self.assertIn(
+            'git merge-base --is-ancestor "${tag_commit}" '
+            '"${policy_commit}"',
+            prepare,
+        )
+        self.assertLess(
+            prepare.index('tag_commit="$(git rev-parse'),
+            prepare.index("git merge-base --is-ancestor"),
+        )
+        self.assertLess(
+            prepare.index("git merge-base --is-ancestor"),
+            prepare.index('echo "tag_commit=${tag_commit}"'),
+        )
 
         windows = job_block(self.promotion, "verify_windows")
         macos = job_block(self.promotion, "verify_macos")

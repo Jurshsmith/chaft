@@ -130,6 +130,7 @@ RELEASE_TOOLS = frozenset(
         "tools/desktop/package-smoke.sh",
         "tools/desktop/package.sh",
         "tools/desktop/platform-verification-receipt-smoke.sh",
+        "tools/desktop/qt-release-binding-test.py",
         "tools/desktop/release-metadata-smoke.sh",
         "tools/desktop/release-metadata.py",
         "tools/desktop/release-version-test.py",

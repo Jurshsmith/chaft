@@ -62,7 +62,7 @@ public relay or production service.
 
 ## Test desktop changes
 
-Desktop development requires Rust 1.97.1 or newer, Qt 6.8 or newer, CMake 3.28 or
+Desktop development requires Rust 1.97.1 or newer, Qt 6.8.4, CMake 3.28 or
 newer, and Ninja. Confirm the toolchain first:
 
 ```sh

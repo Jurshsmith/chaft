@@ -28,10 +28,15 @@ x64 developer environment before invoking the tool.
 
 Choose one of `linux`, `macos`, or `windows` for `PLATFORM`.
 
-Print the offline cache/release identity:
+Capture the native build-tool contract, then print the cache/release identity:
 
 ```sh
-python3 tools/qt/build_qt.py identity --platform PLATFORM
+python3 tools/qt/build_qt.py toolchain-contract \
+  --platform PLATFORM \
+  --output /absolute/path/to/qt-toolchain.json
+python3 tools/qt/build_qt.py identity \
+  --platform PLATFORM \
+  --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
 
 Build into an empty install prefix:
@@ -39,7 +44,8 @@ Build into an empty install prefix:
 ```sh
 python3 tools/qt/build_qt.py build \
   --platform PLATFORM \
-  --prefix /absolute/path/to/qt
+  --prefix /absolute/path/to/qt \
+  --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
 
 `--work-dir /absolute/path` may be supplied to retain verified downloads between
@@ -54,7 +60,8 @@ Verify a restored SDK:
 ```sh
 python3 tools/qt/build_qt.py verify \
   --platform PLATFORM \
-  --prefix /absolute/path/to/qt
+  --prefix /absolute/path/to/qt \
+  --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
 
 Verification requires completed matching provenance, checks exact Qt 6.8.4 via
@@ -110,14 +117,29 @@ build is expected to take roughly 35–60 minutes per platform on standard publi
 GitHub-hosted runners; a prefix restore plus verification is substantially
 faster.
 
-The full per-platform identity is checked into the manifest and includes a
+The base per-platform identity is checked into the manifest and includes a
 canonical hash of the manifest, the build driver, and every CMake/C++/QML
-verification probe. Any source, patch, build, feature, platform, plugin,
-recipe, or probe change makes the checked-in identities stale until
-deliberately updated. `build` writes `chaft-qt-sdk-provenance.json` inside the
+verification probe. CI extends that identity with a canonical fingerprint of
+the actual hosted-runner image, CMake, Ninja, compiler, and Python versions.
+The provisioning job passes that exact identity and fingerprint to consumers,
+so the producer identity remains the only cache key. After installing their
+platform tools, every consumer independently captures its runner/toolchain
+contract and must reproduce the provision job's fingerprint before it may
+restore or use the cache. A hosted-image rollout between jobs therefore fails
+clearly instead of mixing SDK and consumer toolchains.
+
+Any source, patch, build, feature, platform, plugin, recipe, probe, runner
+image, or build-tool change therefore invalidates the cache. `build` writes
+the complete toolchain contract and `chaft-qt-sdk-provenance.json` inside the
 prefix and marks it complete only after all probes pass. `verify` rejects
-incomplete provenance or any source-material, recipe-material, identity,
-platform, or manifest mismatch.
+incomplete provenance or any source-material, recipe-material, toolchain,
+identity, platform, or manifest mismatch.
+
+Desktop release provenance embeds that complete, verified SDK provenance and
+the corresponding-source recipe contract. Tag release inputs additionally
+record the SHA-256 of the exact corresponding-source ZIP. The final release
+audit and website promotion cross-check every Linux, macOS, and Windows
+package against the authenticated ZIP and checksum sidecar.
 
 Run the network-free tooling contracts with:
 
