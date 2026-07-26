@@ -19,6 +19,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
 RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
+CACHE_CLEANUP_PATH = WORKFLOWS / "cleanup-pull-request-caches.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
 RUST_CACHE_ACTION = (
@@ -129,6 +130,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         cls.ci = CI_PATH.read_text(encoding="utf-8")
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
         cls.release_inputs = RELEASE_INPUTS_PATH.read_text(encoding="utf-8")
+        cls.cache_cleanup = CACHE_CLEANUP_PATH.read_text(encoding="utf-8")
 
     def test_job_ids_exactly_match_aggregate_contract(self) -> None:
         expected = {
@@ -281,6 +283,66 @@ class CiWorkflowContractTests(unittest.TestCase):
         for event_name, ref in rejected:
             with self.subTest(event_name=event_name, ref=ref):
                 self.assertFalse(writer_enabled(event_name, ref))
+
+    def test_closed_pr_cache_cleanup_has_one_least_privilege_trigger(
+        self,
+    ) -> None:
+        trigger = self.cache_cleanup.split("\npermissions:\n", 1)[0]
+        self.assertIn(
+            "on:\n"
+            "  pull_request:\n"
+            "    types:\n"
+            "      - closed\n",
+            trigger,
+        )
+        self.assertNotIn("pull_request_target", trigger)
+        self.assertNotIn("push:", trigger)
+        self.assertNotIn("workflow_dispatch:", trigger)
+
+        permissions = self.cache_cleanup.split(
+            "\npermissions:\n", 1
+        )[1].split("\nconcurrency:\n", 1)[0]
+        self.assertEqual(permissions, "  actions: write\n")
+        self.assertIn(
+            "group: cleanup-pull-request-caches-"
+            "${{ github.event.pull_request.number }}",
+            self.cache_cleanup,
+        )
+        self.assertIn("cancel-in-progress: false", self.cache_cleanup)
+
+    def test_closed_pr_cache_cleanup_deletes_only_validated_merge_ref(
+        self,
+    ) -> None:
+        cleanup = job_block(self.cache_cleanup, "cleanup")
+        self.assertIn(
+            '[[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]',
+            cleanup,
+        )
+        self.assertIn(
+            'cache_ref="refs/pull/${PR_NUMBER}/merge"',
+            cleanup,
+        )
+        self.assertEqual(cleanup.count("gh cache delete"), 1)
+        self.assertIn("gh cache delete --all \\", cleanup)
+        self.assertIn('--ref "${cache_ref}" \\', cleanup)
+        self.assertIn('--repo "${GH_REPO}" \\', cleanup)
+        self.assertIn("--succeed-on-no-caches", cleanup)
+        self.assertNotIn("gh api", cleanup)
+        self.assertNotIn("curl ", cleanup)
+
+    def test_closed_pr_cache_cleanup_uses_no_source_or_repository_secrets(
+        self,
+    ) -> None:
+        cleanup = job_block(self.cache_cleanup, "cleanup")
+        self.assertNotIn("uses:", cleanup)
+        self.assertNotIn("checkout", cleanup.lower())
+        self.assertNotIn("secrets.", self.cache_cleanup)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", cleanup)
+        self.assertIn("GH_REPO: ${{ github.repository }}", cleanup)
+        self.assertIn(
+            "PR_NUMBER: ${{ github.event.pull_request.number }}",
+            cleanup,
+        )
 
     def test_desktop_stages_and_platform_invariants_are_explicit(self) -> None:
         contracts = job_block(self.ci, "desktop_contracts")

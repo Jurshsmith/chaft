@@ -1,0 +1,39 @@
+name: Cleanup closed pull request caches
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cleanup-pull-request-caches-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete closed pull request caches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete exact pull request cache scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Pull request number must be a positive integer."
+            exit 1
+          fi
+
+          cache_ref="refs/pull/${PR_NUMBER}/merge"
+          echo "Deleting Actions caches scoped to ${cache_ref}."
+          gh cache delete --all \
+            --ref "${cache_ref}" \
+            --repo "${GH_REPO}" \
+            --succeed-on-no-caches
