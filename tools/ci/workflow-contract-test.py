@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github/workflows"
 CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
+RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
 
@@ -102,6 +103,7 @@ class CiWorkflowContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.ci = CI_PATH.read_text(encoding="utf-8")
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
+        cls.release_inputs = RELEASE_INPUTS_PATH.read_text(encoding="utf-8")
 
     def test_job_ids_exactly_match_aggregate_contract(self) -> None:
         expected = {
@@ -186,6 +188,42 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("archive: true", producer)
         self.assertIn("digest-mismatch: error", consumer)
         self.assertIn("sha256sum --check SHA256SUMS", consumer)
+
+    def test_release_inputs_run_contracts_once_before_platform_packages(self) -> None:
+        contracts = job_block(self.release_inputs, "desktop_contracts")
+        build = job_block(self.release_inputs, "build")
+        self.assertIn("needs: validate", contracts)
+        self.assertIn("runs-on: ubuntu-22.04", contracts)
+        self.assertIn("--stage contracts Linux", contracts)
+        self.assertNotIn("rustup", contracts)
+        self.assertNotIn("cmake", contracts)
+        self.assertNotIn("ninja", contracts)
+        self.assertIn("      - validate\n      - desktop_contracts", build)
+        self.assertIn("--stage package", build)
+        self.assertNotIn(
+            'ci-gates.sh "${{ matrix.package-platform }}"',
+            build,
+        )
+
+    def test_release_input_provenance_and_security_invariants_are_preserved(
+        self,
+    ) -> None:
+        trigger = self.release_inputs.split("\npermissions:\n", 1)[0]
+        build = job_block(self.release_inputs, "build")
+        self.assertIn("  workflow_dispatch:\n", trigger)
+        self.assertIn("  contents: read\n", self.release_inputs)
+        self.assertIn("  cancel-in-progress: false\n", self.release_inputs)
+        self.assertIn("ref: ${{ needs.validate.outputs.commit }}", build)
+        self.assertIn(
+            "CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}",
+            build,
+        )
+        self.assertIn(
+            "EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}",
+            build,
+        )
+        self.assertIn("--expected-commit \"$EXPECTED_COMMIT\"", build)
+        self.assertIn("--require-clean", build)
 
 
 class DesktopGateScriptContractTests(unittest.TestCase):

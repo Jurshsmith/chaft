@@ -60,9 +60,39 @@ jobs:
           retention-days: 7
           archive: true
 
+  desktop_contracts:
+    name: Linux desktop contracts
+    needs: validate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ env.CHAFT_QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Run platform-independent desktop contracts
+        run: tools/desktop/ci-gates.sh --stage contracts Linux
+
   build:
     name: Build ${{ matrix.name }} release input
-    needs: validate
+    needs:
+      - validate
+      - desktop_contracts
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -183,7 +213,9 @@ jobs:
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
         shell: bash
         run: |
-          tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
+          tools/desktop/ci-gates.sh \
+            --stage package \
+            "${{ matrix.package-platform }}"
           python3 tools/desktop/verify-release-metadata.py release \
             --platform "${{ matrix.package-platform }}" \
             --expected-commit "$EXPECTED_COMMIT" \
