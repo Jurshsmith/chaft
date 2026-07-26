@@ -160,12 +160,6 @@ case "${CHAFT_SMOKE_UI_STATE:-}" in
     expected_channel_id="$(json_field "$manifest_json" channels.design)"
     expected_text="$(json_field "$manifest_json" channelExpectedText.design)"
     ;;
-  direct-message)
-    # This state creates a deterministic direct-message room at runtime.
-    # Its screenshot baseline verifies the rendered result.
-    expected_channel_id=
-    expected_text=
-    ;;
 esac
 
 case "$(uname -s)" in

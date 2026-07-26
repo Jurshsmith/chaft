@@ -18698,7 +18698,16 @@ bool desktopSmokeSnapshotSettled(ChaftController *controller,
                                  const QString &expectedText,
                                  const QString &expectedChannelId) {
   if (controller == nullptr || controller->workspaceOperationInFlight() ||
-      !desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+      controller->timelineLoadInFlight()) {
+    return false;
+  }
+  if (controller->smokeUiState() == QStringLiteral("direct-message")) {
+    const auto channelId = controller->lastCreatedChannelId().trimmed();
+    return !channelId.isEmpty() &&
+           snapshot.value(QStringLiteral("timelineChannelId")).toString() ==
+               channelId;
+  }
+  if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
     return false;
   }
   return expectedChannelId.isEmpty() ||
@@ -19076,6 +19085,8 @@ void configureDesktopSmoke(QCoreApplication *app,
                    app, checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller,
                    &ChaftController::workspaceOperationInFlightChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::lastCreatedChannelChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller, &ChaftController::hostedPeerChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
