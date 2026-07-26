@@ -19,7 +19,7 @@ const { title, description, noindex = false, structuredData } = Astro.props;
 const siteName = "Chaft";
 const fullTitle = title === siteName ? title : `${title} · ${siteName}`;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url);
-const socialImage = new URL(sitePath("/og-chaft.png"), Astro.site ?? Astro.url);
+const socialImage = new URL(sitePath("/og-chaft-canary.png"), Astro.site ?? Astro.url);
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
 ---
 
@@ -29,7 +29,7 @@ const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png"
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
-    <meta name="theme-color" content="#182024" />
+    <meta name="theme-color" content="#f4f1e8" />
     <meta name="description" content={description} />
     {noindex && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
@@ -43,12 +43,12 @@ const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png"
     <meta property="og:image" content={socialImage} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Chaft — Private workspace chat, built local-first." />
+    <meta property="og:image:alt" content="Chaft — Team chat designed to stay free." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImage} />
-    <meta name="twitter:image:alt" content="Chaft — Private workspace chat, built local-first." />
+    <meta name="twitter:image:alt" content="Chaft — Team chat designed to stay free." />
 
     {structuredData && (
       <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />

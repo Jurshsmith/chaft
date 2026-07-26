@@ -33,7 +33,7 @@ const platformCodes = {
       <p class="availability">
         {asset.available
           ? `Chaft ${currentRelease.version}`
-          : "Verified preview build not published yet"}
+          : "Canary package not published yet"}
       </p>
       {asset.available && asset.sha256 && (
         <p class="checksum">
@@ -49,10 +49,10 @@ const platformCodes = {
         aria-label={
           asset.available
             ? `Download Chaft ${currentRelease.version} for ${asset.platformLabel}`
-            : `View Chaft releases for ${asset.platformLabel} (opens in a new tab)`
+            : `Follow Chaft releases for ${asset.platformLabel} (opens in a new tab)`
         }
       >
-        {asset.available ? `Download .${asset.format}` : "View releases"}
+        {asset.available ? `Download .${asset.format}` : "Follow releases"}
         <span aria-hidden="true">→</span>
       </a>
     </article>

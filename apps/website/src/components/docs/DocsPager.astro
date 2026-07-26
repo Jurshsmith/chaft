@@ -40,12 +40,8 @@ const { previous, next } = Astro.props;
   .docs-pager {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1px;
     margin-top: clamp(3rem, 8vw, 5rem);
-    overflow: hidden;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--border-subtle);
+    border-block: 1px solid var(--border-subtle);
   }
 
   .docs-pager__link {
@@ -55,7 +51,7 @@ const { previous, next } = Astro.props;
     min-height: 6.5rem;
     align-content: center;
     padding: 1.1rem 1.25rem;
-    background: var(--surface-raised);
+    background: transparent;
     color: var(--text-strong);
     text-decoration: none;
     transition: background-color var(--motion-quick);
@@ -63,6 +59,10 @@ const { previous, next } = Astro.props;
 
   .docs-pager__link:hover {
     background: var(--surface-active);
+  }
+
+  .docs-pager__link--next {
+    border-left: 1px solid var(--border-subtle);
   }
 
   .docs-pager__link span {
@@ -95,6 +95,8 @@ const { previous, next } = Astro.props;
     }
 
     .docs-pager__link--next {
+      border-top: 1px solid var(--border-subtle);
+      border-left: 0;
       justify-items: start;
       text-align: left;
     }

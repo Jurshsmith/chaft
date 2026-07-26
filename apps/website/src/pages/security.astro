@@ -3,7 +3,7 @@ import PageHero from "../components/PageHero.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
 
 const description =
-  "Chaft's current security model, known early-stage limits, and private vulnerability reporting process.";
+  "Chaft's current security model, known canary-stage limits, and private vulnerability reporting process.";
 ---
 
 <BaseLayout title="Security" description={description}>
@@ -37,7 +37,7 @@ const description =
   <section class="section section--deep">
     <div class="shell limits">
       <div>
-        <span class="status">Early-stage limits</span>
+        <span class="status">Canary limits</span>
         <h2>Not yet cleared for sensitive production communication.</h2>
       </div>
       <div class="prose">
@@ -47,8 +47,8 @@ const description =
         </p>
         <p>
           Public relay and discovery remain default-deny while the native peer transport
-          matures. Packaging, code signing, notarization, and update delivery are not yet
-          production release gates.
+          matures. Packaging, code signing, notarization, and update delivery remain
+          incomplete production release gates.
         </p>
         <p>
           Security fixes currently target the main branch until tagged, signed releases

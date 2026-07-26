@@ -4,13 +4,13 @@ import { allReleases, currentRelease } from "../../data/releases";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { sitePath } from "../../lib/site-path";
 
-const description = "Chaft desktop release status, artifacts, and integrity metadata.";
+const description = "Chaft canary and desktop release status, artifacts, and integrity metadata.";
 ---
 
 <BaseLayout title="Releases" description={description}>
   <PageHero
     eyebrow="Release channel"
-    title="Every build should explain where it came from."
+    title="Every canary should explain where it came from."
     lede="Chaft release pages come from a validated manifest. An artifact cannot be marked available until its final package metadata and integrity state are present."
   />
 
@@ -24,14 +24,14 @@ const description = "Chaft desktop release status, artifacts, and integrity meta
               <div class="release-card__heading">
                 <span class="status">
                   {isCurrent
-                    ? release.status === "published" ? "Current release" : "Builds pending"
+                    ? release.status === "published" ? "Current release" : "Canary packages pending"
                     : "Archived release"}
                 </span>
                 <span class="mono">{release.channel}</span>
               </div>
               <div>
                 <p class="release-card__version">v{release.version}</p>
-                <h2>{isCurrent ? "Current website manifest" : `Chaft ${release.version}`}</h2>
+                <h2>{isCurrent ? "Current canary manifest" : `Chaft ${release.version}`}</h2>
                 <p>
                   {release.assets.length} platform definitions · Windows, macOS, and Linux
                 </p>

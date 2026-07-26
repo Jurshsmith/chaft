@@ -28,16 +28,17 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     href={sitePath("/docs/")}
     aria-current={currentId === "index" ? "page" : undefined}
   >
-    Documentation
+    Chaft field manual
   </a>
   <nav aria-label="Documentation navigation">
-    {groups.map((group) => (
+    {groups.map((group, index) => (
       <div
         class="docs-sidebar__group"
         role="group"
         aria-labelledby={`docs-section-${group.section}`}
       >
         <p class="docs-sidebar__section-title" id={`docs-section-${group.section}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
           {group.label}
         </p>
         <ul>
@@ -67,7 +68,7 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     >
       Documentation overview
     </a>
-    {groups.map((group) => (
+    {groups.map((group, index) => (
       <div
         class="docs-sidebar__group"
         role="group"
@@ -77,6 +78,7 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
           class="docs-sidebar__section-title"
           id={`mobile-docs-section-${group.section}`}
         >
+          <span>{String(index + 1).padStart(2, "0")}</span>
           {group.label}
         </p>
         <ul>
@@ -103,17 +105,20 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
 
   .docs-sidebar--desktop {
     position: sticky;
-    top: 1.5rem;
-    max-height: calc(100vh - 3rem);
+    top: 6rem;
+    max-height: calc(100vh - 7.5rem);
     overflow: auto;
-    padding-right: 1.1rem;
+    padding-right: 1.5rem;
+    border-right: 1px solid var(--border-subtle);
   }
 
   .docs-sidebar__home {
     display: block;
     margin-bottom: 1.4rem;
     color: var(--text-strong);
-    font-size: 1rem;
+    font-family: var(--font-editorial);
+    font-size: 1.18rem;
+    font-style: italic;
     font-weight: 500;
     text-decoration: none;
   }
@@ -132,6 +137,8 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
   }
 
   .docs-sidebar__section-title {
+    display: flex;
+    gap: 0.55rem;
     max-width: none;
     margin-bottom: 0.55rem;
     color: var(--text-faint);
@@ -141,6 +148,10 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     letter-spacing: 0.08em;
     line-height: 1.4;
     text-transform: uppercase;
+  }
+
+  .docs-sidebar__section-title span {
+    color: var(--warning);
   }
 
   .docs-sidebar ul {
@@ -156,10 +167,9 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
   }
 
   .docs-sidebar li a {
+    position: relative;
     display: block;
-    padding: 0.43rem 0.55rem;
-    border-left: 2px solid transparent;
-    border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+    padding: 0.43rem 0.4rem 0.43rem 1rem;
     color: var(--text-muted);
     font-size: 0.8rem;
     line-height: 1.35;
@@ -171,9 +181,16 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
   }
 
   .docs-sidebar li a[aria-current="page"] {
-    border-left-color: var(--accent);
-    background: var(--secure-surface);
     color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .docs-sidebar li a[aria-current="page"]::before {
+    position: absolute;
+    top: 0.45rem;
+    left: 0;
+    color: var(--accent);
+    content: "↳";
   }
 
   .docs-sidebar--mobile {

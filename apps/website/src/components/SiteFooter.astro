@@ -8,14 +8,14 @@ const year = new Date().getUTCFullYear();
   <div class="shell site-footer__inner">
     <div>
       <a class="footer-brand" href={sitePath("/")}>chaft</a>
-      <p>Native, local-first, peer-to-peer workspace chat.</p>
+      <p>Experimental P2P-first team chat for small teams.</p>
     </div>
 
     <nav aria-label="Footer navigation">
       <a href={sitePath("/docs/")}>Documentation</a>
       <a href={sitePath("/docs/getting-started/build-desktop/")}>Getting started</a>
       <a href={sitePath("/docs/concepts/architecture/")}>Architecture</a>
-      <a href={sitePath("/download/")}>Downloads</a>
+      <a href={sitePath("/download/")}>Canary builds</a>
       <a href={sitePath("/releases/")}>Releases</a>
       <a href={sitePath("/security/")}>Security</a>
       <a href="https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md">
@@ -26,14 +26,21 @@ const year = new Date().getUTCFullYear();
       <a href={sitePath("/licenses/OFL-SpaceGrotesk.txt")}>Font license</a>
     </nav>
 
-    <p class="site-footer__meta">© {year} Chaft. Early-stage software.</p>
+    <p class="site-footer__meta">
+      © {year} Chaft. Canary software · Not for sensitive production use.
+    </p>
   </div>
 </footer>
 
 <style>
   .site-footer {
+    --border-subtle: #34423e;
+    --text-faint: #91a09a;
+    --text-muted: #b5c0bc;
+    --text-soft: #dce4e0;
+    --text-strong: #fffdf7;
     border-top: 1px solid var(--border-subtle);
-    background: var(--surface-deep);
+    background: var(--surface-ink);
   }
 
   .site-footer__inner {
@@ -47,7 +54,9 @@ const year = new Date().getUTCFullYear();
     display: inline-block;
     margin-block-end: 0.35rem;
     color: var(--text-strong);
-    font-size: 1.25rem;
+    font-family: var(--font-editorial);
+    font-size: 1.55rem;
+    font-style: italic;
     font-weight: 500;
     letter-spacing: -0.04em;
     text-decoration: none;
@@ -73,7 +82,7 @@ const year = new Date().getUTCFullYear();
   }
 
   nav a:hover {
-    color: var(--accent);
+    color: var(--accent-bright);
   }
 
   .site-footer__meta {

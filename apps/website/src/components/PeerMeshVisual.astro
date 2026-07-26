@@ -20,11 +20,11 @@
       <small>local ready</small>
     </span>
     <span class="peer peer--ayo">
-      <b>Ayo</b>
+      <b>Penelope</b>
       <small>direct</small>
     </span>
     <span class="peer peer--mira">
-      <b>Mira</b>
+      <b>Smith</b>
       <small>reconciling</small>
     </span>
 
@@ -43,8 +43,20 @@
 
 <style>
   .mesh-visual {
+    --accent: #64d6b5;
+    --border-strong: #62726c;
+    --border-subtle: #34423e;
+    --secure: #a99de1;
+    --surface-base: #1c2925;
+    --surface-deep: #111a17;
+    --surface-raised: #23332e;
+    --text-faint: #91a09a;
+    --text-muted: #b5c0bc;
+    --text-soft: #dce4e0;
+    --text-strong: #fffdf7;
+    --warning: #ff8368;
     overflow: hidden;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--surface-ink);
     border-radius: var(--radius-md);
     background: var(--surface-deep);
     box-shadow: var(--shadow-lift);
@@ -81,7 +93,9 @@
     position: relative;
     min-height: clamp(24rem, 50vw, 35rem);
     overflow: hidden;
-    background: var(--surface-base);
+    background:
+      radial-gradient(circle at 50% 50%, rgb(100 214 181 / 9%), transparent 38%),
+      var(--surface-base);
   }
 
   .mesh-plane::before,
@@ -143,6 +157,7 @@
     border: 2px solid var(--surface-base);
     border-radius: 50%;
     background: var(--accent);
+    animation: signal 2.8s ease-in-out infinite;
   }
 
   .mesh-pulse--one {
@@ -154,6 +169,7 @@
     top: 60%;
     left: 49%;
     background: var(--secure);
+    animation-delay: -1.2s;
   }
 
   .peer {
@@ -166,7 +182,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     background: var(--surface-raised);
-    box-shadow: 0 8px 25px rgb(0 0 0 / 16%);
+    box-shadow: 4px 5px 0 rgb(0 0 0 / 18%);
   }
 
   .peer::before {
@@ -259,6 +275,19 @@
     border-top: 1px solid var(--border-subtle);
     border-bottom: 0;
     color: var(--text-faint);
+  }
+
+  @keyframes signal {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgb(100 214 181 / 0%);
+      transform: scale(0.92);
+    }
+
+    50% {
+      box-shadow: 0 0 0 7px rgb(100 214 181 / 10%);
+      transform: scale(1.08);
+    }
   }
 
   @media (max-width: 520px) {
