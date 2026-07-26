@@ -259,6 +259,12 @@ if provided_binary is None or provided_binary.text != "ChaftDesktop":
 packaging_script = (
     ROOT / "tools" / "desktop" / "package-linux-appimage.sh"
 ).read_text(encoding="utf-8")
+package_smoke_script = (
+    ROOT / "tools" / "desktop" / "package-smoke.sh"
+).read_text(encoding="utf-8")
+appimage_smoke_script = (
+    ROOT / "tools" / "desktop" / "appimage-smoke.sh"
+).read_text(encoding="utf-8")
 for required_contract in (
     "--library \"$ffi_library\"",
     'qt_prefix="${QTDIR:-${QT_ROOT_DIR:-}}"',
@@ -291,6 +297,31 @@ if packaging_script.index('"$qt_xcb_runtime_check" "$qt_prefix"') > (
     packaging_script.index('"$tool_dir/linuxdeploy"')
 ):
     fail("Qt XCB dependency preflight must run before linuxdeploy")
+for required_contract in (
+    "CHAFT_APPIMAGE_SMOKE_RUNTIME_DIR",
+    "CHAFT_APPIMAGE_SMOKE_EXPECT_NO_WORKSPACE=0",
+    "CHAFT_APPIMAGE_SMOKE_EXPECT_TEXT",
+    "CHAFT_APPIMAGE_SMOKE_WORKSPACE_ID",
+    '"$script_dir/appimage-smoke.sh"',
+):
+    if required_contract not in package_smoke_script:
+        fail(
+            "Linux package smoke must exercise the packaged AppImage with "
+            f"the functional workspace contract: {required_contract}"
+        )
+if 'Darwin|Linux) ;;' not in package_smoke_script:
+    fail("Linux package smoke must not launch the raw install tree")
+for required_contract in (
+    "CHAFT_APPIMAGE_SMOKE_RUNTIME_DIR",
+    "CHAFT_APPIMAGE_SMOKE_EXPECT_NO_WORKSPACE",
+    "CHAFT_APPIMAGE_SMOKE_EXPECT_TEXT",
+    "CHAFT_APPIMAGE_SMOKE_WORKSPACE_ID",
+):
+    if required_contract not in appimage_smoke_script:
+        fail(
+            "AppImage smoke does not expose the package-smoke override: "
+            f"{required_contract}"
+        )
 
 xcb_runtime_check_path = (
     ROOT / "tools" / "desktop" / "check-qt-xcb-runtime.sh"

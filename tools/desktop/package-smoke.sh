@@ -68,16 +68,20 @@ require_tool python3
 "$script_dir/package.sh" "$profile"
 
 platform_name="$(uname -s)"
-if [ "$platform_name" != "Darwin" ]; then
-  installed_binary="$(
-    chaft_desktop_find_installed_binary "$repo_root" "$preset" || true
-  )"
-  if [ ! -x "$installed_binary" ]; then
-    printf 'installed desktop binary not found for %s package\n' "$profile" >&2
-    chaft_desktop_installed_binary_candidates "$repo_root" "$preset" >&2
-    exit 1
-  fi
-fi
+case "$platform_name" in
+  Darwin|Linux) ;;
+  *)
+    installed_binary="$(
+      chaft_desktop_find_installed_binary "$repo_root" "$preset" || true
+    )"
+    if [ ! -x "$installed_binary" ]; then
+      printf 'installed desktop binary not found for %s package\n' \
+        "$profile" >&2
+      chaft_desktop_installed_binary_candidates "$repo_root" "$preset" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 cli_bin="$repo_root/target/$rust_target_dir/$(chaft_desktop_cli_binary_name)"
 if [ ! -x "$cli_bin" ]; then
@@ -89,7 +93,7 @@ trap cleanup EXIT INT TERM
 
 runtime_dir="$smoke_dir/runtime"
 mkdir -p "$runtime_dir"
-if [ "$platform_name" != "Darwin" ]; then
+if [ "$platform_name" != "Darwin" ] && [ "$platform_name" != "Linux" ]; then
   desktop_launch_binary="$(
     chaft_desktop_prepare_smoke_binary "$installed_binary" "$smoke_dir"
   )"
@@ -119,9 +123,12 @@ parent_message_id="$(json_field "$smoke_dir/parent-message.json" messageId)"
 
 case "$platform_name" in
   Linux)
-    if [ -z "${DISPLAY:-}" ]; then
-      export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
-    fi
+    CHAFT_APPIMAGE_SMOKE_RUNTIME_DIR="$runtime_dir" \
+    CHAFT_APPIMAGE_SMOKE_EXPECT_NO_WORKSPACE=0 \
+    CHAFT_APPIMAGE_SMOKE_EXPECT_TEXT="$expected_text" \
+    CHAFT_APPIMAGE_SMOKE_WORKSPACE_ID="$workspace_id" \
+      "$script_dir/appimage-smoke.sh" \
+      "$repo_root/build/$preset/package"
     ;;
   Darwin)
     CHAFT_RUNTIME_DIR="$runtime_dir" \
@@ -139,15 +146,11 @@ case "$platform_name" in
     ;;
 esac
 
-if [ "$platform_name" != "Darwin" ]; then
+if [ "$platform_name" != "Darwin" ] && [ "$platform_name" != "Linux" ]; then
   CHAFT_RUNTIME_DIR="$runtime_dir" \
   CHAFT_WORKSPACE_ID="$workspace_id" \
   CHAFT_DESKTOP_SMOKE=1 \
   CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
   CHAFT_DESKTOP_SMOKE_TIMEOUT_MS="${CHAFT_DESKTOP_SMOKE_TIMEOUT_MS:-15000}" \
     "$desktop_launch_binary"
-fi
-
-if [ "$platform_name" = "Linux" ]; then
-  "$script_dir/appimage-smoke.sh" "$repo_root/build/$preset/package"
 fi
