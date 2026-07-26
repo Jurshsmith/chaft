@@ -91,6 +91,28 @@ chaft_desktop_qt_prefix() {
   return 1
 }
 
+chaft_desktop_qt_compatibility_cmake_arguments() {
+  profile="$1"
+  if [ "$profile" != "debug" ] \
+      || [ "${CHAFT_QT_SDK_BUILD_TYPE:-}" != "Release" ]; then
+    return
+  fi
+
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # Chaft's deterministic Windows SDK intentionally contains release Qt
+      # libraries. Keep the unoptimized application/debug-symbol build, but
+      # align its imported Qt configuration, MSVC CRT, and Qt header contract
+      # with those libraries. Mixing /MDd application code with /MD Qt DLLs
+      # corrupts process state during QApplication startup.
+      printf '%s\n' \
+        "-DCHAFT_DEBUG_USES_RELEASE_QT=ON" \
+        "-DCMAKE_MAP_IMPORTED_CONFIG_DEBUG=Release" \
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
+      ;;
+  esac
+}
+
 chaft_desktop_ffi_library_name() {
   case "$(uname -s)" in
     Darwin) printf 'libchaft_ffi.dylib\n' ;;

@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -73,15 +74,15 @@ class ManifestContractTests(unittest.TestCase):
             {
                 "linux": (
                     "qt-6.8.4-r1-linux-x86_64-gcc-11-"
-                    "f72a044dc42802a6f940"
+                    "efd94e54ed074ca27949"
                 ),
                 "macos": (
                     "qt-6.8.4-r1-macos-x86_64-apple-clang-"
-                    "f72a044dc42802a6f940"
+                    "efd94e54ed074ca27949"
                 ),
                 "windows": (
                     "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-                    "f72a044dc42802a6f940"
+                    "efd94e54ed074ca27949"
                 ),
             },
         )
@@ -299,7 +300,7 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual(
             result.stdout,
             "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-            "f72a044dc42802a6f940\n",
+            "efd94e54ed074ca27949\n",
         )
         self.assertEqual(result.stderr, "")
 
@@ -624,12 +625,55 @@ class VerificationContractTests(unittest.TestCase):
                     f"QTDIR={resolved_prefix}",
                     f"QT_ROOT_DIR={resolved_prefix}",
                     f"CMAKE_PREFIX_PATH={resolved_prefix}",
+                    "CHAFT_QT_SDK_BUILD_TYPE=Release",
                 ],
             )
             self.assertEqual(
                 github_path.read_text(encoding="utf-8"),
                 f"{resolved_prefix / 'bin'}\n",
             )
+
+    def test_release_only_windows_sdk_aligns_debug_consumer_runtime(self) -> None:
+        common = ROOT / "tools" / "desktop" / "common.sh"
+
+        def arguments(
+            platform_name: str, profile: str, build_type: str | None
+        ) -> list[str]:
+            environment = os.environ.copy()
+            if build_type is None:
+                environment.pop("CHAFT_QT_SDK_BUILD_TYPE", None)
+            else:
+                environment["CHAFT_QT_SDK_BUILD_TYPE"] = build_type
+            command = (
+                f'. "{common}"; '
+                f"uname() {{ printf '%s\\n' '{platform_name}'; }}; "
+                "chaft_desktop_qt_compatibility_cmake_arguments "
+                f"'{profile}'"
+            )
+            result = subprocess.run(
+                ["sh", "-c", command],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+            )
+            self.assertEqual(result.stderr, "")
+            return result.stdout.splitlines()
+
+        self.assertEqual(
+            arguments("MINGW64_NT-10.0", "debug", "Release"),
+            [
+                "-DCHAFT_DEBUG_USES_RELEASE_QT=ON",
+                "-DCMAKE_MAP_IMPORTED_CONFIG_DEBUG=Release",
+                "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL",
+            ],
+        )
+        self.assertEqual(arguments("Linux", "debug", "Release"), [])
+        self.assertEqual(
+            arguments("MINGW64_NT-10.0", "release", "Release"), []
+        )
+        self.assertEqual(arguments("MINGW64_NT-10.0", "debug", None), [])
 
 
 if __name__ == "__main__":

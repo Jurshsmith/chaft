@@ -38,14 +38,21 @@ cd "$repo_root"
 
 cargo build -p chaft-ffi $cargo_profile
 
+set -- "-DCHAFT_FFI_LIBRARY_PATH=$ffi_library"
 if [ -n "$qt_prefix" ]; then
-  cmake --preset "$preset" \
-    "-DCMAKE_PREFIX_PATH=$qt_prefix" \
-    "-DCHAFT_FFI_LIBRARY_PATH=$ffi_library"
-else
-  cmake --preset "$preset" \
-    "-DCHAFT_FFI_LIBRARY_PATH=$ffi_library"
+  set -- "-DCMAKE_PREFIX_PATH=$qt_prefix" "$@"
 fi
+qt_compatibility_arguments="$(
+  chaft_desktop_qt_compatibility_cmake_arguments "$profile"
+)"
+while IFS= read -r argument; do
+  if [ -n "$argument" ]; then
+    set -- "$@" "$argument"
+  fi
+done <<EOF
+$qt_compatibility_arguments
+EOF
+cmake --preset "$preset" "$@"
 
 cmake --build --preset "$preset"
 

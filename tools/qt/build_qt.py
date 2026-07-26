@@ -1444,6 +1444,7 @@ def activation_values(prefix: Path) -> dict[str, str]:
         "QTDIR": str(prefix),
         "QT_ROOT_DIR": str(prefix),
         "CMAKE_PREFIX_PATH": cmake_prefix,
+        "CHAFT_QT_SDK_BUILD_TYPE": "Release",
     }
 
 

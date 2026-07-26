@@ -10,6 +10,20 @@ include(GNUInstallDirs)
 find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
 qt_standard_project_setup(REQUIRES 6.8.4)
 
+option(
+    CHAFT_DEBUG_USES_RELEASE_QT
+    "Align a Windows debug-symbol application build with a release-only Qt SDK"
+    OFF
+)
+if(CHAFT_DEBUG_USES_RELEASE_QT)
+    if(NOT MSVC OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(FATAL_ERROR
+            "CHAFT_DEBUG_USES_RELEASE_QT is valid only for an MSVC Debug build"
+        )
+    endif()
+    add_compile_definitions(QT_NO_DEBUG)
+endif()
+
 if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
 endif()
