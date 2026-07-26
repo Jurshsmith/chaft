@@ -104,16 +104,21 @@ jobs:
             qt-host: linux
             qt-arch: linux_gcc_64
             package-platform: Linux
+            smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
             qt-host: mac
             qt-arch: clang_64
             package-platform: macOS
+            smoke-timeout-ms: ""
           - name: Windows
             os: windows-latest
             qt-host: windows
             qt-arch: win64_msvc2022_64
             package-platform: Windows
+            # A cold offscreen QML activation can block the hosted runner's
+            # event loop for longer than the portable 15-second default.
+            smoke-timeout-ms: "60000"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -180,6 +185,8 @@ jobs:
             >> "$GITHUB_ENV"
 
       - name: Run desktop CI gates
+        env:
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
         shell: bash
         run: tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
 
