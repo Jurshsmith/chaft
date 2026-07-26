@@ -521,11 +521,22 @@ class CiWorkflowContractTests(unittest.TestCase):
             "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package",
             clean,
         )
+        self.assertIn(
+            "tools/desktop/macos-unsigned-canary-smoke.sh\n"
+            "          build/clean-macos-package",
+            clean,
+        )
         self.assertLess(
             clean.index("digest-mismatch: error"),
             clean.index(
                 "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
             ),
+        )
+        self.assertLess(
+            clean.index(
+                "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
+            ),
+            clean.index("tools/desktop/macos-unsigned-canary-smoke.sh"),
         )
         self.assertIn(
             "python3 tools/desktop/macos-dmg-smoke-test.py",
@@ -1212,9 +1223,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         for smoke in (
             "appimage-smoke.sh",
             "macos-dmg-smoke.sh",
+            "macos-unsigned-canary-smoke.sh",
             "windows-zip-smoke.ps1",
         ):
             self.assertIn(smoke, actions_smoke)
+        self.assertLess(
+            actions_smoke.index("macos-dmg-smoke.sh"),
+            actions_smoke.index("macos-unsigned-canary-smoke.sh"),
+        )
 
         release_smoke = job_block(self.canary_publish, "release_smoke")
         self.assertIn("releases/assets/${asset_id}", release_smoke)

@@ -319,7 +319,11 @@ install(FILES ${CHAFT_PACKAGE_DOCUMENTATION}
 
 if(APPLE OR WIN32)
     set(CHAFT_DEPLOY_OPTIONS)
-    if(WIN32)
+    if(APPLE)
+        list(APPEND CHAFT_DEPLOY_OPTIONS
+            DEPLOY_TOOL_OPTIONS -codesign=-
+        )
+    elseif(WIN32)
         list(APPEND CHAFT_DEPLOY_OPTIONS
             DEPLOY_TOOL_OPTIONS --include-plugins qoffscreen
         )
@@ -330,6 +334,14 @@ if(APPLE OR WIN32)
         ${CHAFT_DEPLOY_OPTIONS}
     )
     install(SCRIPT ${chaft_desktop_deploy_script})
+    if(APPLE)
+        # macdeployqt signs nested Mach-O files inside-out after adjusting
+        # their install names. Fail before DMG creation unless that final
+        # deployed app has a valid ad-hoc signature.
+        install(SCRIPT
+            "${CMAKE_SOURCE_DIR}/tools/desktop/macos-adhoc-verify.cmake"
+        )
+    endif()
 endif()
 
 set(CPACK_PACKAGE_NAME "Chaft")

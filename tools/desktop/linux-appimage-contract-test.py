@@ -452,6 +452,43 @@ for required_package_name in (
 if 'CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"' not in cmake:
     fail("native embedded desktop version must remain the stable source version")
 
+macos_codesign_option = "DEPLOY_TOOL_OPTIONS -codesign=-"
+macos_deploy_rule = "install(SCRIPT ${chaft_desktop_deploy_script})"
+macos_verify_rule = (
+    '"${CMAKE_SOURCE_DIR}/tools/desktop/macos-adhoc-verify.cmake"'
+)
+if macos_codesign_option not in cmake:
+    fail("macdeployqt must explicitly ad-hoc sign the deployed macOS app")
+if macos_deploy_rule not in cmake or macos_verify_rule not in cmake:
+    fail("CMake must verify the final deployed macOS app signature")
+if cmake.index(macos_verify_rule) < cmake.index(macos_deploy_rule):
+    fail("macOS signature verification must run after the Qt deployment install script")
+
+macos_sign_script = (
+    ROOT / "tools" / "desktop" / "macos-adhoc-verify.cmake"
+).read_text(encoding="utf-8")
+for required_contract in (
+    '"$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/ChaftDesktop.app"',
+    '"/usr/bin/codesign"',
+    'COMMAND "/usr/bin/test" -x "${CHAFT_CODESIGN_EXECUTABLE}"',
+    "--deep",
+    "--verify",
+    "--strict",
+):
+    if required_contract not in macos_sign_script:
+        fail(
+            "final macOS ad-hoc signing is missing required contract: "
+            f"{required_contract}"
+        )
+if "CHAFT_DESKTOP_SKIP_CODESIGN" in macos_sign_script:
+    fail("final macOS package signature verification must not be bypassable")
+for forbidden_contract in ("--force", "--sign"):
+    if forbidden_contract in macos_sign_script:
+        fail(
+            "final macOS verification hook must not mutate signatures: "
+            f"{forbidden_contract}"
+        )
+
 for smoke_name in (
     "appimage-smoke.sh",
     "macos-dmg-smoke.sh",

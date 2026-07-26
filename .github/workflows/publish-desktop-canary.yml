@@ -438,6 +438,10 @@ jobs:
         if: runner.os == 'macOS'
         run: tools/desktop/macos-dmg-smoke.sh build/canary-input
 
+      - name: Verify downloaded macOS unsigned-canary state
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-unsigned-canary-smoke.sh build/canary-input
+
       - name: Smoke downloaded Windows ZIP
         if: runner.os == 'Windows'
         shell: pwsh
