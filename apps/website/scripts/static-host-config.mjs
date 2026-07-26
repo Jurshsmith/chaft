@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { deploymentMountPath } from "./deployment-artifact.mjs";
+
 export function deploymentBase(siteUrl) {
-  const pathname = new URL(siteUrl).pathname.replace(/\/+$/, "");
-  return pathname === "" ? "" : pathname;
+  const mountPath = deploymentMountPath(siteUrl);
+  return mountPath ? `/${mountPath}` : "";
 }
 
 export function withDeploymentBase(base, pathname) {

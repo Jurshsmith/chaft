@@ -26,6 +26,7 @@ const PORTABLE_SEGMENT = /^[A-Za-z0-9._~@+-]+$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SOURCE_COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const ROOT_PROVIDER_FILES = ["_headers", "_redirects"];
 
 function fail(message) {
   throw new Error(message);
@@ -116,6 +117,28 @@ function normalizeSiteUrl(value) {
   return `${parsed.origin}${path}`;
 }
 
+function mountPathFromNormalizedSiteUrl(normalizedSiteUrl) {
+  const pathname = new URL(normalizedSiteUrl).pathname;
+  if (pathname === "/") return "";
+
+  const mountPath = pathname.slice(1);
+  validatePortablePath(mountPath, "SITE_URL pathname");
+  const rootSegment = mountPath.split("/", 1)[0].toLowerCase();
+  if (ROOT_PROVIDER_FILES.some((providerFile) => providerFile.toLowerCase() === rootSegment)) {
+    fail(`SITE_URL pathname collides with a root provider file: ${mountPath}`);
+  }
+  return mountPath;
+}
+
+export function deploymentMountPath(siteUrl) {
+  return mountPathFromNormalizedSiteUrl(normalizeSiteUrl(siteUrl));
+}
+
+export function deploymentMarkerPath(siteUrl) {
+  const mountPath = deploymentMountPath(siteUrl);
+  return mountPath ? `${mountPath}/${DEPLOYMENT_MARKER}` : DEPLOYMENT_MARKER;
+}
+
 export function normalizeArtifactIdentity(identity) {
   assertExactKeys(
     identity,
@@ -136,10 +159,13 @@ export function normalizeArtifactIdentity(identity) {
     fail("sourceCommit must be a lowercase full SHA-1 or SHA-256 revision");
   }
 
+  const siteUrl = normalizeSiteUrl(identity.siteUrl);
+  mountPathFromNormalizedSiteUrl(siteUrl);
+
   return {
     sourceRepository: identity.sourceRepository,
     sourceCommit: identity.sourceCommit,
-    siteUrl: normalizeSiteUrl(identity.siteUrl),
+    siteUrl,
   };
 }
 
@@ -271,14 +297,45 @@ async function walkRegularFiles(root) {
   return files;
 }
 
-function requireProviderFiles(files) {
+function mountedAssetPath(mountPath, assetPath) {
+  return mountPath ? `${mountPath}/${assetPath}` : assetPath;
+}
+
+function isDeploymentMarkerPath(portablePath) {
+  return (
+    portablePath === DEPLOYMENT_MARKER ||
+    portablePath.endsWith(`/${DEPLOYMENT_MARKER}`)
+  );
+}
+
+function requireProviderFiles(files, mountPath) {
   const paths = new Set(files.map((file) => file.path));
-  for (const required of ["404.html", "_headers", "_redirects"]) {
+  for (const required of [
+    ...ROOT_PROVIDER_FILES,
+    mountedAssetPath(mountPath, "404.html"),
+  ]) {
     if (!paths.has(required)) fail(`artifact is missing required file: ${required}`);
   }
 }
 
-function validateManifestRows(rows) {
+function mountPathFromMarkerPath(markerPath) {
+  validatePortablePath(markerPath, "artifact manifest markerPath");
+  if (markerPath === DEPLOYMENT_MARKER) return "";
+
+  const markerSuffix = `/${DEPLOYMENT_MARKER}`;
+  if (!markerPath.endsWith(markerSuffix)) {
+    fail(`artifact manifest markerPath must end with ${DEPLOYMENT_MARKER}`);
+  }
+  const mountPath = markerPath.slice(0, -markerSuffix.length);
+  validatePortablePath(mountPath, "artifact manifest deployment mount path");
+  const rootSegment = mountPath.split("/", 1)[0].toLowerCase();
+  if (ROOT_PROVIDER_FILES.some((providerFile) => providerFile.toLowerCase() === rootSegment)) {
+    fail(`artifact manifest deployment mount path collides with a root provider file: ${mountPath}`);
+  }
+  return mountPath;
+}
+
+function validateManifestRows(rows, markerPath) {
   if (!Array.isArray(rows)) fail("artifact manifest files must be an array");
   if (rows.length > MAX_ASSET_COUNT) {
     fail(`artifact manifest contains more than ${MAX_ASSET_COUNT} files`);
@@ -329,9 +386,15 @@ function validateManifestRows(rows) {
     }
   }
 
-  requireProviderFiles(rows);
-  if (!exact.has(DEPLOYMENT_MARKER)) {
-    fail(`manifest is missing the deployment marker: ${DEPLOYMENT_MARKER}`);
+  const mountPath = mountPathFromMarkerPath(markerPath);
+  requireProviderFiles(rows, mountPath);
+  if (!exact.has(markerPath)) {
+    fail(`manifest is missing the deployment marker: ${markerPath}`);
+  }
+  for (const path of exact) {
+    if (path !== markerPath && isDeploymentMarkerPath(path)) {
+      fail(`manifest contains an unexpected deployment marker: ${path}`);
+    }
   }
 }
 
@@ -368,13 +431,13 @@ async function copyFileList(sourceRoot, destinationRoot, files) {
   }
 }
 
-function artifactManifest(files) {
+function artifactManifest(files, markerPath) {
   return {
     schemaVersion: 1,
     artifactKind: ARTIFACT_KIND,
     algorithm: "sha256",
     assetRoot: ASSET_ROOT,
-    markerPath: DEPLOYMENT_MARKER,
+    markerPath,
     files,
   };
 }
@@ -385,6 +448,8 @@ export async function createDeploymentArtifact({
   identity,
 }) {
   const normalizedIdentity = normalizeArtifactIdentity(identity);
+  const mountPath = mountPathFromNormalizedSiteUrl(normalizedIdentity.siteUrl);
+  const markerPath = mountedAssetPath(mountPath, DEPLOYMENT_MARKER);
   const requestedSource = resolve(sourceDirectory);
   const requestedOutput = resolve(artifactDirectory);
 
@@ -402,9 +467,10 @@ export async function createDeploymentArtifact({
   await mkdir(dirname(output), { recursive: true });
 
   const sourceFiles = await walkRegularFiles(source);
-  requireProviderFiles(sourceFiles);
-  if (sourceFiles.some((file) => file.path === DEPLOYMENT_MARKER)) {
-    fail(`source directory already contains reserved marker: ${DEPLOYMENT_MARKER}`);
+  requireProviderFiles(sourceFiles, mountPath);
+  const reservedMarker = sourceFiles.find((file) => isDeploymentMarkerPath(file.path));
+  if (reservedMarker) {
+    fail(`source directory already contains reserved marker: ${reservedMarker.path}`);
   }
 
   const parent = dirname(output);
@@ -415,7 +481,7 @@ export async function createDeploymentArtifact({
     await mkdir(site);
     await copyFileList(source, site, sourceFiles);
 
-    const marker = join(site, ...DEPLOYMENT_MARKER.split("/"));
+    const marker = join(site, ...markerPath.split("/"));
     await mkdir(dirname(marker), { recursive: true });
     await writeFile(marker, renderDeploymentMarker(normalizedIdentity), {
       encoding: "utf8",
@@ -423,10 +489,10 @@ export async function createDeploymentArtifact({
     });
 
     const stagedFiles = await walkRegularFiles(site);
-    const stagedSourceFiles = stagedFiles.filter((file) => file.path !== DEPLOYMENT_MARKER);
+    const stagedSourceFiles = stagedFiles.filter((file) => file.path !== markerPath);
     compareFileLists(sourceFiles, stagedSourceFiles, "staged source");
 
-    const manifest = artifactManifest(stagedFiles);
+    const manifest = artifactManifest(stagedFiles, markerPath);
     await writeFile(
       join(temporary, ARTIFACT_MANIFEST),
       `${JSON.stringify(manifest, null, 2)}\n`,
@@ -470,14 +536,15 @@ async function readManifest(artifactDirectory) {
     value.schemaVersion !== 1 ||
     value.artifactKind !== ARTIFACT_KIND ||
     value.algorithm !== "sha256" ||
-    value.assetRoot !== ASSET_ROOT ||
-    value.markerPath !== DEPLOYMENT_MARKER
+    value.assetRoot !== ASSET_ROOT
   ) {
     fail("artifact manifest metadata is unsupported");
   }
-  validateManifestRows(value.files);
+  const mountPath = mountPathFromMarkerPath(value.markerPath);
+  validateManifestRows(value.files, value.markerPath);
   const canonical = artifactManifest(
     value.files.map(({ path, sizeBytes, sha256 }) => ({ path, sizeBytes, sha256 })),
+    mountedAssetPath(mountPath, DEPLOYMENT_MARKER),
   );
   if (text !== `${JSON.stringify(canonical, null, 2)}\n`) {
     fail("artifact manifest must use the canonical generated JSON encoding");
@@ -519,8 +586,12 @@ export async function verifyDeploymentArtifact({ artifactDirectory, expectedIden
   const actual = await walkRegularFiles(join(artifact, ASSET_ROOT));
   compareFileLists(manifest.files, actual, "artifact");
 
+  const expectedMarkerPath = deploymentMarkerPath(identity.siteUrl);
+  if (manifest.markerPath !== expectedMarkerPath) {
+    fail("deployment marker path does not match the expected site URL");
+  }
   const marker = await readFile(
-    join(artifact, ASSET_ROOT, ...DEPLOYMENT_MARKER.split("/")),
+    join(artifact, ASSET_ROOT, ...manifest.markerPath.split("/")),
     "utf8",
   );
   const expectedMarker = renderDeploymentMarker(identity);
