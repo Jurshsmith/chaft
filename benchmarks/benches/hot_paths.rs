@@ -1,5 +1,6 @@
 use std::{
     ffi::{CStr, CString},
+    hint::black_box,
     os::raw::c_char,
 };
 
@@ -16,7 +17,7 @@ use chaft_store::EventStore;
 use chaft_types::{
     ChannelId, DeviceId, EventBody, MessageId, SignableEvent, SignedEvent, WorkspaceId,
 };
-use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use tempfile::TempDir;
 use tokio::{runtime::Runtime, sync::oneshot, task::JoinHandle};
 
