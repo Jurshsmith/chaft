@@ -1,0 +1,225 @@
+---
+import type { MarkdownHeading } from "astro";
+
+import DocsBreadcrumbs from "../components/docs/DocsBreadcrumbs.astro";
+import DocsPager from "../components/docs/DocsPager.astro";
+import DocsSidebar from "../components/docs/DocsSidebar.astro";
+import DocsStatus from "../components/docs/DocsStatus.astro";
+import DocsTableOfContents from "../components/docs/DocsTableOfContents.astro";
+import type { DocNavigationEntry } from "../lib/docs";
+import BaseLayout from "./BaseLayout.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  section: string;
+  status: string;
+  audience: string;
+  currentId: string;
+  docs: DocNavigationEntry[];
+  headings: MarkdownHeading[];
+  previous?: DocNavigationEntry | undefined;
+  next?: DocNavigationEntry | undefined;
+}
+
+const {
+  title,
+  description,
+  section,
+  status,
+  audience,
+  currentId,
+  docs,
+  headings,
+  previous,
+  next,
+} = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <section class="docs-page">
+    <div class="shell docs-page__grid">
+      <DocsSidebar entries={docs} currentId={currentId} />
+
+      <article class="docs-article">
+        <DocsBreadcrumbs section={section} title={title} isIndex={currentId === "index"} />
+        <DocsStatus status={status} audience={audience} />
+        <DocsTableOfContents headings={headings} variant="mobile" />
+        <div class="docs-prose">
+          <slot />
+        </div>
+        <DocsPager previous={previous} next={next} />
+      </article>
+
+      <DocsTableOfContents headings={headings} variant="desktop" />
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .docs-page {
+    min-height: 70vh;
+    padding-block: clamp(2.25rem, 5vw, 4.5rem) clamp(4rem, 9vw, 7rem);
+  }
+
+  .docs-page__grid {
+    display: grid;
+    grid-template-columns: minmax(11.5rem, 14rem) minmax(0, 47rem) minmax(10rem, 13rem);
+    gap: clamp(1.75rem, 4vw, 3.25rem);
+    justify-content: center;
+    align-items: start;
+  }
+
+  .docs-article {
+    min-width: 0;
+  }
+
+  .docs-article > :global(.docs-status) {
+    margin-bottom: 1.35rem;
+  }
+
+  .docs-prose {
+    max-width: 70ch;
+  }
+
+  .docs-prose :global(h1) {
+    max-width: 22ch;
+    margin-bottom: 1.5rem;
+    font-size: clamp(2.4rem, 5vw, 4.5rem);
+    overflow-wrap: anywhere;
+  }
+
+  .docs-prose :global(h2),
+  .docs-prose :global(h3) {
+    max-width: 28ch;
+    scroll-margin-top: 1.5rem;
+  }
+
+  .docs-prose :global(h2) {
+    margin-block: 3.5rem 1.15rem;
+    padding-top: 0.35rem;
+    font-size: clamp(1.7rem, 3vw, 2.35rem);
+  }
+
+  .docs-prose :global(h3) {
+    margin-block: 2.35rem 0.75rem;
+    font-size: clamp(1.2rem, 2vw, 1.45rem);
+  }
+
+  .docs-prose :global(h1 + p) {
+    color: var(--text-soft);
+    font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+    line-height: 1.65;
+  }
+
+  .docs-prose :global(p),
+  .docs-prose :global(li) {
+    color: var(--text-muted);
+  }
+
+  .docs-prose :global(p),
+  .docs-prose :global(ul),
+  .docs-prose :global(ol),
+  .docs-prose :global(blockquote),
+  .docs-prose :global(pre),
+  .docs-prose :global(table) {
+    margin-block: 0 1.25rem;
+  }
+
+  .docs-prose :global(ul),
+  .docs-prose :global(ol) {
+    padding-left: 1.4rem;
+  }
+
+  .docs-prose :global(li + li) {
+    margin-top: 0.4rem;
+  }
+
+  .docs-prose :global(strong) {
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .docs-prose :global(a) {
+    color: var(--accent);
+    overflow-wrap: anywhere;
+  }
+
+  .docs-prose :global(code) {
+    padding: 0.12em 0.32em;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--surface-deep);
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+
+  .docs-prose :global(pre) {
+    max-width: 100%;
+    overflow: auto;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-deep);
+    line-height: 1.55;
+  }
+
+  .docs-prose :global(pre code) {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 0.8rem;
+  }
+
+  .docs-prose :global(blockquote) {
+    padding: 0.15rem 0 0.15rem 1rem;
+    border-left: 3px solid var(--accent);
+  }
+
+  .docs-prose :global(blockquote p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .docs-prose :global(table) {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  .docs-prose :global(th),
+  .docs-prose :global(td) {
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .docs-prose :global(th) {
+    background: var(--surface-raised);
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .docs-prose :global(hr) {
+    margin-block: 3rem;
+    border: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  @media (max-width: 1120px) {
+    .docs-page__grid {
+      grid-template-columns: minmax(11.5rem, 14rem) minmax(0, 47rem);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .docs-page__grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

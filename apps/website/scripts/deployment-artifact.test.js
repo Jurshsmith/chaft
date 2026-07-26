@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
@@ -12,6 +12,8 @@ import {
   DEPLOYMENT_MARKER,
   compareInstalledDeploymentArtifact,
   createDeploymentArtifact,
+  deploymentMarkerPath,
+  deploymentMountPath,
   installDeploymentArtifact,
   renderDeploymentMarker,
   validatePortablePath,
@@ -24,6 +26,19 @@ const identity = {
   siteUrl: "https://chaft.example",
 };
 
+const mountedIdentities = [
+  {
+    name: "one-segment",
+    identity: { ...identity, siteUrl: "https://chaft.example/chaft/" },
+    mountPath: "chaft",
+  },
+  {
+    name: "multi-segment",
+    identity: { ...identity, siteUrl: "https://chaft.example/products/chaft" },
+    mountPath: "products/chaft",
+  },
+];
+
 const temporaryRoots = [];
 const execFileAsync = promisify(execFile);
 
@@ -33,24 +48,31 @@ async function temporaryRoot() {
   return root;
 }
 
-async function writeFixture(source) {
-  await mkdir(join(source, "_astro"), { recursive: true });
-  await mkdir(join(source, ".metadata"), { recursive: true });
-  await writeFile(join(source, "404.html"), "<h1>Not found</h1>\n");
+async function writeFixture(source, siteUrl = identity.siteUrl) {
+  const mountPath = deploymentMountPath(siteUrl);
+  const mountedSource = mountPath
+    ? join(source, ...mountPath.split("/"))
+    : source;
+  await mkdir(join(mountedSource, "_astro"), { recursive: true });
+  await mkdir(join(mountedSource, ".metadata"), { recursive: true });
+  await writeFile(join(mountedSource, "404.html"), "<h1>Not found</h1>\n");
   await writeFile(join(source, "_headers"), "/*\n  X-Frame-Options: DENY\n");
   await writeFile(join(source, "_redirects"), "/downloads /download/ 301\n");
-  await writeFile(join(source, "index.html"), "<h1>Chaft</h1>\n");
-  await writeFile(join(source, "_astro", "app.AbCd1234.js"), "export default 1;\n");
-  await writeFile(join(source, ".metadata", "empty"), "");
-  await writeFile(join(source, "logo.bin"), Buffer.from([0, 1, 2, 255]));
+  await writeFile(join(mountedSource, "index.html"), "<h1>Chaft</h1>\n");
+  await writeFile(
+    join(mountedSource, "_astro", "app.AbCd1234.js"),
+    "export default 1;\n",
+  );
+  await writeFile(join(mountedSource, ".metadata", "empty"), "");
+  await writeFile(join(mountedSource, "logo.bin"), Buffer.from([0, 1, 2, 255]));
 }
 
-async function fixture() {
+async function fixture(siteIdentity = identity) {
   const root = await temporaryRoot();
   const source = join(root, "dist");
   const artifact = join(root, "artifact");
   await mkdir(source);
-  await writeFixture(source);
+  await writeFixture(source, siteIdentity.siteUrl);
   return { root, source, artifact };
 }
 
@@ -88,6 +110,7 @@ describe("deployment artifact", () => {
     expect(await readFile(markerPath, "utf8")).toBe(renderDeploymentMarker(identity));
 
     const manifest = JSON.parse(firstManifest.toString("utf8"));
+    expect(manifest.markerPath).toBe(DEPLOYMENT_MARKER);
     expect(manifest.files.map((file) => file.path)).toEqual([
       ".metadata/empty",
       ".well-known/chaft-deployment.json",
@@ -103,6 +126,75 @@ describe("deployment artifact", () => {
       sha256: "3d1f57c984978ef98a18378c8166c1cb8ede02c03eeb6aee7e2f121dfeee3e56",
     });
   });
+
+  it.each(mountedIdentities)(
+    "stores provider files and the deployment marker at the $name physical mount",
+    async ({ identity: mountedIdentity, mountPath }) => {
+      const { root, source, artifact } = await fixture(mountedIdentity);
+      await createDeploymentArtifact({
+        sourceDirectory: source,
+        artifactDirectory: artifact,
+        identity: mountedIdentity,
+      });
+
+      const markerPath = deploymentMarkerPath(mountedIdentity.siteUrl);
+      expect(markerPath).toBe(`${mountPath}/${DEPLOYMENT_MARKER}`);
+      const manifest = await manifestAt(artifact);
+      expect(manifest.markerPath).toBe(markerPath);
+      expect(manifest.files.map((file) => file.path)).toEqual([
+        "_headers",
+        "_redirects",
+        `${mountPath}/.metadata/empty`,
+        markerPath,
+        `${mountPath}/404.html`,
+        `${mountPath}/_astro/app.AbCd1234.js`,
+        `${mountPath}/index.html`,
+        `${mountPath}/logo.bin`,
+      ]);
+
+      await expect(readFile(join(source, "404.html"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(
+        readFile(join(artifact, ASSET_ROOT, ...DEPLOYMENT_MARKER.split("/")), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        await readFile(join(artifact, ASSET_ROOT, ...markerPath.split("/")), "utf8"),
+      ).toBe(renderDeploymentMarker(mountedIdentity));
+
+      await expect(
+        verifyDeploymentArtifact({
+          artifactDirectory: artifact,
+          expectedIdentity: mountedIdentity,
+        }),
+      ).resolves.toMatchObject({
+        manifest: { markerPath },
+        manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+
+      const destination = join(root, `installed-${mountPath.replaceAll("/", "-")}`);
+      await installDeploymentArtifact({
+        artifactDirectory: artifact,
+        destinationDirectory: destination,
+        expectedIdentity: mountedIdentity,
+      });
+      expect(
+        await readFile(join(destination, ...mountPath.split("/"), "index.html"), "utf8"),
+      ).toBe("<h1>Chaft</h1>\n");
+      expect(
+        await readFile(join(destination, ...markerPath.split("/")), "utf8"),
+      ).toBe(renderDeploymentMarker(mountedIdentity));
+      await expect(
+        compareInstalledDeploymentArtifact({
+          artifactDirectory: artifact,
+          destinationDirectory: destination,
+          expectedIdentity: mountedIdentity,
+        }),
+      ).resolves.toMatchObject({
+        manifest: { markerPath },
+      });
+    },
+  );
 
   it("verifies and installs the exact artifact without rebuilding", async () => {
     const { root, source, artifact } = await fixture();
@@ -269,6 +361,51 @@ describe("deployment artifact", () => {
         identity,
       }),
     ).rejects.toThrow(/reserved marker/);
+
+    const mountedIdentity = mountedIdentities[1].identity;
+    const mountedReserved = await fixture(mountedIdentity);
+    const mountedMarker = join(
+      mountedReserved.source,
+      ...deploymentMarkerPath(mountedIdentity.siteUrl).split("/"),
+    );
+    await mkdir(join(mountedReserved.source, "products", "chaft", ".well-known"));
+    await writeFile(mountedMarker, "{}\n");
+    await expect(
+      createDeploymentArtifact({
+        sourceDirectory: mountedReserved.source,
+        artifactDirectory: mountedReserved.artifact,
+        identity: mountedIdentity,
+      }),
+    ).rejects.toThrow(/reserved marker: products\/chaft\/\.well-known/);
+
+    const mountedRootReserved = await fixture(mountedIdentity);
+    const staleRootMarker = join(
+      mountedRootReserved.source,
+      ...DEPLOYMENT_MARKER.split("/"),
+    );
+    await mkdir(dirname(staleRootMarker), { recursive: true });
+    await writeFile(staleRootMarker, "{}\n");
+    await expect(
+      createDeploymentArtifact({
+        sourceDirectory: mountedRootReserved.source,
+        artifactDirectory: mountedRootReserved.artifact,
+        identity: mountedIdentity,
+      }),
+    ).rejects.toThrow(/reserved marker: \.well-known/);
+  });
+
+  it("requires the 404 page at the identity-derived physical mount", async () => {
+    const mountedIdentity = mountedIdentities[0].identity;
+    const { source, artifact } = await fixture(mountedIdentity);
+    await unlink(join(source, "chaft", "404.html"));
+
+    await expect(
+      createDeploymentArtifact({
+        sourceDirectory: source,
+        artifactDirectory: artifact,
+        identity: mountedIdentity,
+      }),
+    ).rejects.toThrow(/missing required file: chaft\/404\.html/);
   });
 
   it.runIf(process.platform !== "win32")("rejects symbolic links", async () => {
@@ -297,7 +434,15 @@ describe("deployment artifact", () => {
   );
 
   it("rejects malicious, duplicate, unsorted, and unknown manifest data", async () => {
-    for (const mutation of ["traversal", "duplicate", "unsorted", "unknown"]) {
+    for (const mutation of [
+      "traversal",
+      "duplicate",
+      "unsorted",
+      "marker-traversal",
+      "marker-missing",
+      "marker-extra",
+      "unknown",
+    ]) {
       const { source, artifact } = await fixture();
       await createDeploymentArtifact({ sourceDirectory: source, artifactDirectory: artifact, identity });
       const manifest = await manifestAt(artifact);
@@ -308,6 +453,19 @@ describe("deployment artifact", () => {
         manifest.files[1] = { ...manifest.files[0] };
       } else if (mutation === "unsorted") {
         [manifest.files[0], manifest.files[1]] = [manifest.files[1], manifest.files[0]];
+      } else if (mutation === "marker-traversal") {
+        manifest.markerPath = "../.well-known/chaft-deployment.json";
+      } else if (mutation === "marker-missing") {
+        manifest.markerPath = "other/.well-known/chaft-deployment.json";
+      } else if (mutation === "marker-extra") {
+        const marker = manifest.files.find((file) => file.path === DEPLOYMENT_MARKER);
+        manifest.files.push({
+          ...marker,
+          path: `other/${DEPLOYMENT_MARKER}`,
+        });
+        manifest.files.sort((left, right) =>
+          Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
+        );
       } else {
         manifest.unreviewed = true;
       }
@@ -397,6 +555,26 @@ describe("deployment artifact", () => {
     ).rejects.toThrow(/marker does not match/);
   });
 
+  it("binds the manifest marker path to the expected site URL", async () => {
+    const mountedIdentity = mountedIdentities[0].identity;
+    const { source, artifact } = await fixture(mountedIdentity);
+    await createDeploymentArtifact({
+      sourceDirectory: source,
+      artifactDirectory: artifact,
+      identity: mountedIdentity,
+    });
+
+    await expect(
+      verifyDeploymentArtifact({
+        artifactDirectory: artifact,
+        expectedIdentity: {
+          ...mountedIdentity,
+          siteUrl: "https://chaft.example/other",
+        },
+      }),
+    ).rejects.toThrow(/marker path does not match the expected site URL/);
+  });
+
   it("accepts only full SHA-1 or SHA-256 source revisions", () => {
     expect(() =>
       renderDeploymentMarker({
@@ -410,6 +588,19 @@ describe("deployment artifact", () => {
         sourceCommit: "a".repeat(64),
       }),
     ).not.toThrow();
+  });
+
+  it.each([
+    "https://chaft.example/_headers/docs",
+    "https://chaft.example/_REDIRECTS/docs",
+    "https://chaft.example/space%20name",
+    "https://chaft.example/encoded%2Fseparator",
+    "https://chaft.example/a//b",
+  ])("rejects a non-portable or provider-colliding site path: %s", (siteUrl) => {
+    expect(() => deploymentMountPath(siteUrl)).toThrow(/pathname|provider file/);
+    expect(() => renderDeploymentMarker({ ...identity, siteUrl })).toThrow(
+      /pathname|provider file/,
+    );
   });
 });
 

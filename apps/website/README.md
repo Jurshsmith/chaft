@@ -29,8 +29,26 @@ SITE_URL=https://example.com/chaft pnpm build
 `SITE_URL` must use HTTPS and cannot include credentials, a query, or a
 fragment. Its optional path becomes Astro's `base`. Internal links and public
 asset references must therefore be generated from `import.meta.env.BASE_URL`
-instead of hard-coding root-relative `/...` URLs. A provider serving the second
-example must mount the contents of `dist/` at `/chaft`.
+instead of hard-coding root-relative `/...` URLs. For the second example, the
+build physically places the public site beneath `dist/chaft/` so Cloudflare can
+serve `/chaft/*` directly from the asset tree. Deploy the complete `dist/`
+directory; `_headers` and `_redirects` intentionally remain at its root.
+
+## Public documentation
+
+`guides/public/**/*.md` is the single source for the website's `/docs/` pages.
+Astro validates each guide's front matter, derives its route from its file
+path, excludes drafts, and renders the remaining guides into the same static
+`dist/` artifact as the landing page.
+
+Authors should use ordinary relative Markdown links so the guides continue to
+work on GitHub. The website's tested remark transform converts links ending in
+`.md` to base-aware `/docs/` routes, preserves heading fragments, and rejects
+missing targets or paths that escape `guides/public/`.
+
+Do not import private deployment documentation into this public collection.
+Public guides must not contain infrastructure-repository references or
+passphrases in command arguments.
 
 ## Validation
 
@@ -38,11 +56,13 @@ example must mount the contents of `dist/` at `/chaft`.
 pnpm validate
 ```
 
-This runs Astro's static/type checks, release-manifest tests, and a production
-build against a reserved validation origin. It also runs the exact-pinned
-Wrangler version in strict dry-run mode against the route-less Worker
-configuration. A standalone `pnpm build` fails unless `SITE_URL` is set,
-preventing deployable output with localhost metadata.
+This validates the documentation sources, Astro types, release-manifest tests,
+root-domain output, and path-prefixed output against reserved validation URLs.
+It verifies published and draft routes, metadata, headings, navigation, links,
+canonical URLs, sitemap coverage, and the physical Cloudflare asset layout
+before running the exact-pinned Wrangler version in strict dry-run mode against
+the route-less Worker configuration. A standalone `pnpm build` fails unless
+`SITE_URL` is set, preventing deployable output with localhost metadata.
 
 ## Release manifest contract
 
@@ -141,7 +161,9 @@ Workers Static Assets. It has no Worker script, asset binding, route, or Custom
 Domain; `workers_dev` and preview URLs are disabled. Wrangler is an exact
 development dependency, and validation uses dry-run mode only. The production
 build rewrites `_headers` and `_redirects` for the configured `SITE_URL` base
-path and includes the OFL license for its subsetted Space Grotesk fonts.
+path, physically nests every public asset beneath that path, and includes the
+OFL license for its subsetted Space Grotesk fonts. Cloudflare control files stay
+at the asset root, as required by Workers Static Assets.
 
 The `Website` GitHub Actions workflow always validates pull requests and pushes
 against `https://website-validation.invalid`. A push to `main` builds a
@@ -155,24 +177,30 @@ Each candidate is uploaded as one atomic `chaft-website-<commit>` bundle:
 ```text
 artifact-manifest.json
 site/
-  .well-known/chaft-deployment.json
-  ...the complete built static site...
+  _headers
+  _redirects
+  {optional SITE_URL base}/
+    .well-known/chaft-deployment.json
+    404.html
+    ...the complete public static site...
 ```
 
 The manifest records the byte size and SHA-256 digest of every path below
-`site/`. The public marker binds the bundle to the source repository, full
-commit, and normalized site URL. Creation and verification reject symlinks,
-non-portable or duplicate paths, extra or missing files, digest mismatches,
-oversized assets, and `website-validation.invalid`. Deployment installs the
-verified `site/` bytes into `dist/`; it does not rebuild them.
+`site/`. The optional base directory is omitted for a root deployment; for
+`SITE_URL=https://example.com/chaft`, it is `chaft/`. The public marker binds
+the bundle to the source repository, full commit, normalized site URL, and
+physical mount. Creation and verification reject symlinks, non-portable or
+duplicate paths, extra or missing files, digest mismatches, oversized assets,
+and `website-validation.invalid`. Deployment installs the verified `site/`
+bytes into `dist/`; it does not rebuild them.
 
 The checked-in deploy and rollback workflows are inert scaffolding. Their
 production jobs contain literal `false` conditions, so completed Website runs
 and manual rollback requests cannot read production credentials or mutate
 Cloudflare. Setting `WEBSITE_SITE_URL` enables candidate construction only.
 Removing either hard stop requires the separately reviewed infrastructure,
-domain, governance, credential, and activation change documented in
-`Jurshsmith/chaft-infra`.
+domain, governance, credential, and activation change. The public application
+repository intentionally does not depend on private operational documentation.
 
 Desktop installers do not belong in the website artifact. Publish them as
 immutable GitHub Release assets or through dedicated object storage.

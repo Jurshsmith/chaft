@@ -19,10 +19,13 @@
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest",
+    "validate:docs": "node scripts/docs-validation.mjs",
+    "validate:docs-build": "node scripts/docs-build-validation.mjs",
     "validate:wrangler": "wrangler deploy --config wrangler.jsonc --dry-run --strict --outdir .wrangler/dry-run",
     "validate": "node scripts/validate.mjs"
   },
   "dependencies": {
+    "@astrojs/markdown-remark": "7.2.1",
     "@astrojs/sitemap": "3.7.3",
     "astro": "7.1.0",
     "sharp": "0.35.3"

@@ -1,0 +1,77 @@
+---
+import { DOC_SECTION_LABELS } from "../../lib/docs";
+import { sitePath } from "../../lib/site-path";
+
+interface Props {
+  section: string;
+  title: string;
+  isIndex: boolean;
+}
+
+const { section, title, isIndex } = Astro.props;
+const sectionLabels = DOC_SECTION_LABELS as Record<string, string>;
+const sectionLabel = sectionLabels[section] ?? section;
+---
+
+<nav class="docs-breadcrumbs" aria-label="Breadcrumb">
+  <ol>
+    <li><a href={sitePath("/")}>Home</a></li>
+    {isIndex ? (
+      <li aria-current="page"><span>Docs</span></li>
+    ) : (
+      <>
+        <li><a href={sitePath("/docs/")}>Docs</a></li>
+        <li><span>{sectionLabel}</span></li>
+        <li aria-current="page"><span>{title}</span></li>
+      </>
+    )}
+  </ol>
+</nav>
+
+<style>
+  .docs-breadcrumbs {
+    min-width: 0;
+    margin-bottom: 1.35rem;
+  }
+
+  .docs-breadcrumbs ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.55rem;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    list-style: none;
+  }
+
+  .docs-breadcrumbs li {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .docs-breadcrumbs li + li::before {
+    color: var(--border-strong);
+    content: "/";
+  }
+
+  .docs-breadcrumbs a {
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .docs-breadcrumbs a:hover {
+    color: var(--accent);
+  }
+
+  .docs-breadcrumbs li:last-child span {
+    overflow: hidden;
+    color: var(--text-soft);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

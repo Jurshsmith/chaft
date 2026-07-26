@@ -1,0 +1,72 @@
+---
+interface Props {
+  status: string;
+  audience: string;
+}
+
+const { status, audience } = Astro.props;
+
+const statusLabels: Record<string, string> = {
+  preview: "Preview",
+  stable: "Stable",
+};
+
+const audienceLabels: Record<string, string> = {
+  users: "For users",
+  contributors: "For contributors",
+  operators: "For operators",
+};
+
+const statusLabel = statusLabels[status] ?? status;
+const audienceLabel = audienceLabels[audience] ?? audience;
+---
+
+<div class="docs-status" aria-label={`${statusLabel}; ${audienceLabel}`}>
+  <span class:list={["docs-status__badge", `docs-status__badge--${status}`]}>
+    {statusLabel}
+  </span>
+  <span class="docs-status__audience">{audienceLabel}</span>
+</div>
+
+<style>
+  .docs-status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .docs-status__badge,
+  .docs-status__audience {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+  }
+
+  .docs-status__badge {
+    gap: 0.4rem;
+    color: var(--text-soft);
+  }
+
+  .docs-status__badge::before {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: var(--warning);
+    content: "";
+  }
+
+  .docs-status__badge--stable::before {
+    background: var(--success);
+  }
+
+  .docs-status__audience {
+    color: var(--text-muted);
+  }
+</style>

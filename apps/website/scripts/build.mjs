@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { mountStaticOutput } from "./static-output-mount.mjs";
 import { writeStaticHostConfig } from "./static-host-config.mjs";
 
 const validationBuild = process.argv.includes("--validation");
@@ -32,7 +33,12 @@ if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 
 const distDirectory = fileURLToPath(new URL("../dist", import.meta.url));
+const siteUrl = configuredSite ?? "https://website-validation.invalid";
+mountStaticOutput({
+  distDirectory,
+  siteUrl,
+});
 writeStaticHostConfig(
   distDirectory,
-  configuredSite ?? "https://website-validation.invalid",
+  siteUrl,
 );

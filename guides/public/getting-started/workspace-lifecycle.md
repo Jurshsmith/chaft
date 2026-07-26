@@ -1,9 +1,39 @@
-# Create, Join, and Administer a Workspace
+---
+title: Create, join, and administer a workspace
+description: Use Chaft's current desktop flows to create, join, recover, and administer a workspace.
+section: getting-started
+order: 20
+audience: users
+status: preview
+draft: false
+---
+
+# Create, join, and administer a workspace
 
 This guide covers the current desktop workspace lifecycle. Chaft workspaces are
 local-first and peer-to-peer; joining a workspace requires explicit material
 from someone with access. Broad distributed discovery is intentionally not part
 of this phase.
+
+Chaft is still in preview. Use test or non-critical workspaces, retain separate
+backups of important material, and expect credential formats and UI wording to
+evolve. The flows below are implemented, but offline delivery still relies on
+explicit file, link, or request handoff between people.
+
+Return to the [public guide index](../index.md). If the desktop app is not
+running yet, start with [Build Chaft Desktop](build-desktop.md).
+
+## Before You Begin
+
+- Give every person or test device its own runtime. Two peers that reuse the
+  same device identity are not a valid multi-device test.
+- Agree on a trusted channel for exchanging invites, requests, and access
+  responses.
+- Keep decryption key kits private and store their passphrases separately.
+- Plan for at least one reachable peer or an explicit out-of-band handoff.
+
+Chaft does not currently provide automatic global workspace discovery, hosted
+account recovery, or root ownership transfer.
 
 ## First Run
 
@@ -212,8 +242,9 @@ Current role policy:
 - Root ownership transfer is not implemented in this phase.
 
 Use owner-only changes for privileged role transitions. Use admin actions for
-day-to-day member access. See `guides/workspace-admin-policy.md` for the full
-owner/admin/member policy.
+day-to-day member access. See the
+[workspace administration policy](https://github.com/Jurshsmith/chaft/blob/main/guides/workspace-admin-policy.md)
+for the full owner/admin/member policy.
 
 ## Remove Members and Rotate Access
 
@@ -244,3 +275,5 @@ Already-synced historical content remains a separate product/security concern.
   export.
 - No workspaces on launch: this is the expected first-run state. Create or join
   a workspace to enter the app.
+
+For build and launch problems, see [Build Chaft Desktop](build-desktop.md).

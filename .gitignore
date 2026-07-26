@@ -4,7 +4,7 @@ build/
 __pycache__/
 *.py[cod]
 .DS_Store
-docs/
+/docs/
 design/
 *.db
 *.db-shm

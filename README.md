@@ -1,1244 +1,274 @@
 # Chaft
 
-Chaft is a native, local-first, peer-to-peer desktop chat workspace. The source
-repo intentionally lives in this nested `chaft/` folder so the parent directory
-can hold private context, local notes, and secrets without becoming part of Git.
+Chaft is an early-stage, native desktop chat workspace built around local-first
+storage, signed event history, end-to-end encrypted content, and peer-to-peer
+replication.
 
-## Architecture
+> **Warning**
+>
+> Chaft is early-stage software. Public downloads are not yet available, and it
+> should not be used for sensitive production communication. See the
+> [Security Policy](SECURITY.md).
 
-- Native desktop shell: Qt 6/QML.
-- Core runtime: Rust workspace.
-- Data model: signed append-only events, materialized locally for fast UI.
-- Causal/auth safety: materialization refuses events with missing parents or
-  missing authorization context and reports gaps instead of silently rendering
-  incomplete or unauthorized history.
-- Channel privacy: private channel writes and read markers are blocked unless
-  signed history authorizes the device through channel creation or a
-  `ChannelMemberAdded` grant. Reader-aware runtime snapshots and search hide
-  private-channel content from devices without that signed grant.
-- App view model: `chaft-app` converts signed event history into channel,
-  member, profile, peer-endpoint, timeline, encrypted-message, history-gap, and
-  failed-signature rows for the desktop shell.
-- Local runtime: `chaft-runtime` owns app data directories, stable device
-  identity, optional passphrase-encrypted identity-file unlock,
-  workspace/private-channel content keys, OpenMLS device key-package bootstrap
-  material, local private OpenMLS workspace group state, encrypted event
-  creation, and local snapshots.
-- Storage: SQLite WAL for local cache and FTS5 for local search.
-- Wire format: protobuf-compatible envelopes via `prost`, with sync payload
-  decode capped at 16 MiB before protobuf parsing.
-- Sync loop: reusable pull sync compares peer inventories, fetches missing
-  events, verifies signatures, stores locally, and returns materialization gaps.
-- Network target: no central server. Optional replica nodes store encrypted,
-  partial event/blob data and never become authority nodes. Signed peer endpoint
-  announcements let members advertise direct TCP, native Iroh, or backup-peer
-  hints plus optional replica storage class and retention intent through normal
-  workspace replication without granting trust.
-- Message privacy: encrypted message event variants carry sealed markdown
-  payloads. Public channels use the workspace content key, private channels use
-  per-channel content keys. When local OpenMLS workspace group state exists,
-  public-channel messages and attachments use an AES-256-GCM-SIV key derived
-  from the current OpenMLS workspace epoch instead of the manual workspace key.
-  Private channels also use channel-scoped OpenMLS exporter-derived keys when
-  local channel group state exists. Generated OpenMLS device key packages,
-  workspace/channel group state, member-add welcome commits, and MLS-derived
-  payload keys are now in place as the production-key bootstrap path. OpenMLS
-  parser inputs, generated artifacts, and peer-supplied event bodies are capped
-  before decode, event publication, authorization, or materialization: 64 KiB
-  public key packages, 512 KiB private key-package bundles, 1 MiB
-  welcomes/commits, and 4 MiB private group state/ratchet trees.
-  Prior local OpenMLS exporter-derived content keys are retained in private
-  group state so older ciphertext remains readable after add/update/remove
-  epochs. Workspace/channel self-update commits, member-removal commits, and
-  local commit catch-up are wired. Local invites, private-channel grants, and
-  pull/sync can now provision OpenMLS member-add welcomes when an unused
-  OpenMLS key package is available. Explicit removal-triggered and
-  suspected-compromise key rotation exist for the manual fallback bridge,
-  local OpenMLS self-update groups, and a combined operator-triggered policy
-  that rotates both when mixed key state exists.
-  Workspace recovery bundles can wrap manual workspace/private-channel key
-  rings with a passphrase for explicit device transfer. The desktop presents
-  these as decryption key kits because they do not carry device identity,
-  membership authorization, OpenMLS private group state, or root ownership.
-  A conservative
-  compromise-signal report can now flag invalid self-contained signatures and
-  tell operators when local secret rotation is the recommended response. The
-  explicit response policy rotates local secret state once for unhandled
-  local-device signals while leaving remote-only signals as review-only.
-- Blob storage: BLAKE3 content-addressed files with whole-blob files capped at
-  128 MiB + 1 KiB, chunk manifests capped at 1 MiB before parse, chunk files
-  capped at 16 MiB, chunk descriptors capped at 16,384 chunks, and chunk
-  availability reporting under each node's data directory. Whole blobs, chunk
-  files, and manifests are persisted through unique synced temp files before
-  replacement so concurrent replica writes do not share staging paths.
-- Attachment privacy: attachment refs can carry encrypted blob metadata while
-  replicas store only ciphertext-addressed blob bytes; plaintext attachment
-  exports land through unique synced temp files before replacement.
-- Attachment availability: runtime snapshots mark when a signed attachment's
-  local ciphertext is missing, treating whole blobs and complete chunked blobs
-  as available, and the desktop UI disables Save until peer sync or retry
-  restores the blob.
-- Bootstrap transport: direct TCP peer sync for executable local/LAN tests plus
-  native Iroh QUIC streams for explicit `iroh://<endpoint-id>?addr=<host:port>`
-  peers. Runtime peer entrypoints reject central-server, public-relay,
-  public-discovery, unknown-scheme, malformed, or zero-port dial targets before
-  network work while carrying scoped event/blob sync over the same protobuf
-  protocol with typed event/proof batches.
-- Replica publish policy: direct replica sync rejects plaintext message bodies,
-  development-plaintext sealed payload markers, and attachment refs without
-  AES-256-GCM-SIV encryption metadata in both proof slices and stored events.
+## Project status
 
-## Current Bootstrap
+Chaft is in public preview development:
 
-The initial Rust crates establish the contracts for event identity, device
-signing, storage, search, wire framing, sync inventory, and future P2P adapters.
-The Qt app is scaffolded but requires Qt 6 and CMake to build. Its first paint
-uses a built-in `WorkspaceSnapshot` with the production JSON shape, then the
-controller replaces it with runtime or raw-store data on background workers.
+- The Rust runtime, CLI, replica node, Qt/QML desktop application, and static
+  website are implemented in this repository.
+- CI builds and exercises desktop packages on Windows, macOS, and Linux.
+- Those CI packages are development artifacts, not public releases.
+- The public release manifest remains `coming-soon`; all download entries are
+  unavailable until a complete signed and verified release is published.
+- The website has a validated Cloudflare Workers Static Assets foundation, but
+  production deployment and domain activation remain deliberately disabled.
+- Security-sensitive behavior is tested, but production key custody, signing,
+  notarization, updates, and operational review are not complete.
 
-## Run The Website
+Useful starting points:
 
-The public landing and download site lives in `apps/website` as a fully static
-Astro application. Use Node.js 22.12 or newer and activate the package-manager
-version declared in `apps/website/package.json` (for example with Corepack):
+- [Public guides](guides/public/index.md)
+- [Security Policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Website development and deployment foundation](apps/website/README.md)
+- [GitHub Releases](https://github.com/Jurshsmith/chaft/releases)
 
-```sh
-corepack enable
-corepack install --global pnpm@11.14.0
-make website-install
-make website-dev
+## What Chaft is building
+
+Chaft treats each device as an independent participant:
+
+- Events are signed by persistent device identities.
+- Writes are stored locally before replication.
+- Materialized views are rebuilt from verified append-only history.
+- Missing parents or authorization context remain visible as history gaps.
+- Public-channel content uses a workspace key; private-channel content uses a
+  channel-scoped key.
+- OpenMLS group state can provide epoch-derived content keys, with manual key
+  rings retained as a compatibility and recovery bridge.
+- Peers and optional replica nodes are untrusted. Replicas receive encrypted,
+  bounded event and blob data rather than plaintext authority.
+- SQLite, FTS5, and content-addressed blob storage keep the local app usable
+  without a continuously reachable service.
+
+Direct TCP and native Iroh transports support local and explicit peer
+connections today. Public relay and discovery policy remains default-deny while
+those paths mature. The intended system has no central authority, but optional
+replica infrastructure may improve availability.
+
+Read the [architecture](guides/public/concepts/architecture.md),
+[security model](guides/public/concepts/security-model.md), and
+[networking guide](guides/public/concepts/networking-and-replication.md) for the
+current boundaries.
+
+## Repository map
+
+```text
+application/view-model/  Rust view-model projection for desktop surfaces
+apps/chaft-cli/          Developer and recovery CLI
+apps/chaft-node/         Headless encrypted replica node
+apps/desktop-qt/         Qt 6 and QML desktop application
+apps/website/            Fully static Astro website
+bindings/ffi/            Rust-to-desktop FFI boundary
+domain/                  Event and domain contracts
+network/                 Transport, wire, sync, direct TCP, and Iroh crates
+runtime/                 Local application runtime and materialization
+security/                Cryptography, identity, and OpenMLS integration
+storage/                 Event store, search, and media/blob storage
+guides/public/           Canonical public documentation
+tools/                   CI, desktop, smoke, release, and validation tooling
 ```
 
-Run the complete static-site validation gate with `make website-validate`.
-Production builds must provide the complete public `SITE_URL` so canonical
-URLs, the sitemap, and `robots.txt` use the deployed URL. Both root origins such
-as `https://chaft.example` and path-prefixed URLs such as
-`https://example.com/chaft` are supported. The route-less Cloudflare Workers
-Static Assets configuration is included in website validation as a strict
-Wrangler dry run.
+The Rust workspace uses edition 2024 and declares Rust 1.92 as its minimum
+supported toolchain.
 
-On `main`, the Website workflow creates one verified
-`chaft-website-<commit>` deployment bundle only when the `WEBSITE_SITE_URL`
-repository variable is configured. Without it, validation passes and candidate
-construction is intentionally skipped. Deploy and rollback workflows are
-checked in but hard-disabled with literal `false` gates until the separately
-reviewed infrastructure, domain, credentials, and activation change is ready.
+## Build the Rust workspace
 
-Desktop packages stay in GitHub Releases or dedicated object storage; the site
-consumes their verified release metadata instead of committing installers into
-the monorepo. Publishing an immutable GitHub Release starts the promotion
-workflow. It verifies the complete uploaded asset set, reruns native signature
-checks on Windows, macOS, and (when signed) Linux runners, and opens a
-descriptive pull request for the website manifest. See `apps/website/README.md`
-for the artifact contract and complete repository configuration.
-
-## Run The Desktop App
-
-For interactive local testing, build the native desktop shell and open a
-persistent local runtime. Fresh runtimes start with no joined workspace; use the
-app to join with credentials or create a workspace:
+Install Rust 1.92 or newer, then run:
 
 ```sh
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+```
+
+The repository gate adds formatting and Clippy:
+
+```sh
+tools/ci/rust-gates.sh --locked
+```
+
+When dependencies are already cached, `--offline` is supported:
+
+```sh
+tools/ci/rust-gates.sh --offline
+```
+
+## Run the developer CLI
+
+The CLI is useful for inspecting the runtime without the desktop shell:
+
+```sh
+cargo run -p chaft-cli -- --data-dir ./scratch/cli device-id
+cargo run -p chaft-cli -- --data-dir ./scratch/cli \
+  init-workspace --name "Chaft Local" --channel general
+cargo run -p chaft-cli -- --data-dir ./scratch/cli list-workspaces
+```
+
+Recovery export and import use a hidden terminal prompt by default. Encrypted
+identity files support `--identity-passphrase-prompt`. Controlled automation
+can use the documented standard-input or owner-only file modes; never place
+passphrases directly in command arguments or environment variables. See the
+[CLI reference](guides/public/reference/cli.md).
+
+## Build and run the desktop app
+
+Desktop development requires:
+
+- Qt 6.8 or newer
+- CMake 3.28 or newer
+- Ninja
+- Rust 1.92 or newer
+
+Confirm the local toolchain:
+
+```sh
+tools/desktop/preflight.sh
+```
+
+Build and launch a fresh development profile:
+
+```sh
+tools/desktop/build.sh debug
 tools/desktop/launch.sh debug --fresh
 ```
 
-By default, the launcher derives a stable runtime under
-`scratch/desktop-instances/` from the canonical directory where it was invoked.
-Rerun from that directory without `--fresh` to keep workspaces, messages, and
-settings created during testing:
+Rerun without `--fresh` to preserve the local identity and workspace data:
 
 ```sh
 tools/desktop/launch.sh debug
 ```
 
-Use named instances to run independent device identities from the same checkout:
+Run multiple isolated local devices:
 
 ```sh
-tools/desktop/launch.sh debug --instance alice --detached
-tools/desktop/launch.sh debug --instance bob --detached
-```
-
-Launch any bounded number of numbered development users with one command:
-
-```sh
-make dev-users N=3
 make dev-users N=3 FRESH=1
 ```
 
-The first instance builds the selected `PROFILE`; later instances reuse that
-build. Names default to `user1`, `user2`, and so on. Override the prefix with
-`PREFIX=peer`, or inspect the resolved profiles without opening windows with
-`DRY_RUN=1`. `N` is capped at 20 to avoid accidental launch storms. These
-instances use the normal product lifecycle: each desktop starts background
-reachability, invitation delivery, access-response polling, and live
-reconciliation automatically. The development launcher disables public
-relay/discovery traffic and explicitly permits a loopback fallback, keeping
-multi-user same-machine testing local without changing invitation authorization.
+Each named instance receives separate identity, key, event, search, blob,
+settings, and log paths. Do not copy `device.json` when simulating independent
+devices.
 
-Each name gets its own identity, event/search databases, keys, blobs, desktop
-settings, log, and window title. Launches from different directories also get
-different profiles automatically. `--data-dir DIR` remains an explicit override,
-and `--print-instance` shows the resolved paths without building or starting the
-app. The desktop refuses a second process that targets an already-open runtime;
-do not copy or share `device.json` when the goal is to simulate separate devices.
-Run `tools/desktop/instance-smoke.sh` to verify the profile resolution rules.
+More detail is available in
+[Build the desktop app](guides/public/getting-started/build-desktop.md) and
+[Workspace lifecycle](guides/public/getting-started/workspace-lifecycle.md).
 
-The local member's action menu includes **Message yourself**. This creates one
-encrypted, device-scoped private conversation per workspace. It intentionally
-belongs to the current device identity; person-wide synchronization across all
-of one user's devices requires a future multi-device person-identity model.
+## Test desktop and replication changes
 
-For deterministic visual regression data, opt into the seeded smoke workspace:
+Run the local encrypted replication smoke test after changing runtime, sync,
+network, replica, or CLI behavior:
 
 ```sh
-tools/desktop/launch.sh debug --smoke-workspace --fresh
+tools/smoke/local-p2p.sh --locked
 ```
 
-Desktop onboarding supports creating more than one workspace, joining from
-exported access credentials, and separately importing passphrase-protected
-decryption key kits using the existing `.chaftrecovery` format. Access inputs
-include Chaft access files (`.chaftaccess`), invite packages, request cards,
-access requests, and older JSON exports. A key kit imports only the key rings
-available when it was saved; it does not replace the local device identity,
-authorize that device, or transfer ownership. Setup can
-create a single-use invite or a reusable group invite for up to 100 joins
-without collecting device IDs first. Group invites offer presets for 5, 10, 25,
-50, or 100 joins plus a custom maximum from 2 through 100; single-use remains
-the safe default. Generate one group invite, then copy or save that same
-artifact and send it privately to each intended joiner. Every successful device
-consumes one join and chooses the display name teammates will see. An optional
-invite label remains internal metadata. The invite contains no workspace key.
-Each recipient joins with their local device identity, and Chaft returns a
-signed, device-bound encrypted access response after the inviter processes the
-request. Legacy access files remain readable for compatibility.
-
-Invite capacities above 20 are a protocol upgrade boundary. Before creating
-one, update every device that participates in the workspace to a build that
-supports 100-join invites. During a mixed-version rollout, keep group invites
-at 20 joins or fewer so older clients continue accepting workspace history.
-Admin/member roles, member removal, and private-channel grants are available
-from Setup and the pinned details panel once a workspace is selected.
-
-For the user-facing workspace lifecycle, see
-[`guides/workspace-lifecycle.md`](guides/workspace-lifecycle.md). For release
-readiness and the later request-access transport work, see
-[`guides/workspace-manual-qa.md`](guides/workspace-manual-qa.md) and
-[`guides/request-access-transport-hardening.md`](guides/request-access-transport-hardening.md).
-The portable plaintext workspace ZIP and its migration-oriented data contract
-are specified in
-[`guides/portable-workspace-export.md`](guides/portable-workspace-export.md).
-Record real-device QA evidence with
-[`guides/workspace-manual-qa-report-template.md`](guides/workspace-manual-qa-report-template.md).
-
-Start the app and return to the shell immediately:
+Desktop changes should run:
 
 ```sh
-tools/desktop/launch.sh debug --detached
-```
-
-Use `release` instead of `debug` to test the optimized app. The same commands
-work on Linux, macOS, and Windows shells that can run the repo scripts. The
-launcher prints the app binary, runtime directory, and selected workspace ID
-before starting the app. Smoke launches also print the generated manifest path.
-Detached Linux and Windows-style shell launches also print a log path.
-
-To verify the packaged app for the current OS with the same runtime smoke:
-
-```sh
-tools/desktop/package-smoke.sh debug
-```
-
-To verify the no-workspace onboarding state without seeding smoke data:
-
-```sh
-tools/desktop/empty-workspace-smoke.sh debug
-```
-
-To verify release metadata, checksums, SBOM, provenance, and platform artifact
-suffix handling for Linux, macOS, and Windows package names:
-
-```sh
-tools/desktop/release-metadata-smoke.sh
-```
-
-Recommended public checks:
-
-```sh
-tools/ci/rust-gates.sh --offline
-tools/smoke/local-p2p.sh --offline
-tools/smoke/access-transport.sh --offline
-tools/smoke/workspace-lifecycle.sh --offline
-make workspace-qa-baseline ARGS=--offline PROFILE=debug
-tools/smoke/visual-workspace.sh --offline
 tools/desktop/preflight.sh
-tools/desktop/instance-smoke.sh
 tools/desktop/qml-lint.sh
-tools/desktop/ci-gates.sh
 tools/desktop/build.sh debug
 tools/desktop/smoke.sh debug
-tools/desktop/screenshot-smoke.sh debug
-tools/desktop/release-metadata-smoke.sh
-python3 tools/desktop/export-website-release-manifest-test.py
-python3 tools/desktop/linux-appimage-contract-test.py
-tools/desktop/platform-verification-receipt-smoke.sh
-python3 tools/desktop/release-version-test.py
-python3 tools/desktop/stage-website-release-assets-test.py
-tools/desktop/package.sh release
-tools/desktop/package-smoke.sh release
-python3 tools/desktop/release-metadata.py release
-python3 tools/desktop/verify-release-metadata.py release
-cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 ```
 
-Desktop build prerequisites by OS:
+The full expectations and focused test commands are in the
+[testing guide](guides/public/development/testing.md).
 
-- Linux x86_64: Rust 1.92, CMake 3.28+, Ninja, Qt 6.8+ desktop libraries,
-  `patchelf`, and the usual C/C++ build toolchain. AppImage packaging also
-  needs the three pinned `linuxdeploy` tools fetched by
-  `tools/desktop/fetch-appimage-tools.sh`. CI installs the desktop/AppStream
-  validators and uses Qt `linux_gcc_64`.
-- macOS: Rust 1.92, CMake 3.28+, Ninja, Xcode command line tools, and Qt 6.8+
-  desktop libraries. CI uses the `macos-15-intel` runner to keep the existing
-  x86_64 download contract, installs CMake/Ninja through Homebrew, and uses Qt
-  `clang_64`.
-- Windows: Rust 1.92, CMake 3.28+, Ninja, MSVC x64 build tools, Python 3, and
-  Qt 6.8+ desktop libraries. CI runs inside the MSVC developer environment and
-  uses Qt `win64_msvc2022_64`.
+## Run the website
 
-CI installs Qt through `jurplel/install-qt-action` with Qt
-`CHAFT_QT_VERSION=6.8.3` and no explicit archive/package filter. Keep it that
-way unless `aqtinstall` package discovery is checked for every OS target; narrow
-archive filters can fail on Linux or Windows with missing `qt_base` packages
-even when the full desktop target is available.
-
-For local Qt installs that mirror CI, `aqtinstall` can be used directly:
+The static website requires Node.js 22.12 or newer and the pnpm version pinned
+in `apps/website/package.json`.
 
 ```sh
-python3 -m pip install --user aqtinstall
-python3 -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$HOME/Qt"
-python3 -m aqt install-qt mac desktop 6.8.3 clang_64 -O "$HOME/Qt"
-python3 -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O "$HOME/Qt"
+corepack enable
+make website-install
+make website-dev
 ```
 
-Point `QT_ROOT_DIR` at the installed Qt prefix, or keep `qt-cmake`/`qmake6` on
-`PATH`. `tools/desktop/ci-gates.sh <platform>` runs the same desktop preflight,
-QML lint, smoke, Linux screenshot baseline, package smoke, and release metadata
-verification sequence used by GitHub Actions.
-
-For a local Linux x86_64 AppImage build, fetch the checksum-pinned packaging
-tools outside the package output, then pass their exact paths to the packager:
+Run its complete validation gate with:
 
 ```sh
-appimage_tools_dir="${TMPDIR:-/tmp}/chaft-appimage-tools"
-tools/desktop/fetch-appimage-tools.sh "$appimage_tools_dir"
-export CHAFT_LINUXDEPLOY="$appimage_tools_dir/linuxdeploy"
-export CHAFT_LINUXDEPLOY_PLUGIN_QT="$appimage_tools_dir/linuxdeploy-plugin-qt"
-export CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE="$appimage_tools_dir/linuxdeploy-plugin-appimage"
-tools/desktop/package.sh release
+make website-validate
 ```
 
-End users normally mark the AppImage executable and launch it directly. On a
-system where FUSE is unavailable, the supported fallback is:
+A production build requires a complete HTTPS `SITE_URL`. Root-domain and
+path-prefixed deployments are both supported:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./Chaft-<version>-x86_64.AppImage
+SITE_URL=https://example.com make website-build
+SITE_URL=https://example.com/chaft make website-build
 ```
 
-The clean CI smoke uses that fallback so the runner does not need FUSE.
-Before public release, also test normal file-manager launch on the supported
-Linux distributions.
+The checked-in Wrangler configuration is asset-only and route-less.
+`workers_dev` and preview URLs are disabled. Deploy and rollback workflows
+remain protected by literal hard stops, so validation and candidate creation
+cannot mutate Cloudflare.
 
-CI builds release desktop packages on Linux, macOS, and Windows after the debug
-desktop smoke passes. Linux produces one portable x86_64 `.AppImage`, macOS a
-`.dmg`, and Windows a `.zip`. Linux no longer emits the old CPack TGZ because it
-did not contain a self-sufficient Qt runtime. The uploaded artifact bundle for
-each OS includes the native package and platform-qualified metadata:
+## Packages and downloads
 
-- `chaft-desktop-{platform}-SHA256SUMS`
-- `chaft-desktop-{platform}-sbom.cdx.json`
-- `chaft-desktop-{platform}-provenance.json`
+The desktop CI matrix builds:
 
-This naming keeps independently uploaded platform bundles collision-free. Generate
-and verify the same metadata locally after packaging with:
+- Windows x86-64 packages
+- macOS x86-64 packages
+- Linux x86-64 AppImage packages
 
-```sh
-python3 tools/desktop/release-metadata.py release --platform Linux
-python3 tools/desktop/verify-release-metadata.py release --platform Linux
-```
+CI artifacts are intended for development verification and expire according to
+GitHub Actions retention. They are not a supported distribution channel.
 
-The Linux and Windows packages are downloaded into separate, clean CI runners
-that do not install Qt or Rust. The AppImage is launched from a Unicode path
-with build-time Qt paths removed. The Windows ZIP is checked for unsafe or
-build-only entries, extracted to a Unicode path, checked for its FFI/Qt/QML
-runtime, and launched in the same empty-workspace smoke mode.
+Public downloads will be immutable assets attached to
+[GitHub Releases](https://github.com/Jurshsmith/chaft/releases). A release is
+not advertised by the website until its packages, checksums, SBOMs, provenance,
+and platform verification evidence pass the promotion workflow and the
+resulting manifest change is reviewed.
 
-`.github/workflows/build-desktop-release-inputs.yml` is the manual,
-non-publishing release build. Give it an existing stable tag such as `v0.1.0`;
-it requires that tag to resolve to the checked-out commit and that the Cargo,
-root CMake, and desktop CMake versions all match. It builds short-lived,
-checksummed workflow artifacts from the immutable commit. It has read-only
-repository permissions and does not create a tag, GitHub Release, signature, or
-website update. A final audit job rechecks all three metadata bundles against
-the same commit and emits an exact filename, size, and SHA-256 inventory.
+See the [release process](guides/public/development/release-process.md) for the
+current workflow and remaining activation work.
 
-Metadata coherence does not prove a native signature. Before publishing, run
-`tools/desktop/generate-platform-verification-receipt.py` on the matching native
-OS. It invokes Authenticode verification on Windows, `codesign`/Gatekeeper/stapler
-on macOS, or OpenPGP detached-signature verification against an explicit trusted
-keyring and fingerprint on Linux. Its platform-qualified receipt is then consumed
-with the three verified package directories by
-`tools/desktop/export-website-release-manifest.py`. For GitHub Releases,
-`tools/desktop/stage-website-release-assets.py` first reconstructs those
-directories from the flat downloaded asset namespace and rejects missing,
-duplicated, stale, or unexpected managed assets. The exporter rehashes the
-packages, resolves the release tag in the matching source checkout, verifies
-that provenance materials and commits match that tag, binds architecture and
-evidence URLs, refuses mutable published versions, and archives the previous
-website manifest before promoting a new one.
+## Documentation
 
-`.github/workflows/promote-desktop-release.yml` performs that chain after a
-GitHub Release is published, validates the generated Astro site, and opens a
-`release/v<version>-website-manifest` pull request. Enable immutable releases
-and allow GitHub Actions to create pull requests in the repository settings.
-Configure these Actions secrets before publishing:
+`guides/public/` is the canonical source for user-facing and contributor-facing
+guides. Those Markdown files remain readable on GitHub and are compiled into
+the static website's `/docs/` routes.
 
-- `CHAFT_WINDOWS_SIGNER_THUMBPRINT`
-- `CHAFT_APPLE_TEAM_ID`
-- `CHAFT_LINUX_SIGNING_FINGERPRINT` for signed Linux releases
-- `CHAFT_LINUX_SIGNING_KEYRING_BASE64` for signed Linux releases
+Public guide changes must:
 
-The last secret is the base64 encoding of the exact public OpenPGP keyring used
-to produce the Linux receipt; it contains no private key. The workflow is
-fail-closed: Windows and macOS receipts are mandatory, a signed Linux status
-requires a Linux receipt plus detached signatures, and unrelated uploaded
-assets must be removed or explicitly supported by the staging policy before
-promotion. A checksummed-only Linux release must not upload detached signatures.
-Read-only native runner jobs independently regenerate trusted
-receipts, and the exporter requires their security claims to match the public
-release receipts. Dependency installation and site validation also run with
-read-only permissions; only a final, dependency-free job can push the bounded
-manifest payload and open its pull request.
+- include the required front matter;
+- contain exactly one level-one heading;
+- use repository-relative Markdown links;
+- distinguish implemented behavior from plans;
+- avoid private operational references and secret-bearing examples.
 
-Linux CI also runs `tools/desktop/screenshot-smoke.sh debug`, verifies the PNG is
-non-blank, and compares broad image metrics against
-`tools/desktop/screenshot-baseline.json` before uploading the smoke screenshot.
-`tools/desktop/release-metadata-smoke.sh` exercises the release metadata tools
-without requiring Qt by generating synthetic Linux, macOS, and Windows package
-artifacts, then checking platform package suffixes, checksums, SBOM/provenance
-artifact rows, provenance source material rows, SBOM/provenance source commit
-consistency, and clean-provenance enforcement.
+Engineering notes outside `guides/public/` may describe lower-level design, but
+they are not part of the public navigation contract.
 
-Phase 2 performance work starts with `chaft-benchmarks`, a public Criterion
-benchmark crate for append, decrypted snapshot hydration, app snapshot
-projection, local search, direct sync pull, direct blob transfer, and FFI JSON
-payload generation. Compile the benchmark target without running samples with:
+## Security
 
-```sh
-cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
-```
+Treat every peer, replica, imported artifact, and signed event as untrusted
+until validation succeeds. Keep runtime identity files, recovery bundles,
+private keys, databases, and passphrase files out of Git.
 
-Run samples locally with Criterion options when investigating regressions:
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+Do not open a public issue for key exposure, plaintext leakage, signature or
+authorization bypass, unsafe parsing, or denial-of-service findings.
 
-```sh
-cargo bench -p chaft-benchmarks --bench hot_paths -- --sample-size 10
-```
+## Contributing
 
-```sh
-cargo test --workspace
-cargo build -p chaft-ffi
-cargo run -p chaft-cli -- --data-dir ./scratch/app paths
-cargo run -p chaft-cli -- --data-dir ./scratch/app list-workspaces
-cargo run -p chaft-cli -- --data-dir ./scratch/app init-workspace --name "Chaft Local" --channel general
-cargo run -p chaft-cli -- --data-dir ./scratch/app update-device-profile --workspace-id <workspace-id> --display-name "Mira"
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-device-key-package --workspace-id <workspace-id> --key-package-file ./scratch/openmls-key-package.bin
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-peer-endpoint --workspace-id <workspace-id> --endpoint-id desktop --endpoint direct+tcp://127.0.0.1:7777 --backup-peer --replica-storage-class full-history-with-blobs --replica-retention-hint 30d
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-open-mls-device-key-package --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app create-open-mls-workspace-group --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app add-open-mls-workspace-group-member --workspace-id <workspace-id> --key-package-id <device-key-package-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-open-mls-workspace-group-member --workspace-id <workspace-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app join-open-mls-workspace-group --workspace-id <workspace-id> --source-event-id <member-add-event-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app update-open-mls-workspace-group --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app update-workspace-open-mls-groups --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app detect-compromise --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app respond-compromise --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app rotate-workspace-for-suspected-compromise --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app apply-open-mls-workspace-group-commits --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app create-open-mls-channel-group --workspace-id <workspace-id> --channel-id <private-channel-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app add-open-mls-channel-group-member --workspace-id <workspace-id> --channel-id <private-channel-id> --key-package-id <device-key-package-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-open-mls-channel-group-member --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app join-open-mls-channel-group --workspace-id <workspace-id> --channel-id <private-channel-id> --source-event-id <channel-member-add-event-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app update-open-mls-channel-group --workspace-id <workspace-id> --channel-id <private-channel-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app apply-open-mls-channel-group-commits --workspace-id <workspace-id> --channel-id <private-channel-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app send-message --workspace-id <workspace-id> --channel-id <channel-id> --text "encrypted hello"
-cargo run -p chaft-cli -- --data-dir ./scratch/app send-message --workspace-id <workspace-id> --channel-id <channel-id> --reply-to <message-id> --text "reply with context"
-cargo run -p chaft-cli -- --data-dir ./scratch/app send-attachment --workspace-id <workspace-id> --channel-id <channel-id> --text "encrypted file" --file ./README.md
-cargo run -p chaft-cli -- --data-dir ./scratch/app send-attachment --workspace-id <workspace-id> --channel-id <channel-id> --reply-to <message-id> --text "file reply" --file ./README.md
-cargo run -p chaft-cli -- --data-dir ./scratch/app save-attachment --workspace-id <workspace-id> --message-id <message-id> --attachment-id <attachment-id> --output ./scratch/downloaded-file
-cargo run -p chaft-cli -- --data-dir ./scratch/app prune-blobs
-cargo run -p chaft-cli -- --data-dir ./scratch/app edit-message --workspace-id <workspace-id> --message-id <message-id> --text "encrypted hello, edited"
-cargo run -p chaft-cli -- --data-dir ./scratch/app add-reaction --workspace-id <workspace-id> --message-id <message-id> --reaction "+1"
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-reaction --workspace-id <workspace-id> --message-id <message-id> --reaction "+1"
-cargo run -p chaft-cli -- --data-dir ./scratch/app mark-channel-read --workspace-id <workspace-id> --channel-id <channel-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app snapshot --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app snapshot --workspace-id <workspace-id> --decrypt
-cargo run -p chaft-cli -- --data-dir ./scratch/app search-workspace --workspace-id <workspace-id> --query "encrypted"
-cargo run -p chaft-cli -- --data-dir ./scratch/app reindex-workspace-search --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app delete-message --workspace-id <workspace-id> --message-id <message-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-queue --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app export-workspace-key --workspace-id <workspace-id> > ./scratch/workspace-key.json
-cargo run -p chaft-cli -- --data-dir ./scratch/app export-recovery-bundle --workspace-id <workspace-id> > ./scratch/recovery-bundle.json
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app device-id
-cargo run -p chaft-cli -- --data-dir ./scratch/app invite-member --workspace-id <workspace-id> --device-id <second-device-id> --role member
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-member-with-open-mls --workspace-id <workspace-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-member-with-key-rotation --workspace-id <workspace-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app rotate-workspace-manual-keys --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-member --workspace-id <workspace-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app create-channel --workspace-id <workspace-id> --name strategy --private
-cargo run -p chaft-cli -- --data-dir ./scratch/app add-channel-member --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <second-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-channel-member-with-open-mls --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-channel-member-with-key-rotation --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app remove-channel-member --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <removed-device-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app export-channel-key --workspace-id <workspace-id> --channel-id <private-channel-id> > ./scratch/private-channel-key.json
-cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json device-id
-cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json --identity-passphrase-prompt device-id
-cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json sample-event
-cargo run -p chaft-node -- --data-dir ./scratch/node
-cargo run -p chaft-node -- --data-dir ./scratch/node serve --listen 127.0.0.1:7777 --max-active-connections 128
-cargo run -p chaft-node -- --data-dir ./scratch/node serve-iroh
-cargo run -p chaft-cli -- --data-dir ./scratch/app export-trust-snapshot --workspace-id <workspace-id> > ./scratch/trust-snapshot.json
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777
-cargo run -p chaft-cli -- --data-dir ./scratch/app backup-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777
-cargo run -p chaft-cli -- --data-dir ./scratch/app retry-blob-transfers --workspace-id <workspace-id> --peer 127.0.0.1:7777 --peer 127.0.0.1:7778
-cargo run -p chaft-cli -- --data-dir ./scratch/app publish-event-with-trust-snapshot --workspace-id <workspace-id> --event-id <event-id> --peer 127.0.0.1:7777
-cargo run -p chaft-cli -- --data-dir ./scratch/app storage-health --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/app repair-storage-metadata --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app pull-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777
-cargo run -p chaft-node -- --data-dir ./scratch/backup mirror-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777 --listen 127.0.0.1:7778 --max-active-connections 128 --once
-cargo run -p chaft-node -- --data-dir ./scratch/backup mirror-workspace --workspace-id <workspace-id> --peer 127.0.0.1:7777 --listen-iroh --once
-cargo run -p chaft-node -- --data-dir ./scratch/backup status
-cargo run -p chaft-node -- --data-dir ./scratch/backup status --json --require-healthy --max-age-seconds 120
-cargo run -p chaft-node -- --data-dir ./scratch/backup repair-storage-metadata --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-workspace-key --key-file ./scratch/workspace-key.json
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-channel-key --key-file ./scratch/private-channel-key.json
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-recovery-bundle --bundle-file ./scratch/recovery-bundle.json
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app snapshot --workspace-id <workspace-id>
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app snapshot --workspace-id <workspace-id> --decrypt
-cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json publish-sample --peer 127.0.0.1:7777
-cargo run -p chaft-cli -- inventory --peer 127.0.0.1:7777
-```
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Keep
+changes focused, add tests at the affected boundary, and report the exact
+validation commands run.
 
-For desktop runs, either set `CHAFT_FFI_LIBRARY` to the built dynamic library or
-launch the app from a location where `target/debug/libchaft_ffi.*` is nearby.
-`make workspace-qa-baseline ARGS=--offline PROFILE=debug` runs the documented
-workspace lifecycle baseline before a real-device QA pass: lifecycle/admin
-smoke, access-envelope smoke, empty-workspace desktop smoke, and screenshot
-smoke.
-`tools/smoke/workspace-lifecycle.sh` exercises create-workspace,
-admin/member role policy, request-access handling, and member removal through
-the CLI without requiring real devices.
-`tools/smoke/access-transport.sh` runs the focused request/response direct
-transport and FFI outbox/inbox tests that back the desktop access-request flow,
-then starts local `chaft-node` peers and uses `chaft-cli` to submit and fetch
-workspace-scoped request/response envelopes.
-`tools/smoke/visual-workspace.sh` creates a deterministic public UI smoke
-runtime through normal CLI commands. Set `CHAFT_KEEP_SMOKE=1` to keep its
-temporary runtime and use the printed `runtimeDir`, `workspaceId`, and
-`desktopExpectedText` values for manual desktop hydration or screenshot work.
-`tools/desktop/screenshot-smoke.sh debug` runs the same desktop smoke plus the
-empty-workspace onboarding state and writes verified PNGs under
-`build/desktop-debug/smoke/` for local visual regression review.
-To hydrate the shell from a real local runtime with decrypted local message
-bodies, set `CHAFT_RUNTIME_DIR` and `CHAFT_WORKSPACE_ID`; optionally set
-`CHAFT_IDENTITY_FILE` when using a non-default identity path, and set
-`CHAFT_IDENTITY_PASSPHRASE` to pre-unlock passphrase-encrypted identity or
-runtime secret files. Whitespace-only or over-16 KiB passphrase values are
-ignored. If a runtime open needs a passphrase and no usable passphrase is
-present, the desktop shows an unlock prompt and retries the runtime load in the
-current process through the FFI library's
-runtime-directory-scoped unlock cache; typed prompt text is cleared when the
-prompt is dismissed or closed. To hydrate from a raw event store without local
-keys, set `CHAFT_EVENT_STORE` to the SQLite `events.db` path shown by
-`chaft-cli paths` and set `CHAFT_WORKSPACE_ID` without setting
-`CHAFT_RUNTIME_DIR`.
-When the runtime is unlocked from the desktop prompt, the Setup panel can lock
-the runtime again by clearing that process-local cache and immediately blanking
-decrypted timeline/search/key-transfer state, unsent drafts, and pending
-attachment text from the visible shell, and clearing app-owned clipboard buffers
-when Qt can prove Chaft still owns the copied data. Locking also advances the
-runtime worker generation barrier so in-flight runtime refresh/write results
-cannot repaint decrypted state after the shell has been locked. While manually
-locked, automatic search, read-marker, sync, backup, metadata-repair, endpoint
-announcement, and timeline/page refresh paths are paused until the user presses
-`Unlock runtime` and supplies the passphrase again; sessions launched with
-usable `CHAFT_IDENTITY_PASSPHRASE` keep the lock control disabled because the
-process can still read the environment fallback.
-Raw event-store mode is view-only: runtime write, search, sync, and hosting
-controls remain disabled because there is no local runtime identity/key context.
-When no workspace exists yet, the shell shows a first-run surface instead of a
-placeholder: a token-colored peer-mesh backdrop (deterministic layout, drift
-and pulse gated by the Reduced motion setting), a display-size hero, create and
-join action cards that reuse the workspace entry flow, a three-step overview of
-the local-first model, a live theme swatch row, and a read-only demo tour that
-renders the built-in bootstrap snapshot entirely in QML with an explicit exit
-banner and no runtime writes; idle controller status strings are suppressed on
-this surface while errors and lock states still show. Raw event-store mode
-reuses the same surface with view-only copy.
-The shell first paints the built-in bootstrap snapshot, then runtime and
-raw-store hydration prefer the latest-window FFI snapshot exports when
-available, loading the latest 500 timeline rows plus `timelineWindow` metadata
-by default; `CHAFT_TIMELINE_LIMIT` can lower that for local stress tests and is
-ignored if its raw text is over 16 bytes before being clamped to the 500-row
-app-view-model window budget. Runtime startup discovery,
-raw-store loading,
-default-workspace selection, and initial latest-window snapshot hydration run on
-a background Qt worker after QML is loaded, so cold launch can show the shell
-without blocking on large encrypted local histories. When `timelineWindow`
-reports older rows, the desktop can page backward with the runtime window export
-or raw event-store window export instead of reloading full history; those
-older-page loads run on a background Qt worker so large local histories do not
-block the UI thread. Desktop attachment
-sends and saves also run on background Qt workers so file encryption,
-decryption, blob storage, post-send snapshot refresh, and large file writes do
-not freeze composer input. Local blob-cache pruning also runs off the UI thread.
-Runtime-backed desktop read models skip corrupt local event JSON while still
-rendering parseable invalid self-contained signatures as security rows, so a
-poisoned cache row does not blank snapshots, channel pages, member pages, or
-local search. Raw event-store inspection remains strict and can still report
-storage corruption. `chaft-cli storage-health` and the FFI
-`chaft_runtime_workspace_storage_health_result_json` export provide compact
-workspace cache counters for total, parseable, corrupt, signature-valid
-metadata, verified servable, poisoned-metadata, promotable-metadata, and
-parseable non-servable rows without contacting peers or requiring content keys.
-The health scan verifies parseable self-contained signatures instead of only
-trusting the fast metadata bit. The Qt shell binds the same report into compact
-cache and row counters near the sync/backup controls and exposes a Repair action
-when metadata drift is likely repairable.
-`chaft-cli repair-storage-metadata` and
-`chaft_runtime_repair_workspace_storage_metadata_result_json` recompute the
-signature-valid metadata bit for one workspace without deleting event rows, so
-poisoned inventory metadata can be corrected and valid demoted rows can be
-promoted while corrupt bytes remain available for strict inspection or later
-peer repair. The desktop repair action uses the same worker-backed path,
-refreshes cache health immediately, then rehydrates the current runtime snapshot
-so promoted legacy rows and cleared poisoned rows are reflected in the UI.
-Runtime write contexts use that same parseable-row policy for local sends,
-edits/deletes, reactions, read markers, setup/admin actions, key rotation, and
-search reindexing: malformed cached event bytes are skipped, invalid
-self-contained signatures are filtered, and authorization still comes from the
-remaining signed materialized history. A poisoned cache row therefore does not
-leave the app readable but unable to send.
-Read-marker writes and their snapshot refreshes run on background workers so
-channel navigation remains responsive. Plain message sends, message edits,
-message deletes, reaction adds/removes, channel creation, profile updates, workspace
-creation, invites/removals, private-channel grants/revocations, device
-key-package publishing, and workspace/private-channel OpenMLS group create,
-join, catch-up, self-update, all-local self-update rotation, and member-add
-actions also append and refresh snapshots on background workers with stale
-snapshot guards, so composer input, quick reactions, message actions, first-run
-setup, and common setup actions are not blocked by local encryption, indexing,
-authorization checks, OpenMLS fallback work, MLS state updates, or snapshot
-hydration.
-Manual workspace/private-channel key import/export, recovery bundle
-import/export, trust-snapshot export, and suspected-compromise manual key
-rotation also run on background workers, so large key-ring serialization,
-passphrase wrapping, search reindexing, rotation, and post-import snapshot
-hydration do not stall the shell. Manual key import JSON is capped at 256 KiB,
-and recovery-bundle import JSON is capped at 4 MiB before desktop dispatch,
-FFI parse, or CLI file reads. Device identity, local secret, OpenMLS
-private-state, blob-transfer ledger, and compromise-response ledger writes use
-unique synced temp files before replacement so concurrent writes do not share
-one staging path.
-When an older successful worker result is skipped after a newer snapshot has
-already applied, the desktop queues a fresh background snapshot refresh so the UI
-still converges to the full local event log. Workspace rail switching applies a
-lightweight selected-workspace placeholder immediately, then hydrates the real
-latest-window snapshot on a background worker; workspace summary refreshes also
-run off the UI thread after snapshot applies, so large local histories do not
-stall workspace navigation or message action completion. The desktop reads
-workspace summaries through the paged FFI result when available, falling back to
-the legacy symbol for older local libraries with a desktop-side 128-row cap, and
-hydrates only the first 128-row rail window on each refresh. Desktop summary
-reads scan at most 512 KiB of returned FFI JSON before parsing, so older
-libraries cannot force a huge rail parse before the row cap is applied. If the
-selected workspace is outside that window, the QML rail keeps it visible from
-the active snapshot instead of forcing a full summary scan. Runtime pages
-preserve total-count metadata while asking SQLite for only the requested
-first-seen workspace-ID window. Other desktop FFI result reads scan at most
-16 MiB before parsing so a large or incompatible local library response cannot
-force an unbounded JSON copy. The runtime clamps oversized page limits to 128
-summary rows, counts workspace rows from metadata, and materializes only servable
-local rows for those workspace summaries so corrupt cached rows do not break the
-rail.
-The desktop stores its
-selected workspace ID, default direct peer endpoint, saved
-backup peer endpoints, backup peer status metadata, the Auto backup setting,
-and the selected theme ID
-in `desktop.json` under the runtime directory. The desktop ignores that config
-file if it grows beyond 64 KiB and writes it with an atomic bounded save so a
-failed persistence attempt keeps the previous routing metadata intact; set
-`CHAFT_PEER_ENDPOINT` to override the saved peer endpoint for a run,
-`CHAFT_BACKUP_PEERS` to add comma- or semicolon-separated backup endpoints, and
-`CHAFT_AUTO_BACKUP=1` to enable Auto backup for a run. `CHAFT_THEME` overrides
-the saved theme ID for a run; theme IDs are trimmed and capped at 64 bytes
-before persistence or use, and unknown IDs fall back to the default theme.
-Appearance can also follow the system color scheme: `themeMode`,
-`darkThemeId`, and `lightThemeId` persist in `desktop.json` under the same
-64-byte theme-ID caps, an unknown system scheme resolves as dark, and a valid
-`CHAFT_THEME` forces manual mode for that run. `CHAFT_BACKUP_PEERS` is
-ignored if its raw list text exceeds the 32-peer saved-backup budget before
-splitting. Selected workspace IDs
-loaded from `desktop.json` or `CHAFT_WORKSPACE_ID` are trimmed, and blank or
-oversized selected IDs are rejected before runtime hydration or worker dispatch.
-Desktop startup also ignores empty or over-64 KiB runtime, raw-store, config,
-or library paths before probing `desktop.json`, saving config, choosing
-raw-store mode, or loading an FFI library. Whitespace-only path environment
-values are treated as absent for startup mode selection.
-Direct peer/listen endpoints are capped at 2 KiB before they are saved, passed
-to FFI, used for network I/O, or written into blob-transfer retry metadata;
-desktop peer
-endpoints must also be direct TCP or native Iroh direct routes before they enter
-the saved default, backup-peer list, or retry set. Blob retry accepts at most 33
-endpoints per call, matching one explicit endpoint plus the 32 saved backup-peer
-slots. Workspace, channel, message, and key-package IDs accepted at
-local boundaries are capped at 128 UTF-8 bytes; event IDs are capped at their
-canonical 68-byte `evt_` plus hash form, and device ID references remain capped
-at 512 bytes. CLI and FFI workspace, channel, message, device, key-package, and
-source-event ID arguments are trimmed; blank or oversized values are rejected
-before local runtime action dispatch, and source-event IDs must be canonical.
-Direct CLI/FFI publish, backup, pull, sync, proof-publish, and blob-retry calls
-reject blank workspace IDs before opening the runtime, and proof-publish
-rejects non-canonical event IDs before local store access.
-The inspector and sidebar snapshot caps channel metadata to an exact 128-row
-bootstrap page with full `channelCount` preserved, and the Qt shell can load
-additional channel pages while preserving the selected channel during refresh.
-Search hits include materialized channel labels/privacy and can resolve the
-sorted channel page containing an unloaded hit channel without walking every
-earlier sidebar page; runtime channel pages and containing-channel lookups clamp
-oversized limits to 128 rows. Message search hits seed resolved channel metadata
-immediately, and exact channel pages hydrate asynchronously without changing the
-loaded sidebar prefix. The `Search or jump` field also runs bounded runtime
-channel search capped to 128 result rows and merges those results with loaded
-local channel matches, so quick-jump is not limited to the bootstrapped sidebar
-page. Empty or
-punctuation-only search states clear desktop search without dispatching runtime
-message or channel workers, and the QML shell treats them as non-search mode so
-loaded timeline/sidebar rows stay visible.
-It caps replicated profile metadata to 256 sorted rows while preserving the
-current device's profile in reader-aware snapshots; snapshot `profileCount`
-still preserves the full materialized total. It caps workspace members to an
-exact 128-row bootstrap page with full `memberCount` preserved, and runtime
-member pages clamp oversized limits to 128 rows while the Qt shell can load
-additional member pages for management controls. It also caps
-replicated key-package metadata to the newest 4 rows per device/protocol so
-repeated key-package publication does not make desktop JSON or the key-package
-list unbounded; snapshot `keyPackageCount` still preserves the full materialized
-total. Discovered peer endpoint hints are also displayed from capped snapshot
-rows while `peerEndpointCount` keeps the full total.
-Top-level snapshot diagnostics also keep full `gapCount` and
-`invalidSignatureCount` totals while capping serialized `gaps` and
-`invalidSignatures` arrays to the newest 64 rows each.
-Direct publish, backup, pull, sync, and blob-retry worker results also preserve
-full count fields while capping returned ID/hash/gap/transfer/detail arrays as
-samples, so desktop status and backup health remain accurate without letting one
-large sync produce unbounded FFI JSON. Chunked blob-transfer attempts preserve
-full chunk counts while returning bounded chunk-hash samples.
-Publish queue, direct push, proof-backed backup, and single-event proof publish
-materialize only parseable and self-contained-signature-valid local rows, while
-still reporting causally incomplete parseable rows as skipped gaps, so one
-corrupt cached event cannot disable P2P controls or leak unverifiable data to a
-peer.
-Shared pull sync and headless mirror-node materialization use the same
-parseable-row policy for local cache reads: malformed stored bytes are skipped,
-parseable invalid self-contained signatures are filtered, and only
-causally/authorization-complete rows drive mirror blob hydration or signed peer
-discovery. This keeps partial backup nodes repairable without making a poisoned
-cache row stop mirror refreshes.
-Recovery-bundle import, explicit OpenMLS catch-up/self-update, manual key
-rotation, member-removal rekey, compromise detect/respond, and
-suspected-compromise rotation FFI results use the same count-first shape,
-preserving full totals while returning bounded status samples instead of
-unbounded event/channel lists.
-Blob-cache prune results follow the same count-first pattern, returning bounded
-workspace/hash/temp-path samples while preserving full reference/removal totals;
-prune also clears stale blob-store temp files from older process IDs without
-touching current-process staging files.
-The desktop starts background native Iroh reachability automatically over the
-same runtime `events.db` and encrypted `blobs/` cache. Public relay and
-endpoint-ID discovery are default-deny. Background startup can use direct
-reachability without silently opting the device into public services. The
-advanced **Use public relay** action explicitly enables encrypted relay traffic
-and, when allowed, reachability discovery for that hosted peer through explicit
-runtime policy; it does not mutate the process environment after workers start.
-An operator can lock either service independently through the environment. The
-Iroh endpoint secret is
-domain-separated from the device signing key but deterministically derived from
-it, so the endpoint ID survives restart without adding another plaintext secret
-file. Relay and discovery services route encrypted peer traffic and publish
-reachability metadata; they do not receive workspace keys or become workspace
-authorities.
-
-Loopback direct-TCP fallback is never enabled by the production desktop. The
-development launcher passes `--local-development-networking`, which disables
-public relay/discovery traffic and enables
-`CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK=1` for same-machine instances. The
-advanced Host controls remain diagnostics and explicit overrides rather than an
-onboarding requirement. Set `CHAFT_DESKTOP_BACKGROUND_REACHABILITY=0` to disable
-automatic hosting; set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=0` and
-`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=0` to lock a local-network-only policy.
-Set `CHAFT_IROH_ALLOW_PUBLIC_RELAYS=1` before launch to allow relay traffic and
-set `CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY=1` independently to allow endpoint-ID
-discovery. **Use public relay** is unavailable when relay policy is explicitly
-disabled; an explicitly disabled discovery policy remains disabled.
-Other profiles or replica nodes can use the active endpoint for pull, push, or
-sync. After reachability starts, the desktop publishes that endpoint as a signed
-workspace hint with a short expiry, refreshes it while hosting, and publishes an
-immediate expiry update on toolbar Stop or best-effort normal desktop shutdown.
-Saving a backup peer in the desktop also publishes an `isBackupPeer` hint. The
-runtime, CLI, and desktop FFI expose the same signed peer-endpoint path, including
-optional `replicaStorageClass` and `replicaRetentionHint` fields, so newly synced
-profiles can discover operator-approved endpoints and their advertised storage
-intent from the replicated log instead of relying only on out-of-band notes.
-Direct TCP and Iroh host start/stop bind and close peer threads on background Qt
-workers, so local store opens, port binding, QUIC endpoint setup, and shutdown
-joins do not freeze the shell.
-Peer fields accept bare `host:port`, `direct+tcp://host:port`, native
-`iroh://<endpoint-id>?addr=<host:port>`, relay-bearing native Iroh endpoints,
-and discovery-backed `iroh://<endpoint-id>` forms through the policy-aware Iroh
-adapter. The production desktop, CLI, raw FFI, and headless node keep public
-relay/discovery policy off unless their flags are set to `1` or the desktop user
-explicitly chooses **Use public relay** for that hosted peer.
-`CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE=1` disables the direct TCP bridge for
-policy tests. Those Iroh policy flags ignore raw values above 16 bytes before
-matching `1`, `true`, `yes`, or `on`. Signed peer endpoint
-hints use the same 2 KiB endpoint cap, a 2304-byte endpoint-ID cap, and a
-64-byte transport-label cap before append. Replica retention hints are capped at
-128 bytes, and the CLI/FFI publish endpoints reject unsupported routes or
-endpoint/transport mismatches before opening the runtime, so replicated
-discovery metadata stays bounded.
-Automatic synchronization is enabled by default and periodically syncs the
-selected peer endpoint while suppressing overlapping workers. The advanced
-`Auto-sync` toggle can pause it for diagnostics. If the endpoint field is empty,
-automatic sync falls back to
-the newest non-expired signed peer endpoint hint in the workspace snapshot,
-preferring member-hosted peers before backup peers. Snapshot JSON caps replicated
-endpoint hints to the newest 32 member-hosted rows plus newest 32 backup rows so
-large logs do not make QML peer selection or the P2P panel unbounded. QML
-rechecks those hints before automatic selection and accepts direct TCP,
-explicit-address Iroh, relay-bearing Iroh, and endpoint-ID discovery hints only
-when their route syntax and transport label agree. Central-server, custom,
-malformed, and mislabelled endpoints remain excluded before automatic
-selection. The Backup
-peer list can also run periodic proof-backed backup slices while sharing the
-same worker guard. Auto backup uses saved backup peers first, then falls back to
-non-expired signed backup-peer hints when no saved peer is available. Auto
-backup also debounces workspace snapshot changes, so local writes, pulls, and
-manual rekeys are offered to backup targets shortly after the UI applies them
-instead of waiting only for the periodic timer. Saved backup peers keep persisted
-last-attempt/success/failure/partial metadata in `desktop.json`; the desktop
-caps that saved list and its status map at 32 peers so persisted backup state,
-auto-backup rotation, retry ranking, and QML lists stay bounded. Automatic backup
-skips peers inside their retry cooldown, while manual Backup remains immediate.
-Protocol-classified backup and retry failures mark a saved peer as Suspect with
-a bounded `suspectScore`; later successful backups decrement that score and
-clear the marker when it reaches zero. Saved retry ranking places clean peers
-before suspect peers and lower suspect scores before higher scores.
-A successful backup with missing
-encrypted blobs is shown as Partial instead of Backed up; so is a backup that
-skipped stored local events because their causal parents are still missing. The
-Retry control uses the current peer endpoint plus saved backup peers to resume
-pending or failed encrypted attachment blob uploads from the local transfer
-ledger; it ranks saved backup peers with the same status metadata, preferring
-peers outside cooldown, then clean peers before suspect peers, lower suspect
-scores before higher scores, then Partial peers with more missing blobs, then
-peers with fewer failures or more recent success. Successful retry attempts
-decrement the saved partial missing-blob
-count and clear the blob part of Partial when the count reaches zero, while
-unresolved skipped gaps keep the peer Partial until history is repaired and
-backed up again.
-Direct push/sync materializes local history first after dropping failed
-self-contained signature rows, uses workspace-scoped peer inventory to publish
-only missing authorized events, pulls workspace inventory through the core
-transport contract, requests new-peer full and workspace inventory in 1024-ID
-pages with total-count metadata while keeping legacy one-shot fallback, rejects
-advertised paged-inventory totals above 1,048,576 IDs per pull, rejects blank,
-padded, or over-128-byte local workspace scopes before network streams and
-peer-supplied workspace scopes before hosted store/decode work, caps
-peer-supplied sync error strings at 2 KiB before turning them into protocol
-errors, avoids echoing unvalidated duplicate request values from hosted
-diagnostics, and sends that event delta as bounded protobuf `PublishEvents`
-frames before checking peer blob availability and uploading only missing or
-incomplete encrypted attachment blobs from materialized events.
-Publish and backup results also report `skippedGaps` when stored local events
-are held back because their causal parents are still missing. `publish-queue`
-and the matching FFI export report full local queue counts/completeness plus
-bounded samples of publishable event IDs, backup-slice event IDs, local blob
-availability, and skipped gaps without contacting a peer, which gives the
-desktop an explicit offline/local-only queued state in its P2P toolbar and
-backup inspector before the next network sync without unbounded queue JSON.
-Pull/sync also joins newly pulled OpenMLS workspace/private-channel welcomes
-when this device has the matching local private key-package bundle, then
-applies later OpenMLS commits, and owner/admin devices can provision
-member-add welcomes for invited/granted peers that have published unused
-OpenMLS key packages. Any locally provisioned welcomes are pushed in a
-follow-up publish during combined sync before snapshots and search refresh; the
-desktop status includes the number of MLS events handled by that sync, reports
-pull/sync history gap counts, and reports missing encrypted attachment blob
-counts separately from sent/fetched blob counts for publish, proof-publish,
-backup, pull, and sync operations.
-Desktop pull/sync performs the post-network latest snapshot hydration in the
-same worker before applying the parsed view model on the UI thread, so large
-remote updates do not freeze the shell after network I/O completes.
-Larger attachment blobs use chunk manifests and chunk frames instead of one
-whole-blob frame. Direct pull/sync fetches missing events in bounded batches
-with split retries for likely oversized responses, then fetches whole attachment
-blobs and availability in bounded batches only after their referencing events
-materialize locally, with chunked fallback when a peer stores only a manifest
-and chunks, so stored gaps remain repairable without pulling untrusted blob
-data. Shared wire sync decoders reject payloads above 16 MiB before protobuf
-parsing, while direct TCP and native Iroh reject over-limit length prefixes
-before allocating the frame body, and clients reject returned event/blob vectors
-above the requested batch size before deeper decode, hashing, or descriptor
-conversion. Direct publish/backup rejects malformed remote inventory before
-using it to skip local event uploads. Direct TCP and native Iroh publish also
-resume partial chunked uploads by checking peer chunk availability after
-publishing the manifest and sending only missing chunks. The runtime persists
-per-blob transfer
-attempts in `blob-transfer-ledger.json`, including in-progress chunk plans, so
-interrupted or failed uploads remain visible after restart and can be reconciled
-when the original peer or another supplied retry peer later advertises the blob
-as complete. The ledger file is capped at 16 MiB before parse.
-`retry-blob-transfers` consumes pending or failed ledger entries and retries
-them for the supplied peer set.
-Attachment sends infer common media types from the file extension when
-`--media-type` is omitted; callers can still pass an explicit value when needed.
-Local runtime send/edit APIs reject message markdown above 64 KiB before sealing
-or appending, and attachment sends reject selected plaintext files above 128 MiB
-before local reads, keeping event-log, snapshot, search, and sync payloads
-bounded. Core authorization/materialization also rejects peer-supplied plaintext
-message markdown above 64 KiB, oversized sealed-message ciphertext, nonce, or
-associated-data buffers, message events with more than 16 attachments, and
-oversized attachment reference metadata before those events enter read models.
-The local event store rejects blank or over-64 KiB event-store paths before
-SQLite open, rejects serialized event JSON above 16 MiB, and treats preexisting
-oversized rows as corrupt for repair. Peer publish decode enforces the same 16
-MiB serialized event JSON ceiling before authorization or store work. Device
-key-package publishing rejects opaque package bytes above 64 KiB;
-path-based CLI/FFI/desktop callers preflight the selected file before reading
-it. Signed metadata writes also cap workspace/channel/display names, member
-device ID references, key-package protocol labels, peer endpoint hints, reaction
-text, and caller-supplied workspace/channel/message/event/key-package IDs before
-append, store reads, FFI action handoff, or network work so local UI and sync
-payloads do not inherit unbounded strings. FFI JSON imports for legacy snapshots,
-manual key transfer, and recovery bundles are also capped at the C-string reader
-before parse, while desktop FFI result strings are scanned only to the
-workspace-summary 512 KiB cap or the general 16 MiB result cap. `LocalRuntime`
-normalizes blank identity passphrases to absent, rejects passphrases above 16
-KiB, and rejects blank data directories plus over-64 KiB data, identity, and
-derived runtime paths before directory creation, identity open, KDF work, or
-SQLite open. Direct runtime attachment sends and saves also reject blank or
-over-64 KiB source/output paths before file stat/read work, workspace scans, or
-attachment export. CLI attachment, key-transfer, recovery-bundle, and output
-paths are also capped at 64 KiB before file stat/read work or attachment
-export. FFI filesystem paths,
-passphrases, role strings, and bounded metadata fields scan only their limit plus
-one byte before rejecting oversized input; unknown future FFI string fields fall
-back to a 16 MiB cap rather than an unbounded C-string scan. Core
-authorization/materialization applies the same peer metadata budget to signed
-event bodies before accepting remote workspace
-names, channel names, device profiles, key-package protocol labels, endpoint
-hints, reactions, content-key epoch labels, OpenMLS metadata labels, or sealed
-message key IDs into read models. Core also validates signed event envelope
-IDs, parent IDs, body reference IDs, and trust-snapshot proof IDs before those
-values enter authorization indexes or materialized state, and rejects event
-author public keys above 32 bytes or signatures above 64 bytes before
-materialization or self-contained signature verification.
-
-`search-workspace` reads the private local FTS index in `search.db` with
-512-byte-capped, sanitized prefix terms, so message search remains responsive
-while a user is typing partial words. `SearchIndex::open` rejects blank or
-over-64 KiB index paths before SQLite open. Valid searches query the local FTS
-index before materializing workspace history, so no-hit searches and searches
-with only stale cached rows stay cheap even in large local workspaces by checking
-only the bounded raw candidate event IDs against local servable-event metadata.
-The low-level FTS reader also clamps direct result requests to 512 rows before
-SQLite execution, and the event-store candidate filter chunks direct oversized
-candidate sets into 1024-ID SQLite statements. Search
-JSON reports capped-row counts, bounded hit/candidate counts, and raw-window
-overflow separately so shells can show that a result list is a preview without
-loading more history. Search hit bodies are bounded FTS snippets with original
-length/truncation metadata rather than unbounded message payloads.
-`send-message`, workspace-key import, and peer pull rebuild enough local search
-state for normal use when the required workspace and private-channel keys are
-available.
-`reindex-workspace-search` forces a rebuild from encrypted local events plus the
-local workspace key and any imported private-channel keys. The index is
-plaintext local cache and is never published to peers or replica nodes. Search
-schema upgrades preserve legacy cache rows with a neutral timestamp, while
-reindex restores exact event-time ordering. Search rebuilds and query-time
-filtering ignore events with embedded author public keys
-that fail self-contained signature verification, matching the snapshot
-failed-signature quarantine.
-
-In the desktop shell, the search field still filters channels locally. When a
-runtime workspace is open, message matches come from the same FFI-backed FTS
-index on a background Qt worker after the controller's 512-byte query preflight
-and render as workspace-wide timeline rows with channel labels, including author
-identity and signed event time for matches outside the loaded timeline window,
-ordered newest-first after authorization filtering; stale cache rows are dropped
-before the visible hit cap, and stale worker results are ignored after newer
-queries or workspace switches. Selecting a workspace-wide message result switches
-the active channel context to that row while keeping the query active, so the
-inspector, composer, and sidebar stay anchored to the result's channel.
-Demo/keyless startup paths fall back to filtering the
-currently loaded snapshot.
-Keyboard control is first-class: `Ctrl/Cmd+K` opens the command palette
-(channels rank first on a query, preserving the old jump behavior, followed by
-actions), `Ctrl/Cmd+F` focuses search/jump, `Ctrl/Cmd+/` opens the shortcut
-overlay generated from the same action registry,
-`Ctrl/Cmd+M` focuses the composer, `Alt+Up/Down` steps channels,
-`Alt+Left/Right` steps workspaces, `Ctrl/Cmd+O` opens file attachment,
-`Alt+Home/End` jumps the timeline, `Ctrl/Cmd+Shift+C` copies selected message
-text, and `Esc` clears search or exits message editing; when the setup panel is
-open, `Esc` closes it and returns focus to the composer. The desktop composer is a
-bounded multi-line input where Enter submits and Shift+Enter inserts a newline.
-It keeps unsent drafts scoped by workspace and channel, restores them when the
-user returns, shows compact draft previews in the channel list without writing
-draft text to the runtime event log, and keeps an active Reply target as local
-view state until the next message or attachment send writes a signed same-channel
-reply event. Runtime lock clears those in-memory drafts and reply targets.
-The left sidebar keeps channels directly under search and channel creation.
-Channel rows are sorted by latest materialized message activity before name and
-show compact previews from the snapshot, so navigation does not scan timeline
-rows or call FFI.
-Timeline rows also render compact local event-time labels from the snapshot's
-`physicalMs` field, quoted reply previews from `replyPreview`, parent-row thread
-chips from `threadReplyCount`/`threadLatestReply`, and bounded multi-line message
-bodies, so scrolling does not fetch or decode raw events. Selecting a thread chip
-opens the row in the right inspector, which renders bounded `threadReplyPreviews`
-from the loaded snapshot.
-Normal channel timelines open at the first visible unread message when the
-selected channel has unread incoming rows;
-otherwise they open at the newest message and keep following new rows while the
-user is already near the bottom. Runtime channel snapshots scope
-`timelineWindow` to the selected channel and set `timelineChannelId`, so opening
-or paging an old channel does not require the desktop to load workspace-wide
-history until that channel appears. When the user scrolls away from the live
-edge, the QML timeline shows a viewport-pinned jump control that returns to the
-newest messages without touching runtime state. The unread divider is derived
-from snapshot `unreadCount` plus local device identity in QML, without extra
-runtime calls. `Load older` preserves the current viewport when older history is
-prepended, history-gap rows expose a Repair action that pulls from the current
-peer endpoint, and search mode starts at the top of result sets instead of
-auto-following chronological chat. Timeline rows expose a Reply action, passive
-thread-count chips, capped attachment preview chips with overflow counts,
-bounded reaction chips with overflow counts, and QML-only quick reaction choices;
-replies write signed encrypted reply-message events while reactions use signed
-add/remove runtime reaction event paths with 64-byte reaction text caps. Reaction
-counts are derived per author device, so duplicate local add/remove events are
-idempotent under replay; the UI gets a `myReactions` row list so only reactions
-owned by the local device are styled and removed as local reactions.
-Device/profile, invite, backup, key-package, OpenMLS, key-transfer, and manual
-rekey controls live behind the scrollable Setup panel so daily channel
-navigation stays visible on normal desktop window heights.
-The Setup panel also has an Appearance section with a 26-theme catalog: new
-installs default to the logo-derived dark `chaft-signal` palette, system light
-mode defaults to `chaft-canvas`, the original hybrid palette remains available
-as `chaft-classic`, and picking a swatch applies live through QML
-token bindings, persists only the bounded `desktop.json` theme ID, and never
-writes to the runtime event log.
-Its `Follow system` toggle tracks the OS dark/light scheme live with separate
-dark and light theme slots; picking a swatch in that mode updates the slot
-matching the theme's dark flag.
-The desktop bundles the Space Grotesk UI face and the JetBrains Mono data face
-(both SIL OFL; license texts ship in `apps/desktop-qt/fonts/` and inside the
-embedded font resources), loads them from embedded resources at startup with
-platform-font fallback, and renders device IDs, event/message IDs, peer
-endpoints, key-package rows, and timeline time labels in the mono face.
-On wide desktop windows, the right inspector derives selected-message details,
-thread reply context, selected attachment save/copy controls with overflow
-counts, channel counts, recent media, backup peer health, members, and
-key-package actions from the already-loaded snapshot. Selecting a timeline row
-only updates local QML state; it does not dispatch FFI or network work.
-The main header keeps channel identity and sync status fixed while direct/Iroh
-host, sync, push, backup, retry, pull, and prune controls live in a horizontal
-action strip, so the inspector can be open without squeezing or overlapping P2P
-controls. A compact route chip in that strip distinguishes local-only/offline
-queue, direct TCP, explicit-address Iroh, relay-style Iroh, discovery-style
-Iroh, and replica-backed peer choices; relay/discovery labels describe
-operator-approved endpoint strings and do not make a relay an authority node.
-
-The desktop shell also exposes local workspace switching in the rail, the local
-device ID, signed device display-name updates, workspace member roster,
-workspace member invite/removal, private-channel creation, private-channel
-member grants/revocation, local device key-package publishing, generated
-OpenMLS key packages, workspace/private-channel OpenMLS group create, join,
-catch-up, self-update, all-local self-update rotation, and member-add actions,
-automatic member-add welcome provisioning when key packages are already
-available, manual workspace/private-channel key import/export controls,
-private-channel key rotation backed by local key rings that retain prior
-content-key epochs, and combined
-suspected-compromise review and rotation for local OpenMLS and manual key state.
-It can also rebuild the local message search index, export a root-signed trust
-snapshot, and publish a selected message event plus that proof to a partial
-backup peer after rejecting non-canonical selected event IDs before starting a
-worker. Its Backup control publishes materialized
-profile/key-package/OpenMLS add-remove-update/content/key-epoch/activity slices
-with trust-snapshot proof, while Push publishes the full materialized workspace
-history; saved backup peers can run this backup periodically and after coalesced
-snapshot changes with the Auto toggle. For a second profile/device, start Host on
-the first profile, use its Copy control to place the endpoint in the second
-profile's peer field, copy the second device ID into the owner profile,
-invite it, grant private-channel access when needed, export the workspace key
-and any granted private-channel key bundles over a private channel, import those
-keys on the second profile, then pull workspace history from the hosted profile
-or a replica.
-
-`chaft-node mirror-workspace` lets a headless replica periodically pull one
-workspace from one or more peers into its own encrypted event/blob store. With
-`--listen`, the same process also serves that mirrored store as a direct peer for
-other profiles or backup nodes; with `--listen-iroh`, it serves the mirrored
-store as a native Iroh QUIC peer and prints the `iroh://...` endpoint. A node can
-also serve its current encrypted store directly with `serve-iroh`. Its outbound
-peers accept bare `host:port`, `tcp://host:port`, `direct+tcp://host:port`, and
-native `iroh://<endpoint-id>?addr=<host:port>` through the policy-aware bridge.
-Direct TCP serving defaults to 256 active connections and `--max-active-connections`
-can lower or raise that limit for both `serve` and `mirror-workspace --listen`;
-zero is rejected before the node starts hosting.
-The `--workspace-id` argument is trimmed, rejected when blank, and capped at
-128 bytes before the node opens its event/blob stores or starts a hosted mirror.
-The node also rejects blank or over-64 KiB `--data-dir` paths and rejects derived
-`events.db`, `blobs`, default mirror-status, or explicit `--status-file` paths
-above the same 64 KiB path budget before store or status-file work begins. The
-same checks are enforced inside the node store, hosted-mirror, and mirror-status
-helpers so direct internal callers cannot bypass the CLI path budget.
-The same `CHAFT_IROH_ALLOW_PUBLIC_RELAYS`,
-`CHAFT_IROH_ALLOW_PUBLIC_DISCOVERY`, and
-`CHAFT_IROH_DISABLE_DIRECT_TCP_BRIDGE` environment flags control node outbound
-mirroring and native Iroh hosting policy.
-Repeat `--peer` to configure multiple upstreams; each mirror cycle tries every
-reachable peer in order and merges what they can serve, so one peer can provide
-events while another fills missing blobs or parents. After each successful pull,
-the mirror also learns non-expired signed `PeerEndpointPublished` hints from the
-materialized workspace log and can use those discovered peers in the same
-one-shot run or later periodic cycles. Discovered peers are priority-sorted,
-deduplicated, blank/oversized/unsupported/malformed/mislabelled endpoint hints
-are prefiltered before discovery materialization, and the discovered set is
-capped at 32 after sorting; configured `--peer` endpoints stay
-operator-controlled, are tried first, and are rejected if blank, over 2 KiB,
-unsupported, malformed, or more than 33 are supplied. Pass
-`--no-discover-peers` to disable that behavior.
-Periodic mirroring logs transient upstream failures and retries
-on the next interval; `--once` returns an error only if all active peers fail.
-Ctrl+C stops periodic mirroring and closes any hosted mirror peer.
-It writes machine-readable replica health to `<data-dir>/mirror-status.json` by
-default, or to `--status-file <path>` when set. The status file contains the
-workspace ID, configured peers, discovered peers, the active peer set, any
-hosted direct/Iroh endpoint, last result, last successful peer, per-peer failure
-messages, successful peer count, report counters, local `storageHealth`
-counters, and a `health` value of `healthy`, `partial`, or `unreachable`.
-Mirror status writes use unique synced temp files before replacement so
-concurrent mirror cycles never share a deterministic staging path, and
-`chaft-node status` rejects local status files above 1 MiB before JSON parse.
-Successful mirror cycles are marked `partial` when encrypted blobs,
-materialized parents, corrupt local rows, poisoned servable metadata,
-promotable metadata, or parseable non-servable rows still need attention.
-`chaft-node status` prints a one-line operator summary from that file;
-`--json` prints the raw status document and `--require-healthy` exits with an
-error unless the mirror is healthy. `--max-age-seconds <n>` also fails if
-`checkedAtUnixMs` is too old, and the text summary includes `ageMs` for quick
-freshness checks. It treats complete local chunk manifests as available
-encrypted blobs even without a whole-blob file, does not need workspace keys, and
-prints peer/requested/fetched/blob/ignored/gap plus storage-health counts after
-each pull. When a mirror is partial, `lastReport.missingBlobHashes` samples the
-encrypted attachment blobs still unavailable locally and `lastReport.gaps`
-samples unresolved event IDs with their missing causal parent event IDs.
-`storageHealth` keeps exact compact row counters for the local mirror store.
-`chaft-node repair-storage-metadata` repairs that local mirror store's fast
-servable metadata and prints repair counters plus post-repair `storageHealth`
-JSON without needing workspace keys or deleting raw event rows.
-Blob/gap samples are capped at 64 rows; `missingBlobCount` and `gapCount`
-remain the full authoritative totals.
-
-`save-attachment` decrypts a locally available encrypted attachment to a chosen
-output path. New message attachments carry a stable `attachmentId`; the legacy
-`--blob-hash` CLI argument remains available for older scripts and legacy events
-that do not carry an attachment ID. New local attachment sends currently cap the
-selected plaintext file at 128 MiB before encryption and reject blank or
-over-64 KiB selected source paths before local file metadata reads. Encrypted
-blobs below that budget still use chunked P2P transfer when they exceed the
-whole-blob frame size. Attachment saves reject blank or over-64 KiB output paths
-before materializing workspace state or creating export temp files.
-The runtime requires the right local content key (workspace key for public
-channels, channel key for private channels) and the ciphertext blob, so a newly
-hydrated profile usually imports keys and pulls/syncs blobs before saving
-attachments. `prune-blobs` removes local ciphertext blob-cache objects that are
-not referenced by any materialized local workspace event while preserving
-referenced whole blobs, manifests, and chunks. `BlobStore::open` rejects blank
-or over-64 KiB blob-store roots before directory creation, even for direct crate
-callers below the runtime and node path checks.
-
-`export-workspace-key` emits a plaintext secret key bundle for explicit manual
-device bootstrap only. The bundle includes the current workspace content key and
-any previous local epochs required for older ciphertext. `export-channel-key`
-does the same for one private channel. These bundles must be moved over a
-private channel and should not be published to peers or stored in replica nodes.
-Signed key-epoch events are replica-safe metadata; the exported key bytes are
-not.
-
-`export-recovery-bundle` emits one passphrase-encrypted JSON bundle containing
-the workspace key ring plus every local private-channel key ring for that
-workspace. It is the preferred bootstrap transfer format over raw key exports,
-but it is still not the final production secret store: new exports use Argon2id
-with fixed memory/time parameters plus AES-256-GCM-SIV, and imports retain
-legacy BLAKE3-wrapped bundle support. When the runtime is opened with
-`--identity-passphrase`, `CHAFT_IDENTITY_PASSPHRASE`, or the FFI
-runtime-directory-scoped unlock cache, newly written local workspace/private
-channel key rings and OpenMLS private state files are also sealed with Argon2id
-plus AES-256-GCM-SIV. `LocalRuntime` treats blank identity passphrases as absent
-and rejects passphrases above 16 KiB before identity open or Argon2id work; the
-lower `DeviceIdentity` API rejects the same oversized passphrases before
-identity generation, file read/write work, or Argon2id, and rejects blank or
-over-64 KiB identity paths before existence checks, reads, directory creation,
-or writes. Identity file reads are capped at 64 KiB, and local
-secret-file reads under `keys/` are capped at 16 MiB before parse/decrypt. The
-OpenMLS parser layer also rejects oversized public key packages, private
-key-package bundles, welcomes, commits, private group state, and ratchet trees
-before JSON/TLS/OpenMLS decode, event publication, authorization, or
-materialization. The desktop unlock prompt uses the FFI
-runtime-directory-scoped process cache and no longer writes typed passphrases to
-`CHAFT_IDENTITY_PASSPHRASE`; cached copies are zeroized on clear, replacement,
-or process shutdown. The environment variable remains a development startup
-fallback only. Chaft still needs an OS keychain or user-unlocked encrypted vault
-for production unlock UX. Passphrases must move privately and should not be
-passed through shared shell history in real use.
-
-Production multi-device and member key distribution now has the first real
-OpenMLS workspace member-add/welcome path, and public workspace payloads can use
-OpenMLS exporter-derived keys once local group state exists. Private-channel
-payloads can also use OpenMLS exporter-derived keys once local channel group
-state exists. A device also needs signed `invite-member` and, for private
-channels, `add-channel-member` events before replicas will accept events it
-authors; key import alone is not authorization.
-
-`publish-sample` sends a valid bootstrap sequence: workspace root, channel, and
-an encrypted message event. The sample content key is throwaway developer state;
-it proves replica-visible ciphertext storage, not durable user recovery. Passing
-`--identity-file` gives the sample a restart-stable signing identity. A lone
-message from an uninvited device is rejected by replica storage, and plaintext
-message bodies are refused even from authorized devices. Partial replicas can
-also authorize a later event from proof events supplied in the publish request
-without storing those proof events. For larger workspaces, a root-owner-signed
-trust snapshot can replace long invite/channel proof chains while remaining
-proof-only replica input. Sync sends these proof snapshots as protobuf frames.
-`export-trust-snapshot` emits that signed snapshot, and
-`publish-event-with-trust-snapshot` publishes one materialized event plus the
-snapshot so a partial backup node can store a later encrypted slice without
-storing the full proof chain. Single-event proof publish scopes the snapshot to
-the selected event's needed roles, channels, message targets, and read-marker
-event targets. Multi-event backup similarly scopes proof to the events the
-replica is missing in each backup publish chunk, while manual export keeps a
-full current snapshot.
+Pull requests should call out security, storage, wire-format, migration,
+release, and UI-thread implications where relevant.
 
 ## License
 
-Chaft is licensed as free software under `AGPL-3.0-or-later`; see `LICENSE`.
+Chaft is licensed under the
+[GNU Affero General Public License v3.0 or later](LICENSE).

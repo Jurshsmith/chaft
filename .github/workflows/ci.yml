@@ -37,6 +37,7 @@ jobs:
             core:
               - "**"
               - "!apps/website/**"
+              - "!guides/public/**"
 
   rust:
     name: Rust workspace

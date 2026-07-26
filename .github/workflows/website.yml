@@ -2,9 +2,21 @@ name: Website
 
 on:
   pull_request:
+    paths:
+      - apps/website/**
+      - guides/public/**
+      - README.md
+      - SECURITY.md
+      - CONTRIBUTING.md
   push:
     branches:
       - main
+    paths:
+      - apps/website/**
+      - guides/public/**
+      - README.md
+      - SECURITY.md
+      - CONTRIBUTING.md
   workflow_dispatch:
     inputs:
       site_url:
