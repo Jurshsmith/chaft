@@ -7,18 +7,32 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Download Chaft for Windows, macOS, or Linux and verify each published desktop artifact.";
+  "Chaft canary builds for Windows, macOS, and Linux. Public packages are being prepared; build from source today.";
+const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
 ---
 
-<BaseLayout title="Download" description={description}>
+<BaseLayout title={hasPublishedDownloads ? "Download" : "Canary builds"} description={description}>
   <PageHero
-    eyebrow={`${currentRelease.channel} channel · ${currentRelease.version}`}
-    title="Choose your Chaft desktop build."
-    lede="Every platform stays visible. When release artifacts are published, this page will show the exact version, architecture, size, checksum, and signing state before you leave."
+    eyebrow={`Canary stage · ${currentRelease.version}`}
+    title={hasPublishedDownloads
+      ? "Choose your Chaft desktop build."
+      : "Canary packages are being prepared."}
+    lede={hasPublishedDownloads
+      ? "Every platform stays visible, with the exact version, architecture, size, checksum, and signing state shown before you leave."
+      : "Windows, macOS, and Linux are supported targets. Build the current source today; verified public packages will appear here only after their release evidence is complete."}
   >
     <div class="button-row">
-      <a class="button" href="#platforms">Choose a platform</a>
-      <a class="button button--secondary" href={currentRelease.sourceUrl}>Build from source</a>
+      <a
+        class="button"
+        href={hasPublishedDownloads
+          ? "#platforms"
+          : sitePath("/docs/getting-started/build-desktop/")}
+      >
+        {hasPublishedDownloads ? "Choose a platform" : "Build the canary"}
+      </a>
+      <a class="button button--secondary" href={currentRelease.releaseUrl}>
+        Follow GitHub releases
+      </a>
     </div>
   </PageHero>
 
@@ -26,10 +40,10 @@ const description =
     <div class="shell">
       <div class="release-strip">
         <span class="status">
-          {currentRelease.status === "published" ? "Release published" : "Release builds pending"}
+          {currentRelease.status === "published" ? "Release published" : "Canary packages pending"}
         </span>
         <div>
-          <strong>Current website manifest</strong>
+          <strong>Current canary candidate</strong>
           <span class="mono">v{currentRelease.version}</span>
         </div>
         <a href={sitePath(`/releases/${currentRelease.version}/`)}>Manifest details →</a>
@@ -42,7 +56,7 @@ const description =
     <div class="shell">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">What you will receive</p>
+          <p class="eyebrow">Release standard</p>
           <h2>Platform-native delivery, with integrity metadata beside it.</h2>
         </div>
         <p>
@@ -87,7 +101,7 @@ const description =
         <pre><code>sha256sum -c chaft-desktop-&lt;platform&gt;-SHA256SUMS</code></pre>
         <p>
           Until that release gate is complete, this page links to the public Releases
-          area without presenting development artifacts as production downloads.
+          area without presenting source builds as verified downloads.
         </p>
       </div>
     </div>

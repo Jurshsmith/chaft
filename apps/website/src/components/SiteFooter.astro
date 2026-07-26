@@ -8,14 +8,14 @@ const year = new Date().getUTCFullYear();
   <div class="shell site-footer__inner">
     <div>
       <a class="footer-brand" href={sitePath("/")}>chaft</a>
-      <p>Native, local-first, peer-to-peer workspace chat.</p>
+      <p>Experimental P2P-first team chat for small teams.</p>
     </div>
 
     <nav aria-label="Footer navigation">
       <a href={sitePath("/docs/")}>Documentation</a>
       <a href={sitePath("/docs/getting-started/build-desktop/")}>Getting started</a>
       <a href={sitePath("/docs/concepts/architecture/")}>Architecture</a>
-      <a href={sitePath("/download/")}>Downloads</a>
+      <a href={sitePath("/download/")}>Canary builds</a>
       <a href={sitePath("/releases/")}>Releases</a>
       <a href={sitePath("/security/")}>Security</a>
       <a href="https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md">
@@ -26,7 +26,9 @@ const year = new Date().getUTCFullYear();
       <a href={sitePath("/licenses/OFL-SpaceGrotesk.txt")}>Font license</a>
     </nav>
 
-    <p class="site-footer__meta">© {year} Chaft. Early-stage software.</p>
+    <p class="site-footer__meta">
+      © {year} Chaft. Canary software · Not for sensitive production use.
+    </p>
   </div>
 </footer>
 

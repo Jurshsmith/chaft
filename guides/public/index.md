@@ -10,10 +10,14 @@ draft: false
 
 # Chaft public guides
 
-Chaft is an early-stage, local-first, peer-to-peer desktop chat workspace. The
-codebase and development builds are available for evaluation, but the product
-is still in preview: interfaces can change, peer connectivity is intentionally
-explicit, and you should not rely on Chaft as the only copy of important data.
+Chaft is an experimental P2P-first Slack alternative for small teams. It
+combines local-first storage, end-to-end encrypted content, and peer-to-peer
+replication to explore whether essential collaboration software can stay free
+within deliberate limits.
+
+The codebase is at the canary stage: interfaces can change, peer connectivity
+is intentionally explicit, and you should not rely on Chaft as the only copy of
+important data.
 
 These guides describe behavior that exists in the repository today. They do not
 promise a stable release schedule, unattended internet-wide discovery, or
@@ -36,7 +40,7 @@ the workspace lifecycle guide.
 - [Architecture](concepts/architecture.md) explains the desktop, Rust runtime,
   local stores, signed event model, and networking boundary.
 - [Security model](concepts/security-model.md) separates current protections
-  from preview-stage limitations and operational responsibilities.
+  from canary-stage limitations and operational responsibilities.
 - [Networking and replication](concepts/networking-and-replication.md) explains
   explicit peer routes, synchronization, and untrusted replica behavior.
 
@@ -54,7 +58,7 @@ the workspace lifecycle guide.
 - [Portable workspace export](reference/portable-workspace-export.md) defines
   the readable plaintext export and its privacy and completeness contract.
 
-## Preview boundaries
+## Canary boundaries
 
 - Chaft stores runtime state locally and synchronizes with explicitly supplied
   peers. A central service does not silently recover a device or discover every

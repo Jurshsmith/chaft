@@ -2,6 +2,7 @@
 import { Image } from "astro:assets";
 
 import avatarDark from "../../../desktop-qt/resources/branding/chaft-avatar-dark.png";
+import { currentRelease } from "../data/releases";
 import { sitePath } from "../lib/site-path";
 
 interface HeaderLink {
@@ -20,6 +21,9 @@ const links: HeaderLink[] = [
 ];
 
 const downloadHref = sitePath("/download/");
+const downloadLabel = currentRelease.assets.some((asset) => asset.available)
+  ? "Download"
+  : "Canary";
 
 function isCurrentLink(link: HeaderLink): boolean {
   if (link.external) return false;
@@ -64,7 +68,7 @@ function isCurrentLink(link: HeaderLink): boolean {
     </nav>
 
     <a class="header-download" href={downloadHref} aria-current={currentPath === downloadHref ? "page" : undefined}>
-      Download
+      {downloadLabel}
     </a>
 
     <details class="mobile-nav">
@@ -82,7 +86,7 @@ function isCurrentLink(link: HeaderLink): boolean {
           </a>
         ))}
         <a href={downloadHref} aria-current={currentPath === downloadHref ? "page" : undefined}>
-          Download
+          {downloadLabel}
         </a>
       </nav>
     </details>
