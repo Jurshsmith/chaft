@@ -125,6 +125,36 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" >/dev/null
           done < <(find "${RUNNER_TEMP}/release-assets" -type f -print0)
 
+      - name: Verify and isolate mandatory Qt corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="${RUNNER_TEMP}/release-assets"
+          release_json="${RUNNER_TEMP}/release.json"
+          source_assets="${RUNNER_TEMP}/qt-corresponding-source"
+          bundle="Chaft-Qt-6.8.4-corresponding-source.zip"
+          checksum="Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+
+          for filename in "${bundle}" "${checksum}"; do
+            count="$(jq --arg filename "${filename}" \
+              '[.assets[] | select(.name == $filename)] | length' \
+              "${release_json}")"
+            if [[ "${count}" -ne 1 ]] || \
+              [[ ! -f "${assets}/${filename}" ]] || \
+              [[ -L "${assets}/${filename}" ]]; then
+              echo "::error::Release must contain exactly one regular ${filename} asset."
+              exit 1
+            fi
+          done
+
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${assets}/${bundle}" \
+            --checksum "${assets}/${checksum}"
+
+          mkdir "${source_assets}"
+          mv -- "${assets}/${bundle}" "${source_assets}/${bundle}"
+          mv -- "${assets}/${checksum}" "${source_assets}/${checksum}"
+
       - name: Stage the release namespace
         id: stage
         shell: bash

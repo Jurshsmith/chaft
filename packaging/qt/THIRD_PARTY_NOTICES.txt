@@ -22,9 +22,12 @@ LICENSE.LGPL3 and LICENSE.GPL3.
 
 The exact Qt source archives and the security patches applied to them are
 listed, with SHA-256 digests, in QT-CORRESPONDING-SOURCE.json next to this
-notice. Each Qt source archive also contains its file-level copyright,
-licensing, and third-party-license records in its LICENSES directories,
-SPDX headers, and REUSE metadata.
+notice. The same immutable Chaft GitHub Release provides the corresponding
+source bundle and checksum named in that manifest. Each Qt source archive in
+the bundle also contains its file-level copyright, licensing, and
+third-party-license records in its LICENSES directories, SPDX headers, and
+REUSE metadata; those records cover bundled third-party code selected by the
+platform build.
 
 The Qt libraries are dynamically linked. You may replace them with
 interface-compatible modified versions, and the package terms do not prohibit

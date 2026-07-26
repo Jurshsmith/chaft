@@ -2,7 +2,11 @@
   "schemaVersion": 1,
   "component": "Qt",
   "version": "6.8.4",
-  "instructions": "Download the source archives for the target platform, verify every SHA-256 digest, and apply each applicable security patch in listed order. The source archives contain the file-level license records and preferred source form for the distributed Qt libraries and plugins.",
+  "instructions": "Obtain the named corresponding-source bundle and checksum from the same immutable Chaft GitHub Release as the desktop package. Verify the bundle checksum, then verify every source archive and patch against the SHA-256 values below and apply each applicable security patch in listed order. The source archives contain the file-level license records and preferred source form for the distributed Qt libraries and plugins.",
+  "releaseAssets": {
+    "bundle": "Chaft-Qt-6.8.4-corresponding-source.zip",
+    "checksum": "Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+  },
   "licenses": [
     {
       "spdx": "LGPL-3.0-only",

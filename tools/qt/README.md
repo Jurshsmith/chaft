@@ -72,6 +72,37 @@ python3 tools/qt/build_qt.py activate \
 
 Without the GitHub file arguments, `activate` prints the environment values.
 
+## Corresponding-source release assets
+
+Every public desktop release must retain one exact copy of the Qt source
+materials beside the Windows, macOS, and Linux binaries. Create the two
+required assets with:
+
+```sh
+python3 tools/qt/source_bundle.py create \
+  --output-dir dist/qt-corresponding-source
+```
+
+This downloads and SHA-verifies all five source archives and six security
+patches, then creates the byte-deterministic
+`Chaft-Qt-6.8.4-corresponding-source.zip` and its adjacent `.sha256` file. The
+ZIP also contains both checked manifests, the packaged notices and license
+texts, the exact SDK build driver and probes, an ordered patch guide, and
+internal checksums.
+
+Verify downloaded release assets without network access:
+
+```sh
+python3 tools/qt/source_bundle.py verify \
+  --bundle dist/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip \
+  --checksum dist/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+```
+
+Release-input automation builds the bundle once on Linux, verifies it again on
+a clean runner, includes it in the release audit, and retains it for seven
+days. Public release promotion fails closed unless the immutable GitHub Release
+contains and verifies both assets.
+
 ## Cache and provenance contract
 
 Cache only the install prefix, never the source or build directories. A cold Qt
@@ -92,4 +123,5 @@ Run the network-free tooling contracts with:
 
 ```sh
 python3 tools/qt/build_qt_test.py
+python3 tools/qt/source_bundle_test.py
 ```

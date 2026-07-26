@@ -19,6 +19,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
 RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
+PROMOTION_PATH = WORKFLOWS / "promote-desktop-release.yml"
 CACHE_CLEANUP_PATH = WORKFLOWS / "cleanup-pull-request-caches.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
@@ -32,6 +33,8 @@ QT_CACHE_RESTORE_ACTION = (
     "actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae"
 )
 QT_CACHE_KEY = "chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}"
+QT_SOURCE_BUNDLE = "Chaft-Qt-6.8.4-corresponding-source.zip"
+QT_SOURCE_CHECKSUM = f"{QT_SOURCE_BUNDLE}.sha256"
 MAIN_CACHE_WRITER = (
     "${{ github.event_name != 'pull_request' && "
     "github.ref == 'refs/heads/main' }}"
@@ -157,6 +160,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         cls.ci = CI_PATH.read_text(encoding="utf-8")
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
         cls.release_inputs = RELEASE_INPUTS_PATH.read_text(encoding="utf-8")
+        cls.promotion = PROMOTION_PATH.read_text(encoding="utf-8")
         cls.cache_cleanup = CACHE_CLEANUP_PATH.read_text(encoding="utf-8")
 
     def test_job_ids_exactly_match_aggregate_contract(self) -> None:
@@ -397,6 +401,10 @@ class CiWorkflowContractTests(unittest.TestCase):
             "python3 tools/qt/build_qt_test.py",
             classify,
         )
+        self.assertIn(
+            "python3 tools/qt/source_bundle_test.py",
+            classify,
+        )
         provisioning = {
             "qt_sdk_linux": ("ubuntu-22.04", "linux"),
             "qt_sdk_macos": ("macos-15-intel", "macos"),
@@ -548,6 +556,161 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("--expected-commit \"$EXPECTED_COMMIT\"", build)
         self.assertIn("--require-clean", build)
+
+    def test_release_inputs_build_qt_source_once_with_exact_layout(
+        self,
+    ) -> None:
+        source = job_block(self.release_inputs, "qt_source_bundle")
+        self.assertIn("needs: validate", source)
+        self.assertIn("runs-on: ubuntu-22.04", source)
+        self.assertNotIn("matrix.", source)
+        self.assertIn(
+            "ref: ${{ needs.validate.outputs.commit }}",
+            source,
+        )
+        self.assertIn(
+            "--tag \"$RELEASE_TAG\"",
+            source,
+        )
+        self.assertIn("--expected-commit HEAD", source)
+        self.assertEqual(
+            source.count("tools/qt/source_bundle.py create"),
+            1,
+        )
+        self.assertIn("tools/qt/source_bundle.py verify", source)
+        self.assertEqual(source.count(QT_SOURCE_CHECKSUM), 3)
+        self.assertEqual(
+            source.count(QT_SOURCE_BUNDLE)
+            - source.count(QT_SOURCE_CHECKSUM),
+            3,
+        )
+        self.assertIn(
+            "artifact_digest: ${{ steps.upload.outputs.artifact-digest }}",
+            source,
+        )
+        self.assertIn(
+            "path: |\n"
+            f"            build/qt-corresponding-source/{QT_SOURCE_BUNDLE}\n"
+            f"            build/qt-corresponding-source/{QT_SOURCE_CHECKSUM}\n",
+            source,
+        )
+        self.assertIn("retention-days: 7", source)
+        self.assertIn("compression-level: 0", source)
+        self.assertIn("archive: true", source)
+        self.assertNotIn("gh release", source)
+        self.assertEqual(
+            self.release_inputs.count(
+                "tools/qt/source_bundle.py create"
+            ),
+            1,
+        )
+
+    def test_qt_source_artifact_is_clean_verified_and_audited(
+        self,
+    ) -> None:
+        clean = job_block(self.release_inputs, "clean-qt-source-bundle")
+        self.assertIn("      - qt_source_bundle", clean)
+        self.assertIn(
+            "ref: ${{ needs.validate.outputs.commit }}",
+            clean,
+        )
+        self.assertIn("digest-mismatch: error", clean)
+        self.assertIn(QT_SOURCE_BUNDLE, clean)
+        self.assertIn(QT_SOURCE_CHECKSUM, clean)
+        self.assertIn("tools/qt/source_bundle.py verify", clean)
+        self.assertNotIn("tools/qt/source_bundle.py create", clean)
+        self.assertIn(
+            "path: build/clean-qt-source\n"
+            "          digest-mismatch: error",
+            clean,
+        )
+
+        audit = job_block(self.release_inputs, "audit-release-inputs")
+        self.assertIn("      - qt_source_bundle", audit)
+        self.assertIn("      - clean-qt-source-bundle", audit)
+        self.assertIn("digest-mismatch: error", audit)
+        self.assertIn(QT_SOURCE_BUNDLE, audit)
+        self.assertIn(QT_SOURCE_CHECKSUM, audit)
+        self.assertIn("tools/qt/source_bundle.py verify", audit)
+        self.assertIn(
+            "path: build/release-input-audit/qt-source\n"
+            "          digest-mismatch: error",
+            audit,
+        )
+
+    def test_promotion_requires_verifies_and_isolates_qt_source_assets(
+        self,
+    ) -> None:
+        prepare = job_block(self.promotion, "prepare")
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}",
+            prepare,
+        )
+        self.assertIn("gh release verify-asset", prepare)
+        self.assertEqual(
+            prepare.count(
+                '[.assets[] | select(.name == $filename)] | length'
+            ),
+            1,
+        )
+        self.assertIn('for filename in "${bundle}" "${checksum}"', prepare)
+        self.assertIn(f'bundle="{QT_SOURCE_BUNDLE}"', prepare)
+        self.assertIn(f'checksum="{QT_SOURCE_CHECKSUM}"', prepare)
+        self.assertIn("tools/qt/source_bundle.py verify", prepare)
+        self.assertIn(
+            'source_assets="${RUNNER_TEMP}/qt-corresponding-source"',
+            prepare,
+        )
+        self.assertEqual(prepare.count('mv -- "${assets}/'), 2)
+        authenticate_position = prepare.index("gh release verify-asset")
+        verify_position = prepare.index("tools/qt/source_bundle.py verify")
+        isolate_position = prepare.index('mv -- "${assets}/${bundle}"')
+        stage_position = prepare.index(
+            "tools/desktop/stage-website-release-assets.py"
+        )
+        self.assertLess(authenticate_position, verify_position)
+        self.assertLess(verify_position, isolate_position)
+        self.assertLess(isolate_position, stage_position)
+        for mutation in (
+            "gh release upload",
+            "gh release delete",
+            "gh release edit",
+        ):
+            self.assertNotIn(mutation, self.promotion)
+
+    def test_promotion_release_and_signing_invariants_are_preserved(
+        self,
+    ) -> None:
+        trigger = self.promotion.split("\npermissions:\n", 1)[0]
+        self.assertIn("  release:\n", trigger)
+        self.assertIn("      - published\n", trigger)
+        self.assertIn("  workflow_dispatch:\n", trigger)
+        self.assertIn("permissions:\n  contents: read\n", self.promotion)
+        self.assertIn("cancel-in-progress: false", self.promotion)
+
+        prepare = job_block(self.promotion, "prepare")
+        self.assertIn(
+            '[[ "$(jq -r \'.immutable // false\' "${release_json}")" '
+            '!= "true" ]]',
+            prepare,
+        )
+        self.assertIn('gh release verify "${RELEASE_TAG}"', prepare)
+        self.assertIn(
+            'tag_commit="$(git rev-parse --verify '
+            '"refs/tags/${RELEASE_TAG}^{commit}")"',
+            prepare,
+        )
+        self.assertIn('policy_commit="$(git rev-parse HEAD)"', prepare)
+
+        windows = job_block(self.promotion, "verify_windows")
+        macos = job_block(self.promotion, "verify_macos")
+        linux = job_block(self.promotion, "verify_linux")
+        self.assertIn("CHAFT_WINDOWS_SIGNER_THUMBPRINT", windows)
+        self.assertIn("--trusted-windows-signer-thumbprint", windows)
+        self.assertIn("CHAFT_APPLE_TEAM_ID", macos)
+        self.assertIn("--trusted-apple-team-id", macos)
+        self.assertIn("CHAFT_LINUX_SIGNING_FINGERPRINT", linux)
+        self.assertIn("--trusted-fingerprint", linux)
 
 
 class DesktopGateScriptContractTests(unittest.TestCase):

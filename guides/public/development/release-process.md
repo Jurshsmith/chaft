@@ -26,7 +26,8 @@ The repository implements these release boundaries:
 1. Pull-request and `main` CI build desktop packages on native platform
    runners.
 2. A manual workflow rebuilds non-publishing release inputs from an existing
-   stable tag and immutable commit.
+   stable tag and immutable commit, including the exact Qt corresponding
+   source used by every desktop package.
 3. Package metadata records checksums, a CycloneDX SBOM, provenance, source
    identity, and platform-specific evidence.
 4. A published GitHub Release can trigger strict asset and signing
@@ -91,7 +92,11 @@ existing tag formatted as `v<semantic-version>`. It:
 - checks out that immutable commit on Windows, macOS, and Linux runners;
 - runs the platform desktop gates;
 - creates package metadata and verifies it against the exact source commit;
+- creates and verifies one deterministic Qt 6.8.4 corresponding-source bundle
+  on Linux rather than duplicating it in the platform matrix;
 - smoke-tests the Windows ZIP and Linux AppImage on clean runners; and
+- verifies the corresponding-source bundle again on a clean runner;
+- includes it in the release-input audit; and
 - uploads non-publishing workflow artifacts with seven-day retention.
 
 The workflow has read-only repository permissions. Its output is intentionally
@@ -112,6 +117,15 @@ For every platform, require:
 - build and source provenance; and
 - the native verification receipt required by that platform.
 
+Every release also requires these two exact GitHub Release assets:
+
+- `Chaft-Qt-6.8.4-corresponding-source.zip`; and
+- `Chaft-Qt-6.8.4-corresponding-source.zip.sha256`.
+
+They are mandatory compliance assets, not temporary build inputs. Retain the
+bundle and checksum alongside the Windows, macOS, and Linux binaries for the
+full lifetime of the release.
+
 Windows packages require trusted Authenticode verification. macOS packages
 require Developer ID signing, notarization, stapling, Gatekeeper assessment,
 and a verification receipt. Linux publication follows the configured policy:
@@ -131,6 +145,8 @@ closed unless:
 - the tag, release, commit, and reviewed source history agree;
 - all expected platform packages and evidence files are present;
 - filenames, sizes, and SHA-256 values match;
+- the mandatory Qt corresponding-source bundle and checksum are present and
+  verify with the policy code from the current default branch;
 - Windows and macOS native verification succeeds on their native runners;
 - the Linux evidence matches its declared signing state; and
 - unrelated, duplicate, or stale assets are absent.
@@ -166,6 +182,8 @@ Before describing a version as public:
 - the stable tag resolves to the reviewed source commit;
 - final package bytes are immutable;
 - checksums, SBOMs, provenance, and native evidence verify;
+- the Qt corresponding-source bundle and checksum are retained alongside the
+  binaries;
 - the GitHub Release contains only the expected coherent asset set;
 - the generated release manifest validates;
 - its website pull request is reviewed and merged; and

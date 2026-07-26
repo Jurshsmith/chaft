@@ -60,6 +60,63 @@ jobs:
           retention-days: 7
           archive: true
 
+  qt_source_bundle:
+    name: Build Qt corresponding-source bundle
+    needs: validate
+    runs-on: ubuntu-22.04
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Revalidate exact checkout
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "$RELEASE_TAG" \
+            --expected-commit HEAD
+
+      - name: Create and verify exact Qt corresponding source
+        run: |
+          set -euo pipefail
+          output="build/qt-corresponding-source"
+          python3 tools/qt/source_bundle.py create --output-dir "${output}"
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${output}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+            --checksum "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          expected="$(
+            printf '%s\n' \
+              Chaft-Qt-6.8.4-corresponding-source.zip \
+              Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          )"
+          actual="$(find "${output}" -mindepth 1 -maxdepth 1 -type f \
+            -printf '%f\n' | sort)"
+          if [[ "${actual}" != "${expected}" ]] || \
+            [[ "$(find "${output}" -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ]]; then
+            echo "::error::Qt corresponding-source output must contain exactly the bundle and checksum."
+            exit 1
+          fi
+
+      - name: Upload non-publishing Qt corresponding source
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: |
+            build/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip
+            build/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          archive: true
+
   build:
     name: Build ${{ matrix.name }} release input
     needs: validate
@@ -325,11 +382,53 @@ jobs:
             -PackageDirectory build/clean-package `
             -ExpectedVersion "${{ needs.validate.outputs.version }}"
 
+  clean-qt-source-bundle:
+    name: Clean Qt corresponding-source verification
+    needs:
+      - validate
+      - qt_source_bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download Qt corresponding source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/clean-qt-source
+          digest-mismatch: error
+
+      - name: Verify exact layout and checksum on a clean runner
+        run: |
+          set -euo pipefail
+          root="build/clean-qt-source"
+          expected="$(
+            printf '%s\n' \
+              Chaft-Qt-6.8.4-corresponding-source.zip \
+              Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          )"
+          actual="$(find "${root}" -mindepth 1 -maxdepth 1 -type f \
+            -printf '%f\n' | sort)"
+          if [[ "${actual}" != "${expected}" ]] || \
+            [[ "$(find "${root}" -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ]]; then
+            echo "::error::Downloaded Qt source artifact has an unexpected layout."
+            exit 1
+          fi
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${root}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+            --checksum "${root}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+
   audit-release-inputs:
     name: Audit release input set
     needs:
       - validate
       - clean-package-smoke
+      - qt_source_bundle
+      - clean-qt-source-bundle
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout validated commit
@@ -368,6 +467,13 @@ jobs:
           path: build/release-input-audit/windows
           digest-mismatch: error
 
+      - name: Download Qt corresponding source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/qt-source
+          digest-mismatch: error
+
       - name: Verify context and platform metadata
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
@@ -401,6 +507,9 @@ jobs:
               --expected-commit "$EXPECTED_COMMIT" \
               --require-clean
           done
+          python3 tools/qt/source_bundle.py verify \
+            --bundle build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip \
+            --checksum build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
 
       - name: Generate exact input inventory
         run: |

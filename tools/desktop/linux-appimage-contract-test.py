@@ -43,6 +43,13 @@ build_manifest = load_json(build_manifest_path)
 if package_manifest.get("version") != build_manifest.get("qtVersion"):
     fail("packaged Qt version does not match the source-build manifest")
 
+expected_release_assets = {
+    "bundle": "Chaft-Qt-6.8.4-corresponding-source.zip",
+    "checksum": "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+}
+if package_manifest.get("releaseAssets") != expected_release_assets:
+    fail("packaged Qt manifest must name the exact corresponding-source assets")
+
 platform_names = {
     "Linux": "linux",
     "macOS": "macos",

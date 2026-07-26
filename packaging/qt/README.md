@@ -19,8 +19,10 @@ When the Qt version, module set, or patch set changes:
    distributed.
 
 The official URLs are retrieval locations, not a transfer of Chaft release
-maintainers' source-availability responsibilities. For public releases,
-maintainers should retain or mirror the exact verified inputs so they remain
-available with the binaries.
+maintainers' source-availability responsibilities. Every public release must
+retain the deterministic `Chaft-Qt-6.8.4-corresponding-source.zip` bundle and
+its `.sha256` file as immutable GitHub Release assets alongside the binaries.
+Release promotion fails if either asset is absent, altered, or does not contain
+the exact verified inputs.
 
 This file is operational guidance, not legal advice.

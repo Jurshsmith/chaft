@@ -50,6 +50,7 @@ jobs:
           python3 tools/ci/required-check-test.py
           python3 tools/ci/workflow-contract-test.py
           python3 tools/qt/build_qt_test.py
+          python3 tools/qt/source_bundle_test.py
 
       - name: Classify changed paths
         id: classify
