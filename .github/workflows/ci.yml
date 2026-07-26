@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,30 +22,42 @@ env:
   CHAFT_QT_VERSION: 6.8.3
 
 jobs:
-  changes:
-    name: Change scope
+  classify:
+    name: Change impact
     runs-on: ubuntu-latest
     outputs:
-      core: ${{ steps.filter.outputs.core }}
+      website: ${{ steps.classify.outputs.website }}
+      rust: ${{ steps.classify.outputs.rust }}
+      rust_test: ${{ steps.classify.outputs.rust_test }}
+      rust_smoke: ${{ steps.classify.outputs.rust_smoke }}
+      benchmark: ${{ steps.classify.outputs.benchmark }}
+      desktop_contract: ${{ steps.classify.outputs.desktop_contract }}
+      desktop: ${{ steps.classify.outputs.desktop }}
+      release_contract: ${{ steps.classify.outputs.release_contract }}
+      package: ${{ steps.classify.outputs.package }}
+      full: ${{ steps.classify.outputs.full }}
     steps:
-      - name: Checkout
+      - name: Checkout exact source with history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Detect non-website changes
-        id: filter
-        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
-        with:
-          predicate-quantifier: every
-          filters: |
-            core:
-              - "**"
-              - "!apps/website/**"
-              - "!guides/public/**"
+      - name: Validate CI classifier contracts
+        run: |
+          python3 tools/ci/classify-changes-test.py
+          python3 tools/ci/required-check-test.py
+          python3 tools/ci/workflow-contract-test.py
+
+      - name: Classify changed paths
+        id: classify
+        run: python3 tools/ci/classify-changes.py
 
   artifact_v7_producer:
     name: Artifact v7 producer contract
+    needs: classify
+    if: needs.classify.outputs.full == 'true'
     runs-on: ubuntu-22.04
     outputs:
       alpha_digest: ${{ steps.upload_alpha.outputs.artifact-digest }}
@@ -84,7 +99,13 @@ jobs:
 
   artifact_v8_consumer:
     name: Artifact v8 consumer contract
-    needs: artifact_v7_producer
+    needs:
+      - classify
+      - artifact_v7_producer
+    if: >-
+      always() &&
+      needs.classify.outputs.full == 'true' &&
+      needs.artifact_v7_producer.result == 'success'
     runs-on: ubuntu-22.04
     steps:
       - name: Download contract artifacts with nested layout
@@ -121,15 +142,52 @@ jobs:
             )
           done
 
-  rust:
-    name: Rust workspace
-    needs: changes
-    if: needs.changes.outputs.core == 'true'
+  website:
+    name: Static website
+    needs: classify
+    if: needs.classify.outputs.website == 'true'
     runs-on: ubuntu-latest
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      SITE_URL: https://website-validation.invalid
+    defaults:
+      run:
+        working-directory: apps/website
     steps:
-      - name: Checkout
+      - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate static website and route-less Worker configuration
+        run: pnpm validate
+
+  rust_quality:
+    name: Rust formatting and clippy
+    needs: classify
+    if: needs.classify.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -139,22 +197,127 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
 
-      - name: Check Rust workspace
-        run: cargo check --workspace --all-targets --locked
-
       - name: Run Rust clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: >-
+          cargo clippy --workspace --all-targets
+          --exclude chaft-benchmarks --locked -- -D warnings
 
-      - name: Compile benchmark targets
-        run: cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
+  rust_tests_ffi:
+    name: Rust FFI tests
+    needs: classify
+    if: needs.classify.outputs.rust_test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Test Rust workspace
-        timeout-minutes: 45
-        run: cargo test --workspace --all-targets --exclude chaft-benchmarks --locked
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
+
+      - name: Test Rust FFI
+        run: cargo test -p chaft-ffi --locked
+
+  rust_tests_runtime:
+    name: Rust runtime tests
+    needs: classify
+    if: needs.classify.outputs.rust_test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
+
+      - name: Test Rust runtime
+        run: cargo test -p chaft-runtime --locked
+
+  rust_tests_workspace:
+    name: Remaining Rust workspace tests
+    needs: classify
+    if: needs.classify.outputs.rust_test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
+
+      - name: Test remaining Rust workspace packages
+        run: >-
+          cargo test --workspace
+          --exclude chaft-benchmarks
+          --exclude chaft-ffi
+          --exclude chaft-runtime
+          --locked
+
+  rust_smokes:
+    name: Rust smoke tests
+    needs: classify
+    if: needs.classify.outputs.rust_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Run local P2P smoke
         run: tools/smoke/local-p2p.sh --locked
@@ -162,21 +325,72 @@ jobs:
       - name: Run visual workspace smoke
         run: tools/smoke/visual-workspace.sh --locked
 
-      - name: Run release metadata smoke
-        run: tools/desktop/release-metadata-smoke.sh
+  benchmark_compile:
+    name: Benchmark compile
+    needs: classify
+    if: needs.classify.outputs.benchmark == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Test release promotion tools
+      - name: Install Rust
         run: |
-          python3 tools/desktop/export-website-release-manifest-test.py
-          python3 tools/desktop/linux-appimage-contract-test.py
-          tools/desktop/platform-verification-receipt-smoke.sh
-          python3 tools/desktop/release-version-test.py
-          python3 tools/desktop/stage-website-release-assets-test.py
+          rustup toolchain install 1.92.0 --profile minimal --component clippy
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
+
+      - name: Lint benchmark target
+        run: >-
+          cargo clippy -p chaft-benchmarks
+          --bench hot_paths --locked -- -D warnings
+
+      - name: Compile benchmark target
+        run: cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
+
+  desktop_contracts:
+    name: Linux desktop contracts
+    needs: classify
+    if: >-
+      needs.classify.outputs.desktop_contract == 'true' ||
+      needs.classify.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ env.CHAFT_QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Run platform-independent desktop contracts
+        run: tools/desktop/ci-gates.sh --stage contracts Linux
 
   desktop:
-    name: Desktop ${{ matrix.name }}
-    needs: changes
-    if: needs.changes.outputs.core == 'true'
+    name: Desktop debug ${{ matrix.name }}
+    needs: classify
+    if: needs.classify.outputs.desktop == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -204,9 +418,10 @@ jobs:
             # event loop for longer than the portable 15-second default.
             smoke-timeout-ms: "60000"
     steps:
-      - name: Checkout
+      - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -216,6 +431,137 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: "false"
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up Python for aqtinstall
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: ${{ env.CHAFT_QT_VERSION }}
+          host: ${{ matrix.qt-host }}
+          target: desktop
+          arch: ${{ matrix.qt-arch }}
+          cache: true
+
+      - name: Run cross-platform desktop debug smoke
+        env:
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
+        shell: bash
+        run: >-
+          tools/desktop/ci-gates.sh
+          --stage debug
+          "${{ matrix.package-platform }}"
+
+      - name: Upload Linux desktop screenshot
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-linux-desktop-screenshot
+          path: build/desktop-debug/smoke/*.png
+          if-no-files-found: warn
+          archive: true
+
+  release_contracts:
+    name: Release contracts
+    needs: classify
+    if: >-
+      needs.classify.outputs.release_contract == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Run release metadata smoke
+        run: tools/desktop/release-metadata-smoke.sh
+
+      - name: Test release promotion tools
+        run: |
+          python3 tools/desktop/export-website-release-manifest-test.py
+          python3 tools/desktop/linux-appimage-contract-test.py
+          tools/desktop/platform-verification-receipt-smoke.sh
+          python3 tools/desktop/release-version-test.py
+          python3 tools/desktop/stage-website-release-assets-test.py
+
+  desktop_package:
+    name: Desktop package ${{ matrix.name }}
+    needs: classify
+    if: needs.classify.outputs.package == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            qt-host: linux
+            qt-arch: linux_gcc_64
+            package-platform: Linux
+            smoke-timeout-ms: ""
+          - name: macOS
+            os: macos-15-intel
+            qt-host: mac
+            qt-arch: clang_64
+            package-platform: macOS
+            smoke-timeout-ms: ""
+          - name: Windows
+            os: windows-latest
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+            package-platform: Windows
+            smoke-timeout-ms: "60000"
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
       - name: Configure MSVC environment
         if: runner.os == 'Windows'
@@ -275,20 +621,14 @@ jobs:
           echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=$tool_dir/linuxdeploy-plugin-appimage" \
             >> "$GITHUB_ENV"
 
-      - name: Run desktop CI gates
+      - name: Build and verify release package
         env:
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
         shell: bash
-        run: tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
-
-      - name: Upload Linux desktop screenshot
-        if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: chaft-linux-desktop-screenshot
-          path: build/desktop-debug/smoke/*.png
-          if-no-files-found: warn
-          archive: true
+        run: >-
+          tools/desktop/ci-gates.sh
+          --stage package
+          "${{ matrix.package-platform }}"
 
       - name: Upload release package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -299,30 +639,47 @@ jobs:
           compression-level: 0
           archive: true
 
-  linux-package-smoke:
-    name: Linux package on clean runner
+  clean_package_smoke:
+    name: Clean ${{ matrix.name }} package smoke
     needs:
-      - changes
-      - desktop
-    if: needs.changes.outputs.core == 'true'
-    runs-on: ubuntu-22.04
+      - classify
+      - desktop_package
+    if: >-
+      always() &&
+      needs.classify.outputs.package == 'true' &&
+      needs.desktop_package.result == 'success'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            artifact-name: chaft-Linux-desktop-release
+            artifact-path: build/clean-linux-package
+          - name: Windows
+            os: windows-latest
+            artifact-name: chaft-Windows-desktop-release
+            artifact-path: build/clean-windows-package
     steps:
-      - name: Checkout
+      - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Download Linux package
+      - name: Download release package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: chaft-Linux-desktop-release
-          path: build/clean-linux-package
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
           digest-mismatch: error
 
       # AppImage intentionally leaves the host GL/EGL dispatch stack unbundled
       # so it can match the user's graphics driver. GitHub's headless image
       # omits both libraries even though normal desktop installs provide them.
       - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
@@ -330,32 +687,46 @@ jobs:
             libopengl0
 
       - name: Run portable AppImage smoke
+        if: runner.os == 'Linux'
         run: tools/desktop/appimage-smoke.sh build/clean-linux-package
 
-  windows-package-smoke:
-    name: Windows package on clean runner
-    needs:
-      - changes
-      - desktop
-    if: needs.changes.outputs.core == 'true'
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Download Windows package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: chaft-Windows-desktop-release
-          path: build/clean-windows-package
-          digest-mismatch: error
-
       - name: Run clean ZIP smoke
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = python tools/desktop/release-version.py --print-version
           tools/desktop/windows-zip-smoke.ps1 `
             -PackageDirectory build/clean-windows-package `
             -ExpectedVersion $version
+
+  required:
+    name: Required
+    if: always()
+    needs:
+      - classify
+      - artifact_v7_producer
+      - artifact_v8_consumer
+      - website
+      - rust_quality
+      - rust_tests_ffi
+      - rust_tests_runtime
+      - rust_tests_workspace
+      - rust_smokes
+      - benchmark_compile
+      - desktop_contracts
+      - desktop
+      - release_contracts
+      - desktop_package
+      - clean_package_smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Evaluate conditional jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/required-check.py

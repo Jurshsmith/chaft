@@ -25,5 +25,7 @@ tokio = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+chaft-crypto = { path = "../../security/crypto" }
+chaft-identity = { path = "../../security/identity" }
 rusqlite = { workspace = true }
 tempfile = { workspace = true }

@@ -113,7 +113,9 @@ cleanup() {
 require_tool cargo
 require_tool "$python_bin"
 
-"$script_dir/build.sh" "$profile"
+if [ "${CHAFT_DESKTOP_SKIP_BUILD:-0}" != "1" ]; then
+  "$script_dir/build.sh" "$profile"
+fi
 
 ffi_library_name="$(chaft_desktop_ffi_library_name)"
 ffi_library="$repo_root/target/$rust_target_dir/$ffi_library_name"

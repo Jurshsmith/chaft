@@ -7,6 +7,8 @@ use std::{
     time::Duration,
 };
 
+use chaft_crypto::{ContentKey, seal_message_markdown};
+use chaft_identity::DeviceIdentity;
 use chaft_net_direct::{
     DirectPeerServer, JoinRequestInbox, JoinResponseInbox, MAX_FETCH_JOIN_RESPONSES_PER_REQUEST,
 };
@@ -3416,16 +3418,63 @@ fn decrypted_snapshot_from_runtime_latest_caps_oversized_timeline_limit() {
     let workspace_id = WorkspaceId(created.workspace_id.clone());
     let channel_id = ChannelId(created.channel_id);
     let message_count = MAX_TIMELINE_WINDOW_ROWS + 2;
+    let identity = DeviceIdentity::load_from_file(&runtime.paths().identity_file).unwrap();
+    let workspace_key = runtime.export_workspace_key(workspace_id.clone()).unwrap();
+    let content_key = ContentKey::from_bytes(
+        workspace_key
+            .aes_256_gcm_siv_key
+            .as_slice()
+            .try_into()
+            .unwrap(),
+    );
+    let initial_events = runtime.workspace_events(&workspace_id).unwrap();
+    let initial_event_ids = initial_events
+        .iter()
+        .map(|event| event.event_id.clone())
+        .collect::<Vec<_>>();
+    let mut parent_event_id = initial_events.last().unwrap().event_id.clone();
+    let mut messages = Vec::with_capacity(message_count);
+
+    // Build a production-valid encrypted and signed history in memory. Calling
+    // send_message here would rematerialize the growing history for every row,
+    // making this boundary fixture quadratic without strengthening the FFI check.
     for index in 0..message_count {
-        runtime
-            .send_message(
-                workspace_id.clone(),
-                channel_id.clone(),
-                format!("message {index:03}"),
-            )
-            .unwrap();
+        let message_id = MessageId::new();
+        let sealed_markdown = seal_message_markdown(
+            workspace_key.key_id.clone(),
+            &content_key,
+            &workspace_id,
+            &channel_id,
+            &message_id,
+            &format!("message {index:03}"),
+        )
+        .unwrap();
+        let mut message = SignableEvent::new(
+            workspace_id.clone(),
+            Some(channel_id.clone()),
+            identity.device_id().clone(),
+            EventBody::MessageCreatedEncrypted {
+                message_id,
+                sealed_markdown,
+                attachments: Vec::new(),
+            },
+        );
+        message.parents = vec![parent_event_id];
+        let message = identity.sign_event(message);
+        parent_event_id = message.event_id.clone();
+        messages.push(message);
     }
+    let event_store_path = runtime.paths().event_store.clone();
     drop(runtime);
+
+    EventStore::open(event_store_path)
+        .unwrap()
+        .append_events_atomically_if_workspace_history_matches(
+            &workspace_id.0,
+            &initial_event_ids,
+            &messages,
+        )
+        .unwrap();
 
     let data_dir = CString::new(tempdir.path().to_string_lossy().as_bytes()).unwrap();
     let workspace_id = CString::new(created.workspace_id).unwrap();
@@ -3444,6 +3493,10 @@ fn decrypted_snapshot_from_runtime_latest_caps_oversized_timeline_limit() {
 
     assert_eq!(value["ok"], true);
     assert_eq!(timeline.len(), MAX_TIMELINE_WINDOW_ROWS);
+    for (offset, row) in timeline.iter().enumerate() {
+        let expected_body = format!("message {:03}", offset + 2);
+        assert_eq!(row["body"].as_str(), Some(expected_body.as_str()));
+    }
     assert_eq!(timeline[0]["body"], "message 002");
     assert_eq!(
         timeline
