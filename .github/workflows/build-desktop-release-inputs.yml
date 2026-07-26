@@ -147,6 +147,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: "false"
 
       - name: Configure MSVC environment
         if: runner.os == 'Windows'

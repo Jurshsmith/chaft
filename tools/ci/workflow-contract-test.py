@@ -21,6 +21,13 @@ WEBSITE_PATH = WORKFLOWS / "website.yml"
 RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
+RUST_CACHE_ACTION = (
+    "Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4"
+)
+MAIN_CACHE_WRITER = (
+    "${{ github.event_name != 'pull_request' && "
+    "github.ref == 'refs/heads/main' }}"
+)
 
 
 def load_required_check() -> types.ModuleType:
@@ -53,6 +60,24 @@ def job_block(text: str, job: str) -> str:
     if match is None:
         raise AssertionError(f"workflow job not found: {job}")
     return match.group("body")
+
+
+def action_inputs(block: str, action: str) -> dict[str, str]:
+    match = re.search(
+        rf"^        uses: {re.escape(action)}(?:\s+#.*)?$\n"
+        r"^        with:$\n"
+        r"(?P<inputs>(?:^          [a-z][a-z-]*:.*$\n?)+)",
+        block,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"action inputs not found: {action}")
+
+    inputs = {}
+    for line in match.group("inputs").splitlines():
+        key, value = line.strip().split(":", 1)
+        inputs[key] = value.strip()
+    return inputs
 
 
 class WorkflowYamlTests(unittest.TestCase):
@@ -159,6 +184,103 @@ class CiWorkflowContractTests(unittest.TestCase):
             self.assertNotIn("--all-targets", tests)
         self.assertIn("cargo clippy -p chaft-benchmarks", benchmark)
         self.assertIn("cargo bench -p chaft-benchmarks", benchmark)
+
+    def test_rust_caches_share_stable_families_with_single_main_writers(
+        self,
+    ) -> None:
+        expected_ci = {
+            "rust_quality": {
+                "shared-key": "rust",
+                "save-if": MAIN_CACHE_WRITER,
+            },
+            "rust_tests_ffi": {
+                "shared-key": "rust",
+                "save-if": '"false"',
+            },
+            "rust_tests_runtime": {
+                "shared-key": "rust",
+                "save-if": '"false"',
+            },
+            "rust_tests_workspace": {
+                "shared-key": "rust",
+                "save-if": '"false"',
+            },
+            "rust_smokes": {
+                "shared-key": "rust",
+                "save-if": '"false"',
+            },
+            "benchmark_compile": {
+                "shared-key": "rust",
+                "save-if": '"false"',
+            },
+            "desktop": {
+                "shared-key": "desktop",
+                "save-if": '"false"',
+            },
+            "desktop_package": {
+                "shared-key": "desktop",
+                "save-if": MAIN_CACHE_WRITER,
+            },
+        }
+        for job, expected in expected_ci.items():
+            with self.subTest(workflow="ci", job=job):
+                self.assertEqual(
+                    action_inputs(job_block(self.ci, job), RUST_CACHE_ACTION),
+                    expected,
+                )
+
+        self.assertEqual(
+            action_inputs(
+                job_block(self.release_inputs, "build"),
+                RUST_CACHE_ACTION,
+            ),
+            {
+                "shared-key": "desktop",
+                "save-if": '"false"',
+            },
+        )
+
+        all_workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(WORKFLOWS.glob("*.yml"))
+        )
+        self.assertEqual(all_workflows.count(f"uses: {RUST_CACHE_ACTION}"), 9)
+        self.assertEqual(self.ci.count(f"save-if: {MAIN_CACHE_WRITER}"), 2)
+        self.assertNotIn(f"save-if: {MAIN_CACHE_WRITER}", self.release_inputs)
+
+        for job in (
+            "rust_quality",
+            "rust_tests_ffi",
+            "rust_tests_runtime",
+            "rust_tests_workspace",
+            "rust_smokes",
+            "benchmark_compile",
+            "desktop_package",
+            "build",
+        ):
+            self.assertNotIn(f"shared-key: {job}", all_workflows)
+
+    def test_cache_writers_reject_pull_request_tag_and_non_main_refs(
+        self,
+    ) -> None:
+        def writer_enabled(event_name: str, ref: str) -> bool:
+            return event_name != "pull_request" and ref == "refs/heads/main"
+
+        for event_name in ("push", "schedule", "workflow_dispatch"):
+            with self.subTest(event_name=event_name, ref="main"):
+                self.assertTrue(
+                    writer_enabled(event_name, "refs/heads/main")
+                )
+
+        rejected = (
+            ("pull_request", "refs/pull/7/merge"),
+            ("push", "refs/tags/v0.1.0"),
+            ("workflow_dispatch", "refs/tags/v0.1.0"),
+            ("workflow_dispatch", "refs/heads/cache-experiment"),
+        )
+        for event_name, ref in rejected:
+            with self.subTest(event_name=event_name, ref=ref):
+                self.assertFalse(writer_enabled(event_name, ref))
 
     def test_desktop_stages_and_platform_invariants_are_explicit(self) -> None:
         contracts = job_block(self.ci, "desktop_contracts")

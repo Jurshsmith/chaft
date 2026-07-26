@@ -197,6 +197,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
@@ -226,6 +229,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Test Rust FFI
         run: cargo test -p chaft-ffi --locked
@@ -250,6 +256,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Test Rust runtime
         run: cargo test -p chaft-runtime --locked
@@ -274,6 +283,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Test remaining Rust workspace packages
         run: >-
@@ -303,6 +315,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Run local P2P smoke
         run: tools/smoke/local-p2p.sh --locked
@@ -329,6 +344,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust
+          save-if: "false"
 
       - name: Lint benchmark target
         run: >-
@@ -413,6 +431,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: "false"
 
       - name: Configure MSVC environment
         if: runner.os == 'Windows'
@@ -538,6 +559,9 @@ jobs:
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
       - name: Configure MSVC environment
         if: runner.os == 'Windows'
