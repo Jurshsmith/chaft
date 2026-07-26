@@ -25,6 +25,7 @@
     "test:watch": "vitest",
     "validate:docs": "node scripts/docs-validation.mjs",
     "validate:docs-build": "node scripts/docs-build-validation.mjs",
+    "validate:social-preview": "node scripts/social-preview-validation.mjs",
     "validate:wrangler": "wrangler deploy --config wrangler.jsonc --dry-run --strict --outdir .wrangler/dry-run",
     "validate": "node scripts/validate.mjs"
   },

@@ -17,6 +17,7 @@ describe("website deployment workflow safety gates", () => {
     expect(source).toContain("vars.WEBSITE_SITE_URL == ''");
     expect(source).toContain("node scripts/deployment-artifact-cli.mjs create");
     expect(source).toContain("node scripts/deployment-artifact-cli.mjs verify");
+    expect(source).toContain("pnpm validate:social-preview");
   });
 
   it("allows deploy candidates only from successful same-repository main runs", async () => {
