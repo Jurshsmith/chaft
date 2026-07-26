@@ -67,7 +67,7 @@ class UnsignedCanaryReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["signatureVerification"], "not-performed")
         self.assertEqual(
             receipt["signatureAndNotarization"],
-            policy.SIGNATURE_AND_NOTARIZATION,
+            policy.SIGNATURE_AND_NOTARIZATION["windows"],
         )
         self.assertIs(receipt["productionEligible"], False)
         self.assertEqual(receipt["status"], "passed")
@@ -124,6 +124,31 @@ class UnsignedCanaryReceiptTests(unittest.TestCase):
             policy.UnsignedCanaryPolicyError, "already exists"
         ):
             generator.generate_receipt(**self.arguments())
+
+    def test_macos_discloses_native_inspected_ad_hoc_bundle(self) -> None:
+        package = self.root / "Chaft-0.1.0-canary.1-macOS-x86_64.dmg"
+        package.write_bytes(b"reviewed macOS canary bytes")
+        receipt = generator.generate_receipt(
+            **self.arguments(
+                platform="macos",
+                package=package,
+                output=self.root / policy.RECEIPT_FILENAMES["macos"],
+                runner_os="macOS",
+                smoke_command=(
+                    "tools/desktop/macos-dmg-smoke.sh + "
+                    "tools/desktop/macos-unsigned-canary-smoke.sh"
+                ),
+            )
+        )
+        self.assertEqual(receipt["signatureVerification"], "native-inspected")
+        self.assertEqual(
+            receipt["signatureAndNotarization"]["appleCodeSigning"],
+            "ad-hoc",
+        )
+        self.assertEqual(
+            receipt["signatureAndNotarization"]["appleNotarization"],
+            "not-performed",
+        )
 
     def test_validator_rejects_forged_signing_claims_and_package_bytes(self) -> None:
         receipt = generator.generate_receipt(**self.arguments())

@@ -4,7 +4,7 @@ description: Understand Chaft's implemented package, verification, GitHub Releas
 section: development
 order: 20
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 
@@ -83,6 +83,7 @@ python3 tools/desktop/canary-release-assets-test.py
 python3 tools/desktop/generate-unsigned-canary-receipt-test.py
 python3 tools/desktop/linux-appimage-contract-test.py
 python3 tools/desktop/macos-dmg-smoke-test.py
+python3 tools/desktop/macos-unsigned-canary-smoke-test.py
 tools/desktop/platform-verification-receipt-smoke.sh
 python3 tools/desktop/release-version-test.py
 python3 tools/desktop/stage-website-release-assets-test.py
@@ -154,8 +155,9 @@ The workflow then:
 7. downloads each package from that draft by asset ID, checks its API byte size
    and SHA-256 digest, and reruns the packaged-app smoke on its native runner;
 8. emits three receipts that bind the package bytes, asset ID, release ID,
-   runner, smoke command, version, tag, and commit while explicitly marking
-   every signing and notarization operation `not-performed`;
+   runner, smoke command, version, tag, and commit; the macOS receipt records a
+   natively inspected ad-hoc app-bundle signature while the workflow proves
+   there is no Apple team identity, DMG signature, or notarization ticket;
 9. adds the receipts, a 17-file inventory, and an aggregate checksum file to
    form the exact 19-file public namespace;
 10. redownloads and verifies the entire draft before publication;

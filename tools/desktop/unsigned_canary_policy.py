@@ -16,7 +16,6 @@ from typing import Mapping
 SCHEMA_VERSION = "chaft.desktop.unsigned-canary-verification.v1"
 VERIFICATION_TYPE = "packaged-app-smoke"
 SIGNING_STATUS = "unsigned-canary"
-SIGNATURE_VERIFICATION = "not-performed"
 STATUS = "passed"
 WARNING = (
     "Unsigned canary. Do not use Chaft canary builds for sensitive or "
@@ -27,11 +26,26 @@ RECEIPT_FILENAMES = {
     platform: f"chaft-desktop-{platform}-verification.json"
     for platform in PLATFORMS
 }
-SIGNATURE_AND_NOTARIZATION = {
+DEFAULT_SIGNATURE_AND_NOTARIZATION = {
     "authenticode": "not-performed",
     "appleCodeSigning": "not-performed",
     "appleNotarization": "not-performed",
     "openPgpDetachedSignature": "not-performed",
+}
+SIGNATURE_VERIFICATION = {
+    "windows": "not-performed",
+    "macos": "native-inspected",
+    "linux": "not-performed",
+}
+SIGNATURE_AND_NOTARIZATION = {
+    "windows": dict(DEFAULT_SIGNATURE_AND_NOTARIZATION),
+    "macos": {
+        **DEFAULT_SIGNATURE_AND_NOTARIZATION,
+        # Ad-hoc signing has no Apple trust identity. It only keeps the
+        # locally built bundle internally consistent after Qt deployment.
+        "appleCodeSigning": "ad-hoc",
+    },
+    "linux": dict(DEFAULT_SIGNATURE_AND_NOTARIZATION),
 }
 CANARY_VERSION = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.([1-9]\d*)$"
@@ -245,15 +259,17 @@ def validate_receipt_document(
         fail(f"{context}.status must be {STATUS!r}")
     if receipt.get("signingStatus") != SIGNING_STATUS:
         fail(f"{context}.signingStatus must be {SIGNING_STATUS!r}")
-    if receipt.get("signatureVerification") != SIGNATURE_VERIFICATION:
+    expected_signature_verification = SIGNATURE_VERIFICATION[platform]
+    if receipt.get("signatureVerification") != expected_signature_verification:
         fail(
             f"{context}.signatureVerification must be "
-            f"{SIGNATURE_VERIFICATION!r}"
+            f"{expected_signature_verification!r} for {platform}"
         )
-    if receipt.get("signatureAndNotarization") != SIGNATURE_AND_NOTARIZATION:
+    expected_signature_state = SIGNATURE_AND_NOTARIZATION[platform]
+    if receipt.get("signatureAndNotarization") != expected_signature_state:
         fail(
-            f"{context}.signatureAndNotarization must explicitly mark every "
-            "native signing and notarization operation as not-performed"
+            f"{context}.signatureAndNotarization does not match the reviewed "
+            f"unsigned-canary policy for {platform}"
         )
     if receipt.get("productionEligible") is not False:
         fail(f"{context}.productionEligible must be false")

@@ -188,9 +188,11 @@ def write_unsigned_canary_receipt(
             "verificationType": stager.unsigned_canary.VERIFICATION_TYPE,
             "status": stager.unsigned_canary.STATUS,
             "signingStatus": stager.unsigned_canary.SIGNING_STATUS,
-            "signatureVerification": stager.unsigned_canary.SIGNATURE_VERIFICATION,
+            "signatureVerification": (
+                stager.unsigned_canary.SIGNATURE_VERIFICATION[platform]
+            ),
             "signatureAndNotarization": dict(
-                stager.unsigned_canary.SIGNATURE_AND_NOTARIZATION
+                stager.unsigned_canary.SIGNATURE_AND_NOTARIZATION[platform]
             ),
             "productionEligible": False,
             "warning": stager.unsigned_canary.WARNING,

@@ -360,6 +360,10 @@ jobs:
 
       - name: Build, smoke, and verify canary package
         env:
+          # The macOS canary deliberately uses only an ad-hoc app-bundle
+          # signature. The draft-download gate below proves there is no Apple
+          # team identity, DMG signature, or notarization ticket.
+          CHAFT_DESKTOP_SKIP_CODESIGN: "0"
           CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
           CHAFT_RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke_timeout_ms }}
@@ -594,9 +598,12 @@ jobs:
           **Unsigned canary. Do not use Chaft canary builds for sensitive or production communication.**
 
           Windows may show an unknown-publisher warning; macOS may require an
-          explicit user override. Package integrity and repository provenance
-          are documented by the immutable GitHub Release, SHA-256 files, SBOMs,
-          provenance, and native packaged-app verification receipts.
+          explicit user override. The macOS app bundle has only an ad-hoc
+          signature for local bundle consistency: it has no Apple team
+          identity, the DMG is unsigned, and neither is notarized. Package
+          integrity and repository provenance are documented by the immutable
+          GitHub Release, SHA-256 files, SBOMs, provenance, and native
+          packaged-app verification receipts.
 
           Stable-release signing and notarization requirements are unchanged.
           NOTES
@@ -663,7 +670,7 @@ jobs:
             key: macos
             os: macos-15-intel
             package: Chaft-${{ needs.preflight.outputs.distribution_version }}-macOS-x86_64.dmg
-            smoke_command: tools/desktop/macos-dmg-smoke.sh
+            smoke_command: tools/desktop/macos-dmg-smoke.sh + tools/desktop/macos-unsigned-canary-smoke.sh
           - name: Windows
             key: windows
             os: windows-2022
@@ -736,7 +743,9 @@ jobs:
 
       - name: Smoke macOS release download
         if: runner.os == 'macOS'
-        run: tools/desktop/macos-dmg-smoke.sh build/release-download
+        run: |
+          tools/desktop/macos-dmg-smoke.sh build/release-download
+          tools/desktop/macos-unsigned-canary-smoke.sh build/release-download
 
       - name: Smoke Windows release download
         if: runner.os == 'Windows'

@@ -105,8 +105,10 @@ def generate_receipt(
         "verificationType": policy.VERIFICATION_TYPE,
         "status": policy.STATUS,
         "signingStatus": policy.SIGNING_STATUS,
-        "signatureVerification": policy.SIGNATURE_VERIFICATION,
-        "signatureAndNotarization": dict(policy.SIGNATURE_AND_NOTARIZATION),
+        "signatureVerification": policy.SIGNATURE_VERIFICATION[platform],
+        "signatureAndNotarization": dict(
+            policy.SIGNATURE_AND_NOTARIZATION[platform]
+        ),
         "productionEligible": False,
         "warning": policy.WARNING,
         "version": version,

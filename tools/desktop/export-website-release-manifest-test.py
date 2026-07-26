@@ -314,9 +314,11 @@ def write_unsigned_canary_receipt(
         "verificationType": exporter.unsigned_canary.VERIFICATION_TYPE,
         "status": exporter.unsigned_canary.STATUS,
         "signingStatus": exporter.unsigned_canary.SIGNING_STATUS,
-        "signatureVerification": exporter.unsigned_canary.SIGNATURE_VERIFICATION,
+        "signatureVerification": (
+            exporter.unsigned_canary.SIGNATURE_VERIFICATION[platform]
+        ),
         "signatureAndNotarization": dict(
-            exporter.unsigned_canary.SIGNATURE_AND_NOTARIZATION
+            exporter.unsigned_canary.SIGNATURE_AND_NOTARIZATION[platform]
         ),
         "productionEligible": False,
         "warning": exporter.unsigned_canary.WARNING,

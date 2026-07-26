@@ -110,10 +110,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INCIDENT_ID: ${{ inputs.incident_id }}
           REASON: ${{ inputs.reason }}
-          RELEASE_MANIFEST_SHA256: ${{ steps.target_release.outputs.release_manifest_sha256 }}
-          RELEASE_STATUS: ${{ steps.target_release.outputs.release_status }}
-          RELEASE_TAG: ${{ steps.target_release.outputs.release_tag }}
-          RELEASE_VERSION: ${{ steps.target_release.outputs.release_version }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
           TARGET_VERSION_ID: ${{ inputs.target_version_id }}
           WORKFLOW_SHA: ${{ github.sha }}
@@ -651,6 +647,10 @@ jobs:
           INCIDENT_ID: ${{ inputs.incident_id }}
           PREVIOUS_DEPLOYMENT_ID: ${{ steps.inspect.outputs.previous_deployment_id }}
           REASON: ${{ inputs.reason }}
+          RELEASE_MANIFEST_SHA256: ${{ steps.target_release.outputs.release_manifest_sha256 }}
+          RELEASE_STATUS: ${{ steps.target_release.outputs.release_status }}
+          RELEASE_TAG: ${{ steps.target_release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.target_release.outputs.release_version }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
           SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
           TARGET_EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact_digest }}
