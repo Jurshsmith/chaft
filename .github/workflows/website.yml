@@ -9,7 +9,7 @@ on:
     inputs:
       site_url:
         description: Production HTTPS URL, including an optional base path
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -30,16 +30,19 @@ jobs:
       run:
         working-directory: apps/website
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.14.0
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -48,12 +51,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate static website
+      - name: Validate static website and route-less Worker configuration
         run: pnpm validate
 
   artifact:
     name: Deployable website artifact
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        vars.WEBSITE_SITE_URL != ''
+      )
     needs: validate
     runs-on: ubuntu-latest
     env:
@@ -63,16 +72,19 @@ jobs:
       run:
         working-directory: apps/website
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.14.0
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -81,22 +93,78 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Require production site URL
+      - name: Require an explicit site URL
         shell: bash
         run: |
+          set -euo pipefail
           if [[ -z "${SITE_URL}" ]]; then
-            echo "::error::Set the WEBSITE_SITE_URL repository variable or provide the site_url workflow input."
+            echo "::error::Set WEBSITE_SITE_URL or provide the required site_url workflow input."
             exit 1
           fi
 
-      - name: Build deployable static website
+      - name: Build production website once
         run: pnpm build
 
-      - name: Upload deployable artifact
-        uses: actions/upload-artifact@v4
+      - name: Create and verify immutable deployment artifact
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-website-artifact
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/deployment-artifact-cli.mjs create \
+            --source dist \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --repository "${SOURCE_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+          node scripts/deployment-artifact-cli.mjs verify \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --repository "${SOURCE_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+
+      - name: Upload immutable deployment artifact
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chaft-website-${{ github.sha }}
-          path: apps/website/dist/
+          path: ${{ runner.temp }}/chaft-website-artifact/
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 14
+
+      - name: Record artifact evidence
+        shell: bash
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          {
+            echo "### Website deployment candidate"
+            echo
+            echo "- Source commit: \`${SOURCE_COMMIT}\`"
+            echo "- Artifact ID: \`${ARTIFACT_ID}\`"
+            echo "- GitHub artifact digest: \`${ARTIFACT_DIGEST}\`"
+            echo "- Production deployed: **no**"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  artifact-not-configured:
+    name: Production artifact not configured
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.WEBSITE_SITE_URL == ''
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record intentional skip
+        run: |
+          {
+            echo "### Website deployment remains disabled"
+            echo
+            echo "The static website passed validation, but WEBSITE_SITE_URL is unset."
+            echo "No production artifact was built and no deployment workflow can mutate Cloudflare."
+          } >> "${GITHUB_STEP_SUMMARY}"

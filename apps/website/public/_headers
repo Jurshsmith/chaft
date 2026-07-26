@@ -5,6 +5,9 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
 
+/.well-known/chaft-deployment.json
+  Cache-Control: no-store
+
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
 
