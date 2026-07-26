@@ -339,7 +339,7 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install 1.92.0 --profile minimal
+          rustup toolchain install 1.92.0 --profile minimal --component clippy
           rustup default 1.92.0
 
       - name: Cache cargo registry and build output

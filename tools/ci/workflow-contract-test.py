@@ -184,6 +184,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("--exclude chaft-runtime", workspace_tests)
         for tests in (ffi_tests, runtime_tests, workspace_tests):
             self.assertNotIn("--all-targets", tests)
+        self.assertIn("--component clippy", benchmark)
         self.assertIn("cargo clippy -p chaft-benchmarks", benchmark)
         self.assertIn("cargo bench -p chaft-benchmarks", benchmark)
 
