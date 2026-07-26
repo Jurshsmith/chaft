@@ -187,6 +187,11 @@ case "$(uname -s)" in
       export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
     fi
     ;;
+  MINGW*|MSYS*|CYGWIN*)
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+    fi
+    ;;
 esac
 
 # The in-app timeout cannot fire if Qt blocks inside synchronous screenshot

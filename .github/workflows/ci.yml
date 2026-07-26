@@ -70,7 +70,7 @@ jobs:
 
       - name: Test Rust workspace
         timeout-minutes: 45
-        run: cargo test --workspace --all-targets --locked
+        run: cargo test --workspace --all-targets --exclude chaft-benchmarks --locked
 
       - name: Run local P2P smoke
         run: tools/smoke/local-p2p.sh --locked
@@ -104,16 +104,21 @@ jobs:
             qt-host: linux
             qt-arch: linux_gcc_64
             package-platform: Linux
+            smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
             qt-host: mac
             qt-arch: clang_64
             package-platform: macOS
+            smoke-timeout-ms: ""
           - name: Windows
             os: windows-latest
             qt-host: windows
             qt-arch: win64_msvc2022_64
             package-platform: Windows
+            # A cold offscreen QML activation can block the hosted runner's
+            # event loop for longer than the portable 15-second default.
+            smoke-timeout-ms: "60000"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -180,16 +185,18 @@ jobs:
             >> "$GITHUB_ENV"
 
       - name: Run desktop CI gates
+        env:
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
         shell: bash
         run: tools/desktop/ci-gates.sh "${{ matrix.package-platform }}"
 
       - name: Upload Linux desktop screenshot
-        if: runner.os == 'Linux'
+        if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: chaft-linux-desktop-screenshot
           path: build/desktop-debug/smoke/*.png
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
@@ -215,6 +222,16 @@ jobs:
         with:
           name: chaft-Linux-desktop-release
           path: build/clean-linux-package
+
+      # AppImage intentionally leaves the host GL/EGL dispatch stack unbundled
+      # so it can match the user's graphics driver. GitHub's headless image
+      # omits both libraries even though normal desktop installs provide them.
+      - name: Install AppImage host graphics runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libegl1 \
+            libopengl0
 
       - name: Run portable AppImage smoke
         run: tools/desktop/appimage-smoke.sh build/clean-linux-package

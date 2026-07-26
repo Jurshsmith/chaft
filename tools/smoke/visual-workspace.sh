@@ -383,25 +383,30 @@ reply_json="$artifacts_dir/reply-message.json"
   --text "replying with local-first context" > "$reply_json"
 reply_message_id="$(json_field "$reply_json" messageId)"
 
+product_expected_text="product room tracks fast native chat"
+design_expected_text="design room keeps dense timeline polish"
+p2p_expected_text="p2p lab expects partial replica recovery"
+vault_expected_text="vault note stays local to authorized devices"
+
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$product_channel_id" \
-  --text "product room tracks fast native chat" > "$artifacts_dir/product-message.json"
+  --text "$product_expected_text" > "$artifacts_dir/product-message.json"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$design_channel_id" \
-  --text "design room keeps dense timeline polish" > "$artifacts_dir/design-message.json"
+  --text "$design_expected_text" > "$artifacts_dir/design-message.json"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$p2p_channel_id" \
-  --text "p2p lab expects partial replica recovery" > "$artifacts_dir/p2p-lab-message.json"
+  --text "$p2p_expected_text" > "$artifacts_dir/p2p-lab-message.json"
 
 "$cli_bin" --data-dir "$runtime_dir" send-message \
   --workspace-id "$workspace_id" \
   --channel-id "$vault_channel_id" \
-  --text "vault note stays local to authorized devices" > "$artifacts_dir/vault-message.json"
+  --text "$vault_expected_text" > "$artifacts_dir/vault-message.json"
 
 attachment_file="$artifacts_dir/launch-checklist.txt"
 cat > "$attachment_file" <<'EOF'
@@ -505,8 +510,9 @@ manifest_json="$smoke_dir/manifest.json"
   "$general_channel_id" "$product_channel_id" "$design_channel_id" \
   "$p2p_channel_id" "$vault_channel_id" "$parent_message_id" \
   "$reply_message_id" "$attachment_message_id" "$deleted_message_id" \
-  "$desktop_message_id" "$desktop_expected_text" "$snapshot_json" \
-  "$search_json" "$status_json" <<'PY'
+  "$desktop_message_id" "$desktop_expected_text" "$product_expected_text" \
+  "$design_expected_text" "$p2p_expected_text" "$vault_expected_text" \
+  "$snapshot_json" "$search_json" "$status_json" <<'PY'
 import json
 import sys
 
@@ -526,6 +532,10 @@ import sys
     deleted_message_id,
     desktop_message_id,
     desktop_expected_text,
+    product_expected_text,
+    design_expected_text,
+    p2p_expected_text,
+    vault_expected_text,
     snapshot_json,
     search_json,
     status_json,
@@ -543,6 +553,13 @@ manifest = {
         "design": design_channel_id,
         "p2pLab": p2p_channel_id,
         "vault": vault_channel_id,
+    },
+    "channelExpectedText": {
+        "general": desktop_expected_text,
+        "product": product_expected_text,
+        "design": design_expected_text,
+        "p2pLab": p2p_expected_text,
+        "vault": vault_expected_text,
     },
     "messages": {
         "editedParent": parent_message_id,

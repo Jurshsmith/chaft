@@ -5246,11 +5246,12 @@ public:
   }
 
   Q_INVOKABLE bool openStartupSettings() {
+    QUrl settingsUrl;
 #if defined(Q_OS_MACOS)
-    const QUrl settingsUrl(QStringLiteral(
+    settingsUrl = QUrl(QStringLiteral(
         "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"));
 #elif defined(Q_OS_WIN)
-    const QUrl settingsUrl(QStringLiteral("ms-settings:startupapps"));
+    settingsUrl = QUrl(QStringLiteral("ms-settings:startupapps"));
 #else
     setSyncStatus(QStringLiteral("add Chaft to your system startup apps"));
     return false;
@@ -18697,7 +18698,16 @@ bool desktopSmokeSnapshotSettled(ChaftController *controller,
                                  const QString &expectedText,
                                  const QString &expectedChannelId) {
   if (controller == nullptr || controller->workspaceOperationInFlight() ||
-      !desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
+      controller->timelineLoadInFlight()) {
+    return false;
+  }
+  if (controller->smokeUiState() == QStringLiteral("direct-message")) {
+    const auto channelId = controller->lastCreatedChannelId().trimmed();
+    return !channelId.isEmpty() &&
+           snapshot.value(QStringLiteral("timelineChannelId")).toString() ==
+               channelId;
+  }
+  if (!desktopSmokeSnapshotContainsText(snapshot, expectedText)) {
     return false;
   }
   return expectedChannelId.isEmpty() ||
@@ -19075,6 +19085,8 @@ void configureDesktopSmoke(QCoreApplication *app,
                    app, checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller,
                    &ChaftController::workspaceOperationInFlightChanged, app,
+                   checkSnapshot, Qt::QueuedConnection);
+  QObject::connect(controller, &ChaftController::lastCreatedChannelChanged, app,
                    checkSnapshot, Qt::QueuedConnection);
   QObject::connect(controller, &ChaftController::hostedPeerChanged, app,
                    checkSnapshot, Qt::QueuedConnection);

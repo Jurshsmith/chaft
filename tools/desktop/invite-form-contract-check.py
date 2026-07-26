@@ -510,8 +510,8 @@ class InviteFormContracts(unittest.TestCase):
         reconcile_start = self.main_cpp.index("void runRuntimeSnapshotReconcile(")
         reconcile_opening = self.main_cpp.index("{", reconcile_start)
         reconcile = balanced_block(self.main_cpp, reconcile_opening)
-        self.assertIn("m_runtimeWriteGeneration != runtimeWriteGeneration", reconcile)
-        self.assertIn("m_workspaceSnapshotRevision !=", reconcile)
+        self.assertIn("m_runtimeWriteGeneration == runtimeWriteGeneration", reconcile)
+        self.assertIn("m_workspaceSnapshotRevision ==", reconcile)
         self.assertNotIn("m_lastAppliedRuntimeWriteGeneration =", reconcile)
 
         invoke_start = self.main_cpp.index("Q_INVOKABLE bool reconcileRuntimeSnapshotIfIdle()")

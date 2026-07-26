@@ -119,6 +119,11 @@ case "$(uname -s)" in
       export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
     fi
     ;;
+  MINGW*|MSYS*|CYGWIN*)
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+    fi
+    ;;
 esac
 
 CHAFT_RUNTIME_DIR="$runtime_dir" \

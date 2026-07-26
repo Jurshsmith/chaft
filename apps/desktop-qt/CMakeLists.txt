@@ -29,6 +29,10 @@ target_compile_definitions(ChaftDesktop PRIVATE
     CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"
 )
 
+if(MSVC)
+    target_compile_options(ChaftDesktop PRIVATE /bigobj)
+endif()
+
 if(WIN32)
     enable_language(RC)
     configure_file(

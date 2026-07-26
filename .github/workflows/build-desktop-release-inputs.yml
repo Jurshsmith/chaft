@@ -74,18 +74,23 @@ jobs:
             qt-arch: linux_gcc_64
             package-platform: Linux
             artifact-prefix: checksummed-linux-x86_64-release-input
+            smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
             qt-host: mac
             qt-arch: clang_64
             package-platform: macOS
             artifact-prefix: unsigned-macos-x86_64-release-input
+            smoke-timeout-ms: ""
           - name: Windows
             os: windows-latest
             qt-host: windows
             qt-arch: win64_msvc2022_64
             package-platform: Windows
             artifact-prefix: unsigned-windows-x86_64-release-input
+            # A cold offscreen QML activation can block the hosted runner's
+            # event loop for longer than the portable 15-second default.
+            smoke-timeout-ms: "60000"
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -168,6 +173,7 @@ jobs:
       - name: Build and verify release package
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
         shell: bash
         run: |
@@ -214,6 +220,17 @@ jobs:
         with:
           name: ${{ matrix.artifact-prefix }}-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
           path: build/clean-package
+
+      # AppImage intentionally leaves the host GL/EGL dispatch stack unbundled
+      # so it can match the user's graphics driver. GitHub's headless image
+      # omits both libraries even though normal desktop installs provide them.
+      - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libegl1 \
+            libopengl0
 
       - name: Smoke Linux AppImage without build dependencies
         if: runner.os == 'Linux'

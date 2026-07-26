@@ -293,7 +293,7 @@ assert_json "$smoke_dir/joiner-before.json" \
   'remote-only marker was present before the desktop started'
 
 case "$(uname -s)" in
-  Linux|Darwin)
+  Linux|Darwin|MINGW*|MSYS*|CYGWIN*)
     export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
     ;;
 esac
