@@ -2,7 +2,8 @@ use std::path::Path;
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chaft_crypto::{ContentKey, SealedPayload, open_aes_256_gcm_siv, seal_aes_256_gcm_siv};
-use rand_core::{OsRng, RngCore};
+use getrandom::SysRng;
+use rand_core::{Rng, UnwrapErr};
 use serde::{Deserialize, Serialize};
 
 use crate::RuntimeError;
@@ -53,7 +54,7 @@ pub(crate) fn encrypt_local_secret(
     plaintext: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
     let mut salt = [0; LOCAL_SECRET_SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
+    UnwrapErr(SysRng).fill_bytes(&mut salt);
     let kdf = LocalSecretKdf {
         name: LOCAL_SECRET_KDF_ARGON2ID.to_owned(),
         context: LOCAL_SECRET_KDF_CONTEXT.to_owned(),

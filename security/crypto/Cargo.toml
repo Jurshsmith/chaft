@@ -9,6 +9,7 @@ version.workspace = true
 [dependencies]
 aes-gcm-siv.workspace = true
 chaft-types = { path = "../../domain/types" }
+getrandom.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 thiserror.workspace = true

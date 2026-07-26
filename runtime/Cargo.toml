@@ -21,6 +21,7 @@ chaft-sync = { path = "../network/sync" }
 chaft-types = { path = "../domain/types" }
 argon2.workspace = true
 blake3.workspace = true
+getrandom.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

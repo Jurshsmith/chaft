@@ -15,7 +15,8 @@ use chaft_types::{
     SignableEvent, SignedEvent, SignedTrustSnapshot, TrustSnapshot,
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand_core::{OsRng, RngCore};
+use getrandom::SysRng;
+use rand_core::{Rng, UnwrapErr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -102,8 +103,9 @@ pub struct InvitationCapability {
 
 impl InvitationCapability {
     pub fn generate() -> Self {
+        let mut rng = UnwrapErr(SysRng);
         Self {
-            signing_key: SigningKey::generate(&mut OsRng),
+            signing_key: SigningKey::generate(&mut rng),
         }
     }
 
@@ -122,13 +124,14 @@ impl InvitationCapability {
     }
 
     pub fn sign(&self, bytes: &[u8]) -> Vec<u8> {
-        self.signing_key.sign(bytes).to_vec()
+        self.signing_key.sign(bytes).to_bytes().to_vec()
     }
 }
 
 impl DeviceIdentity {
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut rng = UnwrapErr(SysRng);
+        let signing_key = SigningKey::generate(&mut rng);
         Self::from_signing_key(signing_key)
     }
 
@@ -158,7 +161,7 @@ impl DeviceIdentity {
     }
 
     pub fn sign_bytes(&self, bytes: &[u8]) -> Vec<u8> {
-        self.signing_key.sign(bytes).to_vec()
+        self.signing_key.sign(bytes).to_bytes().to_vec()
     }
 
     pub fn load_or_generate(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
@@ -466,7 +469,7 @@ impl DeviceIdentity {
         SignedEvent::from_author_signature(
             event,
             self.verifying_key_bytes().to_vec(),
-            signature.to_vec(),
+            signature.to_bytes().to_vec(),
         )
     }
 
@@ -484,7 +487,7 @@ impl DeviceIdentity {
             snapshot,
             root_event,
             author_public_key: self.verifying_key_bytes().to_vec(),
-            signature: signature.to_vec(),
+            signature: signature.to_bytes().to_vec(),
         })
     }
 }
@@ -521,7 +524,7 @@ fn encrypt_persisted_identity(
     passphrase: &str,
 ) -> Result<PersistedEncryptedDeviceIdentity, IdentityError> {
     let mut salt = [0; ENCRYPTED_IDENTITY_SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
+    UnwrapErr(SysRng).fill_bytes(&mut salt);
     let kdf = EncryptedIdentityKdf {
         name: ENCRYPTED_IDENTITY_KDF_ARGON2ID.to_owned(),
         context: ENCRYPTED_IDENTITY_KDF_CONTEXT.to_owned(),
@@ -773,6 +776,17 @@ mod tests {
 
     use super::*;
 
+    const RFC8032_TEST_1_SIGNING_KEY_HEX: &str =
+        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+    const RFC8032_TEST_1_VERIFYING_KEY_HEX: &str =
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    const RFC8032_TEST_1_DEVICE_ID: &str =
+        "dev_6c31041268f471609c79f5f2dbcc38e4a4ab2f4d416109a4e09fcf50fd0f0062";
+    const RFC8032_TEST_1_EMPTY_MESSAGE_SIGNATURE_HEX: &str = concat!(
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155",
+        "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+    );
+
     fn identity_temp_artifacts_under(root: &Path) -> Vec<PathBuf> {
         let mut artifacts = Vec::new();
         collect_identity_temp_artifacts(root, &mut artifacts);
@@ -856,6 +870,63 @@ mod tests {
         assert_eq!(
             identity.verifying_key_bytes(),
             reloaded.verifying_key_bytes()
+        );
+    }
+
+    #[test]
+    fn rfc8032_seed_preserves_identity_and_signature_bytes() {
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroize_on_drop::<SigningKey>();
+
+        let identity = DeviceIdentity::from_signing_key_bytes(
+            decode_hex_32(RFC8032_TEST_1_SIGNING_KEY_HEX).unwrap(),
+        );
+
+        assert_eq!(
+            encode_hex(&identity.verifying_key_bytes()),
+            RFC8032_TEST_1_VERIFYING_KEY_HEX
+        );
+        assert_eq!(identity.device_id().0, RFC8032_TEST_1_DEVICE_ID);
+        assert_eq!(
+            encode_hex(&identity.sign_bytes(b"")),
+            RFC8032_TEST_1_EMPTY_MESSAGE_SIGNATURE_HEX
+        );
+        verify_device_detached_signature(
+            identity.device_id(),
+            &identity.verifying_key_bytes(),
+            b"",
+            &identity.sign_bytes(b""),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn frozen_v1_plaintext_identity_file_still_loads() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let identity_path = tempdir.path().join("device.json");
+        let frozen_identity = format!(
+            concat!(
+                r#"{{"schema_version":1,"device_id":"{}","#,
+                r#""ed25519_signing_key_hex":"{}"}}"#,
+            ),
+            RFC8032_TEST_1_DEVICE_ID, RFC8032_TEST_1_SIGNING_KEY_HEX,
+        );
+        fs::write(&identity_path, frozen_identity).unwrap();
+
+        let identity = DeviceIdentity::load_from_file(&identity_path).unwrap();
+
+        assert_eq!(identity.device_id().0, RFC8032_TEST_1_DEVICE_ID);
+        assert_eq!(
+            encode_hex(&identity.signing_key_bytes()),
+            RFC8032_TEST_1_SIGNING_KEY_HEX
+        );
+        assert_eq!(
+            encode_hex(&identity.verifying_key_bytes()),
+            RFC8032_TEST_1_VERIFYING_KEY_HEX
+        );
+        assert_eq!(
+            encode_hex(&identity.sign_bytes(b"")),
+            RFC8032_TEST_1_EMPTY_MESSAGE_SIGNATURE_HEX
         );
     }
 
