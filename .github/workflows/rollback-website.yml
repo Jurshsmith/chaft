@@ -34,7 +34,8 @@ concurrency:
 jobs:
   rollback:
     # Production safety gate. Removing `false &&` requires a reviewed change
-    # coordinated with chaft-infra, the Custom Domain, and GitHub environment.
+    # coordinated with deployment governance, the Custom Domain, and GitHub
+    # environment.
     if: >-
       ${{
         false &&

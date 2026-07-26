@@ -1,8 +1,8 @@
 name: Deploy website
 
 # INERT FOUNDATION: both jobs are hard-disabled below. Before activation,
-# WEB-DEPLOY-001 must define exact chaft-infra gate verification, prior-state
-# capture, durable deployment evidence, and the reviewed Custom Domain.
+# WEB-DEPLOY-001 must define exact governance verification, prior-state capture,
+# durable deployment evidence, and the reviewed Custom Domain.
 
 on:
   workflow_run:
@@ -25,7 +25,8 @@ concurrency:
 jobs:
   preflight:
     # Production safety gate. Removing `false &&` requires a reviewed change
-    # coordinated with chaft-infra, the Custom Domain, and GitHub environment.
+    # coordinated with deployment governance, the Custom Domain, and GitHub
+    # environment.
     if: >-
       ${{
         false &&

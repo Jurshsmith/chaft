@@ -7,12 +7,13 @@ developer secrets belong outside this repository.
 
 ## Repository Boundaries
 
-- Keep private planning docs outside the repo. The local parent directory may
-  contain `docs/`, `design/`, `scratch/`, `secrets/`, and `context/`.
+- Keep private planning, credentials, operational state, and unpublished
+  security material outside this public repository.
 - Do not commit generated local runtime databases, identity files, key material,
   recovery bundles, build output, or local peer data.
-- Public docs should describe protocol invariants, security properties, and
-  developer workflows without exposing private product strategy.
+- `guides/public/` is the canonical source for public user and contributor
+  documentation. Public docs must not depend on or link to private operational
+  repositories.
 
 ## Required Gates
 
@@ -49,6 +50,17 @@ The script runs:
 - `cargo check --workspace --all-targets`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace --all-targets`
+
+When changing `guides/public/`, `apps/website/`, website workflows, release
+metadata, or public navigation, also run:
+
+```sh
+make website-validate
+```
+
+The website gate validates guide metadata, routes, repository-relative links,
+heading fragments, navigation order, both root and path-prefixed builds, the
+sitemap, deployment safety invariants, and the static Wrangler dry run.
 
 The smoke script builds the CLI and headless node, creates an invited two-device
 workspace, backs up encrypted partial content to a local replica node, verifies
@@ -107,6 +119,33 @@ FFI JSON response shape is guarded by
 `bindings/ffi/ffi-json-contract.snapshot.json`. Update that snapshot only
 with intentional desktop API changes and keep the focused `chaft-ffi` tests
 green.
+
+## Public Documentation Rules
+
+Every Markdown file under `guides/public/` must include:
+
+```yaml
+---
+title: A concise page title
+description: A one-sentence summary
+section: getting-started
+order: 1
+audience: users
+status: preview
+draft: false
+---
+```
+
+Use the section and audience values already established by neighboring guides.
+Each guide must contain exactly one level-one heading. Keep page IDs stable by
+moving files deliberately, use repository-relative `.md` links so GitHub
+navigation works, and let the website transform those links for the deployed
+base path.
+
+Documentation must distinguish current behavior from planned work. Do not
+publish passphrases in arguments, secret-bearing environment-variable examples,
+private infrastructure names, internal URLs, or claims that development CI
+artifacts are supported public downloads.
 
 ## Engineering Rules
 

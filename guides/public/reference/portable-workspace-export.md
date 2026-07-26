@@ -1,14 +1,42 @@
+---
+title: Portable workspace export
+description: Create and validate Chaft's plaintext workspace ZIP for offline reading and migration.
+section: reference
+order: 20
+audience: users
+status: preview
+draft: false
+---
+
 # Portable workspace export
 
-This document defines the first shippable Chaft data-export slice: a portable,
-plaintext ZIP for one workspace. It is a readable interoperability copy for a
-person who wants to retain their data or prepare it for a later Slack,
+Chaft implements a portable, plaintext ZIP export for one workspace in the
+desktop application and local runtime. It is a readable interoperability copy
+for a person who wants to retain their data or prepare it for a later Slack,
 Microsoft Teams, Discord, or similar migration adapter. It is not a Chaft
 backup, restore point, or platform-specific import package.
 
 The behavioral requirements in this guide are part of the format contract.
 The JSON Schema embedded in each archive is the machine-readable structural
 reference. In this document, **must**, **should**, and **may** are normative.
+
+## Create an export
+
+In the desktop application, open **Settings → Data & portability**, choose
+**Export workspace**, and select **Export ZIP…**.
+
+Developers can use the [CLI](cli.md):
+
+```sh
+cargo run -p chaft-cli -- --data-dir ./scratch/cli \
+  export-portable-workspace --workspace-id <workspace-id> \
+  --output ./scratch/chaft-workspace.zip
+```
+
+The output path must not already exist. Keep the resulting ZIP private: it can
+contain readable public rooms, private rooms, direct messages, identity
+metadata, and attachments. Inspect `completeness.json` for known omissions or
+capture warnings before relying on the copy.
 
 ## User experience contract
 
@@ -366,3 +394,9 @@ Before shipping version 2, automated or manual verification must establish:
   the worker finishes;
 - success publishes one complete ZIP, while output races, parent replacement,
   temporary substitution, and failure leave no clobbered or partial output.
+
+Run the relevant checks in the [testing guide](../development/testing.md) when
+changing this contract. Security vulnerabilities belong in a private report
+through the
+[Security Policy](https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md),
+not in a public issue.

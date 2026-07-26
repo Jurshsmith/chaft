@@ -171,8 +171,8 @@ production jobs contain literal `false` conditions, so completed Website runs
 and manual rollback requests cannot read production credentials or mutate
 Cloudflare. Setting `WEBSITE_SITE_URL` enables candidate construction only.
 Removing either hard stop requires the separately reviewed infrastructure,
-domain, governance, credential, and activation change documented in
-`Jurshsmith/chaft-infra`.
+domain, governance, credential, and activation change. The public application
+repository intentionally does not depend on private operational documentation.
 
 Desktop installers do not belong in the website artifact. Publish them as
 immutable GitHub Release assets or through dedicated object storage.

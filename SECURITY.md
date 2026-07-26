@@ -40,8 +40,12 @@ Chaft is designed around these invariants:
   integration for identity and local secret handling.
 - Public relay/discovery policy is intentionally default-deny while the native
   Iroh path matures.
-- Packaging, signing, notarization, and update flows are not yet production
-  release gates.
+- Cross-platform packaging, release metadata, SBOM, provenance, and verification
+  tooling exists, but there is no published production release.
+- Production signing credentials, macOS notarization, immutable release
+  promotion, and an application update channel have not been activated.
+- CI packages are development artifacts and must not be treated as supported
+  public downloads.
 
 ## Passphrase Handling
 
