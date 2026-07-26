@@ -4,6 +4,16 @@
   "compatibility_date": "2026-07-26",
   "workers_dev": false,
   "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "chaft.ai",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.chaft.ai",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "html_handling": "auto-trailing-slash",

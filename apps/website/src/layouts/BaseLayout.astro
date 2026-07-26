@@ -18,8 +18,14 @@ interface Props {
 const { title, description, noindex = false, structuredData } = Astro.props;
 const siteName = "Chaft";
 const fullTitle = title === siteName ? title : `${title} · ${siteName}`;
+const socialTitle =
+  title === siteName
+    ? "Chaft — P2P-first team chat designed to stay free."
+    : fullTitle;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url);
-const socialImage = new URL(sitePath("/og-chaft-canary.png"), Astro.site ?? Astro.url);
+const socialImage = new URL(sitePath("/og-chaft-v2.png"), Astro.site ?? Astro.url);
+const socialImageAlt =
+  "Chaft logo beside a peer network and the message: Team chat designed to stay free.";
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
 ---
 
@@ -37,18 +43,20 @@ const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png"
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={siteName} />
-    <meta property="og:title" content={fullTitle} />
+    <meta property="og:title" content={socialTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={socialImage} />
+    <meta property="og:image:secure_url" content={socialImage} />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Chaft — Team chat designed to stay free." />
+    <meta property="og:image:alt" content={socialImageAlt} />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:title" content={socialTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImage} />
-    <meta name="twitter:image:alt" content="Chaft — Team chat designed to stay free." />
+    <meta name="twitter:image:alt" content={socialImageAlt} />
 
     {structuredData && (
       <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />
