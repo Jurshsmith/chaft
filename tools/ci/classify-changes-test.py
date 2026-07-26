@@ -146,6 +146,13 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(enabled(result), {"desktop_contract"})
 
+    def test_desktop_branding_readme_is_documentation_only(self) -> None:
+        result = self.classify(
+            "apps/desktop-qt/resources/branding/README.md"
+        )
+        self.assertEqual(enabled(result), set())
+        self.assertFalse(result.scopes["full"])
+
     def test_desktop_cmake_change_reaches_package_validation(self) -> None:
         result = self.classify("apps/desktop-qt/CMakeLists.txt")
         self.assertEqual(

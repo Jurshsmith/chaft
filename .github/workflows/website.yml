@@ -1,13 +1,6 @@
 name: Website
 
 on:
-  pull_request:
-    paths:
-      - apps/website/**
-      - guides/public/**
-      - README.md
-      - SECURITY.md
-      - CONTRIBUTING.md
   push:
     branches:
       - main

@@ -64,6 +64,10 @@ class RequiredTruthTableTests(unittest.TestCase):
             with self.subTest(scope=scope):
                 evaluation = required.evaluate_needs(needs_fixture({scope}))
                 self.assertTrue(evaluation.passed, evaluation.errors)
+                self.assertTrue(
+                    any(job.expected for job in evaluation.jobs),
+                    f"{scope} has no mapped required job",
+                )
 
     def test_full_run_requires_and_accepts_every_job_success(self) -> None:
         enabled = set(required.SCOPE_NAMES)
@@ -162,12 +166,45 @@ class RequiredTruthTableTests(unittest.TestCase):
         )
 
     def test_non_boolean_scope_output_fails(self) -> None:
-        for value in ("yes", "", True, None):
+        for value in ("yes", "", True, None, [], {}, ["true"]):
             with self.subTest(value=value):
                 needs = needs_fixture()
                 needs["classify"]["outputs"]["rust"] = value
                 evaluation = required.evaluate_needs(needs)
                 self.assertFalse(evaluation.passed)
+
+    def test_extra_classifier_output_fails(self) -> None:
+        needs = needs_fixture()
+        needs["classify"]["outputs"]["unreviewed_scope"] = "false"
+        evaluation = required.evaluate_needs(needs)
+        self.assertFalse(evaluation.passed)
+        self.assertTrue(
+            any("unmapped output" in error for error in evaluation.errors)
+        )
+
+    def test_all_rust_test_groups_are_required_together(self) -> None:
+        rust_test_jobs = {
+            job
+            for job, scopes in required.JOB_SCOPES.items()
+            if scopes == ("rust_test",)
+        }
+        self.assertEqual(
+            rust_test_jobs,
+            {
+                "rust_tests_ffi",
+                "rust_tests_runtime",
+                "rust_tests_workspace",
+            },
+        )
+        for failed_job in rust_test_jobs:
+            with self.subTest(job=failed_job):
+                needs = needs_fixture({"rust_test"})
+                needs[failed_job]["result"] = "skipped"
+                evaluation = required.evaluate_needs(needs)
+                self.assertFalse(evaluation.passed)
+                self.assertTrue(
+                    any(failed_job in error for error in evaluation.errors)
+                )
 
     def test_inconsistent_full_output_fails(self) -> None:
         needs = needs_fixture()
@@ -261,7 +298,7 @@ class RequiredOutputTests(unittest.TestCase):
             output = Path(directory) / "output"
             summary = Path(directory) / "summary"
             needs = needs_fixture({"rust_test"})
-            needs["rust_tests"]["result"] = "skipped"
+            needs["rust_tests_ffi"]["result"] = "skipped"
             with redirect_stdout(io.StringIO()):
                 status = required.main(
                     [
@@ -277,7 +314,7 @@ class RequiredOutputTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "required=false\n")
             rendered = summary.read_text(encoding="utf-8")
             self.assertIn("Overall result: **fail**", rendered)
-            self.assertIn("rust_tests", rendered)
+            self.assertIn("rust_tests_ffi", rendered)
 
     def test_invalid_json_fails_closed_and_still_emits_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

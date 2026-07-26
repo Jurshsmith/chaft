@@ -246,6 +246,9 @@ def classify_path(path: str) -> PathImpact:
             )
         )
 
+    if path == "apps/desktop-qt/resources/branding/README.md":
+        return PathImpact(frozenset())
+
     if path.startswith("apps/desktop-qt/"):
         if path.startswith("apps/desktop-qt/tests/"):
             return PathImpact(frozenset({"desktop_contract"}))

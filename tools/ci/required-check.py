@@ -45,7 +45,9 @@ JOB_SCOPES: Mapping[str, tuple[str, ...]] = {
     "artifact_v8_consumer": ("full",),
     "website": ("website",),
     "rust_quality": ("rust",),
-    "rust_tests": ("rust_test",),
+    "rust_tests_ffi": ("rust_test",),
+    "rust_tests_runtime": ("rust_test",),
+    "rust_tests_workspace": ("rust_test",),
     "rust_smokes": ("rust_smoke",),
     "benchmark_compile": ("benchmark",),
     "desktop_contracts": ("desktop_contract", "desktop"),
@@ -104,10 +106,15 @@ def _classifier_outputs(needs: Mapping[str, object]) -> Mapping[str, bool]:
     outputs = _object(
         entry.get("outputs"), f"needs.{CLASSIFIER_JOB}.outputs"
     )
+    extra_outputs = sorted(set(outputs) - set(SCOPE_NAMES))
+    if extra_outputs:
+        raise RequiredCheckError(
+            "classifier emitted unmapped output(s): " + ", ".join(extra_outputs)
+        )
     parsed: dict[str, bool] = {}
     for scope in SCOPE_NAMES:
         raw = outputs.get(scope)
-        if raw not in {"true", "false"}:
+        if not isinstance(raw, str) or raw not in {"true", "false"}:
             raise RequiredCheckError(
                 f"classifier output {scope!r} must be 'true' or 'false'"
             )
@@ -126,10 +133,19 @@ def evaluate_needs(value: object) -> RequiredEvaluation:
 
     missing = sorted(expected_jobs - set(needs))
     extra = sorted(set(needs) - expected_jobs)
+    mapped_scopes = {
+        scope for scopes in JOB_SCOPES.values() for scope in scopes
+    }
+    unmapped_scopes = sorted(set(RUNNABLE_SCOPES) - mapped_scopes)
     if missing:
         errors.append("needs is missing job(s): " + ", ".join(missing))
     if extra:
         errors.append("needs contains unmapped job(s): " + ", ".join(extra))
+    if unmapped_scopes:
+        errors.append(
+            "runnable classifier scope(s) have no job mapping: "
+            + ", ".join(unmapped_scopes)
+        )
 
     try:
         classifier_result = _result(
