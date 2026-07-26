@@ -24,7 +24,7 @@ Return to the [public guide index](../index.md), or continue with the
 Install these on every platform:
 
 - Git;
-- Rust 1.92;
+- Rust 1.97.1;
 - CMake 3.28 or newer;
 - Ninja;
 - Python 3;

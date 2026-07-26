@@ -901,7 +901,7 @@ fn append_previous_content_key(
         });
     persisted
         .previous_content_keys
-        .sort_by(|left, right| left.epoch.cmp(&right.epoch));
+        .sort_by_key(|content_key| content_key.epoch);
 }
 
 fn group_member_index_by_identity(

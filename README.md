@@ -78,12 +78,12 @@ guides/public/           Canonical public documentation
 tools/                   CI, desktop, smoke, release, and validation tooling
 ```
 
-The Rust workspace uses edition 2024 and declares Rust 1.92 as its minimum
+The Rust workspace uses edition 2024 and declares Rust 1.97.1 as its minimum
 supported toolchain.
 
 ## Build the Rust workspace
 
-Install Rust 1.92 or newer, then run:
+Install Rust 1.97.1 or newer, then run:
 
 ```sh
 cargo check --workspace --all-targets --locked
@@ -126,7 +126,7 @@ Desktop development requires:
 - Qt 6.8 or newer
 - CMake 3.28 or newer
 - Ninja
-- Rust 1.92 or newer
+- Rust 1.97.1 or newer
 
 Confirm the local toolchain:
 
