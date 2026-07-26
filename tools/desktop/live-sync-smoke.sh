@@ -202,7 +202,9 @@ print_failure_logs() {
 require_tool cargo
 require_tool "$python_bin"
 
-"$script_dir/build.sh" "$profile"
+if [ "${CHAFT_DESKTOP_SKIP_BUILD:-0}" != "1" ]; then
+  "$script_dir/build.sh" "$profile"
+fi
 
 ffi_library="$repo_root/target/$rust_target_dir/$(chaft_desktop_ffi_library_name)"
 desktop_binary="$(chaft_desktop_find_binary "$repo_root" "desktop-$profile" || true)"
