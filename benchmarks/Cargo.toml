@@ -21,6 +21,6 @@ chaft-net-direct = { path = "../network/direct" }
 chaft-runtime = { path = "../runtime" }
 chaft-store = { path = "../storage/store" }
 chaft-types = { path = "../domain/types" }
-criterion = "0.5"
+criterion = "0.8.2"
 tempfile.workspace = true
 tokio.workspace = true
