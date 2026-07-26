@@ -6,9 +6,9 @@ Chaft is testing a simple thesis: as AI-assisted development reduces the cost of
 
 > **Warning**
 >
-> Chaft is canary-stage software. Public downloads are not yet available, and
-> current source builds must not be used for sensitive production
-> communication. See the [Security Policy](SECURITY.md).
+> Chaft is canary-stage software. Published canary packages are deliberately
+> unsigned and must not be used for sensitive or production communication.
+> See the [download page](https://chaft.ai/download/) and [Security Policy](SECURITY.md).
 
 ## Project status
 
@@ -17,7 +17,8 @@ Chaft is in canary development:
 - The Rust runtime, CLI, replica node, Qt/QML desktop application, and static website are implemented in this repository.
 - CI builds and exercises desktop packages on Windows, macOS, and Linux.
 - Those CI packages are development artifacts, not public releases.
-- The first verified Windows, macOS, and Linux canary release is being prepared. Until it is published, all public download entries remain unavailable.
+- A dedicated publisher can create one immutable, versioned GitHub prerelease with native Windows, macOS, and Linux packages. The website advertises it only after a separate reviewed manifest change.
+- Canary receipts explicitly record that signing and notarization were not performed. Stable releases retain their stronger signing and notarization gates.
 - The public website is deployed with Cloudflare Workers Static Assets. `https://chaft.ai` is the canonical hostname; deployment automation and provenance remain subject to the reviewed infrastructure gates.
 - Peer connectivity uses explicit endpoints today. Production public relay, global discovery, guaranteed delivery, and an availability SLA are not provided.
 - Security-sensitive behavior is tested, but production key custody, signing, notarization, updates, and operational review are not complete.
@@ -45,7 +46,9 @@ Chaft's goal is to keep essential collaboration free for small teams without mak
 
 ## Test the canary
 
-Public canary packages are being prepared. Until they are published, build the desktop application from source on a supported Windows, macOS, or Linux host:
+Use a package only when the [download page](https://chaft.ai/download/) marks
+the exact canary version and platform as available. Otherwise, build the
+desktop application from source on a supported Windows, macOS, or Linux host.
 
 1. Follow [Build the desktop app](guides/public/getting-started/build-desktop.md).
 2. Use a fresh profile and non-sensitive test data.
@@ -244,14 +247,16 @@ The desktop CI matrix builds:
 CI artifacts are intended for development verification and expire according to
 GitHub Actions retention. They are not a supported distribution channel.
 
-Public downloads will be immutable assets attached to
-[GitHub Releases](https://github.com/Jurshsmith/chaft/releases). A release is
+Public downloads are versioned, immutable assets attached to
+[GitHub Releases](https://github.com/Jurshsmith/chaft/releases). A canary is a
+GitHub prerelease and never the repository's stable or latest release. It is
 not advertised by the website until its packages, checksums, SBOMs, provenance,
-and platform verification evidence pass the promotion workflow and the
-resulting manifest change is reviewed.
+native smoke receipts, release inventory, and corresponding-source evidence
+pass the canary promotion workflow and the resulting manifest change is
+reviewed.
 
 See the [release process](guides/public/development/release-process.md) for the
-current workflow and remaining activation work.
+canary and stable publication boundaries.
 
 ## Documentation
 

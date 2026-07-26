@@ -10,14 +10,20 @@ draft: false
 
 # Release Chaft desktop builds
 
-Chaft can build and verify desktop packages for Windows, macOS, and Linux, but
-public downloads are not available yet. The checked-in website manifest is
-`coming-soon`, has no release tag, and marks every platform artifact
-unavailable.
+Chaft publishes desktop software through two deliberately separate channels:
+an explicitly unsigned `canary` prerelease for evaluation, and a future
+`stable` release that keeps the full native signing and notarization policy.
+The current website manifest is the authority for whether a particular version
+is actually available.
 
 GitHub Actions artifacts produced by CI are temporary development inputs. They
 are not public releases, are not a supported user download channel, and must
 not be linked from the website as finished software.
+
+> **Warning**
+>
+> Unsigned canary. Do not use Chaft canary builds for sensitive or production
+> communication.
 
 ## What exists today
 
@@ -25,26 +31,30 @@ The repository implements these release boundaries:
 
 1. Pull-request and `main` CI build desktop packages on native platform
    runners.
-2. A manual workflow rebuilds non-publishing release inputs from an existing
-   stable tag and immutable commit, including the exact Qt corresponding
-   source used by every desktop package.
+2. The `Publish desktop canary` workflow rebuilds the exact reviewed `main`
+   commit on clean native runners before it creates any tag or GitHub Release.
 3. Package metadata records checksums, a CycloneDX SBOM, provenance, source
-   identity, and platform-specific evidence.
-4. A published GitHub Release can trigger strict asset and signing
-   verification.
-5. Successful verification prepares a reviewed website-manifest change before
-   any download is advertised.
+   identity, and platform-specific evidence. Canary receipts state that signing
+   and notarization were not performed.
+4. The publisher creates one draft, verifies its downloaded package bytes on
+   Windows, macOS, and Linux, finalizes an exact 19-file namespace, and only
+   then publishes it as an immutable prerelease that is never `latest`.
+5. A dedicated canary promotion workflow reverifies the published release and
+   prepares a reviewed website-manifest pull request before any download is
+   advertised.
+6. Stable publication remains a separate workflow with Authenticode, Apple
+   signing/notarization, and the configured Linux signing policy.
 
 The current x86-64 package formats are:
 
-| Platform | Package | Current release-input state |
+| Platform | Canary package | Canary evidence |
 | --- | --- | --- |
-| Windows | `.zip` | Built and smoke-tested; public delivery requires trusted signing evidence |
-| macOS | `.dmg` | Built in CI; public delivery requires signing, notarization, stapling, and verification |
-| Linux | `.AppImage` | Built and smoke-tested; publication requires checksums and the configured Linux signing policy |
+| Windows | `.zip` | Native draft-download smoke receipt; Authenticode marked not performed |
+| macOS | `.dmg` | Native draft-download smoke receipt; signing and notarization marked not performed |
+| Linux | `.AppImage` | Native draft-download smoke receipt; detached signing marked not performed |
 
-This describes implemented automation, not an announcement that a release has
-passed it.
+The website and GitHub Releases page remain the source for whether a particular
+canary has completed this automation.
 
 ## Validate a release change locally
 
@@ -69,6 +79,8 @@ Run the platform-independent release contract tests too:
 ```sh
 tools/desktop/release-metadata-smoke.sh
 python3 tools/desktop/export-website-release-manifest-test.py
+python3 tools/desktop/canary-release-assets-test.py
+python3 tools/desktop/generate-unsigned-canary-receipt-test.py
 python3 tools/desktop/linux-appimage-contract-test.py
 python3 tools/desktop/macos-dmg-smoke-test.py
 tools/desktop/platform-verification-receipt-smoke.sh
@@ -84,7 +96,7 @@ Qt SDK used for the package.
 
 See the [testing guide](testing.md) for the complete gate selection.
 
-## Build immutable release inputs
+## Build non-publishing stable release inputs
 
 The `Build desktop release inputs` workflow is manually dispatched with an
 existing tag formatted as `v<semantic-version>`. It:
@@ -116,7 +128,52 @@ insufficient to become a public release by itself: Windows and macOS inputs
 still require their native signing processes, and every final artifact must be
 verified again after signing.
 
-## Prepare a public GitHub Release
+## Publish an unsigned canary
+
+Run `Publish desktop canary` only from the protected default branch. Supply:
+
+- the next unused tag matching `v<major>.<minor>.<patch>-canary.<positive
+  integer>`;
+- the exact current, reviewed `main` commit;
+- confirmation that the packages are intentionally unsigned canaries; and
+- confirmation that immutable GitHub Releases are enabled in repository
+  settings.
+
+The workflow then:
+
+1. requires a successful `Required` check from the trusted `CI` workflow's
+   exact `main` push run;
+2. confirms that neither the tag nor a release with that tag already exists;
+3. builds the Qt corresponding-source bundle and all three native packages
+   before it receives write permission;
+4. smoke-tests the packages once after the GitHub Actions artifact boundary;
+5. audits the exact 14 base assets: three packages, three platform checksum
+   files, three SBOMs, three provenance files, and two Qt source files;
+6. creates one draft prerelease through the GitHub API and records its release
+   ID;
+7. downloads each package from that draft by asset ID, checks its API byte size
+   and SHA-256 digest, and reruns the packaged-app smoke on its native runner;
+8. emits three receipts that bind the package bytes, asset ID, release ID,
+   runner, smoke command, version, tag, and commit while explicitly marking
+   every signing and notarization operation `not-performed`;
+9. adds the receipts, a 17-file inventory, and an aggregate checksum file to
+   form the exact 19-file public namespace;
+10. redownloads and verifies the entire draft before publication;
+11. publishes it as a prerelease with `make_latest=false`; and
+12. proves the release is immutable, the tag resolves to the reviewed commit,
+    all assets authenticate, and no canary became `latest`.
+
+The final job explicitly dispatches `Promote desktop canary to website`.
+GitHub suppresses ordinary release-triggered workflows for releases created by
+`GITHUB_TOKEN`, so this explicit dispatch is part of the reviewed contract.
+
+If a run fails after creating a draft, do not clobber assets or silently reuse a
+published tag. Inspect the release ID and exact namespace. Abandon the failed
+draft and increment the canary number unless a reviewed, identity-bound
+recovery proves that the existing draft, commit, and asset bytes are the
+intended ones. Never delete or reuse an immutable published release.
+
+## Prepare a stable GitHub Release
 
 A release candidate is ready for publication only when all final package bytes
 and evidence files agree on the same version, tag, and source commit.
@@ -138,7 +195,7 @@ They are mandatory compliance assets, not temporary build inputs. Retain the
 bundle and checksum alongside the Windows, macOS, and Linux binaries for the
 full lifetime of the release.
 
-Windows packages require trusted Authenticode verification. macOS packages
+Stable Windows packages require trusted Authenticode verification. Stable macOS packages
 require Developer ID signing, notarization, stapling, Gatekeeper assessment,
 and a verification receipt. Linux publication follows the configured policy:
 it is either checksummed-only with no detached signatures, or signed with a
@@ -148,11 +205,35 @@ Upload the final, immutable assets to the matching GitHub Release. Do not
 replace assets under an existing tag. A correction requires a new version and
 tag so users can identify the exact bytes they received.
 
-## Promote a published release
+## Promote a published canary
+
+`Promote desktop canary to website` is dispatch-only and accepts one exact
+canary tag. Before it can write a manifest branch, its read-only preparation job:
+
+- requires a published, immutable prerelease containing exactly 19 safe,
+  uniquely named assets;
+- downloads every asset by immutable asset ID and compares local byte sizes and
+  SHA-256 digests with GitHub's API;
+- runs GitHub's release and per-asset verification;
+- checks that every smoke receipt's release and package asset IDs match the
+  remote release;
+- verifies the complete inventory and aggregate checksum set offline;
+- stages the namespace explicitly as channel `canary`;
+- generates a schema-v2 manifest whose final URLs include the immutable tag and
+  filename; and
+- runs the complete static website validation.
+
+Only a bounded, checksummed JSON payload crosses into the write-enabled job.
+That job creates one descriptive
+`release/<tag>-website-manifest` branch and pull request. It does not merge the
+pull request or deploy Cloudflare.
+
+## Promote a stable release
 
 The `Promote desktop release to website` workflow runs when a GitHub Release is
-published and can also be dispatched for an existing published tag. It fails
-closed unless:
+published with `prerelease=false` and can also be dispatched for an existing
+stable tag. Prereleases are ignored by this workflow and must use the canary
+path above. The stable workflow fails closed unless:
 
 - the tag, release, commit, and reviewed source history agree, including an
   independent check that the tag commit is an ancestor of the current protected
@@ -165,7 +246,7 @@ closed unless:
 - the Linux evidence matches its declared signing state; and
 - unrelated, duplicate, or stale assets are absent.
 
-After verification, the workflow stages immutable website release assets,
+After stable verification, the workflow stages immutable website release assets,
 generates the release manifest, validates the static website, and prepares a
 reviewable manifest pull request. The website must not show a platform as
 available until the reviewed manifest contains the final direct GitHub Release
@@ -182,7 +263,8 @@ Do not direct users to:
 - pull-request or `main` workflow artifacts;
 - manually copied packages;
 - mutable “latest” files without a versioned release;
-- unsigned Windows or macOS release inputs; or
+- an unsigned artifact that is not explicitly identified as `unsigned-canary`
+  with the required native smoke receipt and warning; or
 - a website card whose manifest still says `coming-soon`.
 
 Until a release completes the full gate, contributors should
@@ -193,7 +275,7 @@ Until a release completes the full gate, contributors should
 Before describing a version as public:
 
 - all native-platform CI and clean-package smokes are green;
-- the stable tag resolves to the reviewed source commit;
+- the canary or stable tag resolves to the reviewed source commit;
 - final package bytes are immutable;
 - checksums, SBOMs, provenance, and native evidence verify;
 - the Qt corresponding-source bundle and checksum are retained alongside the
@@ -203,5 +285,5 @@ Before describing a version as public:
 - its website pull request is reviewed and merged; and
 - the public download surface shows no pending or mismatched platform.
 
-Chaft remains preview software after publication unless the project separately
-changes its maturity and support policy.
+Chaft remains canary software after publication unless the project separately
+changes its maturity, signing, support, and security policy.
