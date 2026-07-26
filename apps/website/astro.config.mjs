@@ -1,9 +1,15 @@
 import { fileURLToPath } from "node:url";
 
+import { unified } from "@astrojs/markdown-remark";
 import sitemap from "@astrojs/sitemap";
 import { defineConfig } from "astro/config";
 
+import remarkGitHubDocLinks from "./src/lib/remark-github-doc-links.mjs";
+
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
+const publicGuidesRoot = fileURLToPath(
+  new URL("../../guides/public/", import.meta.url),
+);
 const configuredSite = process.env.SITE_URL;
 const isCi = process.env.CI === "true";
 
@@ -30,6 +36,13 @@ export default defineConfig({
   site: site.origin,
   base,
   integrations: [sitemap()],
+  markdown: {
+    processor: unified({
+      remarkPlugins: [
+        [remarkGitHubDocLinks, { guidesRoot: publicGuidesRoot, basePath: base }],
+      ],
+    }),
+  },
   build: {
     inlineStylesheets: "never",
   },

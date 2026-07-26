@@ -65,7 +65,7 @@ const steps = [
             {hasPublishedDownloads ? "Download Chaft" : "View preview downloads"}
             <span aria-hidden="true">→</span>
           </a>
-          <a class="button button--secondary" href="#how-it-works">See how it works</a>
+          <a class="button button--secondary" href={sitePath("/docs/")}>Read the docs</a>
           <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
         </div>
         <p class="hero__note">
@@ -139,6 +139,45 @@ const steps = [
           </li>
         ))}
       </ol>
+    </div>
+  </section>
+
+  <section class="section section--compact docs-entry">
+    <div class="shell">
+      <div class="docs-entry__inner">
+        <div>
+          <p class="eyebrow">Documentation</p>
+          <h2>Understand the model, then make it yours.</h2>
+        </div>
+        <div class="docs-entry__copy">
+          <p>
+            Start with the desktop build, learn how local-first replication works,
+            or use the contributor reference. Every guide reflects the current
+            preview implementation.
+          </p>
+          <a class="button button--secondary" href={sitePath("/docs/")}>
+            Browse all documentation <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </div>
+      <nav class="docs-entry__links" aria-label="Documentation highlights">
+        <a href={sitePath("/docs/getting-started/workspace-lifecycle/")}>
+          <span>Getting started</span>
+          <strong>Create and join a workspace</strong>
+        </a>
+        <a href={sitePath("/docs/concepts/architecture/")}>
+          <span>Architecture</span>
+          <strong>See how the pieces fit</strong>
+        </a>
+        <a href={sitePath("/docs/concepts/security-model/")}>
+          <span>Security model</span>
+          <strong>Know the preview boundaries</strong>
+        </a>
+        <a href={sitePath("/docs/development/testing/")}>
+          <span>Build and contribute</span>
+          <strong>Run the right project checks</strong>
+        </a>
+      </nav>
     </div>
   </section>
 
@@ -321,6 +360,77 @@ const steps = [
     font-size: 0.88rem;
   }
 
+  .docs-entry {
+    border-block: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+  }
+
+  .docs-entry__inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.75fr);
+    gap: clamp(2rem, 7vw, 6rem);
+    align-items: end;
+  }
+
+  .docs-entry h2 {
+    max-width: 17ch;
+    margin-bottom: 0;
+    font-size: clamp(2rem, 4.4vw, 3.5rem);
+  }
+
+  .docs-entry__copy {
+    display: grid;
+    gap: 1.25rem;
+    justify-items: start;
+  }
+
+  .docs-entry__copy p {
+    max-width: 36rem;
+    margin: 0;
+  }
+
+  .docs-entry__links {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    margin-top: clamp(2rem, 5vw, 3.25rem);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--border-subtle);
+  }
+
+  .docs-entry__links a {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 0;
+    min-height: 7rem;
+    align-content: center;
+    padding: 1rem;
+    background: var(--surface-deep);
+    text-decoration: none;
+    transition: background-color var(--motion-quick);
+  }
+
+  .docs-entry__links a:hover {
+    background: var(--surface-active);
+  }
+
+  .docs-entry__links span {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .docs-entry__links strong {
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    font-weight: 500;
+    line-height: 1.35;
+  }
+
   .open-source__inner {
     display: grid;
     justify-items: start;
@@ -339,6 +449,10 @@ const steps = [
       grid-template-columns: 1fr;
     }
 
+    .docs-entry__links {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .hero__visual {
       width: min(100%, 42rem);
       margin-inline: auto;
@@ -346,8 +460,17 @@ const steps = [
   }
 
   @media (max-width: 680px) {
+    .docs-entry__inner {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
     .trust-rail__inner {
       grid-template-columns: repeat(2, 1fr);
+    }
+
+    .docs-entry__links {
+      grid-template-columns: 1fr;
     }
 
     .trust-rail span:nth-child(3) {

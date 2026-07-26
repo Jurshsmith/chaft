@@ -235,8 +235,8 @@ current workflow and remaining activation work.
 ## Documentation
 
 `guides/public/` is the canonical source for user-facing and contributor-facing
-guides. Those Markdown files are designed to remain readable on GitHub and to
-serve as the static website's documentation source.
+guides. Those Markdown files remain readable on GitHub and are compiled into
+the static website's `/docs/` routes.
 
 Public guide changes must:
 

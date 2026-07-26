@@ -1,0 +1,102 @@
+---
+import { docRoutePath, type DocNavigationEntry } from "../../lib/docs";
+import { sitePath } from "../../lib/site-path";
+
+interface Props {
+  previous?: DocNavigationEntry | undefined;
+  next?: DocNavigationEntry | undefined;
+}
+
+const { previous, next } = Astro.props;
+---
+
+{(previous || next) && (
+  <nav class="docs-pager" aria-label="Documentation pages">
+    {previous ? (
+      <a
+        class="docs-pager__link docs-pager__link--previous"
+        href={sitePath(docRoutePath(previous.id))}
+      >
+        <span>Previous</span>
+        <strong>{previous.data.navTitle ?? previous.data.title}</strong>
+      </a>
+    ) : (
+      <span aria-hidden="true"></span>
+    )}
+
+    {next && (
+      <a
+        class="docs-pager__link docs-pager__link--next"
+        href={sitePath(docRoutePath(next.id))}
+      >
+        <span>Next</span>
+        <strong>{next.data.navTitle ?? next.data.title}</strong>
+      </a>
+    )}
+  </nav>
+)}
+
+<style>
+  .docs-pager {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    margin-top: clamp(3rem, 8vw, 5rem);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--border-subtle);
+  }
+
+  .docs-pager__link {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
+    min-height: 6.5rem;
+    align-content: center;
+    padding: 1.1rem 1.25rem;
+    background: var(--surface-raised);
+    color: var(--text-strong);
+    text-decoration: none;
+    transition: background-color var(--motion-quick);
+  }
+
+  .docs-pager__link:hover {
+    background: var(--surface-active);
+  }
+
+  .docs-pager__link span {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .docs-pager__link strong {
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+    font-weight: 500;
+    line-height: 1.35;
+  }
+
+  .docs-pager__link--next {
+    justify-items: end;
+    text-align: right;
+  }
+
+  @media (max-width: 560px) {
+    .docs-pager {
+      grid-template-columns: 1fr;
+    }
+
+    .docs-pager > span {
+      display: none;
+    }
+
+    .docs-pager__link--next {
+      justify-items: start;
+      text-align: left;
+    }
+  }
+</style>

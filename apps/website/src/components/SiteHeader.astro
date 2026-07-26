@@ -4,15 +4,28 @@ import { Image } from "astro:assets";
 import avatarDark from "../../../desktop-qt/resources/branding/chaft-avatar-dark.png";
 import { sitePath } from "../lib/site-path";
 
+interface HeaderLink {
+  href: string;
+  label: string;
+  external?: boolean;
+  matchPrefix?: boolean;
+}
+
 const currentPath = Astro.url.pathname;
-const links = [
+const links: HeaderLink[] = [
   { href: sitePath("/#why-chaft"), label: "Why Chaft" },
-  { href: sitePath("/#how-it-works"), label: "How it works" },
+  { href: sitePath("/docs/"), label: "Docs", matchPrefix: true },
   { href: sitePath("/security/"), label: "Security" },
   { href: "https://github.com/Jurshsmith/chaft", label: "Source", external: true },
 ];
 
 const downloadHref = sitePath("/download/");
+
+function isCurrentLink(link: HeaderLink): boolean {
+  if (link.external) return false;
+  if (link.matchPrefix) return currentPath.startsWith(link.href);
+  return currentPath === link.href;
+}
 ---
 
 <header class="site-header">
@@ -38,7 +51,7 @@ const downloadHref = sitePath("/download/");
           <li>
             <a
               href={link.href}
-              aria-current={!link.external && currentPath === link.href ? "page" : undefined}
+              aria-current={isCurrentLink(link) ? "page" : undefined}
               target={link.external ? "_blank" : undefined}
               rel={link.external ? "noreferrer" : undefined}
             >
@@ -60,7 +73,7 @@ const downloadHref = sitePath("/download/");
         {links.map((link) => (
           <a
             href={link.href}
-            aria-current={!link.external && currentPath === link.href ? "page" : undefined}
+            aria-current={isCurrentLink(link) ? "page" : undefined}
             target={link.external ? "_blank" : undefined}
             rel={link.external ? "noreferrer" : undefined}
           >
@@ -68,6 +81,9 @@ const downloadHref = sitePath("/download/");
             {link.external && <span class="sr-only"> (opens in a new tab)</span>}
           </a>
         ))}
+        <a href={downloadHref} aria-current={currentPath === downloadHref ? "page" : undefined}>
+          Download
+        </a>
       </nav>
     </details>
   </div>
@@ -249,11 +265,15 @@ const downloadHref = sitePath("/download/");
 
   @media (max-width: 760px) {
     .site-header__inner {
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr auto;
       gap: 0.5rem;
     }
 
     .desktop-nav {
+      display: none;
+    }
+
+    .header-download {
       display: none;
     }
 
