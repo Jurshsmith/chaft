@@ -1,15 +1,8 @@
 # Chaft
 
-Chaft is an experimental, P2P-first Slack alternative for small and early-stage
-teams. It keeps workspace history local, encrypts message and attachment
-content before replication, and synchronizes signed history directly between
-peers.
+Chaft is an experimental, P2P-first Slack alternative for small and early-stage teams. It keeps workspace history local, encrypts message and attachment content before replication, and synchronizes signed history directly between peers.
 
-Chaft is testing a simple thesis: as AI-assisted development reduces the cost
-of creating software, peer-to-peer architecture can reduce the recurring cost
-of sustaining it. By shifting most storage, compute, and replication to the
-devices using the product, essential team collaboration may be able to remain
-free within clear, deliberate limits.
+Chaft is testing a simple thesis: as AI-assisted development reduces the cost of creating software, peer-to-peer architecture can reduce the recurring cost of sustaining it. By shifting most storage, compute, and replication to the devices using the product, essential team collaboration may be able to remain free within clear, deliberate limits.
 
 > **Warning**
 >
@@ -21,20 +14,13 @@ free within clear, deliberate limits.
 
 Chaft is in canary development:
 
-- The Rust runtime, CLI, replica node, Qt/QML desktop application, and static
-  website are implemented in this repository.
+- The Rust runtime, CLI, replica node, Qt/QML desktop application, and static website are implemented in this repository.
 - CI builds and exercises desktop packages on Windows, macOS, and Linux.
 - Those CI packages are development artifacts, not public releases.
-- The first verified Windows, macOS, and Linux canary release is being prepared.
-  Until it is published, all public download entries remain unavailable.
-- The public website is deployed with Cloudflare Workers Static Assets.
-  `https://chaft.ai` is the canonical hostname; deployment automation and
-  provenance remain subject to the reviewed infrastructure gates.
-- Peer connectivity uses explicit endpoints today. Production public relay,
-  global discovery, guaranteed delivery, and an availability SLA are not
-  provided.
-- Security-sensitive behavior is tested, but production key custody, signing,
-  notarization, updates, and operational review are not complete.
+- The first verified Windows, macOS, and Linux canary release is being prepared. Until it is published, all public download entries remain unavailable.
+- The public website is deployed with Cloudflare Workers Static Assets. `https://chaft.ai` is the canonical hostname; deployment automation and provenance remain subject to the reviewed infrastructure gates.
+- Peer connectivity uses explicit endpoints today. Production public relay, global discovery, guaranteed delivery, and an availability SLA are not provided.
+- Security-sensitive behavior is tested, but production key custody, signing, notarization, updates, and operational review are not complete.
 
 Useful starting points:
 
@@ -47,40 +33,26 @@ Useful starting points:
 
 ## Free within deliberate limits
 
-Chaft's goal is to keep essential collaboration free for small teams without
-making a required central application service the authority for their
-workspace. That goal is bounded by the current design:
+Chaft's goal is to keep essential collaboration free for small teams without making a required central application service the authority for their workspace. That goal is bounded by the current design:
 
 - each device supplies its own local compute and storage;
-- peers supply most synchronization bandwidth and must be reachable to
-  exchange new history;
-- optional encrypted replicas can improve availability but are not an uptime
-  guarantee or a plaintext authority;
-- public relay, automatic internet-wide discovery, managed retention, and
-  production support are not included today; and
-- canary builds are for evaluation with non-sensitive data, not production
-  operations.
+- peers supply most synchronization bandwidth and must be reachable to exchange new history;
+- optional encrypted replicas can improve availability but are not an uptime guarantee or a plaintext authority;
+- public relay, automatic internet-wide discovery, managed retention, and production support are not included today; and
+- canary builds are for evaluation with non-sensitive data, not production operations.
 
-“Free” here describes the product goal and the AGPL-licensed software, not a
-claim that hosting, signing, relay capacity, or every future optional service
-has zero cost. Any hosted service added later must publish its limits without
-making the local-first core dependent on it.
+“Free” here describes the product goal and the AGPL-licensed software, not a claim that hosting, signing, relay capacity, or every future optional service has zero cost. Any hosted service added later must publish its limits without making the local-first core dependent on it.
 
 ## Test the canary
 
-Public canary packages are being prepared. Until they are published, build the
-desktop application from source on a supported Windows, macOS, or Linux host:
+Public canary packages are being prepared. Until they are published, build the desktop application from source on a supported Windows, macOS, or Linux host:
 
 1. Follow [Build the desktop app](guides/public/getting-started/build-desktop.md).
 2. Use a fresh profile and non-sensitive test data.
-3. Exercise workspace creation, invitations, and synchronization between at
-   least two isolated devices.
-4. [Open an issue](https://github.com/Jurshsmith/chaft/issues/new) with the
-   operating system, source revision, reproduction steps, and sanitized logs.
-   Never include keys, passphrases, recovery material, or private messages.
+3. Exercise workspace creation, invitations, and synchronization between at least two isolated devices.
+4. [Open an issue](https://github.com/Jurshsmith/chaft/issues/new) with the operating system, source revision, reproduction steps, and sanitized logs. Never include keys, passphrases, recovery material, or private messages.
 
-Contributors can start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[testing guide](guides/public/development/testing.md).
+Contributors can start with [CONTRIBUTING.md](CONTRIBUTING.md) and the [testing guide](guides/public/development/testing.md).
 
 ## What Chaft is building
 
