@@ -1,0 +1,445 @@
+name: Deploy website
+
+# INERT FOUNDATION: both jobs are hard-disabled below. Before activation,
+# WEB-DEPLOY-001 must define exact chaft-infra gate verification, prior-state
+# capture, durable deployment evidence, and the reviewed Custom Domain.
+
+on:
+  workflow_run:
+    workflows:
+      - Website
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: chaft-website-production
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  preflight:
+    # Production safety gate. Removing `false &&` requires a reviewed change
+    # coordinated with chaft-infra, the Custom Domain, and GitHub environment.
+    if: >-
+      ${{
+        false &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    name: Verify immutable deployment candidate
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
+      governance_commit: ${{ steps.identity.outputs.governance_commit }}
+      site_url: ${{ steps.identity.outputs.site_url }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate without stored credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install exact verifier and Wrangler dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Download exact candidate artifact outside the checkout
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chaft-website-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/chaft-website-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Confirm current main and reviewed governance identity
+        id: identity
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          CHAFT_INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CANDIDATE_SHA}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::Candidate source commit is malformed."
+            exit 1
+          fi
+          if [[ ! "${CHAFT_INFRA_COMMIT}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::CHAFT_INFRA_COMMIT must name the reviewed enabling commit."
+            exit 1
+          fi
+          if [[ -z "${SITE_URL}" ]]; then
+            echo "::error::WEBSITE_SITE_URL is not configured."
+            exit 1
+          fi
+          normalized_site_url="$(node -e '
+            const value = new URL(process.argv[1]);
+            if (
+              value.protocol !== "https:" ||
+              value.username ||
+              value.password ||
+              value.search ||
+              value.hash
+            ) process.exit(1);
+            process.stdout.write(
+              `${value.origin}${value.pathname.replace(/\/+$/, "")}`,
+            );
+          ' "${SITE_URL}")"
+          if [[ "${SITE_URL}" != "${normalized_site_url}" ]]; then
+            echo "::error::WEBSITE_SITE_URL must already be a normalized HTTPS URL."
+            exit 1
+          fi
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" \
+            --jq '.sha')"
+          if [[ "${current_main}" != "${CANDIDATE_SHA}" ]]; then
+            echo "::notice::Skipping superseded website candidate ${CANDIDATE_SHA}."
+            exit 1
+          fi
+          echo "source_commit=${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "governance_commit=${CHAFT_INFRA_COMMIT}" >> "${GITHUB_OUTPUT}"
+          echo "site_url=${normalized_site_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify, install, and dry-run the exact artifact
+        id: verify
+        shell: bash
+        working-directory: apps/website
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-website-artifact
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+        run: |
+          set -euo pipefail
+          verification="$(node scripts/deployment-artifact-cli.mjs verify \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${CANDIDATE_SHA}" \
+            --site-url "${SITE_URL}")"
+          node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${CANDIDATE_SHA}" \
+            --site-url "${SITE_URL}"
+          pnpm validate:wrangler
+          manifest_sha256="$(node -e '
+            const value = JSON.parse(process.argv[1]);
+            if (!/^[a-f0-9]{64}$/.test(value.manifestSha256)) process.exit(1);
+            process.stdout.write(value.manifestSha256);
+          ' "${verification}")"
+          echo "manifest_sha256=${manifest_sha256}" >> "${GITHUB_OUTPUT}"
+          node scripts/deployment-artifact-cli.mjs compare \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${CANDIDATE_SHA}" \
+            --site-url "${SITE_URL}"
+
+      - name: Recheck current main after preflight
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" \
+            --jq '.sha')"
+          test "${current_main}" = "${CANDIDATE_SHA}"
+
+  deploy:
+    # Keep the mutation job independently fail-closed even if preflight changes.
+    if: ${{ false && needs.preflight.result == 'success' }}
+    name: Deploy approved Worker version
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ needs.preflight.outputs.site_url }}
+    steps:
+      - name: Checkout exact approved candidate without stored credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install exact verifier and Wrangler dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Download original candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chaft-website-${{ needs.preflight.outputs.source_commit }}
+          path: ${{ runner.temp }}/chaft-website-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Reverify and install original artifact without rebuilding
+        shell: bash
+        working-directory: apps/website
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-website-artifact
+          EXPECTED_MANIFEST_SHA256: ${{ needs.preflight.outputs.artifact_manifest_sha256 }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          verification="$(node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}")"
+          manifest_sha256="$(node -e '
+            const value = JSON.parse(process.argv[1]);
+            if (!/^[a-f0-9]{64}$/.test(value.manifestSha256)) process.exit(1);
+            process.stdout.write(value.manifestSha256);
+          ' "${verification}")"
+          test "${manifest_sha256}" = "${EXPECTED_MANIFEST_SHA256}"
+          pnpm validate:wrangler
+          node scripts/deployment-artifact-cli.mjs compare \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+
+      - name: Recheck current main and variable snapshots after environment approval
+        shell: bash
+        env:
+          CURRENT_INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          CURRENT_SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_INFRA_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
+          EXPECTED_SHA: ${{ needs.preflight.outputs.source_commit }}
+          EXPECTED_SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" \
+            --jq '.sha')"
+          test "${current_main}" = "${EXPECTED_SHA}"
+          test "${CURRENT_INFRA_COMMIT}" = "${EXPECTED_INFRA_COMMIT}"
+          test "${CURRENT_SITE_URL}" = "${EXPECTED_SITE_URL}"
+
+      - name: Deploy exact static assets
+        id: deploy
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_MESSAGE: website ${{ needs.preflight.outputs.source_commit }} from run ${{ github.event.workflow_run.id }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-deploy.ndjson
+        run: |
+          set -euo pipefail
+          if [[ ! "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID must be a 32-character lowercase hexadecimal ID."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler deploy \
+            --config wrangler.jsonc \
+            --strict \
+            --tag "${SOURCE_COMMIT}" \
+            --message "${DEPLOY_MESSAGE}"
+
+      - name: Extract exact deployed version
+        id: version
+        env:
+          WRANGLER_OUTPUT_FILE: ${{ runner.temp }}/wrangler-deploy.ndjson
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const records = fs
+            .readFileSync(process.env.WRANGLER_OUTPUT_FILE, "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+          const deployments = records.filter(
+            (record) => record.type === "deploy" && record.version === 1,
+          );
+          const sessions = records.filter(
+            (record) => record.type === "wrangler-session" && record.version === 1,
+          );
+          if (
+            sessions.length !== 1 ||
+            sessions[0].wrangler_version !== "4.114.0"
+          ) {
+            throw new Error("Wrangler output does not identify the pinned 4.114.0 session");
+          }
+          if (deployments.length !== 1) {
+            throw new Error(`expected one Wrangler deploy record, received ${deployments.length}`);
+          }
+          const deployment = deployments[0];
+          if (
+            deployment.worker_name !== "chaft-website" ||
+            deployment.worker_name_overridden !== false
+          ) {
+            throw new Error("Wrangler deploy record identifies an unexpected Worker");
+          }
+          const versionId = deployment.version_id;
+          if (
+            typeof versionId !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(versionId)
+          ) {
+            throw new Error("Wrangler deploy record has an invalid version_id");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version_id=${versionId}\n`);
+          NODE
+
+      - name: Confirm active deployment with read-only token
+        id: status
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+          EXPECTED_VERSION_ID: ${{ steps.version.outputs.version_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is malformed."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_READ_API_TOKEN is not configured."
+            exit 1
+          fi
+          for attempt in {1..10}; do
+            pnpm exec wrangler deployments status \
+              --config wrangler.jsonc \
+              --json > "${RUNNER_TEMP}/deployment-status.json"
+            if node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-status.json`, "utf8"),
+          );
+          const versions = deployment.versions;
+          if (
+            !Array.isArray(versions) ||
+            versions.length !== 1 ||
+            versions[0].version_id !== process.env.EXPECTED_VERSION_ID ||
+            versions[0].percentage !== 100
+          ) {
+            process.exit(1);
+          }
+          if (
+            typeof deployment.id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id)
+          ) {
+            throw new Error("Cloudflare returned an invalid deployment ID");
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `deployment_id=${deployment.id}\n`,
+          );
+          NODE
+            then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::Expected Worker version did not reach 100 percent traffic."
+          exit 1
+
+      - name: Verify public deployment marker
+        env:
+          EXPECTED_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 10 \
+              "${SITE_URL%/}/.well-known/chaft-deployment.json" \
+              --output "${RUNNER_TEMP}/deployment-marker.json" &&
+              node - <<'NODE'
+          const fs = require("node:fs");
+          const marker = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-marker.json`, "utf8"),
+          );
+          const keys = Object.keys(marker).sort();
+          const expectedKeys = [
+            "artifactKind",
+            "schemaVersion",
+            "siteUrl",
+            "sourceCommit",
+            "sourceRepository",
+          ].sort();
+          const site = new URL(process.env.SITE_URL);
+          const normalizedSiteUrl = `${site.origin}${site.pathname.replace(/\/+$/, "")}`;
+          if (
+            keys.length !== expectedKeys.length ||
+            keys.some((key, index) => key !== expectedKeys[index]) ||
+            marker.schemaVersion !== 1 ||
+            marker.artifactKind !== "chaft-website" ||
+            marker.sourceRepository !== process.env.GITHUB_REPOSITORY ||
+            marker.sourceCommit !== process.env.EXPECTED_COMMIT ||
+            marker.siteUrl !== normalizedSiteUrl
+          ) {
+            process.exit(1);
+          }
+          NODE
+            then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Public deployment marker did not converge to the approved candidate."
+          exit 1
+
+      - name: Record deployment result
+        env:
+          DEPLOYMENT_ID: ${{ steps.status.outputs.deployment_id }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          INFRA_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
+        run: |
+          {
+            echo "### Cloudflare website deployment"
+            echo
+            echo "- Source commit: \`${SOURCE_COMMIT}\`"
+            echo "- Infrastructure decision: \`${INFRA_COMMIT}\`"
+            echo "- Cloudflare deployment: \`${DEPLOYMENT_ID}\`"
+            echo "- Cloudflare version: \`${VERSION_ID}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

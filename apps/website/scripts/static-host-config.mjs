@@ -21,6 +21,9 @@ export function renderHeaders(base) {
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
 
+${withDeploymentBase(base, "/.well-known/chaft-deployment.json")}
+  Cache-Control: no-store
+
 ${withDeploymentBase(base, "/_astro/*")}
   Cache-Control: public, max-age=31536000, immutable
 

@@ -11,11 +11,16 @@
     "dev": "astro dev",
     "build": "node scripts/build.mjs",
     "build:validation": "node scripts/build.mjs --validation",
+    "artifact:create": "node scripts/deployment-artifact-cli.mjs create",
+    "artifact:verify": "node scripts/deployment-artifact-cli.mjs verify",
+    "artifact:install": "node scripts/deployment-artifact-cli.mjs install",
+    "artifact:compare": "node scripts/deployment-artifact-cli.mjs compare",
     "preview": "astro preview",
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest",
-    "validate": "pnpm check && pnpm test && pnpm build:validation"
+    "validate:wrangler": "wrangler deploy --config wrangler.jsonc --dry-run --strict --outdir .wrangler/dry-run",
+    "validate": "node scripts/validate.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.3",
@@ -25,6 +30,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
     "typescript": "^6.0.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "4.114.0"
   }
 }

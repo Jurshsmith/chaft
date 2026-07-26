@@ -113,17 +113,24 @@ Run the complete static-site validation gate with `make website-validate`.
 Production builds must provide the complete public `SITE_URL` so canonical
 URLs, the sitemap, and `robots.txt` use the deployed URL. Both root origins such
 as `https://chaft.example` and path-prefixed URLs such as
-`https://example.com/chaft` are supported. The Website workflow uses the
-`WEBSITE_SITE_URL` repository variable on `main` and uploads a provider-neutral
-`dist/` artifact; configure that variable before the first `main` build. The
-workflow does not deploy or require provider credentials. Desktop
-packages stay in GitHub Releases or dedicated object storage; the site consumes
-their verified release metadata instead of committing installers into the
-monorepo. Publishing an immutable GitHub Release starts the promotion workflow.
-It verifies the complete uploaded asset set, reruns native signature checks on
-Windows, macOS, and (when signed) Linux runners, and opens a descriptive pull
-request for the website manifest. See `apps/website/README.md` for the artifact
-handoff contract and complete repository configuration.
+`https://example.com/chaft` are supported. The route-less Cloudflare Workers
+Static Assets configuration is included in website validation as a strict
+Wrangler dry run.
+
+On `main`, the Website workflow creates one verified
+`chaft-website-<commit>` deployment bundle only when the `WEBSITE_SITE_URL`
+repository variable is configured. Without it, validation passes and candidate
+construction is intentionally skipped. Deploy and rollback workflows are
+checked in but hard-disabled with literal `false` gates until the separately
+reviewed infrastructure, domain, credentials, and activation change is ready.
+
+Desktop packages stay in GitHub Releases or dedicated object storage; the site
+consumes their verified release metadata instead of committing installers into
+the monorepo. Publishing an immutable GitHub Release starts the promotion
+workflow. It verifies the complete uploaded asset set, reruns native signature
+checks on Windows, macOS, and (when signed) Linux runners, and opens a
+descriptive pull request for the website manifest. See `apps/website/README.md`
+for the artifact contract and complete repository configuration.
 
 ## Run The Desktop App
 

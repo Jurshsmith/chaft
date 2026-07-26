@@ -1,0 +1,325 @@
+name: Roll back website
+
+# INERT FOUNDATION: the job is hard-disabled below. Before activation,
+# WEB-DEPLOY-001 and the rollback runbook must be fully resolved and exercised.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version_id:
+        description: Exact Cloudflare Worker version ID to restore
+        required: true
+        type: string
+      expected_source_commit:
+        description: Full source commit stored in the target version tag
+        required: true
+        type: string
+      reason:
+        description: Short operational reason (80 characters maximum)
+        required: true
+        type: string
+      confirmation:
+        description: Type "rollback chaft-website" exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaft-website-production
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  rollback:
+    # Production safety gate. Removing `false &&` requires a reviewed change
+    # coordinated with chaft-infra, the Custom Domain, and GitHub environment.
+    if: >-
+      ${{
+        false &&
+        github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+        inputs.confirmation == 'rollback chaft-website'
+      }}
+    name: Restore explicit Worker version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.WEBSITE_SITE_URL }}
+    steps:
+      - name: Checkout exact approved default-branch revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.14.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install exact Wrangler dependency
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate request and current governance
+        id: request
+        shell: bash
+        env:
+          CHAFT_INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ inputs.reason }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TARGET_VERSION_ID}" =~ ^[a-f0-9-]{32,64}$ ]]; then
+            echo "::error::target_version_id is malformed."
+            exit 1
+          fi
+          if [[ ! "${EXPECTED_SOURCE_COMMIT}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::expected_source_commit is malformed."
+            exit 1
+          fi
+          if [[ -z "${REASON}" || ${#REASON} -gt 80 || "${REASON}" == *$'\n'* || "${REASON}" == *$'\r'* ]]; then
+            echo "::error::reason must be one line containing 1 to 80 characters."
+            exit 1
+          fi
+          if [[ ! "${CHAFT_INFRA_COMMIT}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::CHAFT_INFRA_COMMIT must name the reviewed enabling commit."
+            exit 1
+          fi
+          if [[ -z "${SITE_URL}" ]]; then
+            echo "::error::WEBSITE_SITE_URL is not configured."
+            exit 1
+          fi
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" \
+            --jq '.sha')"
+          if [[ "${current_main}" != "${WORKFLOW_SHA}" ]]; then
+            echo "::error::Run rollback only from the current default-branch revision."
+            exit 1
+          fi
+          echo "rollback_message=rollback to ${EXPECTED_SOURCE_COMMIT:0:12}: ${REASON}" >> "${GITHUB_OUTPUT}"
+
+      - name: Inspect target and current deployment with read-only token
+        id: inspect
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is malformed."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_READ_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler versions view "${TARGET_VERSION_ID}" \
+            --config wrangler.jsonc \
+            --json > "${RUNNER_TEMP}/target-version.json"
+          pnpm exec wrangler deployments status \
+            --config wrangler.jsonc \
+            --json > "${RUNNER_TEMP}/deployment-before.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const target = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/target-version.json`, "utf8"),
+          );
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-before.json`, "utf8"),
+          );
+          if (target.id !== process.env.TARGET_VERSION_ID) {
+            throw new Error("Cloudflare returned a different target version");
+          }
+          if (target.annotations?.["workers/tag"] !== process.env.EXPECTED_SOURCE_COMMIT) {
+            throw new Error("target version tag does not match expected_source_commit");
+          }
+          if (target.resources?.bindings?.some((binding) => binding.type === "secret_text")) {
+            throw new Error("asset-only rollback target unexpectedly contains secrets");
+          }
+          const active = deployment.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          if (
+            active?.length !== 1 ||
+            typeof active[0].version_id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(active[0].version_id)
+          ) {
+            throw new Error("current deployment is not one version at 100 percent");
+          }
+          if (active[0].version_id === process.env.TARGET_VERSION_ID) {
+            throw new Error("target version is already serving 100 percent of traffic");
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `previous_version_id=${active[0].version_id}\n`,
+          );
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/previous-version-id`,
+            `${active[0].version_id}\n`,
+          );
+          NODE
+          IFS= read -r previous_version_id < "${RUNNER_TEMP}/previous-version-id"
+          pnpm exec wrangler versions view "${previous_version_id}" \
+            --config wrangler.jsonc \
+            --json > "${RUNNER_TEMP}/previous-version.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const previous = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/previous-version.json`, "utf8"),
+          );
+          if (previous.resources?.bindings?.some((binding) => binding.type === "secret_text")) {
+            throw new Error("current asset-only version unexpectedly contains secrets");
+          }
+          NODE
+
+      - name: Recheck default branch before mutation
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" \
+            --jq '.sha')"
+          test "${current_main}" = "${WORKFLOW_SHA}"
+
+      - name: Restore exact Worker version
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ROLLBACK_MESSAGE: ${{ steps.request.outputs.rollback_message }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is malformed."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler rollback "${TARGET_VERSION_ID}" \
+            --config wrangler.jsonc \
+            --message "${ROLLBACK_MESSAGE}" \
+            --yes
+
+      - name: Verify active version with read-only token
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CLOUDFLARE_ACCOUNT_ID}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is malformed."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_READ_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler deployments status \
+            --config wrangler.jsonc \
+            --json > "${RUNNER_TEMP}/deployment-after.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-after.json`, "utf8"),
+          );
+          const active = deployment.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          if (
+            active?.length !== 1 ||
+            active[0].version_id !== process.env.TARGET_VERSION_ID
+          ) {
+            throw new Error("requested rollback version is not serving 100 percent of traffic");
+          }
+          NODE
+
+      - name: Verify public deployment marker
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_source_commit }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 10 \
+              "${SITE_URL%/}/.well-known/chaft-deployment.json" \
+              --output "${RUNNER_TEMP}/deployment-marker.json" &&
+              node - <<'NODE'
+          const fs = require("node:fs");
+          const marker = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-marker.json`, "utf8"),
+          );
+          const keys = Object.keys(marker).sort();
+          const expectedKeys = [
+            "artifactKind",
+            "schemaVersion",
+            "siteUrl",
+            "sourceCommit",
+            "sourceRepository",
+          ].sort();
+          const site = new URL(process.env.SITE_URL);
+          const normalizedSiteUrl = `${site.origin}${site.pathname.replace(/\/+$/, "")}`;
+          if (
+            keys.length !== expectedKeys.length ||
+            keys.some((key, index) => key !== expectedKeys[index]) ||
+            marker.schemaVersion !== 1 ||
+            marker.artifactKind !== "chaft-website" ||
+            marker.sourceRepository !== process.env.GITHUB_REPOSITORY ||
+            marker.sourceCommit !== process.env.EXPECTED_COMMIT ||
+            marker.siteUrl !== normalizedSiteUrl
+          ) {
+            process.exit(1);
+          }
+          NODE
+            then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Public deployment marker did not converge to the rollback target."
+          exit 1
+
+      - name: Record rollback result
+        env:
+          INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          PREVIOUS_VERSION_ID: ${{ steps.inspect.outputs.previous_version_id }}
+          REASON: ${{ inputs.reason }}
+          SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          {
+            echo "### Cloudflare website rollback"
+            echo
+            echo "- Previous version: \`${PREVIOUS_VERSION_ID}\`"
+            echo "- Restored version: \`${TARGET_VERSION_ID}\`"
+            echo "- Source commit: \`${SOURCE_COMMIT}\`"
+            echo "- Infrastructure decision: \`${INFRA_COMMIT}\`"
+            echo "- Reason: ${REASON}"
+          } >> "${GITHUB_STEP_SUMMARY}"
