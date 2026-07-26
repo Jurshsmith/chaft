@@ -27,6 +27,7 @@ CLASSIFIER_JOB = "classify"
 SCOPE_NAMES = (
     "website",
     "rust",
+    "rust_test",
     "rust_smoke",
     "benchmark",
     "desktop_contract",
@@ -40,9 +41,11 @@ RUNNABLE_SCOPES = SCOPE_NAMES[:-1]
 # Job identifiers are intentionally underscore-separated so workflow
 # expressions can use needs.<job>.result without bracket syntax.
 JOB_SCOPES: Mapping[str, tuple[str, ...]] = {
+    "artifact_v7_producer": ("full",),
+    "artifact_v8_consumer": ("full",),
     "website": ("website",),
     "rust_quality": ("rust",),
-    "rust_tests": ("rust",),
+    "rust_tests": ("rust_test",),
     "rust_smokes": ("rust_smoke",),
     "benchmark_compile": ("benchmark",),
     "desktop_contracts": ("desktop_contract", "desktop"),

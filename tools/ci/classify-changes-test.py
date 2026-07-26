@@ -81,23 +81,48 @@ class PathClassificationTests(unittest.TestCase):
                 result = self.classify(path)
                 self.assertEqual(
                     enabled(result),
-                    {"rust", "rust_smoke", "desktop_contract", "desktop"},
+                    {
+                        "rust",
+                        "rust_test",
+                        "rust_smoke",
+                        "desktop_contract",
+                        "desktop",
+                    },
                 )
 
-    def test_node_source_is_rust_only(self) -> None:
+    def test_node_source_reaches_desktop_live_sync(self) -> None:
         result = self.classify("apps/chaft-node/src/main.rs")
-        self.assertEqual(enabled(result), {"rust", "rust_smoke"})
+        self.assertEqual(
+            enabled(result),
+            {
+                "rust",
+                "rust_test",
+                "rust_smoke",
+                "desktop_contract",
+                "desktop",
+            },
+        )
 
     def test_cli_source_reaches_desktop_smoke(self) -> None:
         result = self.classify("apps/chaft-cli/src/main.rs")
         self.assertEqual(
             enabled(result),
-            {"rust", "rust_smoke", "desktop_contract", "desktop"},
+            {
+                "rust",
+                "rust_test",
+                "rust_smoke",
+                "desktop_contract",
+                "desktop",
+            },
         )
 
     def test_benchmark_change_has_dedicated_coverage(self) -> None:
         result = self.classify("benchmarks/benches/hot_paths.rs")
         self.assertEqual(enabled(result), {"rust", "benchmark"})
+
+    def test_workspace_test_change_runs_quality_and_tests_without_smokes(self) -> None:
+        result = self.classify("tests/protocol-golden/new-vector.json")
+        self.assertEqual(enabled(result), {"rust", "rust_test"})
 
     def test_rust_smoke_script_only_runs_smoke_job(self) -> None:
         result = self.classify("tools/smoke/local-p2p.sh")
@@ -114,6 +139,12 @@ class PathClassificationTests(unittest.TestCase):
             "apps/desktop-qt/qml/Chaft/features/timeline/TimelineView.qml"
         )
         self.assertEqual(enabled(result), {"desktop_contract", "desktop"})
+
+    def test_desktop_test_change_runs_once_in_linux_contracts(self) -> None:
+        result = self.classify(
+            "apps/desktop-qt/tests/check_reactivity_contract.py"
+        )
+        self.assertEqual(enabled(result), {"desktop_contract"})
 
     def test_desktop_cmake_change_reaches_package_validation(self) -> None:
         result = self.classify("apps/desktop-qt/CMakeLists.txt")
@@ -132,6 +163,13 @@ class PathClassificationTests(unittest.TestCase):
                 result = self.classify(path)
                 self.assertEqual(enabled(result), {"release_contract", "package"})
 
+    def test_desktop_build_script_reaches_debug_and_package_consumers(self) -> None:
+        result = self.classify("tools/desktop/build.sh")
+        self.assertEqual(
+            enabled(result),
+            {"desktop", "release_contract", "package"},
+        )
+
     def test_root_cargo_inputs_cover_benchmark_desktop_and_package(self) -> None:
         for path in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
             with self.subTest(path=path):
@@ -140,6 +178,7 @@ class PathClassificationTests(unittest.TestCase):
                     enabled(result),
                     {
                         "rust",
+                        "rust_test",
                         "rust_smoke",
                         "benchmark",
                         "desktop_contract",
@@ -156,6 +195,7 @@ class PathClassificationTests(unittest.TestCase):
             {
                 "website",
                 "rust",
+                "rust_test",
                 "rust_smoke",
                 "desktop_contract",
                 "desktop",
@@ -247,6 +287,7 @@ class GitDiffParsingTests(unittest.TestCase):
             {
                 "website",
                 "rust",
+                "rust_test",
                 "rust_smoke",
                 "desktop_contract",
                 "desktop",

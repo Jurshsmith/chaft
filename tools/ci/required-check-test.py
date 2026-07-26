@@ -71,6 +71,22 @@ class RequiredTruthTableTests(unittest.TestCase):
         self.assertTrue(evaluation.passed, evaluation.errors)
         self.assertTrue(all(job.expected for job in evaluation.jobs))
 
+    def test_artifact_contract_jobs_are_required_only_for_full_runs(self) -> None:
+        scoped = required.evaluate_needs(needs_fixture({"rust"}))
+        artifact_jobs = {
+            job.job: job for job in scoped.jobs if job.job.startswith("artifact_")
+        }
+        self.assertEqual(set(artifact_jobs), {"artifact_v7_producer", "artifact_v8_consumer"})
+        self.assertTrue(all(not job.expected for job in artifact_jobs.values()))
+
+        needs = needs_fixture(set(required.SCOPE_NAMES))
+        needs["artifact_v8_consumer"]["result"] = "skipped"
+        full = required.evaluate_needs(needs)
+        self.assertFalse(full.passed)
+        self.assertTrue(
+            any("artifact_v8_consumer" in error for error in full.errors)
+        )
+
     def test_enabled_job_result_truth_table(self) -> None:
         for result, expected_pass in (
             ("success", True),
@@ -244,7 +260,7 @@ class RequiredOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             summary = Path(directory) / "summary"
-            needs = needs_fixture({"rust"})
+            needs = needs_fixture({"rust_test"})
             needs["rust_tests"]["result"] = "skipped"
             with redirect_stdout(io.StringIO()):
                 status = required.main(

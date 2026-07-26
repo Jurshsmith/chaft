@@ -36,6 +36,7 @@ from typing import Iterable, Mapping, Sequence
 SCOPE_NAMES = (
     "website",
     "rust",
+    "rust_test",
     "rust_smoke",
     "benchmark",
     "desktop_contract",
@@ -70,7 +71,7 @@ RUST_WORKSPACE_PREFIXES = (
     "tests/",
 )
 DESKTOP_RUST_PREFIXES = tuple(
-    prefix for prefix in RUST_WORKSPACE_PREFIXES if prefix != "apps/chaft-node/"
+    prefix for prefix in RUST_WORKSPACE_PREFIXES if prefix != "tests/"
 )
 ROOT_RUST_RELEASE_INPUTS = frozenset(
     {
@@ -93,7 +94,6 @@ DESKTOP_CONTRACT_TOOLS = frozenset(
 )
 DESKTOP_RUNTIME_TOOLS = frozenset(
     {
-        "tools/desktop/build.sh",
         "tools/desktop/empty-workspace-smoke.sh",
         "tools/desktop/launch-users.sh",
         "tools/desktop/launch.sh",
@@ -185,12 +185,7 @@ def classify_path(path: str) -> PathImpact:
 
     if path.startswith(".github/"):
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
-    if path in {
-        "tools/ci/classify-changes.py",
-        "tools/ci/classify-changes-test.py",
-        "tools/ci/required-check.py",
-        "tools/ci/required-check-test.py",
-    }:
+    if path.startswith("tools/ci/") and path != "tools/ci/rust-gates.sh":
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
     if path == "Makefile":
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
@@ -215,6 +210,7 @@ def classify_path(path: str) -> PathImpact:
             frozenset(
                 {
                     "rust",
+                    "rust_test",
                     "rust_smoke",
                     "benchmark",
                     "desktop_contract",
@@ -231,7 +227,9 @@ def classify_path(path: str) -> PathImpact:
         return PathImpact(frozenset({"rust", "benchmark"}))
 
     if _has_prefix(path, RUST_WORKSPACE_PREFIXES):
-        scopes = {"rust", "rust_smoke"}
+        scopes = {"rust", "rust_test", "rust_smoke"}
+        if path.startswith("tests/"):
+            scopes.discard("rust_smoke")
         if _has_prefix(path, DESKTOP_RUST_PREFIXES):
             scopes.update({"desktop_contract", "desktop"})
         return PathImpact(frozenset(scopes))
@@ -249,11 +247,12 @@ def classify_path(path: str) -> PathImpact:
         )
 
     if path.startswith("apps/desktop-qt/"):
+        if path.startswith("apps/desktop-qt/tests/"):
+            return PathImpact(frozenset({"desktop_contract"}))
         scopes = {"desktop"}
         if (
             path.startswith("apps/desktop-qt/qml/")
             or path.startswith("apps/desktop-qt/src/")
-            or path.startswith("apps/desktop-qt/tests/")
             or path == "apps/desktop-qt/CMakeLists.txt"
         ):
             scopes.add("desktop_contract")
@@ -265,7 +264,9 @@ def classify_path(path: str) -> PathImpact:
         return PathImpact(frozenset({"release_contract", "package"}))
 
     if path == "tools/ci/rust-gates.sh":
-        return PathImpact(frozenset({"rust", "rust_smoke", "benchmark"}))
+        return PathImpact(
+            frozenset({"rust", "rust_test", "rust_smoke", "benchmark"})
+        )
 
     if path == "tools/smoke/visual-workspace.sh":
         return PathImpact(frozenset({"rust_smoke", "desktop_contract", "desktop"}))
@@ -274,6 +275,10 @@ def classify_path(path: str) -> PathImpact:
 
     if path in DESKTOP_CONTRACT_TOOLS:
         return PathImpact(frozenset({"desktop_contract"}))
+    if path == "tools/desktop/build.sh":
+        return PathImpact(
+            frozenset({"desktop", "release_contract", "package"})
+        )
     if path in DESKTOP_RUNTIME_TOOLS or (
         path.startswith("tools/desktop/screenshot-baseline")
         and path.endswith(".json")
