@@ -4,7 +4,7 @@ description: How Chaft devices discover explicit peers, synchronize signed event
 section: concepts
 order: 3
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 

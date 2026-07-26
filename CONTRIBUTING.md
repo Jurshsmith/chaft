@@ -131,7 +131,7 @@ description: A one-sentence summary
 section: getting-started
 order: 1
 audience: users
-status: preview
+status: canary
 draft: false
 ---
 ```

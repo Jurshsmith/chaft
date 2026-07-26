@@ -153,7 +153,7 @@ detached signature for every package. A checksummed-only Linux release must not
 include detached signatures. Unexpected assets stop the promotion so the
 published namespace cannot silently diverge from the website evidence.
 
-The preview manifest intentionally points to GitHub Releases without claiming
+The canary manifest intentionally points to GitHub Releases without claiming
 that current development packages are signed production downloads.
 
 ## Deployment foundation

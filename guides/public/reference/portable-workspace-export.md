@@ -4,7 +4,7 @@ description: Create and validate Chaft's plaintext workspace ZIP for offline rea
 section: reference
 order: 20
 audience: users
-status: preview
+status: canary
 draft: false
 ---
 

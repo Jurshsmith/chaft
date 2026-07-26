@@ -23,7 +23,7 @@ function entry(
       section,
       order,
       audience: "users",
-      status: "preview",
+      status: "canary",
       draft,
     },
   };

@@ -89,7 +89,7 @@ description: ${document.description}
 section: ${document.section}
 order: ${document.order}
 audience: users
-status: preview
+status: canary
 draft: ${document.draft}
 ---
 

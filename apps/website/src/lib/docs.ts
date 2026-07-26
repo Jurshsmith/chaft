@@ -7,7 +7,7 @@ export const DOC_SECTION_ORDER = [
 
 export type DocSection = (typeof DOC_SECTION_ORDER)[number];
 export type DocAudience = "users" | "contributors" | "operators";
-export type DocStatus = "preview" | "stable" | "deprecated";
+export type DocStatus = "canary" | "stable" | "deprecated";
 
 export const DOC_SECTION_LABELS: Record<DocSection, string> = {
   "getting-started": "Getting started",

@@ -4,7 +4,7 @@ description: Use the Chaft developer CLI, including safe identity and recovery p
 section: reference
 order: 10
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 
@@ -13,7 +13,7 @@ draft: false
 `chaft-cli` is a developer and recovery interface to the local-first runtime.
 It can create and inspect local workspaces, exercise replication, manage
 attachments and keys, produce recovery material, and create portable exports.
-Its command surface is still preview-quality and may change before a stable
+Its command surface is still canary-stage and may change before a stable
 release.
 
 Run commands from the repository root:

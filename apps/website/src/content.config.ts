@@ -16,7 +16,7 @@ const docs = defineCollection({
     section: z.enum(["getting-started", "concepts", "development", "reference"]),
     order: z.number().int().nonnegative(),
     audience: z.enum(["users", "contributors", "operators"]),
-    status: z.enum(["preview", "stable", "deprecated"]),
+    status: z.enum(["canary", "stable", "deprecated"]),
     draft: z.boolean().default(false),
     navTitle: z.string().trim().min(1).optional(),
   }),
