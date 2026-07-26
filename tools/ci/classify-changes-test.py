@@ -124,6 +124,46 @@ class PathClassificationTests(unittest.TestCase):
         result = self.classify("tests/protocol-golden/new-vector.json")
         self.assertEqual(enabled(result), {"rust", "rust_test"})
 
+    def test_crate_tests_and_reviewed_contract_fixtures_avoid_desktop(self) -> None:
+        paths = (
+            "apps/chaft-cli/tests/secret_input_subprocess.rs",
+            "bindings/ffi/src/tests.rs",
+            "bindings/ffi/ffi-exports.txt",
+            "bindings/ffi/ffi-json-contract.snapshot.json",
+            "network/direct/tests/direct_peer_sync.rs",
+            "network/sync/tests/two_peer_sync.rs",
+            "runtime/tests/fixtures/portable-workspace-v2.json",
+            "runtime/tests/sync_efficiency.rs",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(enabled(result), {"rust", "rust_test"})
+                self.assertFalse(result.scopes["desktop_contract"])
+                self.assertFalse(result.scopes["desktop"])
+                self.assertFalse(result.scopes["rust_smoke"])
+
+    def test_uncertain_rust_source_and_build_inputs_remain_desktop_impacting(
+        self,
+    ) -> None:
+        for path in (
+            "bindings/ffi/src/snapshot.rs",
+            "network/direct/build.rs",
+            "runtime/src/runtime_validation.rs",
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(
+                    enabled(result),
+                    {
+                        "rust",
+                        "rust_test",
+                        "rust_smoke",
+                        "desktop_contract",
+                        "desktop",
+                    },
+                )
+
     def test_rust_smoke_script_only_runs_smoke_job(self) -> None:
         result = self.classify("tools/smoke/local-p2p.sh")
         self.assertEqual(enabled(result), {"rust_smoke"})

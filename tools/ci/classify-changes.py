@@ -70,6 +70,13 @@ RUST_WORKSPACE_PREFIXES = (
     "storage/",
     "tests/",
 )
+RUST_TEST_ONLY_FILES = frozenset(
+    {
+        "bindings/ffi/ffi-exports.txt",
+        "bindings/ffi/ffi-json-contract.snapshot.json",
+        "bindings/ffi/src/tests.rs",
+    }
+)
 DESKTOP_RUST_PREFIXES = tuple(
     prefix for prefix in RUST_WORKSPACE_PREFIXES if prefix != "tests/"
 )
@@ -164,6 +171,14 @@ def _has_prefix(path: str, prefixes: Iterable[str]) -> bool:
     return any(path.startswith(prefix) for prefix in prefixes)
 
 
+def _is_rust_test_only(path: str) -> bool:
+    if path in RUST_TEST_ONLY_FILES:
+        return True
+    if not _has_prefix(path, RUST_WORKSPACE_PREFIXES):
+        return False
+    return path.startswith("tests/") or "/tests/" in path
+
+
 def _validated_path(path: str) -> str:
     if not path:
         raise ClassificationError("changed path is empty")
@@ -226,10 +241,11 @@ def classify_path(path: str) -> PathImpact:
     if path.startswith("benchmarks/"):
         return PathImpact(frozenset({"rust", "benchmark"}))
 
+    if _is_rust_test_only(path):
+        return PathImpact(frozenset({"rust", "rust_test"}))
+
     if _has_prefix(path, RUST_WORKSPACE_PREFIXES):
         scopes = {"rust", "rust_test", "rust_smoke"}
-        if path.startswith("tests/"):
-            scopes.discard("rust_smoke")
         if _has_prefix(path, DESKTOP_RUST_PREFIXES):
             scopes.update({"desktop_contract", "desktop"})
         return PathImpact(frozenset(scopes))
