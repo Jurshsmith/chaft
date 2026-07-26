@@ -3,7 +3,10 @@ param(
     [string]$PackageDirectory,
 
     [Parameter(Mandatory = $true)]
-    [string]$ExpectedVersion
+    [Alias("ExpectedVersion")]
+    [string]$ExpectedSourceVersion,
+
+    [string]$ExpectedDistributionVersion = $env:CHAFT_DISTRIBUTION_VERSION
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +16,13 @@ $packageRoot = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $archives = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.zip")
 if ($archives.Count -ne 1) {
     throw "Expected exactly one ZIP in $packageRoot, found $($archives.Count)"
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedDistributionVersion)) {
+    $ExpectedDistributionVersion = $ExpectedSourceVersion
+}
+$expectedArchiveName = "Chaft-$ExpectedDistributionVersion-Windows-x86_64.zip"
+if ($archives[0].Name -cne $expectedArchiveName) {
+    throw "Expected ZIP filename $expectedArchiveName, got $($archives[0].Name)"
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -173,8 +183,8 @@ try {
     if ($versionInfo.FileDescription -ne "Chaft Desktop") {
         throw "Unexpected Windows FileDescription: $($versionInfo.FileDescription)"
     }
-    if (-not $versionInfo.ProductVersion.StartsWith($ExpectedVersion)) {
-        throw "Expected ProductVersion $ExpectedVersion, got $($versionInfo.ProductVersion)"
+    if (-not $versionInfo.ProductVersion.StartsWith($ExpectedSourceVersion)) {
+        throw "Expected ProductVersion $ExpectedSourceVersion, got $($versionInfo.ProductVersion)"
     }
 
     foreach ($name in @(

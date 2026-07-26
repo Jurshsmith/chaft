@@ -87,13 +87,21 @@ fi
 
 "$qt_xcb_runtime_check" "$qt_prefix"
 
-version="$(python3 "$script_dir/release-version.py" --print-version)"
+source_version="$(
+  python3 "$script_dir/release-version.py" --print-source-version
+)"
+distribution_version="${CHAFT_DISTRIBUTION_VERSION:-$source_version}"
+distribution_version="$(
+  python3 "$script_dir/release-version.py" \
+    --distribution-version "$distribution_version" \
+    --print-distribution-version
+)"
 build_dir="$repo_root/build/$preset"
 package_dir="$build_dir/package"
 work_dir="$build_dir/appimage"
 app_dir="$work_dir/Chaft.AppDir"
 tool_dir="$work_dir/tools"
-output_path="$package_dir/Chaft-$version-$architecture.AppImage"
+output_path="$package_dir/Chaft-$distribution_version-Linux-$architecture.AppImage"
 
 rm -rf "$work_dir" "$package_dir"
 mkdir -p "$app_dir" "$package_dir" "$tool_dir"
@@ -124,7 +132,7 @@ ln -s "$linuxdeploy_plugin_appimage" \
 
 PATH="$tool_dir:$PATH" \
 ARCH="$architecture" \
-VERSION="$version" \
+VERSION="$distribution_version" \
 OUTPUT="$output_path" \
 APPIMAGE_EXTRACT_AND_RUN=1 \
 LD_LIBRARY_PATH="$qt_library_dir" \

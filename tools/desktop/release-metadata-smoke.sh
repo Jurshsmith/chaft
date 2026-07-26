@@ -147,6 +147,8 @@ signature_dir="$smoke_dir/signature-package"
 orphan_signature_dir="$smoke_dir/orphan-signature-package"
 platform_mismatch_dir="$smoke_dir/platform-mismatch-package"
 qt_binding_dir="$smoke_dir/qt-binding-package"
+canary_dir="$smoke_dir/canary-package"
+invalid_canary_dir="$smoke_dir/invalid-canary-package"
 
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.tar.gz"
 write_artifact "$linux_dir" "Chaft-0.1.0-Linux.AppImage"
@@ -165,6 +167,8 @@ write_signature "$signature_dir" "Chaft-0.1.0-Signed.AppImage" ".sig"
 write_artifact "$orphan_signature_dir" "Chaft-0.1.0-Orphan.AppImage"
 write_artifact "$platform_mismatch_dir" "Chaft-0.1.0-Wrong-Platform.tar.gz"
 write_artifact "$qt_binding_dir" "Chaft-0.1.0-Qt-Binding.tar.gz"
+write_artifact "$canary_dir" "Chaft-0.1.0-canary.1-Linux-x86_64.AppImage"
+write_artifact "$invalid_canary_dir" "Chaft-0.1.0-canary.1-Linux.AppImage"
 
 for row in \
   "Linux:$linux_dir" \
@@ -195,6 +199,57 @@ do
   assert_not_file "$package_dir/chaft-desktop-sbom.cdx.json"
   assert_not_file "$package_dir/chaft-desktop-provenance.json"
 done
+
+CHAFT_DISTRIBUTION_VERSION=0.1.0-canary.1 \
+  python3 "$repo_root/tools/desktop/release-metadata.py" release \
+    --package-dir "$canary_dir" \
+    --platform Linux
+python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+  --package-dir "$canary_dir" \
+  --platform Linux \
+  --expected-source-version 0.1.0 \
+  --expected-distribution-version 0.1.0-canary.1
+python3 - \
+  "$canary_dir/chaft-desktop-linux-sbom.cdx.json" \
+  "$canary_dir/chaft-desktop-linux-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sbom = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+provenance = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+component = sbom["metadata"]["component"]
+properties = {
+    item["name"]: item["value"]
+    for item in sbom["metadata"]["properties"]
+}
+if component["version"] != "0.1.0-canary.1":
+    raise SystemExit("canary SBOM component does not use distribution version")
+if properties.get("chaft:sourceVersion") != "0.1.0":
+    raise SystemExit("canary SBOM does not retain stable source version")
+if properties.get("chaft:distributionVersion") != "0.1.0-canary.1":
+    raise SystemExit("canary SBOM distribution version is missing")
+if provenance.get("sourceVersion") != "0.1.0":
+    raise SystemExit("canary provenance does not retain stable source version")
+if provenance.get("distributionVersion") != "0.1.0-canary.1":
+    raise SystemExit("canary provenance distribution version is missing")
+if provenance.get("version") != "0.1.0-canary.1":
+    raise SystemExit("canary provenance version alias is stale")
+PY
+expect_failure "incorrect canary native package filename" \
+  env CHAFT_DISTRIBUTION_VERSION=0.1.0-canary.1 \
+  python3 "$repo_root/tools/desktop/release-metadata.py" release \
+    --package-dir "$invalid_canary_dir" \
+    --platform Linux
+expect_failure "canary filename with omitted distribution version input" \
+  python3 "$repo_root/tools/desktop/release-metadata.py" release \
+    --package-dir "$canary_dir" \
+    --platform Linux
+expect_failure "mismatched expected canary distribution version" \
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$canary_dir" \
+    --platform Linux \
+    --expected-distribution-version 0.1.0-canary.2
 
 python3 "$repo_root/tools/desktop/release-metadata.py" release \
   --package-dir "$qt_binding_dir" \

@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+
 usage() {
   printf 'usage: %s DMG_OR_PACKAGE_DIRECTORY\n' "$0" >&2
 }
@@ -43,6 +45,28 @@ fi
 
 if [ ! -f "$dmg_path" ]; then
   printf 'DMG not found: %s\n' "$dmg_path" >&2
+  exit 1
+fi
+
+source_version="$(
+  python3 "$script_dir/release-version.py" --print-source-version
+)"
+if [ -n "${CHAFT_SOURCE_VERSION:-}" ] \
+    && [ "$CHAFT_SOURCE_VERSION" != "$source_version" ]; then
+  printf 'expected source version %s, repository declares %s\n' \
+    "$CHAFT_SOURCE_VERSION" "$source_version" >&2
+  exit 1
+fi
+distribution_version="${CHAFT_DISTRIBUTION_VERSION:-$source_version}"
+distribution_version="$(
+  python3 "$script_dir/release-version.py" \
+    --distribution-version "$distribution_version" \
+    --print-distribution-version
+)"
+expected_name="Chaft-$distribution_version-macOS-x86_64.dmg"
+if [ "$(basename "$dmg_path")" != "$expected_name" ]; then
+  printf 'expected DMG filename %s, got %s\n' \
+    "$expected_name" "$(basename "$dmg_path")" >&2
   exit 1
 fi
 
@@ -134,6 +158,33 @@ do
     exit 1
   fi
 done
+
+plist_versions="$(
+  python3 - "$mounted_app/Contents/Info.plist" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    plist = plistlib.load(handle)
+for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+    value = plist.get(key)
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"macOS package Info.plist is missing {key}")
+    print(value)
+PY
+)"
+short_version="$(printf '%s\n' "$plist_versions" | sed -n '1p')"
+bundle_version="$(printf '%s\n' "$plist_versions" | sed -n '2p')"
+if [ "$short_version" != "$source_version" ]; then
+  printf 'expected embedded macOS short version %s, got %s\n' \
+    "$source_version" "$short_version" >&2
+  exit 1
+fi
+if [ "$bundle_version" != "$source_version" ]; then
+  printf 'expected embedded macOS bundle version %s, got %s\n' \
+    "$source_version" "$bundle_version" >&2
+  exit 1
+fi
 
 # Keep the full DMG-derived bundle, but avoid a .app suffix because direct
 # executable launches from .app bundles can be left launched-suspended by

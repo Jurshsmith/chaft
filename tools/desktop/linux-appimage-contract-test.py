@@ -267,6 +267,8 @@ appimage_smoke_script = (
 ).read_text(encoding="utf-8")
 for required_contract in (
     "--library \"$ffi_library\"",
+    "--print-distribution-version",
+    'output_path="$package_dir/Chaft-$distribution_version-Linux-$architecture.AppImage"',
     'qt_prefix="${QTDIR:-${QT_ROOT_DIR:-}}"',
     'qt_quick_library="$qt_library_dir/libQt6Quick.so.6"',
     'LD_LIBRARY_PATH="$qt_library_dir"',
@@ -316,6 +318,7 @@ for required_contract in (
     "CHAFT_APPIMAGE_SMOKE_EXPECT_NO_WORKSPACE",
     "CHAFT_APPIMAGE_SMOKE_EXPECT_TEXT",
     "CHAFT_APPIMAGE_SMOKE_WORKSPACE_ID",
+    'expected_name="Chaft-$distribution_version-Linux-x86_64.AppImage"',
 ):
     if required_contract not in appimage_smoke_script:
         fail(
@@ -440,6 +443,14 @@ for required_destination in (
 ):
     if required_destination not in cmake:
         fail(f"CMake install rules omit package notice destination: {required_destination}")
+for required_package_name in (
+    "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-x86_64",
+    "Chaft-${CHAFT_DISTRIBUTION_VERSION}-Windows-x86_64",
+):
+    if required_package_name not in cmake:
+        fail(f"CMake omits distribution package name: {required_package_name}")
+if 'CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"' not in cmake:
+    fail("native embedded desktop version must remain the stable source version")
 
 for smoke_name in (
     "appimage-smoke.sh",
@@ -451,6 +462,18 @@ for smoke_name in (
     for required_file in PACKAGE_NOTICE_FILES:
         if required_file not in smoke:
             fail(f"{smoke_path} does not verify package notice: {required_file}")
+
+windows_smoke = (
+    ROOT / "tools" / "desktop" / "windows-zip-smoke.ps1"
+).read_text(encoding="utf-8")
+for required_contract in (
+    "ExpectedDistributionVersion",
+    '"Chaft-$ExpectedDistributionVersion-Windows-x86_64.zip"',
+    "ProductVersion.StartsWith($ExpectedSourceVersion)",
+    '[Alias("ExpectedVersion")]',
+):
+    if required_contract not in windows_smoke:
+        fail(f"Windows package smoke is missing version contract: {required_contract}")
 
 package_smoke = (
     ROOT / "tools" / "desktop" / "package-smoke.sh"

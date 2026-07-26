@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -26,6 +27,29 @@ PACKAGE_FORMATS = (
     (".exe", "windows", "windows-exe"),
 )
 SIGNATURE_SUFFIXES = (".sig", ".asc")
+PRERELEASE_PACKAGE_NAMES = {
+    "linux": "Chaft-{version}-Linux-x86_64.AppImage",
+    "macos": "Chaft-{version}-macOS-x86_64.dmg",
+    "windows": "Chaft-{version}-Windows-x86_64.zip",
+}
+CANONICAL_PACKAGE_SUFFIXES = {
+    "linux": "-Linux-x86_64.AppImage",
+    "macos": "-macOS-x86_64.dmg",
+    "windows": "-Windows-x86_64.zip",
+}
+
+
+def load_release_version_module():
+    path = Path(__file__).with_name("release-version.py")
+    spec = importlib.util.spec_from_file_location("chaft_release_version", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"unable to load release version contract: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+release_version = load_release_version_module()
 
 
 def package_format(name):
@@ -181,6 +205,37 @@ def verify_platform_packages(packages, platform_name):
         )
 
 
+def verify_distribution_packages(
+    packages, platform_name, distribution_version, prerelease
+):
+    prefix = f"Chaft-{distribution_version}-"
+    unexpected = [path.name for path in packages if not path.name.startswith(prefix)]
+    if unexpected:
+        raise SystemExit(
+            "package filename does not contain the exact distribution version: "
+            + ", ".join(sorted(unexpected))
+        )
+    canonical_suffix = CANONICAL_PACKAGE_SUFFIXES[platform_name]
+    for path in packages:
+        if path.name.startswith("Chaft-") and path.name.endswith(canonical_suffix):
+            filename_version = path.name[len("Chaft-") : -len(canonical_suffix)]
+            if filename_version != distribution_version:
+                raise SystemExit(
+                    f"{path.name} embeds distribution version {filename_version}, "
+                    f"expected {distribution_version}"
+                )
+    if prerelease is not None:
+        expected = PRERELEASE_PACKAGE_NAMES[platform_name].format(
+            version=distribution_version
+        )
+        actual = [path.name for path in packages]
+        if actual != [expected]:
+            raise SystemExit(
+                f"{platform_name} prerelease package must be exactly {expected}; "
+                f"found {', '.join(actual)}"
+            )
+
+
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -254,11 +309,15 @@ def qt_release_record(root, platform_name):
     }
 
 
-def project_version(root):
-    cmake = root / "apps" / "desktop-qt" / "CMakeLists.txt"
-    text = cmake.read_text(encoding="utf-8")
-    match = re.search(r"project\(ChaftDesktop\s+VERSION\s+([^\s\)]+)", text)
-    return match.group(1) if match else "0.0.0"
+def release_versions(root, declared_distribution_version):
+    source_version, _ = release_version.validated_source_version(root)
+    distribution_version = declared_distribution_version or source_version
+    distribution_version, prerelease = (
+        release_version.validated_distribution_version(
+            distribution_version, source_version
+        )
+    )
+    return source_version, distribution_version, prerelease
 
 
 def cargo_metadata(root):
@@ -372,7 +431,16 @@ def write_checksums(package_dir, artifacts, names):
     return checksum_path
 
 
-def write_sbom(root, package_dir, version, artifacts, tools, platform_name, names):
+def write_sbom(
+    root,
+    package_dir,
+    source_version,
+    distribution_version,
+    artifacts,
+    tools,
+    platform_name,
+    names,
+):
     metadata = cargo_metadata(root)
     sbom = {
         "bomFormat": "CycloneDX",
@@ -384,8 +452,8 @@ def write_sbom(root, package_dir, version, artifacts, tools, platform_name, name
             "component": {
                 "type": "application",
                 "name": "Chaft Desktop",
-                "version": version,
-                "bom-ref": f"pkg:generic/chaft-desktop@{version}",
+                "version": distribution_version,
+                "bom-ref": f"pkg:generic/chaft-desktop@{distribution_version}",
             },
             "tools": {
                 "components": [
@@ -396,6 +464,11 @@ def write_sbom(root, package_dir, version, artifacts, tools, platform_name, name
             },
             "properties": [
                 {"name": "chaft:sourceCommit", "value": source_context(root).get("commit") or ""},
+                {"name": "chaft:sourceVersion", "value": source_version},
+                {
+                    "name": "chaft:distributionVersion",
+                    "value": distribution_version,
+                },
                 {"name": "chaft:platform", "value": platform.platform()},
                 {"name": "chaft:packagePlatform", "value": platform_name},
             ],
@@ -438,7 +511,8 @@ def write_provenance(
     root,
     package_dir,
     profile,
-    version,
+    source_version,
+    distribution_version,
     artifacts,
     tools,
     platform_name,
@@ -449,7 +523,9 @@ def write_provenance(
         "schemaVersion": "chaft.desktop.provenance.v1",
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "name": "Chaft Desktop release package",
-        "version": version,
+        "version": distribution_version,
+        "sourceVersion": source_version,
+        "distributionVersion": distribution_version,
         "profile": profile,
         "packagePlatform": platform_name,
         "source": source_context(root),
@@ -482,6 +558,14 @@ def main():
         default=current_platform_name(),
         help="Package platform: Linux, macOS, or Windows (defaults to the runner OS).",
     )
+    parser.add_argument(
+        "--distribution-version",
+        default=os.environ.get("CHAFT_DISTRIBUTION_VERSION"),
+        help=(
+            "Exact SemVer package version. Defaults to "
+            "CHAFT_DISTRIBUTION_VERSION, then the stable source version."
+        ),
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -494,19 +578,24 @@ def main():
         raise SystemExit(f"no package artifacts found in {package_dir}")
     platform_name = normalized_platform_name(args.platform)
     names = metadata_names(platform_name)
+    source_version, distribution_version, prerelease = release_versions(
+        root, args.distribution_version
+    )
     verify_platform_packages(packages, platform_name)
+    verify_distribution_packages(
+        packages, platform_name, distribution_version, prerelease
+    )
     signatures = signature_files(package_dir, packages)
 
     artifacts = artifact_rows(packages, signatures)
     tools = tool_versions()
-    version = project_version(root)
-
     generated = [
         write_checksums(package_dir, artifacts, names),
         write_sbom(
             root,
             package_dir,
-            version,
+            source_version,
+            distribution_version,
             artifacts,
             tools,
             platform_name,
@@ -516,7 +605,8 @@ def main():
             root,
             package_dir,
             args.profile,
-            version,
+            source_version,
+            distribution_version,
             artifacts,
             tools,
             platform_name,

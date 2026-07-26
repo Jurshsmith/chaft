@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -24,11 +25,36 @@ PACKAGE_FORMATS = (
     (".exe", "windows", "windows-exe"),
 )
 SIGNATURE_SUFFIXES = (".sig", ".asc")
+PRERELEASE_PACKAGE_NAMES = {
+    "linux": "Chaft-{version}-Linux-x86_64.AppImage",
+    "macos": "Chaft-{version}-macOS-x86_64.dmg",
+    "windows": "Chaft-{version}-Windows-x86_64.zip",
+}
+CANONICAL_PACKAGE_SUFFIXES = {
+    "linux": "-Linux-x86_64.AppImage",
+    "macos": "-macOS-x86_64.dmg",
+    "windows": "-Windows-x86_64.zip",
+}
 SOURCE_MATERIALS = (
     "Cargo.lock",
     "Cargo.toml",
     "apps/desktop-qt/CMakeLists.txt",
 )
+
+
+def load_release_version_module():
+    path = Path(__file__).with_name("release-version.py")
+    spec = importlib.util.spec_from_file_location(
+        "chaft_release_version_verify", path
+    )
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"unable to load release version contract: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+release_version = load_release_version_module()
 
 
 def fail(message):
@@ -286,6 +312,37 @@ def verify_platform_package_shape(artifacts, platform_name):
         )
 
 
+def verify_distribution_package_shape(
+    packages, platform_name, distribution_version, prerelease
+):
+    prefix = f"Chaft-{distribution_version}-"
+    unexpected = [path.name for path in packages if not path.name.startswith(prefix)]
+    if unexpected:
+        fail(
+            "package filename does not contain the exact distribution version: "
+            + ", ".join(sorted(unexpected))
+        )
+    canonical_suffix = CANONICAL_PACKAGE_SUFFIXES[platform_name]
+    for path in packages:
+        if path.name.startswith("Chaft-") and path.name.endswith(canonical_suffix):
+            filename_version = path.name[len("Chaft-") : -len(canonical_suffix)]
+            if filename_version != distribution_version:
+                fail(
+                    f"{path.name} embeds distribution version {filename_version}, "
+                    f"expected {distribution_version}"
+                )
+    if prerelease is not None:
+        expected = PRERELEASE_PACKAGE_NAMES[platform_name].format(
+            version=distribution_version
+        )
+        actual = [path.name for path in packages]
+        if actual != [expected]:
+            fail(
+                f"{platform_name} prerelease package must be exactly {expected}; "
+                f"found {', '.join(actual)}"
+            )
+
+
 def metadata_property_map(metadata):
     properties = metadata.get("properties")
     if not isinstance(properties, list):
@@ -297,7 +354,15 @@ def metadata_property_map(metadata):
     }
 
 
-def verify_sbom(package_dir, artifacts, source_commit, platform_name, names):
+def verify_sbom(
+    package_dir,
+    artifacts,
+    source_commit,
+    source_version,
+    distribution_version,
+    platform_name,
+    names,
+):
     sbom = load_json(package_dir / names["sbom"])
     if sbom.get("bomFormat") != "CycloneDX":
         fail("SBOM bomFormat must be CycloneDX")
@@ -312,12 +377,26 @@ def verify_sbom(package_dir, artifacts, source_commit, platform_name, names):
     component = metadata.get("component")
     if not isinstance(component, dict) or component.get("name") != "Chaft Desktop":
         fail("SBOM metadata.component must describe Chaft Desktop")
+    if component.get("version") != distribution_version:
+        fail("SBOM component version does not match the distribution version")
+    if (
+        component.get("bom-ref")
+        != f"pkg:generic/chaft-desktop@{distribution_version}"
+    ):
+        fail("SBOM component bom-ref does not match the distribution version")
 
     metadata_properties = metadata_property_map(metadata)
     if metadata_properties.get("chaft:sourceCommit") != source_commit:
         fail("SBOM metadata source commit does not match provenance source.commit")
     if metadata_properties.get("chaft:packagePlatform") != platform_name:
         fail("SBOM package platform does not match its platform-qualified filename")
+    if metadata_properties.get("chaft:sourceVersion") != source_version:
+        fail("SBOM source version does not match the release source version")
+    if (
+        metadata_properties.get("chaft:distributionVersion")
+        != distribution_version
+    ):
+        fail("SBOM distribution version does not match provenance")
 
     components = sbom.get("components")
     if not isinstance(components, list) or not components:
@@ -501,12 +580,34 @@ def verify_provenance(
     names,
     source_root,
     expected_commit,
+    source_version,
+    expected_distribution_version,
     qt_source_bundle=None,
     qt_source_checksum=None,
 ):
     provenance = load_json(package_dir / names["provenance"])
     if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
         fail("provenance schemaVersion is unsupported")
+    if provenance.get("sourceVersion") != source_version:
+        fail("provenance sourceVersion does not match the release checkout")
+    distribution_version = provenance.get("distributionVersion")
+    if not isinstance(distribution_version, str):
+        fail("provenance distributionVersion is missing")
+    distribution_version, prerelease = (
+        release_version.validated_distribution_version(
+            distribution_version, source_version
+        )
+    )
+    if provenance.get("version") != distribution_version:
+        fail("provenance version alias does not match distributionVersion")
+    if (
+        expected_distribution_version is not None
+        and distribution_version != expected_distribution_version
+    ):
+        fail(
+            "provenance distributionVersion does not match the expected "
+            "distribution version"
+        )
     if provenance.get("profile") != profile:
         fail(f"provenance profile must be {profile!r}")
     if provenance.get("packagePlatform") != platform_name:
@@ -595,7 +696,7 @@ def verify_provenance(
         qt_source_bundle,
         qt_source_checksum,
     )
-    return provenance
+    return provenance, distribution_version, prerelease
 
 
 def main():
@@ -613,6 +714,22 @@ def main():
     parser.add_argument(
         "--expected-commit",
         help="Exact release commit expected in provenance and GitHub CI context.",
+    )
+    parser.add_argument(
+        "--expected-source-version",
+        default=os.environ.get("CHAFT_SOURCE_VERSION"),
+        help=(
+            "Stable source version expected in provenance and the source checkout. "
+            "Defaults to CHAFT_SOURCE_VERSION when set."
+        ),
+    )
+    parser.add_argument(
+        "--expected-distribution-version",
+        default=os.environ.get("CHAFT_DISTRIBUTION_VERSION"),
+        help=(
+            "Exact SemVer package version expected in filenames and metadata. "
+            "Defaults to CHAFT_DISTRIBUTION_VERSION when set."
+        ),
     )
     parser.add_argument(
         "--require-clean",
@@ -647,6 +764,22 @@ def main():
     expected_commit = (
         args.expected_commit.lower() if args.expected_commit is not None else None
     )
+    source_version, _ = release_version.validated_source_version(source_root)
+    if (
+        args.expected_source_version is not None
+        and args.expected_source_version != source_version
+    ):
+        fail(
+            "expected source version does not match the release checkout: "
+            f"{args.expected_source_version} != {source_version}"
+        )
+    expected_distribution_version = args.expected_distribution_version
+    if expected_distribution_version is not None:
+        expected_distribution_version, _ = (
+            release_version.validated_distribution_version(
+                expected_distribution_version, source_version
+            )
+        )
     package_dir = args.package_dir or source_root / "build" / f"desktop-{args.profile}" / "package"
     platform_name = normalized_platform_name(args.platform)
     names = metadata_names(platform_name)
@@ -658,7 +791,7 @@ def main():
 
     verify_platform_package_shape(artifacts, platform_name)
     verify_checksums(package_dir, artifacts, names)
-    provenance = verify_provenance(
+    provenance, distribution_version, prerelease = verify_provenance(
         package_dir,
         args.profile,
         artifacts,
@@ -667,13 +800,20 @@ def main():
         names,
         source_root,
         expected_commit,
+        source_version,
+        expected_distribution_version,
         args.qt_source_bundle,
         args.qt_source_checksum,
+    )
+    verify_distribution_package_shape(
+        packages, platform_name, distribution_version, prerelease
     )
     verify_sbom(
         package_dir,
         artifacts,
         provenance["source"]["commit"],
+        source_version,
+        distribution_version,
         platform_name,
         names,
     )

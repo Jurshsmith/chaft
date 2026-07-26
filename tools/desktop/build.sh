@@ -30,6 +30,16 @@ esac
 chaft_desktop_add_tool_paths
 "$script_dir/preflight.sh"
 
+source_version="$(
+  python3 "$script_dir/release-version.py" --print-source-version
+)"
+distribution_version="${CHAFT_DISTRIBUTION_VERSION:-$source_version}"
+distribution_version="$(
+  python3 "$script_dir/release-version.py" \
+    --distribution-version "$distribution_version" \
+    --print-distribution-version
+)"
+
 qt_prefix="$(chaft_desktop_qt_prefix || true)"
 ffi_library_name="$(chaft_desktop_ffi_library_name)"
 ffi_library="$repo_root/target/$rust_target_dir/$ffi_library_name"
@@ -38,7 +48,9 @@ cd "$repo_root"
 
 cargo build -p chaft-ffi $cargo_profile
 
-set -- "-DCHAFT_FFI_LIBRARY_PATH=$ffi_library"
+set -- \
+  "-DCHAFT_FFI_LIBRARY_PATH=$ffi_library" \
+  "-DCHAFT_DISTRIBUTION_VERSION=$distribution_version"
 if [ -n "$qt_prefix" ]; then
   set -- "-DCMAKE_PREFIX_PATH=$qt_prefix" "$@"
 fi
