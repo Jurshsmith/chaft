@@ -17,7 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CHAFT_QT_VERSION: 6.8.3
+  CHAFT_QT_VERSION: 6.8.4
 
 jobs:
   validate:
@@ -60,63 +60,30 @@ jobs:
           retention-days: 7
           archive: true
 
-  desktop_contracts:
-    name: Linux desktop contracts
-    needs: validate
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout validated commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.validate.outputs.commit }}
-          persist-credentials: false
-
-      - name: Set up Python for aqtinstall
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.3"
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
-        with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          cache: true
-
-      - name: Run platform-independent desktop contracts
-        run: tools/desktop/ci-gates.sh --stage contracts Linux
-
   build:
     name: Build ${{ matrix.name }} release input
-    needs:
-      - validate
-      - desktop_contracts
+    needs: validate
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-host: linux
-            qt-arch: linux_gcc_64
+            qt-platform: linux
             package-platform: Linux
             artifact-prefix: checksummed-linux-x86_64-release-input
             smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
-            qt-host: mac
-            qt-arch: clang_64
+            qt-platform: macos
             package-platform: macOS
             artifact-prefix: unsigned-macos-x86_64-release-input
             smoke-timeout-ms: ""
           - name: Windows
             os: windows-latest
-            qt-host: windows
-            qt-arch: win64_msvc2022_64
+            qt-platform: windows
             package-platform: Windows
             artifact-prefix: unsigned-windows-x86_64-release-input
             # A cold offscreen QML activation can block the hosted runner's
@@ -161,12 +128,51 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install --no-install-recommends -y \
             appstream \
+            build-essential \
             cmake \
             desktop-file-utils \
+            libatspi2.0-dev \
+            libcups2-dev \
+            libdbus-1-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libgl1-mesa-dev \
+            libinput-dev \
+            libudev-dev \
+            libwayland-dev \
+            libwayland-egl-backend-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb-cursor-dev \
+            libxcb-glx0-dev \
+            libxcb-icccm4-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-randr0-dev \
+            libxcb-render0-dev \
+            libxcb-render-util0-dev \
+            libxcb-shape0-dev \
+            libxcb-shm0-dev \
+            libxcb-sync-dev \
+            libxcb-util-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xkb-dev \
+            libxcb-xinerama0-dev \
+            libxcb1-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrender-dev \
             ninja-build \
-            patchelf
+            patchelf \
+            perl \
+            wayland-protocols
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -176,19 +182,51 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ninja --no-progress -y
 
-      - name: Set up Python for aqtinstall
+      - name: Set up Python for deterministic Qt tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.3"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform "${{ matrix.qt-platform }}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore main-branch Qt SDK when available
+        id: qt-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: ${{ matrix.qt-host }}
-          target: desktop
-          arch: ${{ matrix.qt-arch }}
-          cache: true
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build exact Qt SDK on cache miss
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform "${{ matrix.qt-platform }}"
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+
+      - name: Activate and verify exact Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --platform "${{ matrix.qt-platform }}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+
+      - name: Run platform-independent desktop contracts once
+        if: runner.os == 'Linux'
+        run: tools/desktop/ci-gates.sh --stage contracts Linux
 
       - name: Validate Linux desktop metadata
         if: runner.os == 'Linux'

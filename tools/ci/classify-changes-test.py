@@ -217,6 +217,26 @@ class PathClassificationTests(unittest.TestCase):
             {"desktop", "release_contract", "package"},
         )
 
+    def test_qt_sdk_inputs_reach_every_qt_consumer_without_rust(self) -> None:
+        for path in (
+            "tools/qt/qt-6.8.4.json",
+            "tools/qt/build_qt.py",
+            "tools/qt/probe/CMakeLists.txt",
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(
+                    enabled(result),
+                    {
+                        "desktop_contract",
+                        "desktop",
+                        "release_contract",
+                        "package",
+                    },
+                )
+                self.assertFalse(result.scopes["rust"])
+                self.assertFalse(result.scopes["full"])
+
     def test_root_cargo_inputs_cover_benchmark_desktop_and_package(self) -> None:
         for path in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
             with self.subTest(path=path):

@@ -287,6 +287,18 @@ def classify_path(path: str) -> PathImpact:
             frozenset({"rust", "rust_test", "rust_smoke", "benchmark"})
         )
 
+    if path.startswith("tools/qt/"):
+        return PathImpact(
+            frozenset(
+                {
+                    "desktop_contract",
+                    "desktop",
+                    "release_contract",
+                    "package",
+                }
+            )
+        )
+
     if path == "tools/smoke/visual-workspace.sh":
         return PathImpact(frozenset({"rust_smoke", "desktop_contract", "desktop"}))
     if path.startswith("tools/smoke/"):
