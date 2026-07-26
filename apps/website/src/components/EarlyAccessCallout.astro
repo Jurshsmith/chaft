@@ -31,13 +31,21 @@ import { sitePath } from "../lib/site-path";
 
 <style>
   .early-access {
+    --border-strong: #a85c47;
+    --border-subtle: #d7a28f;
+    --surface-active: #f1cfc2;
+    --text-faint: #815144;
+    --text-muted: #713829;
+    --text-soft: #492820;
+    --text-strong: #321c17;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.8fr);
     gap: clamp(2rem, 7vw, 7rem);
     padding: clamp(2rem, 6vw, 4rem);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--warning);
     border-radius: var(--radius-md);
     background: var(--warning-surface);
+    box-shadow: 7px 8px 0 color-mix(in srgb, var(--brand-coral) 22%, transparent);
   }
 
   h2 {
@@ -56,10 +64,6 @@ import { sitePath } from "../lib/site-path";
 
   .early-access__copy .button-row {
     margin-top: 0.8rem;
-  }
-
-  .early-access__copy .button:not(.button--secondary, .button--quiet) {
-    background: color-mix(in srgb, var(--surface-deep) 65%, transparent);
   }
 
   @media (max-width: 760px) {

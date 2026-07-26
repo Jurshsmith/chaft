@@ -26,23 +26,42 @@ const hasActions = Astro.slots.has("default");
   .page-hero {
     position: relative;
     overflow: hidden;
-    padding-block: clamp(4rem, 10vw, 8rem);
+    padding-block: clamp(4rem, 9vw, 7rem);
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-deep);
+    background: var(--surface-base);
+  }
+
+  .page-hero::before,
+  .page-hero::after {
+    position: absolute;
+    content: "";
+  }
+
+  .page-hero::before {
+    top: 42%;
+    right: max(4rem, calc((100vw - var(--content-width)) / 2 + 3rem));
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 50%;
+    background: var(--brand-coral);
+    box-shadow:
+      6.5rem -4.5rem 0 var(--accent),
+      11.5rem 3.8rem 0 var(--brand-violet);
   }
 
   .page-hero::after {
-    position: absolute;
     top: 50%;
-    right: max(-8rem, calc((100vw - var(--content-width)) / 2));
-    width: clamp(14rem, 32vw, 30rem);
-    height: clamp(14rem, 32vw, 30rem);
+    right: max(-4rem, calc((100vw - var(--content-width)) / 2 - 2rem));
+    width: clamp(15rem, 27vw, 23rem);
+    height: clamp(15rem, 27vw, 23rem);
     transform: translateY(-50%);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-strong);
     border-radius: 50%;
-    background: var(--surface-base);
-    opacity: 0.55;
-    content: "";
+    background: transparent;
+    box-shadow:
+      inset 0 0 0 clamp(3rem, 6vw, 5rem) rgb(8 118 91 / 4%),
+      0 0 0 clamp(2rem, 4vw, 3.5rem) color-mix(in srgb, var(--brand-coral) 4%, transparent);
+    opacity: 0.78;
   }
 
   .page-hero__inner {
@@ -52,10 +71,26 @@ const hasActions = Astro.slots.has("default");
 
   h1 {
     max-width: 11ch;
-    font-size: clamp(3.2rem, 8vw, 6.8rem);
+    font-family: var(--font-editorial);
+    font-size: clamp(3.1rem, 7vw, 5.8rem);
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: -0.045em;
   }
 
   .page-hero__actions {
     margin-top: 2rem;
+  }
+
+  @media (max-width: 760px) {
+    .page-hero::before {
+      right: 0;
+      opacity: 0.38;
+    }
+
+    .page-hero::after {
+      right: -8rem;
+      opacity: 0.32;
+    }
   }
 </style>

@@ -44,14 +44,12 @@ const {
       <article class="docs-article">
         <DocsBreadcrumbs section={section} title={title} isIndex={currentId === "index"} />
         <DocsStatus status={status} audience={audience} />
-        <DocsTableOfContents headings={headings} variant="mobile" />
+        <DocsTableOfContents headings={headings} />
         <div class="docs-prose">
           <slot />
         </div>
         <DocsPager previous={previous} next={next} />
       </article>
-
-      <DocsTableOfContents headings={headings} variant="desktop" />
     </div>
   </section>
 </BaseLayout>
@@ -59,19 +57,20 @@ const {
 <style>
   .docs-page {
     min-height: 70vh;
-    padding-block: clamp(2.25rem, 5vw, 4.5rem) clamp(4rem, 9vw, 7rem);
+    padding-block: clamp(2rem, 4vw, 3.5rem) clamp(4rem, 9vw, 7rem);
   }
 
   .docs-page__grid {
     display: grid;
-    grid-template-columns: minmax(11.5rem, 14rem) minmax(0, 47rem) minmax(10rem, 13rem);
-    gap: clamp(1.75rem, 4vw, 3.25rem);
-    justify-content: center;
+    grid-template-columns: minmax(12.5rem, 14rem) minmax(0, 48rem);
+    gap: clamp(2.25rem, 6vw, 5rem);
+    justify-content: start;
     align-items: start;
   }
 
   .docs-article {
     min-width: 0;
+    padding-bottom: 2rem;
   }
 
   .docs-article > :global(.docs-status) {
@@ -79,13 +78,13 @@ const {
   }
 
   .docs-prose {
-    max-width: 70ch;
+    max-width: 66ch;
   }
 
   .docs-prose :global(h1) {
-    max-width: 22ch;
-    margin-bottom: 1.5rem;
-    font-size: clamp(2.4rem, 5vw, 4.5rem);
+    max-width: 18ch;
+    margin-bottom: 1.35rem;
+    font-size: clamp(2.55rem, 5vw, 3.85rem);
     overflow-wrap: anywhere;
   }
 
@@ -96,9 +95,10 @@ const {
   }
 
   .docs-prose :global(h2) {
-    margin-block: 3.5rem 1.15rem;
-    padding-top: 0.35rem;
-    font-size: clamp(1.7rem, 3vw, 2.35rem);
+    margin-block: 3.75rem 1.15rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-subtle);
+    font-size: clamp(1.65rem, 3vw, 2.15rem);
   }
 
   .docs-prose :global(h3) {
@@ -108,13 +108,15 @@ const {
 
   .docs-prose :global(h1 + p) {
     color: var(--text-soft);
-    font-size: clamp(1.05rem, 1.8vw, 1.2rem);
-    line-height: 1.65;
+    font-size: clamp(1.08rem, 1.8vw, 1.22rem);
+    line-height: 1.7;
   }
 
   .docs-prose :global(p),
   .docs-prose :global(li) {
     color: var(--text-muted);
+    font-size: 1.02rem;
+    line-height: 1.72;
   }
 
   .docs-prose :global(p),
@@ -142,6 +144,7 @@ const {
 
   .docs-prose :global(a) {
     color: var(--accent);
+    font-weight: 500;
     overflow-wrap: anywhere;
   }
 
@@ -150,7 +153,7 @@ const {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xs);
     background: var(--surface-deep);
-    color: var(--text-soft);
+    color: var(--text-strong);
     font-family: var(--font-mono);
     font-size: 0.85em;
   }
@@ -159,9 +162,10 @@ const {
     max-width: 100%;
     overflow: auto;
     padding: 1rem 1.1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--surface-deep);
+    border: 1px solid var(--surface-ink);
+    border-radius: var(--radius-sm);
+    background: var(--surface-ink);
+    box-shadow: 5px 6px 0 rgb(23 33 31 / 10%);
     line-height: 1.55;
   }
 
@@ -169,13 +173,16 @@ const {
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--text-soft);
+    color: #e8eee9;
     font-size: 0.8rem;
   }
 
   .docs-prose :global(blockquote) {
-    padding: 0.15rem 0 0.15rem 1rem;
-    border-left: 3px solid var(--accent);
+    padding: 1.15rem 1.25rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border-subtle));
+    border-left: 4px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: var(--secure-surface);
   }
 
   .docs-prose :global(blockquote p:last-child) {
@@ -209,12 +216,6 @@ const {
     margin-block: 3rem;
     border: 0;
     border-top: 1px solid var(--border-subtle);
-  }
-
-  @media (max-width: 1120px) {
-    .docs-page__grid {
-      grid-template-columns: minmax(11.5rem, 14rem) minmax(0, 47rem);
-    }
   }
 
   @media (max-width: 900px) {
