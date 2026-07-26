@@ -40,13 +40,13 @@ required = load_required_check()
 
 def workflow_job_ids(text: str) -> set[str]:
     jobs = text.split("\njobs:\n", 1)[1]
-    return set(re.findall(r"^  ([a-zA-Z0-9_]+):\s*$", jobs, re.MULTILINE))
+    return set(re.findall(r"^  ([a-zA-Z0-9_-]+):\s*$", jobs, re.MULTILINE))
 
 
 def job_block(text: str, job: str) -> str:
     jobs = text.split("\njobs:\n", 1)[1]
     match = re.search(
-        rf"^  {re.escape(job)}:\s*$\n(?P<body>.*?)(?=^  [a-zA-Z0-9_]+:\s*$|\Z)",
+        rf"^  {re.escape(job)}:\s*$\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\s*$|\Z)",
         jobs,
         re.MULTILINE | re.DOTALL,
     )
@@ -200,6 +200,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("ninja", contracts)
         self.assertIn("      - validate\n      - desktop_contracts", build)
         self.assertIn("--stage package", build)
+        self.assertNotIn("Smoke Linux AppImage", build)
         self.assertNotIn(
             'ci-gates.sh "${{ matrix.package-platform }}"',
             build,
