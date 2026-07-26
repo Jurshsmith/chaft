@@ -184,7 +184,7 @@ The full expectations and focused test commands are in the
 
 ## Run the website
 
-The static website requires Node.js 22.12 or newer and the pnpm version pinned
+The static website requires Node.js 22.13 or newer and the pnpm version pinned
 in `apps/website/package.json`.
 
 ```sh
