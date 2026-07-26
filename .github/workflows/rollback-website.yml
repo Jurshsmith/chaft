@@ -1,7 +1,7 @@
 name: Roll back website
 
-# INERT FOUNDATION: the job is hard-disabled below. Before activation,
-# WEB-DEPLOY-001 and the rollback runbook must be fully resolved and exercised.
+# Rollback is an explicit, protected restoration of a retained successful
+# deployment record. It never infers "previous" from upload order.
 
 on:
   workflow_dispatch:
@@ -14,6 +14,14 @@ on:
         description: Full source commit stored in the target version tag
         required: true
         type: string
+      failed_version_id:
+        description: Exact currently active version that the incident identified
+        required: true
+        type: string
+      incident_id:
+        description: Incident or change identifier (for example INC-2026-001)
+        required: true
+        type: string
       reason:
         description: Short operational reason (80 characters maximum)
         required: true
@@ -24,21 +32,17 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
   group: chaft-website-production
   cancel-in-progress: false
-  queue: max
 
 jobs:
   rollback:
-    # Production safety gate. Removing `false &&` requires a reviewed change
-    # coordinated with deployment governance, the Custom Domain, and GitHub
-    # environment.
     if: >-
       ${{
-        false &&
         github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
         inputs.confirmation == 'rollback chaft-website'
       }}
@@ -69,6 +73,32 @@ jobs:
         working-directory: apps/website
         run: pnpm install --frozen-lockfile
 
+      - name: Checkout the current private governance revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Jurshsmith/chaft-infra
+          ref: main
+          path: _governance
+          fetch-depth: 0
+          persist-credentials: false
+          ssh-key: ${{ secrets.CHAFT_INFRA_DEPLOY_KEY }}
+
+      - name: Prove exact production governance
+        env:
+          EXPECTED_INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          GOVERNANCE_KEY_CONFIGURED: ${{ secrets.CHAFT_INFRA_DEPLOY_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${GOVERNANCE_KEY_CONFIGURED}" != "true" ]]; then
+            echo "::error::CHAFT_INFRA_DEPLOY_KEY is not configured."
+            exit 1
+          fi
+          node apps/website/scripts/governance-validation.mjs \
+            --repository-root _governance \
+            --component _governance/cloudflare/website/component.yaml \
+            --expected-commit "${EXPECTED_INFRA_COMMIT}" \
+            > "${RUNNER_TEMP}/governance-verification.json"
+
       - name: Validate request and current governance
         id: request
         shell: bash
@@ -76,7 +106,9 @@ jobs:
           CHAFT_INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          FAILED_VERSION_ID: ${{ inputs.failed_version_id }}
           GH_TOKEN: ${{ github.token }}
+          INCIDENT_ID: ${{ inputs.incident_id }}
           REASON: ${{ inputs.reason }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
           TARGET_VERSION_ID: ${{ inputs.target_version_id }}
@@ -89,6 +121,14 @@ jobs:
           fi
           if [[ ! "${EXPECTED_SOURCE_COMMIT}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
             echo "::error::expected_source_commit is malformed."
+            exit 1
+          fi
+          if [[ ! "${FAILED_VERSION_ID}" =~ ^[a-f0-9-]{32,64}$ ]]; then
+            echo "::error::failed_version_id is malformed."
+            exit 1
+          fi
+          if [[ ! "${INCIDENT_ID}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{2,79}$ ]]; then
+            echo "::error::incident_id must be 3 to 80 safe identifier characters."
             exit 1
           fi
           if [[ -z "${REASON}" || ${#REASON} -gt 80 || "${REASON}" == *$'\n'* || "${REASON}" == *$'\r'* ]]; then
@@ -110,7 +150,90 @@ jobs:
             echo "::error::Run rollback only from the current default-branch revision."
             exit 1
           fi
-          echo "rollback_message=rollback to ${EXPECTED_SOURCE_COMMIT:0:12}: ${REASON}" >> "${GITHUB_OUTPUT}"
+          echo "rollback_message=${INCIDENT_ID}: restore ${EXPECTED_SOURCE_COMMIT:0:12} from failed ${FAILED_VERSION_ID}: ${REASON}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve retained successful deployment record
+        id: evidence
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_name="chaft-website-deployment-${EXPECTED_SOURCE_COMMIT}"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${expected_name}&per_page=100" \
+            > "${RUNNER_TEMP}/deployment-record-artifacts.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-record-artifacts.json`, "utf8"),
+          );
+          const expectedName = `chaft-website-deployment-${process.env.EXPECTED_SOURCE_COMMIT}`;
+          const artifacts = payload.artifacts?.filter(
+            (artifact) => artifact.name === expectedName && artifact.expired === false,
+          );
+          if (!Array.isArray(artifacts) || artifacts.length !== 1) {
+            throw new Error(`expected one retained deployment record, received ${artifacts?.length}`);
+          }
+          const artifact = artifacts[0];
+          if (
+            !Number.isSafeInteger(artifact.id) ||
+            !Number.isSafeInteger(artifact.workflow_run?.id) ||
+            !/^sha256:[a-f0-9]{64}$/.test(artifact.digest)
+          ) {
+            throw new Error("retained deployment record identity is malformed");
+          }
+          for (const [name, value] of [
+            ["artifact_id", artifact.id],
+            ["artifact_name", artifact.name],
+            ["artifact_digest", artifact.digest],
+            ["run_id", artifact.workflow_run.id],
+          ]) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Download retained successful deployment record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.evidence.outputs.artifact_name }}
+          path: ${{ runner.temp }}/target-deployment-record
+          run-id: ${{ steps.evidence.outputs.run_id }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+
+      - name: Validate retained rollback target evidence
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          GOVERNANCE_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const record = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/target-deployment-record/deployment-record.json`,
+              "utf8",
+            ),
+          );
+          if (
+            record.schemaVersion !== 1 ||
+            record.artifactKind !== "chaft-website-deployment-record" ||
+            record.result !== "passed" ||
+            record.source?.repository !== process.env.GITHUB_REPOSITORY ||
+            record.source?.commit !== process.env.EXPECTED_SOURCE_COMMIT ||
+            record.cloudflare?.worker !== "chaft-website" ||
+            record.cloudflare?.siteUrl !== process.env.SITE_URL ||
+            record.cloudflare?.newVersionId !== process.env.TARGET_VERSION_ID ||
+            !/^sha256:[a-f0-9]{64}$/.test(record.artifact?.digest) ||
+            !/^[a-f0-9]{64}$/.test(record.artifact?.manifestSha256) ||
+            record.verification?.result !== "passed"
+          ) {
+            throw new Error("retained deployment record does not authorize this rollback target");
+          }
+          NODE
 
       - name: Inspect target and current deployment with read-only token
         id: inspect
@@ -120,6 +243,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
           EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          FAILED_VERSION_ID: ${{ inputs.failed_version_id }}
           TARGET_VERSION_ID: ${{ inputs.target_version_id }}
         run: |
           set -euo pipefail
@@ -137,6 +261,12 @@ jobs:
           pnpm exec wrangler deployments status \
             --config wrangler.jsonc \
             --json > "${RUNNER_TEMP}/deployment-before.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/domains-before-response.json"
           node - <<'NODE'
           const fs = require("node:fs");
           const target = JSON.parse(
@@ -158,18 +288,49 @@ jobs:
             (version) => version.percentage === 100,
           );
           if (
+            typeof deployment.id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id) ||
             active?.length !== 1 ||
             typeof active[0].version_id !== "string" ||
             !/^[a-f0-9-]{32,64}$/i.test(active[0].version_id)
           ) {
             throw new Error("current deployment is not one version at 100 percent");
           }
+          if (active[0].version_id !== process.env.FAILED_VERSION_ID) {
+            throw new Error("failed_version_id is no longer the active production version");
+          }
           if (active[0].version_id === process.env.TARGET_VERSION_ID) {
             throw new Error("target version is already serving 100 percent of traffic");
           }
+          const domainsPayload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-before-response.json`, "utf8"),
+          );
+          if (domainsPayload.success !== true || !Array.isArray(domainsPayload.result)) {
+            throw new Error("Cloudflare Custom Domain query failed");
+          }
+          const domains = domainsPayload.result
+            .filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({ hostname, service, zoneName }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          const expectedDomains = ["chaft.ai", "www.chaft.ai"];
+          if (
+            domains.length !== expectedDomains.length ||
+            domains.some(
+              (domain, index) =>
+                domain.hostname !== expectedDomains[index] ||
+                domain.service !== "chaft-website" ||
+                domain.zoneName !== "chaft.ai",
+            )
+          ) {
+            throw new Error(`unexpected Custom Domains: ${JSON.stringify(domains)}`);
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/domains-before.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
-            `previous_version_id=${active[0].version_id}\n`,
+            `previous_deployment_id=${deployment.id}\nprevious_version_id=${active[0].version_id}\n`,
           );
           fs.writeFileSync(
             `${process.env.RUNNER_TEMP}/previous-version-id`,
@@ -226,6 +387,7 @@ jobs:
             --yes
 
       - name: Verify active version with read-only token
+        id: after
         working-directory: apps/website
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -244,6 +406,12 @@ jobs:
           pnpm exec wrangler deployments status \
             --config wrangler.jsonc \
             --json > "${RUNNER_TEMP}/deployment-after.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/domains-after-response.json"
           node - <<'NODE'
           const fs = require("node:fs");
           const deployment = JSON.parse(
@@ -253,62 +421,129 @@ jobs:
             (version) => version.percentage === 100,
           );
           if (
+            typeof deployment.id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id) ||
             active?.length !== 1 ||
             active[0].version_id !== process.env.TARGET_VERSION_ID
           ) {
             throw new Error("requested rollback version is not serving 100 percent of traffic");
           }
+          const payload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-after-response.json`, "utf8"),
+          );
+          if (payload.success !== true || !Array.isArray(payload.result)) {
+            throw new Error("Cloudflare Custom Domain query failed after rollback");
+          }
+          const domains = payload.result
+            .filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({ hostname, service, zoneName }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          const before = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-before.json`, "utf8"),
+          );
+          if (JSON.stringify(domains) !== JSON.stringify(before)) {
+            throw new Error("Custom Domains changed during rollback");
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/domains-after.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `deployment_id=${deployment.id}\n`);
           NODE
 
-      - name: Verify public deployment marker
+      - name: Verify the complete public deployment contract
+        working-directory: apps/website
         env:
           EXPECTED_COMMIT: ${{ inputs.expected_source_commit }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
         run: |
           set -euo pipefail
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error \
-              --connect-timeout 5 \
-              --max-time 10 \
-              "${SITE_URL%/}/.well-known/chaft-deployment.json" \
-              --output "${RUNNER_TEMP}/deployment-marker.json" &&
-              node - <<'NODE'
+          node scripts/verify-public-deployment.mjs \
+            --site-url "${SITE_URL}" \
+            --alternate-site-url "https://www.chaft.ai" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${EXPECTED_COMMIT}" \
+            --attempts 12 \
+            --delay-ms 5000 \
+            --output "${RUNNER_TEMP}/public-verification.json"
+
+      - name: Create durable rollback record
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CURRENT_DEPLOYMENT_ID: ${{ steps.after.outputs.deployment_id }}
+          FAILED_VERSION_ID: ${{ inputs.failed_version_id }}
+          GOVERNANCE_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          PREVIOUS_DEPLOYMENT_ID: ${{ steps.inspect.outputs.previous_deployment_id }}
+          REASON: ${{ inputs.reason }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+          SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          TARGET_EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact_digest }}
+          TARGET_EVIDENCE_ID: ${{ steps.evidence.outputs.artifact_id }}
+          TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/rollback-evidence"
+          node - <<'NODE'
           const fs = require("node:fs");
-          const marker = JSON.parse(
-            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-marker.json`, "utf8"),
+          const readJson = (name) =>
+            JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, "utf8"));
+          const record = {
+            schemaVersion: 1,
+            artifactKind: "chaft-website-rollback-record",
+            result: "passed",
+            recordedAt: new Date().toISOString(),
+            actor: process.env.GITHUB_ACTOR,
+            workflowRunId: Number(process.env.GITHUB_RUN_ID),
+            workflowRunUrl:
+              `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}` +
+              `/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            incidentId: process.env.INCIDENT_ID,
+            reason: process.env.REASON,
+            governance: {
+              repository: "Jurshsmith/chaft-infra",
+              commit: process.env.GOVERNANCE_COMMIT,
+              verification: readJson("governance-verification.json"),
+            },
+            target: {
+              sourceCommit: process.env.SOURCE_COMMIT,
+              versionId: process.env.TARGET_VERSION_ID,
+              retainedEvidenceArtifactId: Number(process.env.TARGET_EVIDENCE_ID),
+              retainedEvidenceArtifactDigest: process.env.TARGET_EVIDENCE_DIGEST,
+            },
+            cloudflare: {
+              accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+              worker: "chaft-website",
+              siteUrl: process.env.SITE_URL,
+              failedVersionId: process.env.FAILED_VERSION_ID,
+              previousDeploymentId: process.env.PREVIOUS_DEPLOYMENT_ID,
+              rollbackDeploymentId: process.env.CURRENT_DEPLOYMENT_ID,
+              domainsBefore: readJson("domains-before.json"),
+              domainsAfter: readJson("domains-after.json"),
+            },
+            verification: readJson("public-verification.json"),
+          };
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/rollback-evidence/rollback-record.json`,
+            `${JSON.stringify(record, null, 2)}\n`,
           );
-          const keys = Object.keys(marker).sort();
-          const expectedKeys = [
-            "artifactKind",
-            "schemaVersion",
-            "siteUrl",
-            "sourceCommit",
-            "sourceRepository",
-          ].sort();
-          const site = new URL(process.env.SITE_URL);
-          const normalizedSiteUrl = `${site.origin}${site.pathname.replace(/\/+$/, "")}`;
-          if (
-            keys.length !== expectedKeys.length ||
-            keys.some((key, index) => key !== expectedKeys[index]) ||
-            marker.schemaVersion !== 1 ||
-            marker.artifactKind !== "chaft-website" ||
-            marker.sourceRepository !== process.env.GITHUB_REPOSITORY ||
-            marker.sourceCommit !== process.env.EXPECTED_COMMIT ||
-            marker.siteUrl !== normalizedSiteUrl
-          ) {
-            process.exit(1);
-          }
           NODE
-            then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::Public deployment marker did not converge to the rollback target."
-          exit 1
+
+      - name: Retain rollback evidence
+        id: rollback_evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-website-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/rollback-evidence/rollback-record.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
 
       - name: Record rollback result
         env:
+          EVIDENCE_DIGEST: ${{ steps.rollback_evidence.outputs.artifact-digest }}
+          EVIDENCE_ID: ${{ steps.rollback_evidence.outputs.artifact-id }}
+          INCIDENT_ID: ${{ inputs.incident_id }}
           INFRA_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
           PREVIOUS_VERSION_ID: ${{ steps.inspect.outputs.previous_version_id }}
           REASON: ${{ inputs.reason }}
@@ -322,5 +557,7 @@ jobs:
             echo "- Restored version: \`${TARGET_VERSION_ID}\`"
             echo "- Source commit: \`${SOURCE_COMMIT}\`"
             echo "- Infrastructure decision: \`${INFRA_COMMIT}\`"
+            echo "- Incident: \`${INCIDENT_ID}\`"
             echo "- Reason: ${REASON}"
+            echo "- Evidence artifact: \`${EVIDENCE_ID}\` (\`${EVIDENCE_DIGEST}\`)"
           } >> "${GITHUB_STEP_SUMMARY}"

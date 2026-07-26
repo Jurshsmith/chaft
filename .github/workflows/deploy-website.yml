@@ -1,8 +1,9 @@
 name: Deploy website
 
-# INERT FOUNDATION: both jobs are hard-disabled below. Before activation,
-# WEB-DEPLOY-001 must define exact governance verification, prior-state capture,
-# durable deployment evidence, and the reviewed Custom Domain.
+# Production deploys consume the immutable artifact from a successful Website
+# run. Mutation remains independently protected by the production environment,
+# exact private-infra governance, scoped Cloudflare credentials, and a shared
+# non-cancelling concurrency group.
 
 on:
   workflow_run:
@@ -20,16 +21,11 @@ permissions:
 concurrency:
   group: chaft-website-production
   cancel-in-progress: false
-  queue: max
 
 jobs:
   preflight:
-    # Production safety gate. Removing `false &&` requires a reviewed change
-    # coordinated with deployment governance, the Custom Domain, and GitHub
-    # environment.
     if: >-
       ${{
-        false &&
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main' &&
@@ -38,6 +34,10 @@ jobs:
     name: Verify immutable deployment candidate
     runs-on: ubuntu-latest
     outputs:
+      artifact_digest: ${{ steps.artifact.outputs.artifact_digest }}
+      artifact_id: ${{ steps.artifact.outputs.artifact_id }}
+      artifact_name: ${{ steps.artifact.outputs.artifact_name }}
+      artifact_size: ${{ steps.artifact.outputs.artifact_size }}
       artifact_manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
       governance_commit: ${{ steps.identity.outputs.governance_commit }}
       site_url: ${{ steps.identity.outputs.site_url }}
@@ -63,6 +63,53 @@ jobs:
       - name: Install exact verifier and Wrangler dependencies
         working-directory: apps/website
         run: pnpm install --frozen-lockfile
+
+      - name: Resolve exact GitHub artifact identity
+        id: artifact
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          expected_name="chaft-website-${CANDIDATE_SHA}"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?name=${expected_name}&per_page=100" \
+            > "${RUNNER_TEMP}/candidate-artifacts.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/candidate-artifacts.json`, "utf8"),
+          );
+          const expectedName = `chaft-website-${process.env.CANDIDATE_SHA}`;
+          const artifacts = payload.artifacts;
+          if (!Array.isArray(artifacts) || artifacts.length !== 1) {
+            throw new Error(`expected one exact candidate artifact, received ${artifacts?.length}`);
+          }
+          const artifact = artifacts[0];
+          if (
+            artifact.name !== expectedName ||
+            artifact.expired !== false ||
+            !Number.isSafeInteger(artifact.id) ||
+            artifact.id <= 0 ||
+            !Number.isSafeInteger(artifact.size_in_bytes) ||
+            artifact.size_in_bytes <= 0 ||
+            !/^sha256:[a-f0-9]{64}$/.test(artifact.digest) ||
+            artifact.workflow_run?.id !== Number(process.env.SOURCE_RUN_ID) ||
+            artifact.workflow_run?.head_sha !== process.env.CANDIDATE_SHA ||
+            artifact.workflow_run?.head_branch !== "main"
+          ) {
+            throw new Error("candidate artifact identity does not match the source workflow");
+          }
+          for (const [name, value] of [
+            ["artifact_id", artifact.id],
+            ["artifact_name", artifact.name],
+            ["artifact_digest", artifact.digest],
+            ["artifact_size", artifact.size_in_bytes],
+          ]) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
 
       - name: Download exact candidate artifact outside the checkout
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -173,8 +220,7 @@ jobs:
           test "${current_main}" = "${CANDIDATE_SHA}"
 
   deploy:
-    # Keep the mutation job independently fail-closed even if preflight changes.
-    if: ${{ false && needs.preflight.result == 'success' }}
+    if: ${{ needs.preflight.result == 'success' }}
     name: Deploy approved Worker version
     needs: preflight
     runs-on: ubuntu-latest
@@ -242,6 +288,32 @@ jobs:
             --commit "${SOURCE_COMMIT}" \
             --site-url "${SITE_URL}"
 
+      - name: Checkout the current private governance revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Jurshsmith/chaft-infra
+          ref: main
+          path: _governance
+          fetch-depth: 0
+          persist-credentials: false
+          ssh-key: ${{ secrets.CHAFT_INFRA_DEPLOY_KEY }}
+
+      - name: Prove exact production governance
+        env:
+          EXPECTED_INFRA_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
+          GOVERNANCE_KEY_CONFIGURED: ${{ secrets.CHAFT_INFRA_DEPLOY_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${GOVERNANCE_KEY_CONFIGURED}" != "true" ]]; then
+            echo "::error::CHAFT_INFRA_DEPLOY_KEY is not configured."
+            exit 1
+          fi
+          node apps/website/scripts/governance-validation.mjs \
+            --repository-root _governance \
+            --component _governance/cloudflare/website/component.yaml \
+            --expected-commit "${EXPECTED_INFRA_COMMIT}" \
+            > "${RUNNER_TEMP}/governance-verification.json"
+
       - name: Recheck current main and variable snapshots after environment approval
         shell: bash
         env:
@@ -260,6 +332,78 @@ jobs:
           test "${current_main}" = "${EXPECTED_SHA}"
           test "${CURRENT_INFRA_COMMIT}" = "${EXPECTED_INFRA_COMMIT}"
           test "${CURRENT_SITE_URL}" = "${EXPECTED_SITE_URL}"
+
+      - name: Capture active deployment and Custom Domains before mutation
+        id: before
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "${CLOUDFLARE_ACCOUNT_ID}" != "1354b55cd97e5051f32727c8dad4399d" ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID does not match reviewed governance."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_READ_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler deployments status \
+            --config wrangler.jsonc \
+            --json > "${RUNNER_TEMP}/deployment-before.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/domains-before-response.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-before.json`, "utf8"),
+          );
+          const active = deployment.versions?.filter((version) => version.percentage === 100);
+          if (
+            typeof deployment.id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id) ||
+            active?.length !== 1 ||
+            !/^[a-f0-9-]{32,64}$/i.test(active[0].version_id)
+          ) {
+            throw new Error("production is not one explicit version at 100 percent");
+          }
+          const domainsPayload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-before-response.json`, "utf8"),
+          );
+          if (domainsPayload.success !== true || !Array.isArray(domainsPayload.result)) {
+            throw new Error("Cloudflare Custom Domain query failed");
+          }
+          const domains = domainsPayload.result
+            .filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({ hostname, service, zoneName }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          const expected = ["chaft.ai", "www.chaft.ai"];
+          if (
+            domains.length !== expected.length ||
+            domains.some(
+              (domain, index) =>
+                domain.hostname !== expected[index] ||
+                domain.service !== "chaft-website" ||
+                domain.zoneName !== "chaft.ai",
+            )
+          ) {
+            throw new Error(`unexpected Custom Domains: ${JSON.stringify(domains)}`);
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/domains-before.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `previous_deployment_id=${deployment.id}\nprevious_version_id=${active[0].version_id}\n`,
+          );
+          NODE
 
       - name: Deploy exact static assets
         id: deploy
@@ -384,65 +528,158 @@ jobs:
           echo "::error::Expected Worker version did not reach 100 percent traffic."
           exit 1
 
-      - name: Verify public deployment marker
+      - name: Confirm Custom Domains remained exact
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/domains-after-response.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-after-response.json`, "utf8"),
+          );
+          if (payload.success !== true || !Array.isArray(payload.result)) {
+            throw new Error("Cloudflare Custom Domain query failed after deployment");
+          }
+          const domains = payload.result
+            .filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({ hostname, service, zoneName }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          const before = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/domains-before.json`, "utf8"),
+          );
+          if (JSON.stringify(domains) !== JSON.stringify(before)) {
+            throw new Error(
+              `Custom Domains changed unexpectedly: ${JSON.stringify({ before, domains })}`,
+            );
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/domains-after.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Verify the complete public deployment contract
+        working-directory: apps/website
         env:
           EXPECTED_COMMIT: ${{ needs.preflight.outputs.source_commit }}
           SITE_URL: ${{ needs.preflight.outputs.site_url }}
         run: |
           set -euo pipefail
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error \
-              --connect-timeout 5 \
-              --max-time 10 \
-              "${SITE_URL%/}/.well-known/chaft-deployment.json" \
-              --output "${RUNNER_TEMP}/deployment-marker.json" &&
-              node - <<'NODE'
+          node scripts/verify-public-deployment.mjs \
+            --site-url "${SITE_URL}" \
+            --alternate-site-url "https://www.chaft.ai" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${EXPECTED_COMMIT}" \
+            --attempts 12 \
+            --delay-ms 5000 \
+            --output "${RUNNER_TEMP}/public-verification.json"
+
+      - name: Create durable deployment record
+        env:
+          ARTIFACT_DIGEST: ${{ needs.preflight.outputs.artifact_digest }}
+          ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+          ARTIFACT_MANIFEST_SHA256: ${{ needs.preflight.outputs.artifact_manifest_sha256 }}
+          ARTIFACT_NAME: ${{ needs.preflight.outputs.artifact_name }}
+          ARTIFACT_SIZE: ${{ needs.preflight.outputs.artifact_size }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYMENT_ID: ${{ steps.status.outputs.deployment_id }}
+          GOVERNANCE_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
+          PREVIOUS_DEPLOYMENT_ID: ${{ steps.before.outputs.previous_deployment_id }}
+          PREVIOUS_VERSION_ID: ${{ steps.before.outputs.previous_version_id }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/deployment-evidence"
+          node - <<'NODE'
           const fs = require("node:fs");
-          const marker = JSON.parse(
-            fs.readFileSync(`${process.env.RUNNER_TEMP}/deployment-marker.json`, "utf8"),
+          const readJson = (name) =>
+            JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, "utf8"));
+          const record = {
+            schemaVersion: 1,
+            artifactKind: "chaft-website-deployment-record",
+            result: "passed",
+            recordedAt: new Date().toISOString(),
+            source: {
+              repository: process.env.GITHUB_REPOSITORY,
+              commit: process.env.SOURCE_COMMIT,
+              workflowRunId: Number(process.env.SOURCE_RUN_ID),
+              workflowRunUrl:
+                `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}` +
+                `/actions/runs/${process.env.SOURCE_RUN_ID}`,
+            },
+            governance: {
+              repository: "Jurshsmith/chaft-infra",
+              commit: process.env.GOVERNANCE_COMMIT,
+              verification: readJson("governance-verification.json"),
+            },
+            artifact: {
+              id: Number(process.env.ARTIFACT_ID),
+              name: process.env.ARTIFACT_NAME,
+              digest: process.env.ARTIFACT_DIGEST,
+              sizeInBytes: Number(process.env.ARTIFACT_SIZE),
+              manifestSha256: process.env.ARTIFACT_MANIFEST_SHA256,
+            },
+            cloudflare: {
+              accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+              worker: "chaft-website",
+              siteUrl: process.env.SITE_URL,
+              previousDeploymentId: process.env.PREVIOUS_DEPLOYMENT_ID,
+              previousVersionId: process.env.PREVIOUS_VERSION_ID,
+              newDeploymentId: process.env.DEPLOYMENT_ID,
+              newVersionId: process.env.VERSION_ID,
+              domainsBefore: readJson("domains-before.json"),
+              domainsAfter: readJson("domains-after.json"),
+            },
+            verification: readJson("public-verification.json"),
+          };
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/deployment-evidence/deployment-record.json`,
+            `${JSON.stringify(record, null, 2)}\n`,
           );
-          const keys = Object.keys(marker).sort();
-          const expectedKeys = [
-            "artifactKind",
-            "schemaVersion",
-            "siteUrl",
-            "sourceCommit",
-            "sourceRepository",
-          ].sort();
-          const site = new URL(process.env.SITE_URL);
-          const normalizedSiteUrl = `${site.origin}${site.pathname.replace(/\/+$/, "")}`;
-          if (
-            keys.length !== expectedKeys.length ||
-            keys.some((key, index) => key !== expectedKeys[index]) ||
-            marker.schemaVersion !== 1 ||
-            marker.artifactKind !== "chaft-website" ||
-            marker.sourceRepository !== process.env.GITHUB_REPOSITORY ||
-            marker.sourceCommit !== process.env.EXPECTED_COMMIT ||
-            marker.siteUrl !== normalizedSiteUrl
-          ) {
-            process.exit(1);
-          }
           NODE
-            then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::Public deployment marker did not converge to the approved candidate."
-          exit 1
+
+      - name: Retain deployment evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-website-deployment-${{ needs.preflight.outputs.source_commit }}
+          path: ${{ runner.temp }}/deployment-evidence/deployment-record.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
 
       - name: Record deployment result
         env:
+          ARTIFACT_DIGEST: ${{ needs.preflight.outputs.artifact_digest }}
+          ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
           DEPLOYMENT_ID: ${{ steps.status.outputs.deployment_id }}
-          VERSION_ID: ${{ steps.version.outputs.version_id }}
-          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+          EVIDENCE_ID: ${{ steps.evidence.outputs.artifact-id }}
           INFRA_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
+          PREVIOUS_VERSION_ID: ${{ steps.before.outputs.previous_version_id }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
         run: |
           {
             echo "### Cloudflare website deployment"
             echo
             echo "- Source commit: \`${SOURCE_COMMIT}\`"
             echo "- Infrastructure decision: \`${INFRA_COMMIT}\`"
+            echo "- GitHub candidate artifact: \`${ARTIFACT_ID}\` (\`${ARTIFACT_DIGEST}\`)"
+            echo "- Previous Cloudflare version: \`${PREVIOUS_VERSION_ID}\`"
             echo "- Cloudflare deployment: \`${DEPLOYMENT_ID}\`"
             echo "- Cloudflare version: \`${VERSION_ID}\`"
+            echo "- Evidence artifact: \`${EVIDENCE_ID}\` (\`${EVIDENCE_DIGEST}\`)"
           } >> "${GITHUB_STEP_SUMMARY}"
