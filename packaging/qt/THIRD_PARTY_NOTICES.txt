@@ -1,0 +1,34 @@
+Chaft Desktop third-party notices
+=====================================
+
+Chaft
+-----
+
+Chaft is licensed separately under the GNU Affero General Public License,
+version 3 or later. The complete Chaft license is distributed next to this
+notice as LICENSE. Nothing in this notice replaces or changes that license.
+
+Qt 6.8.4
+--------
+
+This package contains dynamically linked libraries and plugins built from the
+open-source Qt 6.8.4 source distribution. Qt is copyright The Qt Company Ltd.
+and other contributors identified in the Qt source.
+
+Chaft distributes the included Qt components under the
+GNU Lesser General Public License, version 3. Copies of the GNU LGPL version 3
+and the GNU GPL version 3 are distributed next to this notice as
+LICENSE.LGPL3 and LICENSE.GPL3.
+
+The exact Qt source archives and the security patches applied to them are
+listed, with SHA-256 digests, in QT-CORRESPONDING-SOURCE.json next to this
+notice. Each Qt source archive also contains its file-level copyright,
+licensing, and third-party-license records in its LICENSES directories,
+SPDX headers, and REUSE metadata.
+
+The Qt libraries are dynamically linked. You may replace them with
+interface-compatible modified versions, and the package terms do not prohibit
+reverse engineering for the purpose of debugging such modifications.
+
+Qt and the Qt logo are trademarks of The Qt Company Ltd. Chaft is not
+affiliated with or endorsed by The Qt Company Ltd.

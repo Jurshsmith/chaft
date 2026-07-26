@@ -30,9 +30,11 @@ Install these on every platform:
 - Python 3;
 - Qt 6.8 or newer with the Network, QML, Quick, and Widgets components.
 
-The automated builds currently use Qt 6.8.3. Keep `qt-cmake` or `qmake6` on
-`PATH`, or set `QT_ROOT_DIR` to the Qt installation prefix before running the
-repository scripts.
+The automated builds use the open-source Qt 6.8.4 source release with pinned
+security patches. Keep `qt-cmake` or `qmake6` on `PATH`, or set `QT_ROOT_DIR`
+to the Qt installation prefix before running the repository scripts. The
+exact source inputs and SHA-256 digests are recorded in
+`packaging/qt/QT-CORRESPONDING-SOURCE.json`.
 
 Platform toolchains:
 
@@ -44,9 +46,10 @@ Platform toolchains:
   C++ workload, an x64 MSVC developer environment, and Git Bash. Use the Qt
   `win64_msvc2022_64` build so Qt and the compiler ABI match.
 
-If you use `aqtinstall`, the repository’s CI-equivalent Qt targets are
-`linux_gcc_64`, `clang_64`, and `win64_msvc2022_64` for Linux, macOS, and
-Windows respectively.
+The public Qt installer repositories do not provide credential-free Qt 6.8.4
+desktop binaries for these platforms, so `aqtinstall` cannot reproduce the
+CI toolchain. CI builds the exact source modules instead of silently falling
+back to an older patch release.
 
 ## Get the source
 
@@ -141,6 +144,12 @@ tools/desktop/package.sh release
 
 These locally produced packages are unsigned development artifacts unless you
 separately perform and verify the platform’s release-signing process.
+
+Every package also includes Chaft's AGPL license, the Qt third-party notice,
+the LGPL and GPL license texts, and the exact Qt corresponding-source
+manifest. They are installed under `usr/share/doc/Chaft` in the AppImage,
+`share/doc/Chaft` in the Windows ZIP, and
+`ChaftDesktop.app/Contents/Resources/doc/Chaft` in the macOS DMG.
 
 ## Troubleshooting
 

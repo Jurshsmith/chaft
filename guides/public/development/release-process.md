@@ -74,6 +74,12 @@ python3 tools/desktop/release-version-test.py
 python3 tools/desktop/stage-website-release-assets-test.py
 ```
 
+The package contract requires each AppImage, DMG, and ZIP to contain Chaft's
+AGPL license plus the Qt notice, GPL/LGPL license copies, and
+`QT-CORRESPONDING-SOURCE.json`. Before publishing, confirm that the manifest's
+platform-specific module list, patch order, URLs, and SHA-256 digests match the
+Qt SDK used for the package.
+
 See the [testing guide](testing.md) for the complete gate selection.
 
 ## Build immutable release inputs

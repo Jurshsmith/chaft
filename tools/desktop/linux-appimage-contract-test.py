@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import hashlib
+import json
 import re
 import struct
 import xml.etree.ElementTree as ET
@@ -7,11 +9,137 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LINUX_PACKAGING = ROOT / "packaging" / "linux"
+QT_PACKAGING = ROOT / "packaging" / "qt"
 DESKTOP_ID = "io.github.jurshsmith.chaft"
+PACKAGE_NOTICE_FILES = (
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt",
+    "LICENSE.LGPL3",
+    "LICENSE.GPL3",
+    "QT-CORRESPONDING-SOURCE.json",
+)
 
 
 def fail(message):
     raise SystemExit(message)
+
+
+def load_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"{path}: invalid JSON: {error}")
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+package_manifest_path = QT_PACKAGING / "QT-CORRESPONDING-SOURCE.json"
+build_manifest_path = ROOT / "tools" / "qt" / "qt-6.8.4.json"
+package_manifest = load_json(package_manifest_path)
+build_manifest = load_json(build_manifest_path)
+
+if package_manifest.get("version") != build_manifest.get("qtVersion"):
+    fail("packaged Qt version does not match the source-build manifest")
+
+platform_names = {
+    "Linux": "linux",
+    "macOS": "macos",
+    "Windows": "windows",
+}
+
+
+def package_module_contract(module):
+    try:
+        platforms = tuple(platform_names[name] for name in module["platforms"])
+        return module["name"], platforms, module["url"], module["sha256"]
+    except (KeyError, TypeError) as error:
+        fail(f"invalid packaged Qt module record: {error}")
+
+
+def build_module_contract(module):
+    try:
+        return (
+            module["name"],
+            tuple(module["platforms"]),
+            module["url"],
+            module["sha256"],
+        )
+    except (KeyError, TypeError) as error:
+        fail(f"invalid source-build Qt module record: {error}")
+
+
+packaged_modules = tuple(
+    package_module_contract(module)
+    for module in package_manifest.get("sourceModules", ())
+)
+build_modules = tuple(
+    build_module_contract(module)
+    for module in sorted(
+        build_manifest.get("modules", ()),
+        key=lambda module: module.get("order", -1),
+    )
+)
+if packaged_modules != build_modules:
+    fail(
+        "packaged Qt module order/platforms/URLs/digests do not match "
+        "tools/qt/qt-6.8.4.json"
+    )
+
+all_platforms = ("linux", "macos", "windows")
+
+
+def package_patch_contract(patch):
+    try:
+        platforms = tuple(platform_names[name] for name in patch["platforms"])
+        return patch["module"], platforms, patch["url"], patch["sha256"]
+    except (KeyError, TypeError) as error:
+        fail(f"invalid packaged Qt patch record: {error}")
+
+
+def build_patch_contract(patch):
+    try:
+        return patch["module"], all_platforms, patch["url"], patch["sha256"]
+    except (KeyError, TypeError) as error:
+        fail(f"invalid source-build Qt patch record: {error}")
+
+
+packaged_patches = tuple(
+    package_patch_contract(patch)
+    for patch in package_manifest.get("securityPatches", ())
+)
+build_patches = tuple(
+    build_patch_contract(patch)
+    for patch in sorted(
+        build_manifest.get("patches", ()),
+        key=lambda patch: patch.get("order", -1),
+    )
+)
+if packaged_patches != build_patches:
+    fail(
+        "packaged Qt patch order/platforms/URLs/digests do not match "
+        "tools/qt/qt-6.8.4.json"
+    )
+
+expected_license_hashes = {
+    "LICENSE.LGPL3": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+    "LICENSE.GPL3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+}
+for filename, expected_digest in expected_license_hashes.items():
+    path = QT_PACKAGING / filename
+    if sha256(path) != expected_digest:
+        fail(f"{path} is not the verbatim license from the pinned Qt source")
+
+notice = (QT_PACKAGING / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
+for required_notice in (
+    "Qt 6.8.4",
+    "GNU Lesser General Public License, version 3",
+    "QT-CORRESPONDING-SOURCE.json",
+    "dynamically linked",
+):
+    if required_notice not in notice:
+        fail(f"Qt third-party notice is missing: {required_notice}")
 
 
 def parse_lock_file(path):
@@ -82,6 +210,30 @@ for required_contract in (
 ):
     if required_contract not in packaging_script:
         fail(f"AppImage packager is missing required contract: {required_contract}")
+
+cmake = (ROOT / "apps" / "desktop-qt" / "CMakeLists.txt").read_text(
+    encoding="utf-8"
+)
+for required_file in PACKAGE_NOTICE_FILES:
+    if required_file not in cmake:
+        fail(f"CMake install rules omit package notice: {required_file}")
+for required_destination in (
+    "ChaftDesktop.app/Contents/Resources/doc/Chaft",
+    "${CMAKE_INSTALL_DATADIR}/doc/Chaft",
+):
+    if required_destination not in cmake:
+        fail(f"CMake install rules omit package notice destination: {required_destination}")
+
+for smoke_name in (
+    "appimage-smoke.sh",
+    "package-smoke.sh",
+    "windows-zip-smoke.ps1",
+):
+    smoke_path = ROOT / "tools" / "desktop" / smoke_name
+    smoke = smoke_path.read_text(encoding="utf-8")
+    for required_file in PACKAGE_NOTICE_FILES:
+        if required_file not in smoke:
+            fail(f"{smoke_path} does not verify package notice: {required_file}")
 
 for workflow_name in ("ci.yml", "build-desktop-release-inputs.yml"):
     workflow_path = ROOT / ".github" / "workflows" / workflow_name

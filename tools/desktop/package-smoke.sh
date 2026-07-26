@@ -47,6 +47,9 @@ PY
 }
 
 cleanup() {
+  if [ -n "${dmg_mount_dir:-}" ]; then
+    hdiutil detach -quiet "$dmg_mount_dir" >/dev/null 2>&1 || true
+  fi
   if [ "${CHAFT_KEEP_SMOKE:-0}" != "1" ] && [ -n "${smoke_dir:-}" ]; then
     rm -rf "$smoke_dir"
   elif [ -n "${smoke_dir:-}" ]; then
@@ -85,6 +88,40 @@ trap cleanup EXIT INT TERM
 runtime_dir="$smoke_dir/runtime"
 mkdir -p "$runtime_dir"
 desktop_launch_binary="$(chaft_desktop_prepare_smoke_binary "$installed_binary" "$smoke_dir")"
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  require_tool hdiutil
+  package_dir="$repo_root/build/$preset/package"
+  dmg_count="$(
+    find "$package_dir" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' '
+  )"
+  if [ "$dmg_count" -ne 1 ]; then
+    printf 'expected exactly one DMG in %s, found %s\n' \
+      "$package_dir" "$dmg_count" >&2
+    exit 1
+  fi
+  dmg_path="$(find "$package_dir" -maxdepth 1 -type f -name '*.dmg' -print)"
+  dmg_mount_dir="$smoke_dir/dmg"
+  mkdir -p "$dmg_mount_dir"
+  hdiutil attach -readonly -nobrowse -quiet \
+    -mountpoint "$dmg_mount_dir" "$dmg_path"
+  compliance_dir="$dmg_mount_dir/ChaftDesktop.app/Contents/Resources/doc/Chaft"
+  for required_file in \
+    LICENSE \
+    THIRD_PARTY_NOTICES.txt \
+    LICENSE.LGPL3 \
+    LICENSE.GPL3 \
+    QT-CORRESPONDING-SOURCE.json
+  do
+    if [ ! -f "$compliance_dir/$required_file" ]; then
+      printf 'required macOS package notice is missing: %s\n' \
+        "$compliance_dir/$required_file" >&2
+      exit 1
+    fi
+  done
+  hdiutil detach -quiet "$dmg_mount_dir"
+  dmg_mount_dir=
+fi
 
 created_json="$smoke_dir/created.json"
 "$cli_bin" --data-dir "$runtime_dir" init-workspace \

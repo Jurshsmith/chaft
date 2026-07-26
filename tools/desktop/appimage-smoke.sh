@@ -56,6 +56,27 @@ portable_appimage="$launch_dir/Chaft portable.AppImage"
 cp "$appimage" "$portable_appimage"
 chmod 0755 "$portable_appimage"
 
+extract_dir="$smoke_dir/extracted"
+mkdir -p "$extract_dir"
+(
+  cd "$extract_dir"
+  "$portable_appimage" --appimage-extract >/dev/null
+)
+compliance_dir="$extract_dir/squashfs-root/usr/share/doc/Chaft"
+for required_file in \
+  LICENSE \
+  THIRD_PARTY_NOTICES.txt \
+  LICENSE.LGPL3 \
+  LICENSE.GPL3 \
+  QT-CORRESPONDING-SOURCE.json
+do
+  if [ ! -f "$compliance_dir/$required_file" ]; then
+    printf 'required AppImage package notice is missing: %s\n' \
+      "$compliance_dir/$required_file" >&2
+    exit 1
+  fi
+done
+
 unset LD_LIBRARY_PATH
 unset QML2_IMPORT_PATH
 unset QML_IMPORT_PATH

@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "component": "Qt",
+  "version": "6.8.4",
+  "instructions": "Download the source archives for the target platform, verify every SHA-256 digest, and apply each applicable security patch in listed order. The source archives contain the file-level license records and preferred source form for the distributed Qt libraries and plugins.",
+  "licenses": [
+    {
+      "spdx": "LGPL-3.0-only",
+      "packageFile": "LICENSE.LGPL3"
+    },
+    {
+      "spdx": "GPL-3.0-only",
+      "packageFile": "LICENSE.GPL3"
+    }
+  ],
+  "sourceModules": [
+    {
+      "name": "qtbase",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtbase-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "532dfbf3fa3cbc68fa37441ea9e81c5009da044eaecda78ffaeafd8bd125532f"
+    },
+    {
+      "name": "qtshadertools",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtshadertools-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "379a70692b52903b82897869112c4759f7f6f4e76abc4987700e9cdd87c87ebd"
+    },
+    {
+      "name": "qtsvg",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtsvg-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "e2a83b315b97eeaffa1d3f17e8192436541fe53e62171e82c7311c56ee9aac07"
+    },
+    {
+      "name": "qtdeclarative",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtdeclarative-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "e4e68aad4c07fbb9da670ecd621fabe51b56a2bfcce8da775653bdf8dcd768fc"
+    },
+    {
+      "name": "qtwayland",
+      "platforms": [
+        "Linux"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtwayland-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "b2475cfae9f5b8f40ea456b762cc634e7d083873aa554eb63954ee20e8a7bb8b"
+    }
+  ],
+  "securityPatches": [
+    {
+      "id": "CVE-2025-10728",
+      "module": "qtsvg",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-10728-qtsvg-6.8.diff",
+      "sha256": "cfb2399cdf094b378c40cfa3faebd2e2b69de1b910b63286986e081cda474a99"
+    },
+    {
+      "id": "CVE-2025-10729",
+      "module": "qtsvg",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-10729-qtsvg-6.8.diff",
+      "sha256": "7fe9c1a9e20e8919bca677f4cdd791cc0179a31669e8b5f5793dabddb094c727"
+    },
+    {
+      "id": "CVE-2025-12385",
+      "module": "qtdeclarative",
+      "part": 1,
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-12385-qtdeclarative-6.8-0001.diff",
+      "sha256": "c0fcc2971682c303b554c37617af337ed2ca36be9d6f5aa3702d4a2cf561f173"
+    },
+    {
+      "id": "CVE-2025-12385",
+      "module": "qtdeclarative",
+      "part": 2,
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-12385-qtdeclarative-6.8-0002.diff",
+      "sha256": "9bfe5e7f02d5d1bcc11355df01d6bef9016e434c5df3a371f88113e94047c7fd"
+    },
+    {
+      "id": "CVE-2025-14576",
+      "module": "qtdeclarative",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-14576-qtdeclarative-6.8.diff",
+      "sha256": "554c6381035326ea6dc315555d8d1591c707929ff3eabcbe6af747d10ea95458"
+    },
+    {
+      "id": "CVE-2026-6210",
+      "module": "qtsvg",
+      "platforms": [
+        "Linux",
+        "macOS",
+        "Windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2026-6210-qtsvg-6.8.diff",
+      "sha256": "a1edf7b97643432042446538bf8438ae3d5c1d7cf54d28528c9a8503c3cb9d08"
+    }
+  ]
+}
