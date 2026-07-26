@@ -433,6 +433,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         desktop = job_block(self.ci, "desktop")
         package = job_block(self.ci, "desktop_package")
         clean = job_block(self.ci, "clean_package_smoke")
+        release_contracts = job_block(self.ci, "release_contracts")
         self.assertIn("--stage contracts Linux", contracts)
         self.assertNotIn("rustup", contracts)
         self.assertIn("--stage debug", desktop)
@@ -442,6 +443,30 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("compression-level: 0", package)
         self.assertIn("archive: true", package)
         self.assertIn("digest-mismatch: error", clean)
+        self.assertIn("timeout-minutes: 15", clean)
+        self.assertIn("os: macos-15-intel", clean)
+        self.assertIn(
+            "artifact-name: chaft-macOS-desktop-release",
+            clean,
+        )
+        self.assertIn(
+            "artifact-path: build/clean-macos-package",
+            clean,
+        )
+        self.assertIn(
+            "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package",
+            clean,
+        )
+        self.assertLess(
+            clean.index("digest-mismatch: error"),
+            clean.index(
+                "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
+            ),
+        )
+        self.assertIn(
+            "python3 tools/desktop/macos-dmg-smoke-test.py",
+            release_contracts,
+        )
         self.assertIn(
             f"{LINUX_DEPENDENCIES} install sdk-consumer",
             contracts,
@@ -703,6 +728,20 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("aqtinstall", self.release_inputs)
 
         clean = job_block(self.release_inputs, "clean-package-smoke")
+        self.assertIn("timeout-minutes: 15", clean)
+        self.assertIn("os: macos-15-intel", clean)
+        self.assertIn(
+            "artifact-prefix: unsigned-macos-x86_64-release-input",
+            clean,
+        )
+        self.assertIn(
+            "tools/desktop/macos-dmg-smoke.sh build/clean-package",
+            clean,
+        )
+        self.assertLess(
+            clean.index("digest-mismatch: error"),
+            clean.index("tools/desktop/macos-dmg-smoke.sh build/clean-package"),
+        )
         self.assertIn(
             f"{LINUX_DEPENDENCIES} install appimage-runtime",
             clean,

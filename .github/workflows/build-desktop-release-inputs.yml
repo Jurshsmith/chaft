@@ -339,6 +339,7 @@ jobs:
       - validate
       - build
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -346,6 +347,9 @@ jobs:
           - name: Linux
             os: ubuntu-22.04
             artifact-prefix: checksummed-linux-x86_64-release-input
+          - name: macOS
+            os: macos-15-intel
+            artifact-prefix: unsigned-macos-x86_64-release-input
           - name: Windows
             os: windows-2022
             artifact-prefix: unsigned-windows-x86_64-release-input
@@ -373,6 +377,10 @@ jobs:
       - name: Smoke Linux AppImage without build dependencies
         if: runner.os == 'Linux'
         run: tools/desktop/appimage-smoke.sh build/clean-package
+
+      - name: Smoke macOS DMG without build dependencies
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh build/clean-package
 
       - name: Smoke Windows ZIP without build dependencies
         if: runner.os == 'Windows'

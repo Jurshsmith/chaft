@@ -126,6 +126,8 @@ RELEASE_TOOLS = frozenset(
         "tools/desktop/generate-platform-verification-receipt-test.py",
         "tools/desktop/generate-platform-verification-receipt.py",
         "tools/desktop/linux-appimage-contract-test.py",
+        "tools/desktop/macos-dmg-smoke-test.py",
+        "tools/desktop/macos-dmg-smoke.sh",
         "tools/desktop/package-linux-appimage.sh",
         "tools/desktop/package-smoke.sh",
         "tools/desktop/package.sh",

@@ -233,7 +233,7 @@ for required_destination in (
 
 for smoke_name in (
     "appimage-smoke.sh",
-    "package-smoke.sh",
+    "macos-dmg-smoke.sh",
     "windows-zip-smoke.ps1",
 ):
     smoke_path = ROOT / "tools" / "desktop" / smoke_name
@@ -241,6 +241,37 @@ for smoke_name in (
     for required_file in PACKAGE_NOTICE_FILES:
         if required_file not in smoke:
             fail(f"{smoke_path} does not verify package notice: {required_file}")
+
+package_smoke = (
+    ROOT / "tools" / "desktop" / "package-smoke.sh"
+).read_text(encoding="utf-8")
+macos_dmg_smoke_path = (
+    ROOT / "tools" / "desktop" / "macos-dmg-smoke.sh"
+)
+macos_dmg_smoke = macos_dmg_smoke_path.read_text(encoding="utf-8")
+if '"$script_dir/macos-dmg-smoke.sh"' not in package_smoke:
+    fail("package smoke must delegate macOS validation to the DMG smoke")
+if "hdiutil" in package_smoke:
+    fail("package smoke must not inspect a DMG and then launch staging bytes")
+for required_contract in (
+    'ditto "$mounted_app" "$portable_app"',
+    'desktop_binary="$portable_app/Contents/MacOS/ChaftDesktop"',
+    'hdiutil detach -quiet "$dmg_mount_dir"',
+    "QT_QPA_PLATFORM=cocoa",
+    'exec "$desktop_binary"',
+    'macOS DMG smoke timed out after %ss',
+):
+    if required_contract not in macos_dmg_smoke:
+        fail(
+            "macOS DMG smoke is missing required contract: "
+            f"{required_contract}"
+        )
+if macos_dmg_smoke.rindex('hdiutil detach -quiet "$dmg_mount_dir"') > (
+    macos_dmg_smoke.index('exec "$desktop_binary"')
+):
+    fail("macOS DMG smoke must launch only after copying and detaching the DMG")
+if "offscreen" in macos_dmg_smoke:
+    fail("macOS DMG smoke must not require a non-shipping offscreen plugin")
 
 linux_dependencies_path = (
     ROOT / "tools" / "qt" / "install-linux-dependencies.sh"

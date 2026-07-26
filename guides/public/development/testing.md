@@ -168,6 +168,7 @@ The release tools also have platform-independent regression checks:
 tools/desktop/release-metadata-smoke.sh
 python3 tools/desktop/export-website-release-manifest-test.py
 python3 tools/desktop/linux-appimage-contract-test.py
+python3 tools/desktop/macos-dmg-smoke-test.py
 tools/desktop/platform-verification-receipt-smoke.sh
 python3 tools/desktop/release-version-test.py
 python3 tools/desktop/stage-website-release-assets-test.py
