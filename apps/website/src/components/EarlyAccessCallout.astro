@@ -4,19 +4,28 @@ import { sitePath } from "../lib/site-path";
 
 <aside class="early-access" aria-labelledby="early-access-title">
   <div>
-    <span class="status">Early access</span>
-    <h2 id="early-access-title">Built in public. Honest about what is ready.</h2>
+    <span class="status">Canary</span>
+    <h2 id="early-access-title">Help test the thesis.</h2>
   </div>
   <div class="early-access__copy">
     <p>
-      Chaft is early-stage software. Packaging, production signing, notarization, and
-      update delivery are still release gates.
+      Chaft is experimental software. Public packages, production signing,
+      notarization, and update delivery are still release gates.
     </p>
     <p>
-      Do not use current development builds for sensitive production communication.
-      Follow the public security policy for readiness and responsible disclosure.
+      Use non-sensitive data. When reporting a problem, include your operating system
+      and source revision, then remove credentials, local paths, and message content
+      from logs.
     </p>
-    <a class="button button--secondary" href={sitePath("/security/")}>Read the security posture</a>
+    <div class="button-row">
+      <a class="button" href={sitePath("/docs/getting-started/build-desktop/")}>
+        Build the canary
+      </a>
+      <a class="button button--secondary" href="https://github.com/Jurshsmith/chaft/issues">
+        Report an issue
+      </a>
+      <a class="button button--quiet" href={sitePath("/security/")}>Security posture</a>
+    </div>
   </div>
 </aside>
 
@@ -45,8 +54,11 @@ import { sitePath } from "../lib/site-path";
     color: var(--warning-text);
   }
 
-  .early-access__copy .button {
+  .early-access__copy .button-row {
     margin-top: 0.8rem;
+  }
+
+  .early-access__copy .button:not(.button--secondary, .button--quiet) {
     background: color-mix(in srgb, var(--surface-deep) 65%, transparent);
   }
 

@@ -7,7 +7,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Chaft is a native, local-first, peer-to-peer chat workspace for macOS, Windows, and Linux.";
+  "Chaft is an experimental P2P-first Slack alternative for small teams, designed to keep essential collaboration free within deliberate limits.";
 
 const structuredData = {
   "@context": "https://schema.org",
@@ -23,23 +23,27 @@ const structuredData = {
 };
 
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
+const primaryHref = hasPublishedDownloads
+  ? sitePath("/download/")
+  : sitePath("/docs/getting-started/build-desktop/");
+const primaryLabel = hasPublishedDownloads ? "Download Chaft" : "Build the canary";
 
 const features = [
   {
-    title: "Local by default",
-    copy: "Send, search, and browse local history without waiting on a remote service to render your workspace.",
+    title: "Local-first storage",
+    copy: "Messages, search, and history stay useful on your device instead of depending on a central service to render the workspace.",
   },
   {
-    title: "Direct when reachable",
-    copy: "Conversations reconcile directly between teammates by default, with optional encrypted replicas for recovery.",
+    title: "Direct peer sync",
+    copy: "Teammates reconcile directly when reachable, with optional encrypted replicas supporting recovery without becoming the authority.",
   },
   {
-    title: "Verifiable history",
-    copy: "Signed events and encrypted message paths help each device verify what it receives before materializing history.",
+    title: "Encrypted content",
+    copy: "End-to-end encrypted content and signed events let each device verify what it receives before materializing history.",
   },
   {
-    title: "Native everywhere",
-    copy: "A Qt desktop surface backed by a deterministic Rust core, targeting macOS, Windows, and Linux.",
+    title: "Bounded by design",
+    copy: "Chaft targets the essentials small teams need, keeping the free-software promise tied to explicit product and infrastructure limits.",
   },
 ];
 
@@ -54,22 +58,23 @@ const steps = [
   <section class="hero">
     <div class="shell hero__grid">
       <div class="hero__copy">
-        <p class="eyebrow">Native · Local-first · Peer-to-peer</p>
-        <h1>Private workspace chat, built local-first.</h1>
+        <p class="eyebrow">Experimental · P2P-first · Canary</p>
+        <h1>Team chat designed to stay free.</h1>
         <p class="lede">
-          Chaft keeps messages, search, and history fast on your device, then syncs
-          conversations directly when teammates are online.
+          Chaft is an experimental Slack alternative for small teams. Local-first
+          storage, end-to-end encrypted content, and direct peer replication reduce
+          dependence on costly central infrastructure.
         </p>
         <div class="button-row hero__actions">
-          <a class="button" href={sitePath("/download/")}>
-            {hasPublishedDownloads ? "Download Chaft" : "View preview downloads"}
+          <a class="button" href={primaryHref}>
+            {primaryLabel}
             <span aria-hidden="true">→</span>
           </a>
           <a class="button button--secondary" href={sitePath("/docs/")}>Read the docs</a>
           <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
         </div>
         <p class="hero__note">
-          <span class="status">Early access</span>
+          <span class="status">Canary</span>
           Not yet recommended for sensitive production communication.
         </p>
       </div>
@@ -82,10 +87,10 @@ const steps = [
 
   <div class="trust-rail" aria-label="Chaft attributes">
     <div class="shell trust-rail__inner">
-      <span>Native desktop</span>
       <span>Local-first</span>
       <span>Direct peer sync</span>
-      <span>Open source</span>
+      <span>Encrypted content</span>
+      <span>Free software</span>
     </div>
   </div>
 
@@ -93,13 +98,13 @@ const steps = [
     <div class="shell">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Conversation first</p>
-          <h2>Your workspace should not disappear behind a connection spinner.</h2>
+          <p class="eyebrow">Lower infrastructure by design</p>
+          <h2>Software should be cheap to sustain, too.</h2>
         </div>
         <p>
-          Chaft is built around local work and visible network state. Offline, partial,
-          and missing history stay explicit and repairable instead of being silently
-          hidden.
+          AI is making software cheaper to create. Chaft explores whether peer-to-peer
+          architecture can also make collaboration software cheaper to sustain—without
+          pretending the tradeoffs disappear.
         </p>
       </div>
 
@@ -119,7 +124,7 @@ const steps = [
     <div class="shell">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Three calm steps</p>
+          <p class="eyebrow">How it works</p>
           <h2>Create a workspace. Invite your people. Keep talking.</h2>
         </div>
         <p>
@@ -153,7 +158,7 @@ const steps = [
           <p>
             Start with the desktop build, learn how local-first replication works,
             or use the contributor reference. Every guide reflects the current
-            preview implementation.
+            canary implementation.
           </p>
           <a class="button button--secondary" href={sitePath("/docs/")}>
             Browse all documentation <span aria-hidden="true">→</span>
@@ -171,7 +176,7 @@ const steps = [
         </a>
         <a href={sitePath("/docs/concepts/security-model/")}>
           <span>Security model</span>
-          <strong>Know the preview boundaries</strong>
+          <strong>Know the canary boundaries</strong>
         </a>
         <a href={sitePath("/docs/development/testing/")}>
           <span>Build and contribute</span>
@@ -185,12 +190,12 @@ const steps = [
     <div class="shell">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Desktop preview</p>
-          <h2>One workspace, across the machines you already use.</h2>
+          <p class="eyebrow">Canary builds</p>
+          <h2>Windows, macOS, and Linux stay first-class.</h2>
         </div>
         <p>
-          Every platform remains visible. Chaft only highlights the likely match and
-          never starts a download automatically.
+          Public packages are being prepared. Build from source today; every supported
+          platform remains visible and no download starts automatically.
         </p>
       </div>
       <DownloadGrid compact />
@@ -198,9 +203,16 @@ const steps = [
         <p>
           {hasPublishedDownloads
             ? `Chaft ${currentRelease.version} artifacts and verification details are ready.`
-            : "Public verified builds are not published yet. Current source builds remain available in the repository."}
+            : "Public canary packages are not published yet. The current source remains available to build and test."}
         </p>
-        <a class="button button--secondary" href={sitePath("/download/")}>All download details</a>
+        <a
+          class="button button--secondary"
+          href={hasPublishedDownloads
+            ? sitePath("/download/")
+            : sitePath("/docs/getting-started/build-desktop/")}
+        >
+          {hasPublishedDownloads ? "All download details" : "Build the canary"}
+        </a>
       </div>
     </div>
   </section>
@@ -213,16 +225,20 @@ const steps = [
 
   <section class="section open-source">
     <div class="shell open-source__inner">
-      <p class="eyebrow">Open by construction</p>
-      <h2>Read the code. Run the checks. Help shape what comes next.</h2>
+      <p class="eyebrow">Free within limits</p>
+      <h2>Small-team collaboration without a permanent SaaS bill.</h2>
       <p class="lede">
-        Chaft is free software under AGPL-3.0-or-later. Its Rust core, native shell,
-        protocol contracts, security posture, and release tooling live together in the
-        public repository.
+        Chaft aims to keep the core experience free by shifting storage and replication
+        to participating devices. That promise is bounded by deliberate product limits,
+        not unlimited hosted infrastructure. The AGPL source and every current boundary
+        are public.
       </p>
       <div class="button-row">
-        <a class="button" href="https://github.com/Jurshsmith/chaft">Open on GitHub</a>
-        <a class="button button--secondary" href={sitePath("/releases/")}>Release status</a>
+        <a class="button" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
+        <a class="button button--secondary" href="https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md">
+          Contribute
+        </a>
+        <a class="button button--quiet" href={sitePath("/releases/")}>Release status</a>
       </div>
     </div>
   </section>

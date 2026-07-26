@@ -21,16 +21,21 @@ interface Props {
 
 const { release } = Astro.props;
 const description = `Chaft ${release.version} ${release.channel} release status and desktop artifact metadata.`;
+const isPublished = release.status === "published";
 ---
 
 <BaseLayout title={`Release ${release.version}`} description={description}>
   <PageHero
-    eyebrow={`${release.channel} · ${release.status}`}
+    eyebrow={isPublished
+      ? `${release.channel} · ${release.status}`
+      : `Canary candidate · ${release.status}`}
     title={`Chaft ${release.version}`}
     lede="This page is generated from the same validated manifest consumed by the download surface. Published artifacts must carry their final filename, byte size, SHA-256, and signing state."
   >
     <div class="button-row">
-      <a class="button" href={sitePath("/download/")}>Open downloads</a>
+      <a class="button" href={sitePath("/download/")}>
+        {isPublished ? "Open downloads" : "Canary build status"}
+      </a>
       <a class="button button--secondary" href={release.releaseUrl}>GitHub Releases</a>
     </div>
   </PageHero>
