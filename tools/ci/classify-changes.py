@@ -134,6 +134,8 @@ RELEASE_TOOLS = frozenset(
         "tools/desktop/linux-appimage-contract-test.py",
         "tools/desktop/macos-dmg-smoke-test.py",
         "tools/desktop/macos-dmg-smoke.sh",
+        "tools/desktop/macos-unsigned-canary-smoke-test.py",
+        "tools/desktop/macos-unsigned-canary-smoke.sh",
         "tools/desktop/package-linux-appimage.sh",
         "tools/desktop/package-smoke.sh",
         "tools/desktop/package.sh",

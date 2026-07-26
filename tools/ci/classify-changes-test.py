@@ -210,6 +210,8 @@ class PathClassificationTests(unittest.TestCase):
             "tools/desktop/linux-appimage-contract-test.py",
             "tools/desktop/macos-dmg-smoke-test.py",
             "tools/desktop/macos-dmg-smoke.sh",
+            "tools/desktop/macos-unsigned-canary-smoke-test.py",
+            "tools/desktop/macos-unsigned-canary-smoke.sh",
             "tools/desktop/package-linux-appimage.sh",
             "tools/desktop/qt-release-binding-test.py",
             "tools/desktop/release-metadata.py",
