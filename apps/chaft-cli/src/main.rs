@@ -28,6 +28,10 @@ use chaft_types::{
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
+mod secret_input;
+
+use secret_input::{Secret, TerminalPrompter};
+
 const DEVICE_KEY_PACKAGE_FILE_MAX_BYTES: u64 = 64 * 1024;
 const KEY_TRANSFER_JSON_FILE_MAX_BYTES: u64 = 256 * 1024;
 const RECOVERY_BUNDLE_JSON_FILE_MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -43,8 +47,30 @@ struct Cli {
     #[arg(long, global = true)]
     identity_file: Option<PathBuf>,
 
+    #[arg(
+        long,
+        global = true,
+        hide = true,
+        conflicts_with_all = [
+            "identity_passphrase_prompt",
+            "identity_passphrase_stdin",
+            "identity_passphrase_file"
+        ]
+    )]
+    identity_passphrase: Option<Secret>,
+
+    #[arg(
+        long,
+        global = true,
+        conflicts_with_all = ["identity_passphrase_stdin", "identity_passphrase_file"]
+    )]
+    identity_passphrase_prompt: bool,
+
+    #[arg(long, global = true, conflicts_with = "identity_passphrase_file")]
+    identity_passphrase_stdin: bool,
+
     #[arg(long, global = true)]
-    identity_passphrase: Option<String>,
+    identity_passphrase_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -538,14 +564,30 @@ enum Command {
     ExportRecoveryBundle {
         #[arg(long)]
         workspace_id: String,
+        #[arg(
+            long,
+            hide = true,
+            conflicts_with_all = ["passphrase_stdin", "passphrase_file"]
+        )]
+        passphrase: Option<Secret>,
+        #[arg(long, conflicts_with = "passphrase_file")]
+        passphrase_stdin: bool,
         #[arg(long)]
-        passphrase: String,
+        passphrase_file: Option<PathBuf>,
     },
     ImportRecoveryBundle {
         #[arg(long)]
         bundle_file: PathBuf,
+        #[arg(
+            long,
+            hide = true,
+            conflicts_with_all = ["passphrase_stdin", "passphrase_file"]
+        )]
+        passphrase: Option<Secret>,
+        #[arg(long, conflicts_with = "passphrase_file")]
+        passphrase_stdin: bool,
         #[arg(long)]
-        passphrase: String,
+        passphrase_file: Option<PathBuf>,
     },
     ExportTrustSnapshot {
         #[arg(long)]
@@ -648,9 +690,30 @@ fn main() -> Result<()> {
 
 #[tokio::main]
 async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    validate_secret_source_selection(&cli)?;
     let data_dir = checked_cli_path_arg(cli.data_dir.clone(), "data directory")?;
     let identity_file = checked_optional_cli_path_arg(cli.identity_file.clone(), "identity file")?;
+    let identity_passphrase_file = checked_optional_cli_path_arg(
+        cli.identity_passphrase_file.clone(),
+        "identity passphrase file",
+    )?;
+    if cli.identity_passphrase.is_some() {
+        eprintln!(
+            "warning: --identity-passphrase is deprecated; use --identity-passphrase-prompt, --identity-passphrase-stdin, or --identity-passphrase-file"
+        );
+    }
+    let mut stdin = std::io::stdin().lock();
+    let mut prompter = TerminalPrompter;
+    cli.identity_passphrase = secret_input::resolve_identity_passphrase(
+        cli.identity_passphrase.take(),
+        cli.identity_passphrase_prompt,
+        cli.identity_passphrase_stdin,
+        identity_passphrase_file.as_deref(),
+        &mut stdin,
+        &mut prompter,
+    )?;
+    drop(stdin);
 
     match cli.command {
         Command::DeviceId => {
@@ -1754,11 +1817,30 @@ async fn run_cli() -> Result<()> {
         Command::ExportRecoveryBundle {
             workspace_id,
             passphrase,
+            passphrase_stdin,
+            passphrase_file,
         } => {
+            let passphrase_file =
+                checked_optional_cli_path_arg(passphrase_file, "recovery passphrase file")?;
             let runtime = open_runtime(
                 &data_dir,
                 identity_file.clone(),
                 cli.identity_passphrase.as_deref(),
+            )?;
+            if passphrase.is_some() {
+                eprintln!(
+                    "warning: --passphrase is deprecated; use the hidden terminal prompt, --passphrase-stdin, or --passphrase-file"
+                );
+            }
+            let mut stdin = std::io::stdin().lock();
+            let mut prompter = TerminalPrompter;
+            let passphrase = secret_input::resolve_recovery_passphrase(
+                passphrase,
+                passphrase_stdin,
+                passphrase_file.as_deref(),
+                true,
+                &mut stdin,
+                &mut prompter,
             )?;
             let exported = runtime
                 .export_workspace_recovery_bundle(workspace_id_arg(workspace_id)?, &passphrase)?;
@@ -1767,12 +1849,31 @@ async fn run_cli() -> Result<()> {
         Command::ImportRecoveryBundle {
             bundle_file,
             passphrase,
+            passphrase_stdin,
+            passphrase_file,
         } => {
             let bundle_file = checked_cli_path_arg(bundle_file, "recovery bundle JSON file")?;
+            let passphrase_file =
+                checked_optional_cli_path_arg(passphrase_file, "recovery passphrase file")?;
             let runtime = open_runtime(
                 &data_dir,
                 identity_file.clone(),
                 cli.identity_passphrase.as_deref(),
+            )?;
+            if passphrase.is_some() {
+                eprintln!(
+                    "warning: --passphrase is deprecated; use the hidden terminal prompt, --passphrase-stdin, or --passphrase-file"
+                );
+            }
+            let mut stdin = std::io::stdin().lock();
+            let mut prompter = TerminalPrompter;
+            let passphrase = secret_input::resolve_recovery_passphrase(
+                passphrase,
+                passphrase_stdin,
+                passphrase_file.as_deref(),
+                false,
+                &mut stdin,
+                &mut prompter,
             )?;
             let bundle_bytes = read_recovery_bundle_json_file(&bundle_file)?;
             let bundle = serde_json::from_slice::<WorkspaceRecoveryBundle>(&bundle_bytes)?;
@@ -1826,6 +1927,25 @@ async fn run_cli() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_secret_source_selection(cli: &Cli) -> Result<()> {
+    let recovery_uses_stdin = matches!(
+        &cli.command,
+        Command::ExportRecoveryBundle {
+            passphrase_stdin: true,
+            ..
+        } | Command::ImportRecoveryBundle {
+            passphrase_stdin: true,
+            ..
+        }
+    );
+    if cli.identity_passphrase_stdin && recovery_uses_stdin {
+        return Err(anyhow!(
+            "standard input cannot supply both the identity and recovery passphrases in one invocation"
+        ));
+    }
     Ok(())
 }
 
@@ -2232,6 +2352,156 @@ mod tests {
         CHANNEL_ID_MAX_BYTES, DEVICE_ID_MAX_BYTES, DEVICE_KEY_PACKAGE_ID_MAX_BYTES,
         MESSAGE_ID_MAX_BYTES, WORKSPACE_ID_MAX_BYTES,
     };
+
+    #[test]
+    fn cli_accepts_new_identity_passphrase_sources_and_rejects_conflicts() {
+        for arguments in [
+            vec!["chaft", "--identity-passphrase-prompt", "device-id"],
+            vec!["chaft", "--identity-passphrase-stdin", "device-id"],
+            vec![
+                "chaft",
+                "--identity-passphrase-file",
+                "identity.secret",
+                "device-id",
+            ],
+        ] {
+            Cli::try_parse_from(arguments).unwrap();
+        }
+
+        let error = Cli::try_parse_from([
+            "chaft",
+            "--identity-passphrase-prompt",
+            "--identity-passphrase-stdin",
+            "device-id",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let legacy_conflict = Cli::try_parse_from([
+            "chaft",
+            "--identity-passphrase",
+            "legacy-secret",
+            "--identity-passphrase-file",
+            "identity.secret",
+            "device-id",
+        ])
+        .unwrap_err();
+        assert_eq!(
+            legacy_conflict.kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
+        assert!(!legacy_conflict.to_string().contains("legacy-secret"));
+    }
+
+    #[test]
+    fn recovery_passphrase_defaults_to_prompt_and_rejects_explicit_source_conflicts() {
+        let cli = Cli::try_parse_from([
+            "chaft",
+            "export-recovery-bundle",
+            "--workspace-id",
+            "wrk_cli_local",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ExportRecoveryBundle {
+                passphrase,
+                passphrase_stdin,
+                passphrase_file,
+                ..
+            } => {
+                assert!(passphrase.is_none());
+                assert!(!passphrase_stdin);
+                assert!(passphrase_file.is_none());
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        let error = Cli::try_parse_from([
+            "chaft",
+            "import-recovery-bundle",
+            "--bundle-file",
+            "bundle.json",
+            "--passphrase-stdin",
+            "--passphrase-file",
+            "recovery.secret",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let legacy_conflict = Cli::try_parse_from([
+            "chaft",
+            "export-recovery-bundle",
+            "--workspace-id",
+            "wrk_cli_local",
+            "--passphrase",
+            "legacy-secret",
+            "--passphrase-stdin",
+        ])
+        .unwrap_err();
+        assert_eq!(
+            legacy_conflict.kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
+        assert!(!legacy_conflict.to_string().contains("legacy-secret"));
+    }
+
+    #[test]
+    fn cli_rejects_using_stdin_for_identity_and_recovery_together() {
+        let cli = Cli::try_parse_from([
+            "chaft",
+            "--identity-passphrase-stdin",
+            "import-recovery-bundle",
+            "--bundle-file",
+            "bundle.json",
+            "--passphrase-stdin",
+        ])
+        .unwrap();
+
+        let error = validate_secret_source_selection(&cli).unwrap_err();
+
+        assert!(error.to_string().contains("cannot supply both"));
+    }
+
+    #[test]
+    fn legacy_direct_secret_arguments_remain_accepted_but_debug_redacted() {
+        let identity_secret = "identity-should-never-appear";
+        let recovery_secret = "recovery-should-never-appear";
+        let cli = Cli::try_parse_from([
+            "chaft",
+            "--identity-passphrase",
+            identity_secret,
+            "export-recovery-bundle",
+            "--workspace-id",
+            "wrk_cli_local",
+            "--passphrase",
+            recovery_secret,
+        ])
+        .unwrap();
+
+        let debug = format!("{cli:?}");
+
+        assert!(!debug.contains(identity_secret));
+        assert!(!debug.contains(recovery_secret));
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn legacy_direct_secret_arguments_are_hidden_from_help() {
+        let root_help = Cli::try_parse_from(["chaft", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(!root_help.contains("--identity-passphrase <"));
+        assert!(root_help.contains("--identity-passphrase-prompt"));
+        assert!(root_help.contains("--identity-passphrase-stdin"));
+        assert!(root_help.contains("--identity-passphrase-file"));
+
+        let recovery_help = Cli::try_parse_from(["chaft", "export-recovery-bundle", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(!recovery_help.contains("--passphrase <"));
+        assert!(recovery_help.contains("--passphrase-stdin"));
+        assert!(recovery_help.contains("--passphrase-file"));
+    }
 
     #[test]
     fn portable_workspace_export_command_accepts_workspace_and_output() {

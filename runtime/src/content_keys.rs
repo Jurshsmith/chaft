@@ -1,16 +1,21 @@
+use std::fmt;
 #[cfg(test)]
 use std::{fs, path::Path};
 
 use chaft_crypto::ContentKey;
 use chaft_types::{ChannelId, ContentKeyScope, EventBody, SignableEvent, WorkspaceId};
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{SeqAccess, Visitor},
+};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{CONTENT_KEY_ALGORITHM_AES_256_GCM_SIV, LocalRuntime, RuntimeError};
 
 pub(crate) const WORKSPACE_KEY_LEN: usize = 32;
 pub(crate) const CONTENT_KEY_EXPORT_SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceKeyExport {
     pub schema_version: u32,
@@ -22,6 +27,12 @@ pub struct WorkspaceKeyExport {
     pub aes_256_gcm_siv_key: Vec<u8>,
     #[serde(default)]
     pub previous_keys: Vec<ExportedContentKeyMaterial>,
+}
+
+impl Drop for WorkspaceKeyExport {
+    fn drop(&mut self) {
+        self.aes_256_gcm_siv_key.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,7 +53,7 @@ pub struct RotatedWorkspaceKey {
     pub event_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelKeyExport {
     pub schema_version: u32,
@@ -55,6 +66,12 @@ pub struct ChannelKeyExport {
     pub aes_256_gcm_siv_key: Vec<u8>,
     #[serde(default)]
     pub previous_keys: Vec<ExportedContentKeyMaterial>,
+}
+
+impl Drop for ChannelKeyExport {
+    fn drop(&mut self) {
+        self.aes_256_gcm_siv_key.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,11 +107,168 @@ pub struct RotatedWorkspaceManualKeys {
     pub rotated_event_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportedContentKeyMaterial {
     pub key_id: String,
     pub aes_256_gcm_siv_key: Vec<u8>,
+}
+
+impl Drop for ExportedContentKeyMaterial {
+    fn drop(&mut self) {
+        self.aes_256_gcm_siv_key.zeroize();
+    }
+}
+
+struct SensitiveKeyBytes(Vec<u8>);
+
+impl SensitiveKeyBytes {
+    fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for SensitiveKeyBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+struct SensitiveKeyBytesVisitor;
+
+impl<'de> Visitor<'de> for SensitiveKeyBytesVisitor {
+    type Value = SensitiveKeyBytes;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an array of key bytes")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let initial_capacity = sequence.size_hint().unwrap_or(0).min(WORKSPACE_KEY_LEN + 1);
+        let mut bytes = Zeroizing::new(Vec::with_capacity(initial_capacity));
+        while let Some(byte) = sequence.next_element()? {
+            bytes.push(byte);
+        }
+        Ok(SensitiveKeyBytes(std::mem::take(&mut *bytes)))
+    }
+}
+
+impl<'de> Deserialize<'de> for SensitiveKeyBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(SensitiveKeyBytesVisitor)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceKeyExportWire {
+    schema_version: u32,
+    workspace_id: String,
+    #[serde(default = "default_content_key_epoch")]
+    epoch: u64,
+    key_id: String,
+    exporter_device_id: String,
+    aes_256_gcm_siv_key: SensitiveKeyBytes,
+    #[serde(default)]
+    previous_keys: Vec<ExportedContentKeyMaterial>,
+}
+
+impl<'de> Deserialize<'de> for WorkspaceKeyExport {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let WorkspaceKeyExportWire {
+            schema_version,
+            workspace_id,
+            epoch,
+            key_id,
+            exporter_device_id,
+            mut aes_256_gcm_siv_key,
+            previous_keys,
+        } = WorkspaceKeyExportWire::deserialize(deserializer)?;
+        Ok(Self {
+            schema_version,
+            workspace_id,
+            epoch,
+            key_id,
+            exporter_device_id,
+            aes_256_gcm_siv_key: aes_256_gcm_siv_key.take(),
+            previous_keys,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelKeyExportWire {
+    schema_version: u32,
+    workspace_id: String,
+    channel_id: String,
+    #[serde(default = "default_content_key_epoch")]
+    epoch: u64,
+    key_id: String,
+    exporter_device_id: String,
+    aes_256_gcm_siv_key: SensitiveKeyBytes,
+    #[serde(default)]
+    previous_keys: Vec<ExportedContentKeyMaterial>,
+}
+
+impl<'de> Deserialize<'de> for ChannelKeyExport {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ChannelKeyExportWire {
+            schema_version,
+            workspace_id,
+            channel_id,
+            epoch,
+            key_id,
+            exporter_device_id,
+            mut aes_256_gcm_siv_key,
+            previous_keys,
+        } = ChannelKeyExportWire::deserialize(deserializer)?;
+        Ok(Self {
+            schema_version,
+            workspace_id,
+            channel_id,
+            epoch,
+            key_id,
+            exporter_device_id,
+            aes_256_gcm_siv_key: aes_256_gcm_siv_key.take(),
+            previous_keys,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportedContentKeyMaterialWire {
+    key_id: String,
+    aes_256_gcm_siv_key: SensitiveKeyBytes,
+}
+
+impl<'de> Deserialize<'de> for ExportedContentKeyMaterial {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ExportedContentKeyMaterialWire {
+            key_id,
+            mut aes_256_gcm_siv_key,
+        } = ExportedContentKeyMaterialWire::deserialize(deserializer)?;
+        Ok(Self {
+            key_id,
+            aes_256_gcm_siv_key: aes_256_gcm_siv_key.take(),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -249,12 +423,12 @@ impl WorkspaceKey {
             return Err(RuntimeError::InvalidWorkspaceKey);
         }
         let content_key =
-            decode_workspace_key_material(persisted.key_id.clone(), persisted.aes_256_gcm_siv_key)?
+            decode_workspace_key_material(&persisted.key_id, &persisted.aes_256_gcm_siv_key)?
                 .content_key;
         let previous_keys = persisted
             .previous_keys
-            .into_iter()
-            .map(|key| decode_workspace_key_material(key.key_id, key.aes_256_gcm_siv_key))
+            .iter()
+            .map(|key| decode_workspace_key_material(&key.key_id, &key.aes_256_gcm_siv_key))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             workspace_id: persisted.workspace_id,
@@ -269,23 +443,23 @@ impl WorkspaceKey {
         if !content_key_schema_supported(exported.schema_version) {
             return Err(RuntimeError::UnsupportedWorkspaceKeyExport);
         }
-        let workspace_id = WorkspaceId(exported.workspace_id);
+        let workspace_id = WorkspaceId(exported.workspace_id.clone());
         let epoch = exported.epoch.max(1);
         if exported.key_id != Self::key_id_for_epoch(&workspace_id, epoch) {
             return Err(RuntimeError::InvalidWorkspaceKey);
         }
         let content_key =
-            decode_workspace_key_material(exported.key_id.clone(), exported.aes_256_gcm_siv_key)?
+            decode_workspace_key_material(&exported.key_id, &exported.aes_256_gcm_siv_key)?
                 .content_key;
         let previous_keys = exported
             .previous_keys
-            .into_iter()
-            .map(|key| decode_workspace_key_material(key.key_id, key.aes_256_gcm_siv_key))
+            .iter()
+            .map(|key| decode_workspace_key_material(&key.key_id, &key.aes_256_gcm_siv_key))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             workspace_id,
             epoch,
-            key_id: exported.key_id,
+            key_id: exported.key_id.clone(),
             content_key,
             previous_keys,
         })
@@ -385,12 +559,12 @@ impl ChannelKey {
         }
 
         let content_key =
-            decode_channel_key_material(persisted.key_id.clone(), persisted.aes_256_gcm_siv_key)?
+            decode_channel_key_material(&persisted.key_id, &persisted.aes_256_gcm_siv_key)?
                 .content_key;
         let previous_keys = persisted
             .previous_keys
-            .into_iter()
-            .map(|key| decode_channel_key_material(key.key_id, key.aes_256_gcm_siv_key))
+            .iter()
+            .map(|key| decode_channel_key_material(&key.key_id, &key.aes_256_gcm_siv_key))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             workspace_id: persisted.workspace_id,
@@ -407,25 +581,25 @@ impl ChannelKey {
             return Err(RuntimeError::UnsupportedChannelKeyExport);
         }
 
-        let workspace_id = WorkspaceId(exported.workspace_id);
-        let channel_id = ChannelId(exported.channel_id);
+        let workspace_id = WorkspaceId(exported.workspace_id.clone());
+        let channel_id = ChannelId(exported.channel_id.clone());
         let epoch = exported.epoch.max(1);
         if exported.key_id != Self::key_id_for_epoch(&workspace_id, &channel_id, epoch) {
             return Err(RuntimeError::InvalidChannelKey);
         }
         let content_key =
-            decode_channel_key_material(exported.key_id.clone(), exported.aes_256_gcm_siv_key)?
+            decode_channel_key_material(&exported.key_id, &exported.aes_256_gcm_siv_key)?
                 .content_key;
         let previous_keys = exported
             .previous_keys
-            .into_iter()
-            .map(|key| decode_channel_key_material(key.key_id, key.aes_256_gcm_siv_key))
+            .iter()
+            .map(|key| decode_channel_key_material(&key.key_id, &key.aes_256_gcm_siv_key))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             workspace_id,
             channel_id,
             epoch,
-            key_id: exported.key_id,
+            key_id: exported.key_id.clone(),
             content_key,
             previous_keys,
         })
@@ -492,34 +666,32 @@ fn content_key_schema_supported(schema_version: u32) -> bool {
 }
 
 fn decode_workspace_key_material(
-    key_id: String,
-    raw_key: Vec<u8>,
+    key_id: &str,
+    raw_key: &[u8],
 ) -> Result<ContentKeyMaterial, RuntimeError> {
     if raw_key.len() != WORKSPACE_KEY_LEN {
         return Err(RuntimeError::InvalidWorkspaceKey);
     }
-    let bytes = raw_key
-        .try_into()
-        .map_err(|_| RuntimeError::InvalidWorkspaceKey)?;
+    let mut bytes = Zeroizing::new([0_u8; WORKSPACE_KEY_LEN]);
+    bytes.copy_from_slice(raw_key);
     Ok(ContentKeyMaterial {
-        key_id,
-        content_key: ContentKey::from_bytes(bytes),
+        key_id: key_id.to_owned(),
+        content_key: ContentKey::from_bytes(*bytes),
     })
 }
 
 fn decode_channel_key_material(
-    key_id: String,
-    raw_key: Vec<u8>,
+    key_id: &str,
+    raw_key: &[u8],
 ) -> Result<ContentKeyMaterial, RuntimeError> {
     if raw_key.len() != WORKSPACE_KEY_LEN {
         return Err(RuntimeError::InvalidChannelKey);
     }
-    let bytes = raw_key
-        .try_into()
-        .map_err(|_| RuntimeError::InvalidChannelKey)?;
+    let mut bytes = Zeroizing::new([0_u8; WORKSPACE_KEY_LEN]);
+    bytes.copy_from_slice(raw_key);
     Ok(ContentKeyMaterial {
-        key_id,
-        content_key: ContentKey::from_bytes(bytes),
+        key_id: key_id.to_owned(),
+        content_key: ContentKey::from_bytes(*bytes),
     })
 }
 

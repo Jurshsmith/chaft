@@ -16,5 +16,11 @@ chaft-net-iroh = { path = "../../network/iroh" }
 chaft-runtime = { path = "../../runtime" }
 chaft-types = { path = "../../domain/types" }
 clap.workspace = true
+libc.workspace = true
+rpassword.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

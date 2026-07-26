@@ -43,6 +43,20 @@ Chaft is designed around these invariants:
 - Packaging, signing, notarization, and update flows are not yet production
   release gates.
 
+## Passphrase Handling
+
+- Prefer the CLI's hidden interactive prompt. Recovery export and import prompt
+  by default; use `--identity-passphrase-prompt` when unlocking an identity.
+- For controlled automation, use the CLI's standard-input passphrase mode and
+  keep the producer, consumer, and logs isolated.
+- On Unix, a passphrase file must be owner-only: create it under `umask 077`,
+  keep mode `0600`, and pass its path with `--passphrase-file`.
+- Passphrases in command-line arguments or environment variables are not
+  recommended because process listings, shell history, logs, or child processes
+  can expose them.
+- The environment-variable path remains a development startup fallback only,
+  not a production secret-delivery mechanism.
+
 ## Supported Versions
 
 Security fixes target the `main` branch until tagged releases exist.

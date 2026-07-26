@@ -30,6 +30,7 @@ pub use chaft_types::{
     PEER_ENDPOINT_ID_MAX_BYTES, PEER_ENDPOINT_LIST_MAX_ITEMS, PEER_ENDPOINT_MAX_BYTES,
 };
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 mod attachment_runtime;
 mod blob_transfer;
@@ -486,7 +487,7 @@ impl RuntimeError {
 pub struct LocalRuntime {
     paths: RuntimePaths,
     identity: DeviceIdentity,
-    identity_passphrase: Option<String>,
+    identity_passphrase: Option<Zeroizing<String>>,
     store: EventStore,
 }
 
@@ -658,7 +659,9 @@ impl LocalRuntime {
         fs::create_dir_all(&paths.workspace_keys_dir)?;
         let identity = DeviceIdentity::load_or_generate_with_passphrase(
             &paths.identity_file,
-            identity_passphrase.as_deref(),
+            identity_passphrase
+                .as_ref()
+                .map(|passphrase| passphrase.as_str()),
         )?;
         let store = EventStore::open(&paths.event_store)?;
 

@@ -100,7 +100,9 @@ impl LocalRuntime {
             &bytes,
             secret_kind,
             &path_hint,
-            self.identity_passphrase.as_deref(),
+            self.identity_passphrase
+                .as_ref()
+                .map(|passphrase| passphrase.as_str()),
         )? {
             return Ok(plaintext);
         }

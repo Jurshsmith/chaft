@@ -29,6 +29,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
 x25519-dalek.workspace = true
+zeroize.workspace = true
 zip.workspace = true
 
 [target.'cfg(unix)'.dependencies]

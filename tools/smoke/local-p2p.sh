@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+umask 077
 
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
@@ -56,7 +57,7 @@ expect_failure_contains() {
   rm -f "$stdout_file" "$stderr_file"
 
   if "$@" >"$stdout_file" 2>"$stderr_file"; then
-    printf 'expected command to fail: %s\n' "$*" >&2
+    printf 'expected command to fail\n' >&2
     exit 1
   fi
 
@@ -148,6 +149,12 @@ fi
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-smoke.XXXXXX")"
 trap cleanup EXIT INT TERM
 
+recovery_passphrase_file="$smoke_dir/recovery-passphrase"
+wrong_recovery_passphrase_file="$smoke_dir/wrong-recovery-passphrase"
+printf '%s' 'local p2p recovery passphrase' > "$recovery_passphrase_file"
+printf '%s' 'wrong local p2p recovery passphrase' > "$wrong_recovery_passphrase_file"
+chmod 600 "$recovery_passphrase_file" "$wrong_recovery_passphrase_file"
+
 app_dir="$smoke_dir/app"
 peer_dir="$smoke_dir/peer"
 recovery_dir="$smoke_dir/recovery-peer"
@@ -217,7 +224,7 @@ workspace_key_json="$smoke_dir/workspace-key.json"
 recovery_bundle_json="$smoke_dir/recovery-bundle.json"
 "$cli_bin" --data-dir "$app_dir" export-recovery-bundle \
   --workspace-id "$workspace_id" \
-  --passphrase "local p2p recovery passphrase" > "$recovery_bundle_json"
+  --passphrase-file "$recovery_passphrase_file" > "$recovery_bundle_json"
 
 port="$(unused_port)"
 node_log="$smoke_dir/backup-node.log"
@@ -318,7 +325,7 @@ assert_json "$recovery_pull_json" \
 expect_failure_contains 'crypto|passphrase|open failed|recovery' \
   "$cli_bin" --data-dir "$recovery_dir" import-recovery-bundle \
   --bundle-file "$recovery_bundle_json" \
-  --passphrase "wrong local p2p recovery passphrase"
+  --passphrase-file "$wrong_recovery_passphrase_file"
 
 expect_failure_contains 'key|decrypt|missing|open failed' \
   "$cli_bin" --data-dir "$recovery_dir" snapshot \
@@ -328,7 +335,7 @@ expect_failure_contains 'key|decrypt|missing|open failed' \
 recovery_import_json="$smoke_dir/recovery-import.json"
 "$cli_bin" --data-dir "$recovery_dir" import-recovery-bundle \
   --bundle-file "$recovery_bundle_json" \
-  --passphrase "local p2p recovery passphrase" > "$recovery_import_json"
+  --passphrase-file "$recovery_passphrase_file" > "$recovery_import_json"
 assert_json "$recovery_import_json" \
   'data["workspaceId"] == "'"$workspace_id"'"' \
   'recovery import did not return the restored workspace ID'
