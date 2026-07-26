@@ -486,7 +486,7 @@ cargo run -p chaft-cli -- --data-dir ./scratch/app reindex-workspace-search --wo
 cargo run -p chaft-cli -- --data-dir ./scratch/app delete-message --workspace-id <workspace-id> --message-id <message-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app publish-queue --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app export-workspace-key --workspace-id <workspace-id> > ./scratch/workspace-key.json
-cargo run -p chaft-cli -- --data-dir ./scratch/app export-recovery-bundle --workspace-id <workspace-id> --passphrase "<private passphrase>" > ./scratch/recovery-bundle.json
+cargo run -p chaft-cli -- --data-dir ./scratch/app export-recovery-bundle --workspace-id <workspace-id> > ./scratch/recovery-bundle.json
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app device-id
 cargo run -p chaft-cli -- --data-dir ./scratch/app invite-member --workspace-id <workspace-id> --device-id <second-device-id> --role member
 cargo run -p chaft-cli -- --data-dir ./scratch/app remove-member-with-open-mls --workspace-id <workspace-id> --device-id <removed-device-id>
@@ -500,7 +500,7 @@ cargo run -p chaft-cli -- --data-dir ./scratch/app remove-channel-member-with-ke
 cargo run -p chaft-cli -- --data-dir ./scratch/app remove-channel-member --workspace-id <workspace-id> --channel-id <private-channel-id> --device-id <removed-device-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/app export-channel-key --workspace-id <workspace-id> --channel-id <private-channel-id> > ./scratch/private-channel-key.json
 cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json device-id
-cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json --identity-passphrase "<private passphrase>" device-id
+cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json --identity-passphrase-prompt device-id
 cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json sample-event
 cargo run -p chaft-node -- --data-dir ./scratch/node
 cargo run -p chaft-node -- --data-dir ./scratch/node serve --listen 127.0.0.1:7777 --max-active-connections 128
@@ -520,7 +520,7 @@ cargo run -p chaft-node -- --data-dir ./scratch/backup status --json --require-h
 cargo run -p chaft-node -- --data-dir ./scratch/backup repair-storage-metadata --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-workspace-key --key-file ./scratch/workspace-key.json
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-channel-key --key-file ./scratch/private-channel-key.json
-cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-recovery-bundle --bundle-file ./scratch/recovery-bundle.json --passphrase "<private passphrase>"
+cargo run -p chaft-cli -- --data-dir ./scratch/second-app import-recovery-bundle --bundle-file ./scratch/recovery-bundle.json
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app snapshot --workspace-id <workspace-id>
 cargo run -p chaft-cli -- --data-dir ./scratch/second-app snapshot --workspace-id <workspace-id> --decrypt
 cargo run -p chaft-cli -- --identity-file ../secrets/dev-device.json publish-sample --peer 127.0.0.1:7777

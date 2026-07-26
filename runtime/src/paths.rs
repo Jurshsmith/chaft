@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::RuntimeError;
 
@@ -68,7 +69,7 @@ pub(crate) fn validate_runtime_path(path: &Path, field: &'static str) -> Result<
 
 pub(crate) fn normalize_runtime_identity_passphrase(
     passphrase: Option<&str>,
-) -> Result<Option<String>, RuntimeError> {
+) -> Result<Option<Zeroizing<String>>, RuntimeError> {
     match passphrase {
         Some(passphrase) if passphrase.len() > RUNTIME_PASSPHRASE_MAX_BYTES => {
             Err(RuntimeError::MetadataFieldTooLarge {
@@ -78,7 +79,58 @@ pub(crate) fn normalize_runtime_identity_passphrase(
             })
         }
         Some(passphrase) if passphrase.trim().is_empty() => Ok(None),
-        Some(passphrase) => Ok(Some(passphrase.to_owned())),
+        Some(passphrase) => Ok(Some(Zeroizing::new(passphrase.to_owned()))),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zeroize::Zeroizing;
+
+    use super::{RUNTIME_PASSPHRASE_MAX_BYTES, normalize_runtime_identity_passphrase};
+    use crate::RuntimeError;
+
+    fn assert_zeroizing_string(_: &Zeroizing<String>) {}
+
+    #[test]
+    fn identity_passphrase_normalization_zeroizes_owned_copy_and_preserves_whitespace() {
+        let normalized =
+            normalize_runtime_identity_passphrase(Some("  significant passphrase \t")).unwrap();
+        let normalized = normalized.as_ref().expect("passphrase should be retained");
+
+        assert_zeroizing_string(normalized);
+        assert_eq!(normalized.as_str(), "  significant passphrase \t");
+    }
+
+    #[test]
+    fn identity_passphrase_normalization_preserves_blank_semantics() {
+        assert!(
+            normalize_runtime_identity_passphrase(None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            normalize_runtime_identity_passphrase(Some(" \t\r\n "))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn identity_passphrase_normalization_rejects_oversized_input_without_echoing_it() {
+        let passphrase = "p".repeat(RUNTIME_PASSPHRASE_MAX_BYTES + 1);
+        let error = normalize_runtime_identity_passphrase(Some(&passphrase)).unwrap_err();
+        let rendered = error.to_string();
+
+        assert!(matches!(
+            error,
+            RuntimeError::MetadataFieldTooLarge {
+                field: "identity passphrase",
+                actual_bytes,
+                max_bytes: RUNTIME_PASSPHRASE_MAX_BYTES,
+            } if actual_bytes == RUNTIME_PASSPHRASE_MAX_BYTES + 1
+        ));
+        assert!(!rendered.contains(&passphrase));
     }
 }

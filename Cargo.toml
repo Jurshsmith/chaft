@@ -38,8 +38,10 @@ blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 jsonschema = { version = "0.48", default-features = false }
+libc = "0.2"
 prost = "0.14"
 rand_core = { version = "0.6", features = ["getrandom"] }
+rpassword = "7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
