@@ -4,7 +4,7 @@
   "minDistinctSampledPixels": 8,
   "minHeight": 500,
   "minLuminanceStddev": 4.0,
-  "minQuadrantLuminanceSpread": 1.0,
+  "minQuadrantLuminanceSpread": 0.75,
   "minWidth": 800,
   "version": 1
 }
