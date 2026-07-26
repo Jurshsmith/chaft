@@ -29,17 +29,24 @@ describe("website deployment workflow safety gates", () => {
     expect(source).toContain(
       "github.event.workflow_run.head_repository.full_name == github.repository",
     );
-    expect(source.match(/^\s*false &&\s*$/gm)).toHaveLength(1);
-    expect(source).toContain("if: ${{ false && needs.preflight.result == 'success' }}");
+    expect(source).not.toMatch(/^\s*false &&\s*$/gm);
+    expect(source).toContain("if: ${{ needs.preflight.result == 'success' }}");
+    expect(source).toContain("/actions/runs/${SOURCE_RUN_ID}/artifacts?name=");
+    expect(source).toContain("artifact.workflow_run?.head_sha");
+    expect(source).toContain("/^sha256:[a-f0-9]{64}$/");
   });
 
-  it("keeps rollback manual, explicit, and hard-disabled", async () => {
+  it("keeps rollback manual and binds it to explicit incident state", async () => {
     const source = await workflow("rollback-website.yml");
     expect(source).toContain("workflow_dispatch:");
     expect(source).toContain("target_version_id:");
     expect(source).toContain("expected_source_commit:");
+    expect(source).toContain("failed_version_id:");
+    expect(source).toContain("incident_id:");
     expect(source).toContain("inputs.confirmation == 'rollback chaft-website'");
-    expect(source.match(/^\s*false &&\s*$/gm)).toHaveLength(1);
+    expect(source).not.toMatch(/^\s*false &&\s*$/gm);
+    expect(source).toContain("chaft-website-deployment-${EXPECTED_SOURCE_COMMIT}");
+    expect(source).toContain("retained deployment record does not authorize");
   });
 
   it("serializes deploy and rollback in the same non-cancelling production queue", async () => {
@@ -47,7 +54,34 @@ describe("website deployment workflow safety gates", () => {
       const source = await workflow(name);
       expect(source).toContain("group: chaft-website-production");
       expect(source).toContain("cancel-in-progress: false");
-      expect(source).toContain("queue: max");
+      expect(source).not.toContain("queue: max");
     }
+  });
+
+  it("proves private governance before either production mutation", async () => {
+    for (const name of ["deploy-website.yml", "rollback-website.yml"]) {
+      const source = await workflow(name);
+      expect(source).toContain("repository: Jurshsmith/chaft-infra");
+      expect(source).toContain("ssh-key: ${{ secrets.CHAFT_INFRA_DEPLOY_KEY }}");
+      expect(source).toContain("node apps/website/scripts/governance-validation.mjs");
+      expect(source).toContain("--expected-commit");
+    }
+  });
+
+  it("captures Cloudflare state and retains structured evidence", async () => {
+    const deploy = await workflow("deploy-website.yml");
+    expect(deploy).toContain("deployment-before.json");
+    expect(deploy).toContain("/workers/domains?service=chaft-website");
+    expect(deploy).toContain("domains-after.json");
+    expect(deploy).toContain("node scripts/verify-public-deployment.mjs");
+    expect(deploy).toContain('"chaft-website-deployment-record"');
+    expect(deploy).toContain("retention-days: 90");
+
+    const rollback = await workflow("rollback-website.yml");
+    expect(rollback).toContain("deployment-before.json");
+    expect(rollback).toContain("domains-after.json");
+    expect(rollback).toContain("node scripts/verify-public-deployment.mjs");
+    expect(rollback).toContain('"chaft-website-rollback-record"');
+    expect(rollback).toContain("retention-days: 90");
   });
 });
