@@ -3,6 +3,7 @@ set -eu
 
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
+. "$script_dir/common.sh"
 
 usage() {
   printf 'usage: %s [debug|release]\n' "$0" >&2
@@ -52,6 +53,40 @@ linuxdeploy_plugin_appimage="$(
     CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE "${CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE:-}"
 )"
 
+chaft_desktop_add_tool_paths
+qt_prefix="${QTDIR:-${QT_ROOT_DIR:-}}"
+if [ -z "$qt_prefix" ]; then
+  qt_prefix="$(chaft_desktop_qt_prefix || true)"
+fi
+if [ -z "$qt_prefix" ]; then
+  printf 'unable to resolve the Qt prefix for AppImage packaging\n' >&2
+  exit 1
+fi
+qt_prefix="$(CDPATH= cd "$qt_prefix" && pwd)"
+qt_library_dir="$qt_prefix/lib"
+qt_qmake="$qt_prefix/bin/qmake6"
+qt_quick_library="$qt_library_dir/libQt6Quick.so.6"
+qt_xcb_runtime_check="$script_dir/check-qt-xcb-runtime.sh"
+if [ ! -d "$qt_library_dir" ]; then
+  printf 'Qt library directory not found: %s\n' "$qt_library_dir" >&2
+  exit 1
+fi
+if [ ! -x "$qt_qmake" ]; then
+  printf 'Qt qmake executable not found: %s\n' "$qt_qmake" >&2
+  exit 1
+fi
+if [ ! -f "$qt_quick_library" ]; then
+  printf 'Qt Quick library not found: %s\n' "$qt_quick_library" >&2
+  exit 1
+fi
+if [ ! -x "$qt_xcb_runtime_check" ]; then
+  printf 'Qt XCB runtime check is not executable: %s\n' \
+    "$qt_xcb_runtime_check" >&2
+  exit 1
+fi
+
+"$qt_xcb_runtime_check" "$qt_prefix"
+
 version="$(python3 "$script_dir/release-version.py" --print-version)"
 build_dir="$repo_root/build/$preset"
 package_dir="$build_dir/package"
@@ -92,6 +127,8 @@ ARCH="$architecture" \
 VERSION="$version" \
 OUTPUT="$output_path" \
 APPIMAGE_EXTRACT_AND_RUN=1 \
+LD_LIBRARY_PATH="$qt_library_dir" \
+QMAKE="$qt_qmake" \
 EXTRA_PLATFORM_PLUGINS=libqoffscreen.so \
 QML_SOURCES_PATHS="$repo_root/apps/desktop-qt/qml" \
   "$tool_dir/linuxdeploy" \
@@ -102,6 +139,64 @@ QML_SOURCES_PATHS="$repo_root/apps/desktop-qt/qml" \
     --icon-file "$icon_file" \
     --plugin qt \
     --output appimage
+
+if [ ! -f "$app_dir/usr/lib/libQt6Quick.so.6" ]; then
+  rm -f "$output_path"
+  printf 'linuxdeploy did not bundle Qt Quick from %s\n' \
+    "$qt_library_dir" >&2
+  exit 1
+fi
+
+missing_xcb_library=""
+for xcb_library in \
+  libxcb-cursor.so.0 \
+  libxcb-glx.so.0 \
+  libxcb-icccm.so.4 \
+  libxcb-image.so.0 \
+  libxcb-keysyms.so.1 \
+  libxcb-randr.so.0 \
+  libxcb-render.so.0 \
+  libxcb-render-util.so.0 \
+  libxcb-shape.so.0 \
+  libxcb-shm.so.0 \
+  libxcb-sync.so.1 \
+  libxcb-util.so.1 \
+  libxcb-xfixes.so.0 \
+  libxcb-xkb.so.1 \
+  libxkbcommon.so.0 \
+  libxkbcommon-x11.so.0
+do
+  if [ ! -f "$app_dir/usr/lib/$xcb_library" ]; then
+    missing_xcb_library="${missing_xcb_library}
+  $xcb_library"
+  fi
+done
+if [ -n "$missing_xcb_library" ]; then
+  rm -f "$output_path"
+  printf 'linuxdeploy did not bundle required XCB/XKB libraries:%s\n' \
+    "$missing_xcb_library" >&2
+  exit 1
+fi
+
+for host_gl_pattern in \
+  'libEGL.so*' \
+  'libGL.so*' \
+  'libGLdispatch.so*' \
+  'libGLX.so*' \
+  'libOpenGL.so*'
+do
+  host_gl_library="$(
+    find "$app_dir/usr/lib" -maxdepth 1 \
+      \( -type f -o -type l \) \
+      -name "$host_gl_pattern" -print -quit
+  )"
+  if [ -n "$host_gl_library" ]; then
+    rm -f "$output_path"
+    printf 'AppImage must use the host GL dispatch library: %s\n' \
+      "$host_gl_library" >&2
+    exit 1
+  fi
+done
 
 if [ ! -f "$output_path" ]; then
   printf 'linuxdeploy did not create the expected AppImage: %s\n' \

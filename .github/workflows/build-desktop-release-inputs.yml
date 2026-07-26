@@ -17,7 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CHAFT_QT_VERSION: 6.8.3
+  CHAFT_QT_VERSION: 6.8.4
 
 jobs:
   validate:
@@ -28,23 +28,44 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout requested ref
+      - name: Checkout the current default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
 
-      - name: Validate release context
+      - name: Validate requested tag with current policy
         id: release
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release tag must be a stable v<major>.<minor>.<patch> tag."
+            exit 1
+          fi
+
+          policy_commit="$(git rev-parse HEAD)"
+          tag_commit="$(
+            git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"
+          )" || {
+            echo "::error::Release tag does not resolve to a commit."
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "${tag_commit}" "${policy_commit}"; then
+            echo "::error::Release tag commit must be an ancestor of the current protected default branch."
+            exit 1
+          fi
+
+          release_source="${RUNNER_TEMP}/release-source"
+          git worktree add --detach "${release_source}" "${tag_commit}"
           mkdir -p build
           python3 tools/desktop/release-version.py \
+            --root "${release_source}" \
             --tag "$RELEASE_TAG" \
-            --expected-commit HEAD \
+            --expected-commit "${tag_commit}" \
             --output build/release-context.json \
             --github-output "$GITHUB_OUTPUT"
 
@@ -60,63 +81,102 @@ jobs:
           retention-days: 7
           archive: true
 
-  desktop_contracts:
-    name: Linux desktop contracts
+  qt_source_bundle:
+    name: Build Qt corresponding-source bundle
     needs: validate
     runs-on: ubuntu-22.04
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      bundle_sha256: ${{ steps.source.outputs.bundle_sha256 }}
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
-      - name: Set up Python for aqtinstall
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.3"
+      - name: Revalidate exact checkout
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          python3 tools/desktop/release-version.py \
+            --tag "$RELEASE_TAG" \
+            --expected-commit HEAD
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
-        with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          cache: true
+      - name: Create and verify exact Qt corresponding source
+        id: source
+        run: |
+          set -euo pipefail
+          output="build/qt-corresponding-source"
+          python3 tools/qt/source_bundle.py create --output-dir "${output}"
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${output}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+            --checksum "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          bundle_sha256="$(
+            cut -d ' ' -f 1 \
+              "${output}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          )"
+          if [[ ! "${bundle_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Qt corresponding-source checksum is malformed."
+            exit 1
+          fi
+          echo "bundle_sha256=${bundle_sha256}" >> "${GITHUB_OUTPUT}"
+          expected="$(
+            printf '%s\n' \
+              Chaft-Qt-6.8.4-corresponding-source.zip \
+              Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          )"
+          actual="$(find "${output}" -mindepth 1 -maxdepth 1 -type f \
+            -printf '%f\n' | sort)"
+          if [[ "${actual}" != "${expected}" ]] || \
+            [[ "$(find "${output}" -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ]]; then
+            echo "::error::Qt corresponding-source output must contain exactly the bundle and checksum."
+            exit 1
+          fi
 
-      - name: Run platform-independent desktop contracts
-        run: tools/desktop/ci-gates.sh --stage contracts Linux
+      - name: Upload non-publishing Qt corresponding source
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: |
+            build/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip
+            build/qt-corresponding-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          archive: true
 
   build:
     name: Build ${{ matrix.name }} release input
     needs:
       - validate
-      - desktop_contracts
+      - qt_source_bundle
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    # A cache miss compiles Qt and the release package on one runner. Cache-hit
+    # runs retain their normal target; 180 minutes is the exceptional cold path.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-host: linux
-            qt-arch: linux_gcc_64
+            qt-platform: linux
             package-platform: Linux
             artifact-prefix: checksummed-linux-x86_64-release-input
             smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
-            qt-host: mac
-            qt-arch: clang_64
+            qt-platform: macos
             package-platform: macOS
             artifact-prefix: unsigned-macos-x86_64-release-input
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
-            qt-host: windows
-            qt-arch: win64_msvc2022_64
+            os: windows-2022
+            qt-platform: windows
             package-platform: Windows
             artifact-prefix: unsigned-windows-x86_64-release-input
             # A cold offscreen QML activation can block the hosted runner's
@@ -159,14 +219,7 @@ jobs:
 
       - name: Install Linux build tools
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            appstream \
-            cmake \
-            desktop-file-utils \
-            ninja-build \
-            patchelf
+        run: tools/desktop/install-linux-package-dependencies.sh install release-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -176,19 +229,64 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ninja --no-progress -y
 
-      - name: Set up Python for aqtinstall
+      - name: Set up Python for deterministic Qt tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.3"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore main-branch Qt SDK when available
+        id: qt-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: ${{ matrix.qt-host }}
-          target: desktop
-          arch: ${{ matrix.qt-arch }}
-          cache: true
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build exact Qt SDK on cache miss
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform "${{ matrix.qt-platform }}"
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Activate and verify exact Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --platform "${{ matrix.qt-platform }}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Remove transient Qt build tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}/chaft-qt-build"
+
+      - name: Run platform-independent desktop contracts once
+        if: runner.os == 'Linux'
+        run: tools/desktop/ci-gates.sh --stage contracts Linux
 
       - name: Validate Linux desktop metadata
         if: runner.os == 'Linux'
@@ -213,6 +311,7 @@ jobs:
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
+          CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source_bundle.outputs.bundle_sha256 }}
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
         shell: bash
         run: |
@@ -240,6 +339,7 @@ jobs:
       - validate
       - build
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -247,8 +347,11 @@ jobs:
           - name: Linux
             os: ubuntu-22.04
             artifact-prefix: checksummed-linux-x86_64-release-input
+          - name: macOS
+            os: macos-15-intel
+            artifact-prefix: unsigned-macos-x86_64-release-input
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             artifact-prefix: unsigned-windows-x86_64-release-input
     steps:
       - name: Checkout validated commit
@@ -269,15 +372,15 @@ jobs:
       # omits both libraries even though normal desktop installs provide them.
       - name: Install AppImage host graphics runtime
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libegl1 \
-            libopengl0
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
 
       - name: Smoke Linux AppImage without build dependencies
         if: runner.os == 'Linux'
         run: tools/desktop/appimage-smoke.sh build/clean-package
+
+      - name: Smoke macOS DMG without build dependencies
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh build/clean-package
 
       - name: Smoke Windows ZIP without build dependencies
         if: runner.os == 'Windows'
@@ -287,11 +390,53 @@ jobs:
             -PackageDirectory build/clean-package `
             -ExpectedVersion "${{ needs.validate.outputs.version }}"
 
+  clean-qt-source-bundle:
+    name: Clean Qt corresponding-source verification
+    needs:
+      - validate
+      - qt_source_bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download Qt corresponding source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/clean-qt-source
+          digest-mismatch: error
+
+      - name: Verify exact layout and checksum on a clean runner
+        run: |
+          set -euo pipefail
+          root="build/clean-qt-source"
+          expected="$(
+            printf '%s\n' \
+              Chaft-Qt-6.8.4-corresponding-source.zip \
+              Chaft-Qt-6.8.4-corresponding-source.zip.sha256
+          )"
+          actual="$(find "${root}" -mindepth 1 -maxdepth 1 -type f \
+            -printf '%f\n' | sort)"
+          if [[ "${actual}" != "${expected}" ]] || \
+            [[ "$(find "${root}" -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ]]; then
+            echo "::error::Downloaded Qt source artifact has an unexpected layout."
+            exit 1
+          fi
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${root}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+            --checksum "${root}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+
   audit-release-inputs:
     name: Audit release input set
     needs:
       - validate
       - clean-package-smoke
+      - qt_source_bundle
+      - clean-qt-source-bundle
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout validated commit
@@ -330,9 +475,17 @@ jobs:
           path: build/release-input-audit/windows
           digest-mismatch: error
 
+      - name: Download Qt corresponding source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qt-corresponding-source-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/qt-source
+          digest-mismatch: error
+
       - name: Verify context and platform metadata
         env:
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source_bundle.outputs.bundle_sha256 }}
           EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
           EXPECTED_TAG: ${{ needs.validate.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
@@ -361,8 +514,15 @@ jobs:
               --package-dir "build/release-input-audit/$platform" \
               --platform "$platform" \
               --expected-commit "$EXPECTED_COMMIT" \
-              --require-clean
+              --require-clean \
+              --qt-source-bundle \
+                build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip \
+              --qt-source-checksum \
+                build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
           done
+          python3 tools/qt/source_bundle.py verify \
+            --bundle build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip \
+            --checksum build/release-input-audit/qt-source/Chaft-Qt-6.8.4-corresponding-source.zip.sha256
 
       - name: Generate exact input inventory
         run: |

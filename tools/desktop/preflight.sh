@@ -27,21 +27,25 @@ if [ -z "$qt_prefix" ]; then
   missing=1
 fi
 
-if command -v qmake6 >/dev/null 2>&1; then
+qt_version=""
+if command -v qtpaths6 >/dev/null 2>&1; then
+  qt_version="$(qtpaths6 --qt-version 2>/dev/null | sed -n '1p')"
+elif command -v qtpaths >/dev/null 2>&1; then
+  qt_version="$(qtpaths --qt-version 2>/dev/null | sed -n '1p')"
+elif command -v qmake6 >/dev/null 2>&1; then
   qt_version="$(qmake6 --version | sed -n 's/^Using Qt version \([0-9][0-9.]*\).*$/\1/p' | sed -n '1p')"
-  if [ -n "$qt_version" ]; then
-    qt_major="${qt_version%%.*}"
-    qt_minor_rest="${qt_version#*.}"
-    qt_minor="${qt_minor_rest%%.*}"
-    if [ "$qt_major" -lt 6 ] || { [ "$qt_major" -eq 6 ] && [ "$qt_minor" -lt 8 ]; }; then
-      printf 'Qt %s is too old: Chaft desktop requires Qt 6.8+\n' "$qt_version" >&2
-      missing=1
-    fi
-  fi
+fi
+
+if [ -z "$qt_version" ]; then
+  printf 'unable to determine the installed Qt version\n' >&2
+  missing=1
+elif [ "$qt_version" != "6.8.4" ]; then
+  printf 'Qt %s is unsupported: Chaft desktop requires exactly Qt 6.8.4\n' "$qt_version" >&2
+  missing=1
 fi
 
 if [ "$missing" -ne 0 ]; then
-  printf 'install Rust, CMake 3.28+, Ninja, and Qt 6.8+ before building apps/desktop-qt\n' >&2
+  printf 'install Rust, CMake 3.28+, Ninja, and Qt 6.8.4 before building apps/desktop-qt\n' >&2
   exit 1
 fi
 
@@ -49,6 +53,7 @@ cargo --version
 cmake --version | sed -n '1p'
 ninja --version | sed -n '1s/^/ninja /p'
 printf 'qt prefix: %s\n' "$qt_prefix"
+printf 'Qt version: %s\n' "$qt_version"
 
 if command -v qt-cmake >/dev/null 2>&1; then
   printf 'qt-cmake: %s\n' "$(command -v qt-cmake)"

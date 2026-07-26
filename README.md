@@ -144,7 +144,7 @@ passphrases directly in command arguments or environment variables. See the
 
 Desktop development requires:
 
-- Qt 6.8 or newer
+- Qt 6.8.4
 - CMake 3.28 or newer
 - Ninja
 - Rust 1.97.1 or newer

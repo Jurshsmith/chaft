@@ -136,6 +136,23 @@ class RequiredTruthTableTests(unittest.TestCase):
                     any("desktop_contracts" in error for error in evaluation.errors)
                 )
 
+    def test_qt_sdk_provisioning_matches_platform_consumers(self) -> None:
+        contracts = needs_fixture({"desktop_contract"})
+        self.assertEqual(contracts["qt_sdk_linux"]["result"], "success")
+        self.assertEqual(contracts["qt_sdk_macos"]["result"], "skipped")
+        self.assertEqual(contracts["qt_sdk_windows"]["result"], "skipped")
+
+        for scope in ("desktop", "package"):
+            with self.subTest(scope=scope):
+                needs = needs_fixture({scope})
+                for job in ("qt_sdk_linux", "qt_sdk_macos", "qt_sdk_windows"):
+                    self.assertEqual(needs[job]["result"], "success")
+                    needs[job]["result"] = "skipped"
+                    evaluation = required.evaluate_needs(needs)
+                    self.assertFalse(evaluation.passed)
+                    self.assertTrue(any(job in error for error in evaluation.errors))
+                    needs[job]["result"] = "success"
+
     def test_release_contract_job_is_enabled_by_package_scope(self) -> None:
         needs = needs_fixture({"package"})
         needs["release_contracts"]["result"] = "skipped"

@@ -52,9 +52,37 @@ home_dir="$smoke_dir/home"
 working_dir="$smoke_dir/unrelated cwd"
 mkdir -p "$launch_dir" "$runtime_dir" "$home_dir" "$working_dir"
 
+smoke_runtime_dir="${CHAFT_APPIMAGE_SMOKE_RUNTIME_DIR:-$runtime_dir}"
+smoke_expect_no_workspace="${CHAFT_APPIMAGE_SMOKE_EXPECT_NO_WORKSPACE:-1}"
+smoke_expect_text="${CHAFT_APPIMAGE_SMOKE_EXPECT_TEXT:-}"
+smoke_workspace_id="${CHAFT_APPIMAGE_SMOKE_WORKSPACE_ID:-}"
+mkdir -p "$smoke_runtime_dir"
+smoke_runtime_dir="$(CDPATH= cd "$smoke_runtime_dir" && pwd)"
+
 portable_appimage="$launch_dir/Chaft portable.AppImage"
 cp "$appimage" "$portable_appimage"
 chmod 0755 "$portable_appimage"
+
+extract_dir="$smoke_dir/extracted"
+mkdir -p "$extract_dir"
+(
+  cd "$extract_dir"
+  "$portable_appimage" --appimage-extract >/dev/null
+)
+compliance_dir="$extract_dir/squashfs-root/usr/share/doc/Chaft"
+for required_file in \
+  LICENSE \
+  THIRD_PARTY_NOTICES.txt \
+  LICENSE.LGPL3 \
+  LICENSE.GPL3 \
+  QT-CORRESPONDING-SOURCE.json
+do
+  if [ ! -f "$compliance_dir/$required_file" ]; then
+    printf 'required AppImage package notice is missing: %s\n' \
+      "$compliance_dir/$required_file" >&2
+    exit 1
+  fi
+done
 
 unset LD_LIBRARY_PATH
 unset QML2_IMPORT_PATH
@@ -62,10 +90,21 @@ unset QML_IMPORT_PATH
 unset QT_PLUGIN_PATH
 unset QT_QPA_PLATFORM_PLUGIN_PATH
 unset CHAFT_FFI_LIBRARY
+unset CHAFT_WORKSPACE_ID
 unset QT_ROOT_DIR
 unset Qt6_DIR
 
 (
+  if [ -n "$smoke_expect_text" ]; then
+    export CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$smoke_expect_text"
+  else
+    unset CHAFT_DESKTOP_SMOKE_EXPECT_TEXT
+  fi
+  if [ -n "$smoke_workspace_id" ]; then
+    export CHAFT_WORKSPACE_ID="$smoke_workspace_id"
+  else
+    unset CHAFT_WORKSPACE_ID
+  fi
   cd "$working_dir"
   HOME="$home_dir" \
   XDG_CACHE_HOME="$smoke_dir/cache" \
@@ -73,9 +112,9 @@ unset Qt6_DIR
   XDG_DATA_HOME="$smoke_dir/data" \
   APPIMAGE_EXTRACT_AND_RUN=1 \
   QT_QPA_PLATFORM=offscreen \
-  CHAFT_RUNTIME_DIR="$runtime_dir" \
+  CHAFT_RUNTIME_DIR="$smoke_runtime_dir" \
   CHAFT_DESKTOP_SMOKE=1 \
-  CHAFT_DESKTOP_SMOKE_EXPECT_NO_WORKSPACE=1 \
+  CHAFT_DESKTOP_SMOKE_EXPECT_NO_WORKSPACE="$smoke_expect_no_workspace" \
   CHAFT_DESKTOP_SMOKE_TIMEOUT_MS=15000 \
     timeout 45 "$portable_appimage"
 )

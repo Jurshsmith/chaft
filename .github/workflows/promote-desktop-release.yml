@@ -105,6 +105,10 @@ jobs:
 
           tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           policy_commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "${tag_commit}" "${policy_commit}"; then
+            echo "::error::Release tag commit must be an ancestor of the current protected default branch."
+            exit 1
+          fi
           echo "published_at=${published_at}" >> "${GITHUB_OUTPUT}"
           echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
           echo "tag_commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
@@ -125,9 +129,47 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" >/dev/null
           done < <(find "${RUNNER_TEMP}/release-assets" -type f -print0)
 
+      - name: Verify and isolate mandatory Qt corresponding source
+        shell: bash
+        env:
+          VERIFIED_RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          assets="${RUNNER_TEMP}/release-assets"
+          release_json="${RUNNER_TEMP}/release.json"
+          source_assets="${RUNNER_TEMP}/qt-corresponding-source"
+          bundle="Chaft-Qt-6.8.4-corresponding-source.zip"
+          checksum="Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          release_source="${RUNNER_TEMP}/release-source"
+
+          for filename in "${bundle}" "${checksum}"; do
+            count="$(jq --arg filename "${filename}" \
+              '[.assets[] | select(.name == $filename)] | length' \
+              "${release_json}")"
+            if [[ "${count}" -ne 1 ]] || \
+              [[ ! -f "${assets}/${filename}" ]] || \
+              [[ -L "${assets}/${filename}" ]]; then
+              echo "::error::Release must contain exactly one regular ${filename} asset."
+              exit 1
+            fi
+          done
+
+          git worktree add --detach "${release_source}" \
+            "${VERIFIED_RELEASE_COMMIT}"
+          python3 tools/qt/source_bundle.py verify \
+            --bundle "${assets}/${bundle}" \
+            --checksum "${assets}/${checksum}" \
+            --source-root "${release_source}"
+
+          mkdir "${source_assets}"
+          mv -- "${assets}/${bundle}" "${source_assets}/${bundle}"
+          mv -- "${assets}/${checksum}" "${source_assets}/${checksum}"
+
       - name: Stage the release namespace
         id: stage
         shell: bash
+        env:
+          VERIFIED_RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
         run: |
           set -euo pipefail
           staged="${RUNNER_TEMP}/release-staged"
@@ -135,6 +177,21 @@ jobs:
           python3 tools/desktop/stage-website-release-assets.py \
             --assets-dir "${RUNNER_TEMP}/release-assets" \
             --output-dir "${staged}"
+
+          release_source="${RUNNER_TEMP}/release-source"
+          source_assets="${RUNNER_TEMP}/qt-corresponding-source"
+          for platform in linux macos windows; do
+            python3 tools/desktop/verify-release-metadata.py release \
+              --package-dir "${staged}/${platform}-package" \
+              --platform "${platform}" \
+              --source-root "${release_source}" \
+              --expected-commit "${VERIFIED_RELEASE_COMMIT}" \
+              --require-clean \
+              --qt-source-bundle \
+                "${source_assets}/Chaft-Qt-6.8.4-corresponding-source.zip" \
+              --qt-source-checksum \
+                "${source_assets}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
+          done
 
           normalize_architecture() {
             case "${1,,}" in
@@ -223,7 +280,7 @@ jobs:
   verify_windows:
     name: Reverify Authenticode on Windows
     needs: prepare
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:

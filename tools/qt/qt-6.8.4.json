@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "sdkRevision": 1,
+  "qtVersion": "6.8.4",
+  "identityHash": "sha256",
+  "sdkIdentities": {
+    "linux": "qt-6.8.4-r1-linux-x86_64-gcc-11-efd94e54ed074ca27949",
+    "macos": "qt-6.8.4-r1-macos-x86_64-apple-clang-efd94e54ed074ca27949",
+    "windows": "qt-6.8.4-r1-windows-x86_64-msvc-2022-efd94e54ed074ca27949"
+  },
+  "build": {
+    "buildType": "Release",
+    "generator": "Ninja",
+    "parallel": 4,
+    "shared": true,
+    "buildExamples": false,
+    "buildTests": false,
+    "buildBenchmarks": false,
+    "buildDocumentation": false
+  },
+  "platforms": {
+    "linux": {
+      "runner": "ubuntu-22.04",
+      "architecture": "x86_64",
+      "toolchain": "gcc-11",
+      "cmakeArguments": [
+        "-DCMAKE_C_COMPILER=gcc",
+        "-DCMAKE_CXX_COMPILER=g++"
+      ],
+      "moduleCmakeArguments": {
+        "qtbase": [
+          "-DFEATURE_xcb=ON",
+          "-DFEATURE_opengl=ON",
+          "-DFEATURE_egl=ON"
+        ],
+        "qtwayland": [
+          "-DFEATURE_wayland_client=ON",
+          "-DFEATURE_wayland_egl=ON"
+        ]
+      },
+      "requiredPlatformPlugins": [
+        "libqoffscreen.so",
+        "libqwayland-egl.so",
+        "libqxcb.so"
+      ]
+    },
+    "macos": {
+      "runner": "macos-15-intel",
+      "architecture": "x86_64",
+      "toolchain": "apple-clang",
+      "cmakeArguments": [
+        "-DCMAKE_C_COMPILER=clang",
+        "-DCMAKE_CXX_COMPILER=clang++",
+        "-DCMAKE_OSX_ARCHITECTURES=x86_64",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0"
+      ],
+      "moduleCmakeArguments": {},
+      "requiredPlatformPlugins": [
+        "libqcocoa.dylib",
+        "libqoffscreen.dylib"
+      ]
+    },
+    "windows": {
+      "runner": "windows-2022",
+      "architecture": "x86_64",
+      "toolchain": "msvc-2022",
+      "cmakeArguments": [
+        "-DCMAKE_C_COMPILER=cl.exe",
+        "-DCMAKE_CXX_COMPILER=cl.exe"
+      ],
+      "moduleCmakeArguments": {},
+      "requiredPlatformPlugins": [
+        "qoffscreen.dll",
+        "qwindows.dll"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "order": 10,
+      "name": "qtbase",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtbase-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "532dfbf3fa3cbc68fa37441ea9e81c5009da044eaecda78ffaeafd8bd125532f"
+    },
+    {
+      "order": 20,
+      "name": "qtshadertools",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtshadertools-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "379a70692b52903b82897869112c4759f7f6f4e76abc4987700e9cdd87c87ebd"
+    },
+    {
+      "order": 30,
+      "name": "qtsvg",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtsvg-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "e2a83b315b97eeaffa1d3f17e8192436541fe53e62171e82c7311c56ee9aac07"
+    },
+    {
+      "order": 40,
+      "name": "qtdeclarative",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtdeclarative-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "e4e68aad4c07fbb9da670ecd621fabe51b56a2bfcce8da775653bdf8dcd768fc"
+    },
+    {
+      "order": 50,
+      "name": "qtwayland",
+      "platforms": [
+        "linux"
+      ],
+      "url": "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/qtwayland-everywhere-opensource-src-6.8.4.tar.xz",
+      "sha256": "b2475cfae9f5b8f40ea456b762cc634e7d083873aa554eb63954ee20e8a7bb8b"
+    }
+  ],
+  "patches": [
+    {
+      "order": 10,
+      "name": "CVE-2025-10728-qtsvg-6.8.diff",
+      "module": "qtsvg",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-10728-qtsvg-6.8.diff",
+      "sha256": "cfb2399cdf094b378c40cfa3faebd2e2b69de1b910b63286986e081cda474a99"
+    },
+    {
+      "order": 20,
+      "name": "CVE-2025-10729-qtsvg-6.8.diff",
+      "module": "qtsvg",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-10729-qtsvg-6.8.diff",
+      "sha256": "7fe9c1a9e20e8919bca677f4cdd791cc0179a31669e8b5f5793dabddb094c727"
+    },
+    {
+      "order": 30,
+      "name": "CVE-2025-12385-qtdeclarative-6.8-0001.diff",
+      "module": "qtdeclarative",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-12385-qtdeclarative-6.8-0001.diff",
+      "sha256": "c0fcc2971682c303b554c37617af337ed2ca36be9d6f5aa3702d4a2cf561f173"
+    },
+    {
+      "order": 40,
+      "name": "CVE-2025-12385-qtdeclarative-6.8-0002.diff",
+      "module": "qtdeclarative",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-12385-qtdeclarative-6.8-0002.diff",
+      "sha256": "9bfe5e7f02d5d1bcc11355df01d6bef9016e434c5df3a371f88113e94047c7fd"
+    },
+    {
+      "order": 50,
+      "name": "CVE-2025-14576-qtdeclarative-6.8.diff",
+      "module": "qtdeclarative",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2025-14576-qtdeclarative-6.8.diff",
+      "sha256": "554c6381035326ea6dc315555d8d1591c707929ff3eabcbe6af747d10ea95458"
+    },
+    {
+      "order": 60,
+      "name": "CVE-2026-6210-qtsvg-6.8.diff",
+      "module": "qtsvg",
+      "url": "https://download.qt.io/official_releases/qt/6.8/CVE-2026-6210-qtsvg-6.8.diff",
+      "sha256": "a1edf7b97643432042446538bf8438ae3d5c1d7cf54d28528c9a8503c3cb9d08"
+    }
+  ]
+}

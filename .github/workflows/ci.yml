@@ -19,7 +19,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CHAFT_QT_VERSION: 6.8.3
+  CHAFT_QT_VERSION: 6.8.4
 
 jobs:
   classify:
@@ -49,6 +49,8 @@ jobs:
           python3 tools/ci/classify-changes-test.py
           python3 tools/ci/required-check-test.py
           python3 tools/ci/workflow-contract-test.py
+          python3 tools/qt/build_qt_test.py
+          python3 tools/qt/source_bundle_test.py
 
       - name: Classify changed paths
         id: classify
@@ -356,13 +358,18 @@ jobs:
       - name: Compile benchmark target
         run: cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 
-  desktop_contracts:
-    name: Linux desktop contracts
+  qt_sdk_linux:
+    name: Provision Qt SDK Linux
     needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
     if: >-
       needs.classify.outputs.desktop_contract == 'true' ||
-      needs.classify.outputs.desktop == 'true'
-    runs-on: ubuntu-latest
+      needs.classify.outputs.desktop == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -370,27 +377,297 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Set up Python for aqtinstall
+      - name: Set up Python for deterministic Qt tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.3"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - name: Install Qt build dependencies
+        run: tools/qt/install-linux-dependencies.sh install sdk-build
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform linux \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or reserve Linux Qt SDK cache
+        id: qt-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          cache: true
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build Linux Qt SDK from verified sources
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform linux
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Verify Linux Qt SDK
+        run: >-
+          python3 tools/qt/build_qt.py verify
+          --platform linux
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+  qt_sdk_macos:
+    name: Provision Qt SDK macOS
+    needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+    if: >-
+      needs.classify.outputs.desktop == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt build tools
+        run: brew install cmake ninja
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform macos \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform macos \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform macos \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or reserve macOS Qt SDK cache
+        id: qt-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build macOS Qt SDK from verified sources
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform macos
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Verify macOS Qt SDK
+        run: >-
+          python3 tools/qt/build_qt.py verify
+          --platform macos
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+  qt_sdk_windows:
+    name: Provision Qt SDK Windows
+    needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+    if: >-
+      needs.classify.outputs.desktop == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Configure MSVC 2022 x64 environment
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt build tools
+        run: choco install ninja --no-progress -y
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform windows \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform windows \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --platform windows \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or reserve Windows Qt SDK cache
+        id: qt-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build Windows Qt SDK from verified sources
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --platform windows
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Verify Windows Qt SDK
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py verify
+          --platform windows
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+  desktop_contracts:
+    name: Linux desktop contracts
+    needs:
+      - classify
+      - qt_sdk_linux
+    if: >-
+      always() &&
+      needs.qt_sdk_linux.result == 'success' &&
+      (
+        needs.classify.outputs.desktop_contract == 'true' ||
+        needs.classify.outputs.desktop == 'true'
+      )
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Linux Qt SDK consumer dependencies
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
+
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          PROVISIONED_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          PROVISIONED_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform linux \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform linux \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${PROVISIONED_IDENTITY}" || \
+                -z "${PROVISIONED_TOOLCHAIN}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is missing."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${PROVISIONED_TOOLCHAIN}" ]]; then
+            echo "::error::Linux consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${PROVISIONED_TOOLCHAIN}; refusing the cache."
+            exit 1
+          fi
+          echo "identity=${PROVISIONED_IDENTITY}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${PROVISIONED_TOOLCHAIN}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Restore provisioned Linux Qt SDK
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+          fail-on-cache-miss: true
+
+      - name: Activate and verify Linux Qt SDK
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --platform linux \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Run platform-independent desktop contracts
         run: tools/desktop/ci-gates.sh --stage contracts Linux
 
   desktop:
     name: Desktop debug ${{ matrix.name }}
-    needs: classify
-    if: needs.classify.outputs.desktop == 'true'
+    needs:
+      - classify
+      - qt_sdk_linux
+      - qt_sdk_macos
+      - qt_sdk_windows
+    if: >-
+      always() &&
+      needs.classify.outputs.desktop == 'true' &&
+      needs.qt_sdk_linux.result == 'success' &&
+      needs.qt_sdk_macos.result == 'success' &&
+      needs.qt_sdk_windows.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -399,20 +676,17 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-host: linux
-            qt-arch: linux_gcc_64
+            qt-platform: linux
             package-platform: Linux
             smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
-            qt-host: mac
-            qt-arch: clang_64
+            qt-platform: macos
             package-platform: macOS
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
-            qt-host: windows
-            qt-arch: win64_msvc2022_64
+            os: windows-2022
+            qt-platform: windows
             package-platform: Windows
             # A cold offscreen QML activation can block the hosted runner's
             # event loop for longer than the portable 15-second default.
@@ -441,11 +715,9 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Linux build tools
+      - name: Install Linux Qt SDK consumer dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -455,19 +727,79 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ninja --no-progress -y
 
-      - name: Set up Python for aqtinstall
+      - name: Set up Python for deterministic Qt tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.3"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
+          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
+          WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
+        run: |
+          case "${{ matrix.qt-platform }}" in
+            linux)
+              identity="${LINUX_IDENTITY}"
+              fingerprint="${LINUX_TOOLCHAIN}"
+              ;;
+            macos)
+              identity="${MACOS_IDENTITY}"
+              fingerprint="${MACOS_TOOLCHAIN}"
+              ;;
+            windows)
+              identity="${WINDOWS_IDENTITY}"
+              fingerprint="${WINDOWS_TOOLCHAIN}"
+              ;;
+            *)
+              echo "::error::Unsupported Qt SDK platform."
+              exit 1
+              ;;
+          esac
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
+            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+            exit 1
+          fi
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore provisioned Qt SDK
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: ${{ matrix.qt-host }}
-          target: desktop
-          arch: ${{ matrix.qt-arch }}
-          cache: true
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+          fail-on-cache-miss: true
+
+      - name: Activate and verify Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --platform "${{ matrix.qt-platform }}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Run cross-platform desktop debug smoke
         env:
@@ -507,20 +839,32 @@ jobs:
           rustup default 1.97.1
 
       - name: Run release metadata smoke
-        run: tools/desktop/release-metadata-smoke.sh
+        run: |
+          tools/desktop/release-metadata-smoke.sh
+          python3 tools/desktop/qt-release-binding-test.py
 
       - name: Test release promotion tools
         run: |
           python3 tools/desktop/export-website-release-manifest-test.py
           python3 tools/desktop/linux-appimage-contract-test.py
+          python3 tools/desktop/macos-dmg-smoke-test.py
           tools/desktop/platform-verification-receipt-smoke.sh
           python3 tools/desktop/release-version-test.py
           python3 tools/desktop/stage-website-release-assets-test.py
 
   desktop_package:
     name: Desktop package ${{ matrix.name }}
-    needs: classify
-    if: needs.classify.outputs.package == 'true'
+    needs:
+      - classify
+      - qt_sdk_linux
+      - qt_sdk_macos
+      - qt_sdk_windows
+    if: >-
+      always() &&
+      needs.classify.outputs.package == 'true' &&
+      needs.qt_sdk_linux.result == 'success' &&
+      needs.qt_sdk_macos.result == 'success' &&
+      needs.qt_sdk_windows.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -529,20 +873,17 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-host: linux
-            qt-arch: linux_gcc_64
+            qt-platform: linux
             package-platform: Linux
             smoke-timeout-ms: ""
           - name: macOS
             os: macos-15-intel
-            qt-host: mac
-            qt-arch: clang_64
+            qt-platform: macos
             package-platform: macOS
             smoke-timeout-ms: ""
           - name: Windows
-            os: windows-latest
-            qt-host: windows
-            qt-arch: win64_msvc2022_64
+            os: windows-2022
+            qt-platform: windows
             package-platform: Windows
             smoke-timeout-ms: "60000"
     steps:
@@ -569,16 +910,9 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Linux build tools
+      - name: Install Linux package dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            appstream \
-            cmake \
-            desktop-file-utils \
-            ninja-build \
-            patchelf
+        run: tools/desktop/install-linux-package-dependencies.sh install desktop-package
 
       - name: Install macOS build tools
         if: runner.os == 'macOS'
@@ -588,19 +922,79 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ninja --no-progress -y
 
-      - name: Set up Python for aqtinstall
+      - name: Set up Python for deterministic Qt tooling
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.3"
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action/action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
+          LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
+          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
+          WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
+        run: |
+          case "${{ matrix.qt-platform }}" in
+            linux)
+              identity="${LINUX_IDENTITY}"
+              fingerprint="${LINUX_TOOLCHAIN}"
+              ;;
+            macos)
+              identity="${MACOS_IDENTITY}"
+              fingerprint="${MACOS_TOOLCHAIN}"
+              ;;
+            windows)
+              identity="${WINDOWS_IDENTITY}"
+              fingerprint="${WINDOWS_TOOLCHAIN}"
+              ;;
+            *)
+              echo "::error::Unsupported Qt SDK platform."
+              exit 1
+              ;;
+          esac
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --platform "${{ matrix.qt-platform }}" \
+            --output "${contract}"
+          consumer_fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --platform "${{ matrix.qt-platform }}" \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            exit 1
+          fi
+          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
+            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+            exit 1
+          fi
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore provisioned Qt SDK
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          version: ${{ env.CHAFT_QT_VERSION }}
-          host: ${{ matrix.qt-host }}
-          target: desktop
-          arch: ${{ matrix.qt-arch }}
-          cache: true
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+          fail-on-cache-miss: true
+
+      - name: Activate and verify Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --platform "${{ matrix.qt-platform }}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract \
+              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Validate Linux desktop metadata
         if: runner.os == 'Linux'
@@ -649,6 +1043,7 @@ jobs:
       needs.classify.outputs.package == 'true' &&
       needs.desktop_package.result == 'success'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -657,8 +1052,12 @@ jobs:
             os: ubuntu-22.04
             artifact-name: chaft-Linux-desktop-release
             artifact-path: build/clean-linux-package
+          - name: macOS
+            os: macos-15-intel
+            artifact-name: chaft-macOS-desktop-release
+            artifact-path: build/clean-macos-package
           - name: Windows
-            os: windows-latest
+            os: windows-2022
             artifact-name: chaft-Windows-desktop-release
             artifact-path: build/clean-windows-package
     steps:
@@ -680,15 +1079,15 @@ jobs:
       # omits both libraries even though normal desktop installs provide them.
       - name: Install AppImage host graphics runtime
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libegl1 \
-            libopengl0
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
 
       - name: Run portable AppImage smoke
         if: runner.os == 'Linux'
         run: tools/desktop/appimage-smoke.sh build/clean-linux-package
+
+      - name: Run portable DMG smoke
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh build/clean-macos-package
 
       - name: Run clean ZIP smoke
         if: runner.os == 'Windows'
@@ -713,6 +1112,9 @@ jobs:
       - rust_tests_workspace
       - rust_smokes
       - benchmark_compile
+      - qt_sdk_linux
+      - qt_sdk_macos
+      - qt_sdk_windows
       - desktop_contracts
       - desktop
       - release_contracts

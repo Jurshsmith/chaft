@@ -9,6 +9,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+QT_TOOLS = Path(__file__).resolve().parents[1] / "qt"
+sys.path.insert(0, str(QT_TOOLS))
+import build_qt as qt_sdk  # noqa: E402
+import source_bundle as qt_source  # noqa: E402
+
 PACKAGE_FORMATS = (
     (".tar.gz", "linux", "linux-tgz"),
     (".tgz", "linux", "linux-tgz"),
@@ -162,22 +167,20 @@ def artifact_rows(packages, signatures):
 
 def source_material_rows(source_root):
     root = source_root
-    missing = []
     rows = {}
     for relative in SOURCE_MATERIALS:
-        path = root / relative
-        if not path.is_file():
-            missing.append(relative)
-            continue
+        try:
+            path = qt_sdk.trusted_source_file(
+                root,
+                relative,
+                f"release source material {relative}",
+            )
+        except qt_sdk.QtSdkError as error:
+            fail(str(error))
         rows[relative] = {
             "sha256": file_sha256(path),
             "sizeBytes": path.stat().st_size,
         }
-    if missing:
-        fail(
-            "source material file(s) missing from current checkout: "
-            + ", ".join(missing)
-        )
     return rows
 
 
@@ -373,6 +376,122 @@ def verify_provenance_materials(provenance, source_root):
         fail("provenance material rows do not match current source checkout")
 
 
+def verify_qt_release_binding(
+    provenance,
+    source_root,
+    platform_name,
+    qt_source_bundle=None,
+    qt_source_checksum=None,
+):
+    qt_record = provenance.get("qt")
+    if not isinstance(qt_record, dict) or set(qt_record) != {
+        "schemaVersion",
+        "sdk",
+        "correspondingSource",
+    }:
+        fail("provenance Qt release binding is missing or malformed")
+    if (
+        type(qt_record["schemaVersion"]) is not int
+        or qt_record["schemaVersion"] != 1
+    ):
+        fail("provenance Qt release binding schemaVersion is unsupported")
+
+    sdk = qt_record["sdk"]
+    if not isinstance(sdk, dict) or set(sdk) != {
+        "identity",
+        "provenance",
+        "provenanceSha256",
+    }:
+        fail("provenance Qt SDK binding is missing or malformed")
+    embedded = sdk["provenance"]
+    manifest_path = source_root / "tools" / "qt" / "qt-6.8.4.json"
+    manifest = qt_sdk.load_manifest(
+        manifest_path, recipe_root=source_root
+    )
+    qt_sdk.validate_provenance_object(
+        embedded,
+        manifest,
+        platform_name,
+        recipe_root=source_root,
+    )
+    if sdk["identity"] != embedded["identity"]:
+        fail("provenance Qt SDK identity differs from embedded SDK provenance")
+    expected_provenance_digest = qt_sdk.sha256_bytes(
+        qt_sdk.canonical_json(embedded)
+    )
+    if sdk["provenanceSha256"] != expected_provenance_digest:
+        fail("provenance Qt SDK provenanceSha256 is stale")
+
+    expected_source = qt_source.release_contract(
+        manifest_path,
+        source_root / "packaging" / "qt",
+        source_root / "tools" / "qt" / "source_bundle.py",
+        recipe_root=source_root,
+    )
+    source = qt_record["correspondingSource"]
+    if not isinstance(source, dict):
+        fail("provenance Qt corresponding-source binding is malformed")
+    if set(source) != set(expected_source) | {"bundleSha256"}:
+        fail(
+            "provenance Qt corresponding-source binding keys differ from "
+            "the release contract"
+        )
+    bundle_sha256 = source.get("bundleSha256")
+    contract_without_bundle = {
+        key: value for key, value in source.items() if key != "bundleSha256"
+    }
+    if not qt_sdk.json_exact_equal(
+        contract_without_bundle, expected_source
+    ):
+        fail(
+            "provenance Qt corresponding-source contract differs from the "
+            "release checkout"
+        )
+    if embedded["manifestSha256"] != source["sdkManifestSha256"]:
+        fail("provenance Qt SDK and corresponding-source manifests differ")
+    if embedded["contractSha256"] != source["sdkContractSha256"]:
+        fail("provenance Qt SDK and corresponding-source recipes differ")
+    if bundle_sha256 is not None and re.fullmatch(
+        r"[0-9a-f]{64}", str(bundle_sha256)
+    ) is None:
+        fail("provenance Qt corresponding-source bundleSha256 is invalid")
+
+    expected_bundle_digest = os.environ.get(
+        "CHAFT_QT_SOURCE_BUNDLE_SHA256"
+    )
+    if expected_bundle_digest is not None:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_bundle_digest) is None:
+            fail("CHAFT_QT_SOURCE_BUNDLE_SHA256 is invalid")
+        if bundle_sha256 != expected_bundle_digest:
+            fail(
+                "provenance Qt corresponding-source bundleSha256 differs "
+                "from the release workflow"
+            )
+
+    if qt_source_bundle is not None:
+        bundle_path = qt_source_bundle.resolve()
+        checksum_path = (
+            qt_source_checksum.resolve()
+            if qt_source_checksum is not None
+            else None
+        )
+        qt_source.verify_bundle(
+            bundle_path,
+            checksum_path,
+            manifest_path=manifest_path,
+            package_dir=source_root / "packaging" / "qt",
+            recipe_root=source_root,
+        )
+        actual_bundle_digest = file_sha256(bundle_path)
+        if bundle_sha256 != actual_bundle_digest:
+            fail(
+                "provenance Qt corresponding-source bundleSha256 does not "
+                "match the authenticated release bundle"
+            )
+    elif qt_source_checksum is not None:
+        fail("--qt-source-checksum requires --qt-source-bundle")
+
+
 def verify_provenance(
     package_dir,
     profile,
@@ -382,6 +501,8 @@ def verify_provenance(
     names,
     source_root,
     expected_commit,
+    qt_source_bundle=None,
+    qt_source_checksum=None,
 ):
     provenance = load_json(package_dir / names["provenance"])
     if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
@@ -467,6 +588,13 @@ def verify_provenance(
     if actual != expected:
         fail("provenance artifact rows do not match package files")
     verify_provenance_materials(provenance, source_root)
+    verify_qt_release_binding(
+        provenance,
+        source_root,
+        platform_name,
+        qt_source_bundle,
+        qt_source_checksum,
+    )
     return provenance
 
 
@@ -496,11 +624,22 @@ def main():
         default=current_platform_name(),
         help="Package platform to verify: Linux, macOS, or Windows.",
     )
+    parser.add_argument(
+        "--qt-source-bundle",
+        type=Path,
+        help="Authenticated Qt corresponding-source bundle to cross-check.",
+    )
+    parser.add_argument(
+        "--qt-source-checksum",
+        type=Path,
+        help="Checksum sidecar for --qt-source-bundle.",
+    )
     args = parser.parse_args()
 
-    source_root = args.source_root.resolve()
-    if not source_root.is_dir():
-        fail(f"source root does not exist: {source_root}")
+    try:
+        source_root = qt_sdk.trusted_source_root(args.source_root)
+    except qt_sdk.QtSdkError as error:
+        fail(str(error))
     if args.expected_commit is not None and re.fullmatch(
         r"[0-9a-fA-F]{40,64}", args.expected_commit
     ) is None:
@@ -528,6 +667,8 @@ def main():
         names,
         source_root,
         expected_commit,
+        args.qt_source_bundle,
+        args.qt_source_checksum,
     )
     verify_sbom(
         package_dir,

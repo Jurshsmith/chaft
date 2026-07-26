@@ -120,16 +120,21 @@ DESKTOP_SHARED_TOOLS = frozenset(
 RELEASE_TOOLS = frozenset(
     {
         "tools/desktop/appimage-smoke.sh",
+        "tools/desktop/check-qt-xcb-runtime.sh",
         "tools/desktop/export-website-release-manifest-test.py",
         "tools/desktop/export-website-release-manifest.py",
         "tools/desktop/fetch-appimage-tools.sh",
         "tools/desktop/generate-platform-verification-receipt-test.py",
         "tools/desktop/generate-platform-verification-receipt.py",
+        "tools/desktop/install-linux-package-dependencies.sh",
         "tools/desktop/linux-appimage-contract-test.py",
+        "tools/desktop/macos-dmg-smoke-test.py",
+        "tools/desktop/macos-dmg-smoke.sh",
         "tools/desktop/package-linux-appimage.sh",
         "tools/desktop/package-smoke.sh",
         "tools/desktop/package.sh",
         "tools/desktop/platform-verification-receipt-smoke.sh",
+        "tools/desktop/qt-release-binding-test.py",
         "tools/desktop/release-metadata-smoke.sh",
         "tools/desktop/release-metadata.py",
         "tools/desktop/release-version-test.py",
@@ -202,7 +207,7 @@ def classify_path(path: str) -> PathImpact:
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
     if path.startswith("tools/ci/") and path != "tools/ci/rust-gates.sh":
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
-    if path == "Makefile":
+    if path in {".gitattributes", "Makefile"}:
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
 
     if (
@@ -285,6 +290,18 @@ def classify_path(path: str) -> PathImpact:
     if path == "tools/ci/rust-gates.sh":
         return PathImpact(
             frozenset({"rust", "rust_test", "rust_smoke", "benchmark"})
+        )
+
+    if path.startswith("tools/qt/"):
+        return PathImpact(
+            frozenset(
+                {
+                    "desktop_contract",
+                    "desktop",
+                    "release_contract",
+                    "package",
+                }
+            )
         )
 
     if path == "tools/smoke/visual-workspace.sh":

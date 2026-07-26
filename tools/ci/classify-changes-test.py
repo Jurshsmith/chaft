@@ -203,6 +203,13 @@ class PathClassificationTests(unittest.TestCase):
     def test_packaging_and_release_tools_avoid_rust_and_debug_desktop(self) -> None:
         for path in (
             "packaging/linux/appimage-tools.lock",
+            "tools/desktop/check-qt-xcb-runtime.sh",
+            "tools/desktop/install-linux-package-dependencies.sh",
+            "tools/desktop/linux-appimage-contract-test.py",
+            "tools/desktop/macos-dmg-smoke-test.py",
+            "tools/desktop/macos-dmg-smoke.sh",
+            "tools/desktop/package-linux-appimage.sh",
+            "tools/desktop/qt-release-binding-test.py",
             "tools/desktop/release-metadata.py",
             "tools/desktop/windows-zip-smoke.ps1",
         ):
@@ -216,6 +223,26 @@ class PathClassificationTests(unittest.TestCase):
             enabled(result),
             {"desktop", "release_contract", "package"},
         )
+
+    def test_qt_sdk_inputs_reach_every_qt_consumer_without_rust(self) -> None:
+        for path in (
+            "tools/qt/qt-6.8.4.json",
+            "tools/qt/build_qt.py",
+            "tools/qt/probe/CMakeLists.txt",
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(
+                    enabled(result),
+                    {
+                        "desktop_contract",
+                        "desktop",
+                        "release_contract",
+                        "package",
+                    },
+                )
+                self.assertFalse(result.scopes["rust"])
+                self.assertFalse(result.scopes["full"])
 
     def test_root_cargo_inputs_cover_benchmark_desktop_and_package(self) -> None:
         for path in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
@@ -253,6 +280,7 @@ class PathClassificationTests(unittest.TestCase):
         for path in (
             ".github/workflows/ci.yml",
             "tools/ci/classify-changes.py",
+            ".gitattributes",
             "Makefile",
         ):
             with self.subTest(path=path):

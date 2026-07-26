@@ -11,6 +11,11 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+QT_TOOLS = Path(__file__).resolve().parents[1] / "qt"
+sys.path.insert(0, str(QT_TOOLS))
+import build_qt as qt_sdk  # noqa: E402
+import source_bundle as qt_source  # noqa: E402
+
 PACKAGE_FORMATS = (
     (".tar.gz", "linux", "linux-tgz"),
     (".tgz", "linux", "linux-tgz"),
@@ -178,6 +183,75 @@ def verify_platform_packages(packages, platform_name):
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def qt_release_record(root, platform_name):
+    provenance_value = os.environ.get("CHAFT_QT_SDK_PROVENANCE")
+    provenance_dir = os.environ.get("CHAFT_QT_SDK_PROVENANCE_DIR")
+    if provenance_value and provenance_dir:
+        raise SystemExit(
+            "set only one of CHAFT_QT_SDK_PROVENANCE and "
+            "CHAFT_QT_SDK_PROVENANCE_DIR"
+        )
+    if provenance_value:
+        provenance_path = Path(provenance_value)
+    elif provenance_dir:
+        provenance_path = (
+            Path(provenance_dir) / f"chaft-qt-sdk-{platform_name}.json"
+        )
+    else:
+        qt_prefix = os.environ.get("QTDIR")
+        if not qt_prefix:
+            raise SystemExit(
+                "QTDIR or CHAFT_QT_SDK_PROVENANCE is required to bind "
+                "desktop metadata to the verified Qt SDK"
+            )
+        provenance_path = Path(qt_prefix) / qt_sdk.PROVENANCE_NAME
+
+    manifest_path = root / "tools" / "qt" / "qt-6.8.4.json"
+    manifest = qt_sdk.load_manifest(manifest_path, recipe_root=root)
+    sdk_provenance = qt_sdk.load_and_validate_provenance(
+        provenance_path,
+        manifest,
+        platform_name,
+        recipe_root=root,
+    )
+    source_contract = qt_source.release_contract(
+        manifest_path,
+        root / "packaging" / "qt",
+        root / "tools" / "qt" / "source_bundle.py",
+        recipe_root=root,
+    )
+    if sdk_provenance["manifestSha256"] != source_contract["sdkManifestSha256"]:
+        raise SystemExit(
+            "Qt SDK provenance and corresponding-source manifest differ"
+        )
+    if sdk_provenance["contractSha256"] != source_contract["sdkContractSha256"]:
+        raise SystemExit(
+            "Qt SDK provenance and corresponding-source recipe differ"
+        )
+
+    bundle_sha256 = os.environ.get("CHAFT_QT_SOURCE_BUNDLE_SHA256")
+    if bundle_sha256 is not None and re.fullmatch(
+        r"[0-9a-f]{64}", bundle_sha256
+    ) is None:
+        raise SystemExit(
+            "CHAFT_QT_SOURCE_BUNDLE_SHA256 must be a lowercase SHA-256 digest"
+        )
+    return {
+        "schemaVersion": 1,
+        "sdk": {
+            "identity": sdk_provenance["identity"],
+            "provenanceSha256": qt_sdk.sha256_bytes(
+                qt_sdk.canonical_json(sdk_provenance)
+            ),
+            "provenance": sdk_provenance,
+        },
+        "correspondingSource": {
+            **source_contract,
+            "bundleSha256": bundle_sha256,
+        },
+    }
 
 
 def project_version(root):
@@ -370,6 +444,7 @@ def write_provenance(
     platform_name,
     names,
 ):
+    qt = qt_release_record(root, platform_name)
     provenance = {
         "schemaVersion": "chaft.desktop.provenance.v1",
         "createdAt": datetime.now(timezone.utc).isoformat(),
@@ -387,6 +462,7 @@ def write_provenance(
             "python": platform.python_version(),
         },
         "tools": tools,
+        "qt": qt,
         "materials": material_rows(root),
         "artifacts": artifacts,
     }

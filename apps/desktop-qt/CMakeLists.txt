@@ -7,8 +7,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 
-find_package(Qt6 REQUIRED COMPONENTS Network Qml Quick Widgets)
-qt_standard_project_setup(REQUIRES 6.8)
+find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
+qt_standard_project_setup(REQUIRES 6.8.4)
+
+option(
+    CHAFT_DEBUG_USES_RELEASE_QT
+    "Align a Windows debug-symbol application build with a release-only Qt SDK"
+    OFF
+)
+if(CHAFT_DEBUG_USES_RELEASE_QT)
+    if(NOT MSVC OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(FATAL_ERROR
+            "CHAFT_DEBUG_USES_RELEASE_QT is valid only for an MSVC Debug build"
+        )
+    endif()
+    add_compile_definitions(QT_NO_DEBUG)
+endif()
 
 if(DEFINED QT_KNOWN_POLICY_QTP0004)
     qt_policy(SET QTP0004 NEW)
@@ -249,12 +263,25 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
-if(NOT APPLE)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/Chaft"
+set(CHAFT_PACKAGE_DOCUMENTATION
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    "${CMAKE_SOURCE_DIR}/packaging/qt/THIRD_PARTY_NOTICES.txt"
+    "${CMAKE_SOURCE_DIR}/packaging/qt/LICENSE.LGPL3"
+    "${CMAKE_SOURCE_DIR}/packaging/qt/LICENSE.GPL3"
+    "${CMAKE_SOURCE_DIR}/packaging/qt/QT-CORRESPONDING-SOURCE.json"
+)
+if(APPLE)
+    set(CHAFT_PACKAGE_DOCUMENTATION_DESTINATION
+        "ChaftDesktop.app/Contents/Resources/doc/Chaft"
+    )
+else()
+    set(CHAFT_PACKAGE_DOCUMENTATION_DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/doc/Chaft"
     )
 endif()
+install(FILES ${CHAFT_PACKAGE_DOCUMENTATION}
+    DESTINATION "${CHAFT_PACKAGE_DOCUMENTATION_DESTINATION}"
+)
 
 if(APPLE OR WIN32)
     set(CHAFT_DEPLOY_OPTIONS)

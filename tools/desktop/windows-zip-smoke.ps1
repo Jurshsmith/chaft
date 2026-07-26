@@ -85,6 +85,45 @@ try {
     $executable = $executables[0]
     $binaryDirectory = $executable.Directory.FullName
 
+    $complianceDirectories = @(
+        Get-ChildItem -LiteralPath $extractRoot -Recurse -Directory |
+            Where-Object {
+                $_.FullName.Replace("\", "/").EndsWith(
+                    "/share/doc/Chaft",
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            }
+    )
+    if ($complianceDirectories.Count -ne 1) {
+        throw "Expected exactly one share/doc/Chaft directory, found $($complianceDirectories.Count)"
+    }
+    foreach ($filename in @(
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.txt",
+        "LICENSE.LGPL3",
+        "LICENSE.GPL3",
+        "QT-CORRESPONDING-SOURCE.json"
+    )) {
+        $path = Join-Path $complianceDirectories[0].FullName $filename
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required package notice is missing: $path"
+        }
+    }
+    $qtSourceManifest = Get-Content -LiteralPath (
+        Join-Path $complianceDirectories[0].FullName "QT-CORRESPONDING-SOURCE.json"
+    ) -Raw | ConvertFrom-Json
+    if ($qtSourceManifest.version -ne "6.8.4") {
+        throw "Expected Qt source manifest version 6.8.4, got $($qtSourceManifest.version)"
+    }
+    $windowsModules = @(
+        $qtSourceManifest.sourceModules |
+            Where-Object { $_.platforms -contains "Windows" } |
+            ForEach-Object { $_.name }
+    )
+    if ($windowsModules -contains "qtwayland") {
+        throw "Windows package source manifest must not claim Qt Wayland"
+    }
+
     $requiredSiblingFiles = @(
         "chaft_ffi.dll",
         "qt.conf",
