@@ -216,6 +216,14 @@ jobs:
           name: chaft-Linux-desktop-release
           path: build/clean-linux-package
 
+      # AppImage intentionally leaves the host GL dispatch stack unbundled so
+      # it can match the user's graphics driver. GitHub's headless image omits
+      # libOpenGL.so.0 even though normal Linux desktop installs provide it.
+      - name: Install AppImage host graphics runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopengl0
+
       - name: Run portable AppImage smoke
         run: tools/desktop/appimage-smoke.sh build/clean-linux-package
 

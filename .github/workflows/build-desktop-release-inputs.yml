@@ -215,6 +215,15 @@ jobs:
           name: ${{ matrix.artifact-prefix }}-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
           path: build/clean-package
 
+      # AppImage intentionally leaves the host GL dispatch stack unbundled so
+      # it can match the user's graphics driver. GitHub's headless image omits
+      # libOpenGL.so.0 even though normal Linux desktop installs provide it.
+      - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopengl0
+
       - name: Smoke Linux AppImage without build dependencies
         if: runner.os == 'Linux'
         run: tools/desktop/appimage-smoke.sh build/clean-package
