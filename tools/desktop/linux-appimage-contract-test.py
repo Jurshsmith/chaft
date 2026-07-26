@@ -86,11 +86,12 @@ for required_contract in (
 for workflow_name in ("ci.yml", "build-desktop-release-inputs.yml"):
     workflow_path = ROOT / ".github" / "workflows" / workflow_name
     workflow = workflow_path.read_text(encoding="utf-8")
-    if "sudo apt-get install --no-install-recommends -y libopengl0" not in workflow:
-        fail(
-            f"{workflow_path} must install the host OpenGL dispatch runtime "
-            "before clean AppImage smoke"
-        )
+    for package in ("libegl1", "libopengl0"):
+        if package not in workflow:
+            fail(
+                f"{workflow_path} must install the host GL dispatch runtime "
+                f"{package} before clean AppImage smoke"
+            )
 
 icon_path = LINUX_PACKAGING / f"{DESKTOP_ID}.png"
 with icon_path.open("rb") as icon:
