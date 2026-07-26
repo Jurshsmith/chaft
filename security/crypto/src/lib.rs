@@ -4,7 +4,8 @@ use aes_gcm_siv::{
 };
 use chaft_types::{ChannelId, MessageId, WorkspaceId};
 pub use chaft_types::{EncryptedBlobRef, PayloadEncryption, SealedPayload};
-use rand_core::{OsRng, RngCore};
+use getrandom::SysRng;
+use rand_core::{Rng, UnwrapErr};
 use std::string::FromUtf8Error;
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -36,7 +37,7 @@ pub struct ContentKey([u8; AES_256_GCM_SIV_KEY_LEN]);
 impl ContentKey {
     pub fn generate() -> Self {
         let mut bytes = [0; AES_256_GCM_SIV_KEY_LEN];
-        OsRng.fill_bytes(&mut bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut bytes);
         Self(bytes)
     }
 
@@ -77,7 +78,7 @@ pub fn seal_aes_256_gcm_siv(
     let cipher =
         Aes256GcmSiv::new_from_slice(key.as_bytes()).map_err(|_| CryptoError::SealFailed)?;
     let mut nonce = [0; AES_256_GCM_SIV_NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
+    UnwrapErr(SysRng).fill_bytes(&mut nonce);
     let bytes = cipher
         .encrypt(
             Nonce::from_slice(&nonce),

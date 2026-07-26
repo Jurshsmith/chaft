@@ -1,7 +1,8 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use chaft_crypto::{ContentKey, SealedPayload, open_aes_256_gcm_siv, seal_aes_256_gcm_siv};
 use chaft_types::{DeviceId, WorkspaceId};
-use rand_core::{OsRng, RngCore};
+use getrandom::SysRng;
+use rand_core::{Rng, UnwrapErr};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -104,7 +105,7 @@ impl LocalRuntime {
         plaintext.zeroize_secret_material();
         let plaintext = Zeroizing::new(serialized_plaintext?);
         let mut salt = vec![0; RECOVERY_BUNDLE_SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
+        UnwrapErr(SysRng).fill_bytes(&mut salt);
         let kdf = WorkspaceRecoveryBundleKdf {
             name: RECOVERY_BUNDLE_KDF_ARGON2ID.to_owned(),
             context: RECOVERY_BUNDLE_KDF_CONTEXT.to_owned(),
