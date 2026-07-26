@@ -145,6 +145,7 @@ runtime_dir="$(json_field "$manifest_json" runtimeDir)"
 workspace_id="$(json_field "$manifest_json" workspaceId)"
 expected_channel_id="$(json_field "$manifest_json" channels.general)"
 expected_text="$(json_field "$manifest_json" desktopExpectedText)"
+expected_reachable="${CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE:-1}"
 
 # Visual states that intentionally select another room can move away from the
 # seeded general timeline before the smoke harness settles. Wait for the room
@@ -161,6 +162,13 @@ case "${CHAFT_SMOKE_UI_STATE:-}" in
     expected_text="$(json_field "$manifest_json" channelExpectedText.design)"
     ;;
 esac
+
+# This state intentionally renders the failed retry from a saved but
+# unreachable teammate address. Its readiness is the settled vault snapshot,
+# not a healthy transport status.
+if [ "${CHAFT_SMOKE_UI_STATE:-}" = "private-channel-repair-saved" ]; then
+  expected_reachable=0
+fi
 
 case "$(uname -s)" in
   Linux)
@@ -252,7 +260,7 @@ run_desktop_with_watchdog \
   CHAFT_DESKTOP_SMOKE=1 \
   CHAFT_DESKTOP_SMOKE_EXPECT_TEXT="$expected_text" \
   CHAFT_DESKTOP_SMOKE_EXPECT_CHANNEL_ID="$expected_channel_id" \
-  CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE="${CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE:-1}" \
+  CHAFT_DESKTOP_SMOKE_EXPECT_REACHABLE="$expected_reachable" \
   CHAFT_DESKTOP_SMOKE_EXPECT_ROUTE="${CHAFT_DESKTOP_SMOKE_EXPECT_ROUTE:-iroh-direct}" \
   CHAFT_DESKTOP_ALLOW_LOOPBACK_FALLBACK=1 \
   CHAFT_IROH_ALLOW_PUBLIC_RELAYS=0 \
