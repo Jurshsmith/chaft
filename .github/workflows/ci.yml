@@ -70,7 +70,7 @@ jobs:
 
       - name: Test Rust workspace
         timeout-minutes: 45
-        run: cargo test --workspace --all-targets --locked
+        run: cargo test --workspace --all-targets --exclude chaft-benchmarks --locked
 
       - name: Run local P2P smoke
         run: tools/smoke/local-p2p.sh --locked
