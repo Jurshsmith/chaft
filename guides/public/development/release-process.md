@@ -8,7 +8,7 @@ status: preview
 draft: false
 ---
 
-# Release process
+# Release Chaft desktop builds
 
 Chaft can build and verify desktop packages for Windows, macOS, and Linux, but
 public downloads are not available yet. The checked-in website manifest is

@@ -8,7 +8,7 @@ status: preview
 draft: false
 ---
 
-# Testing Chaft
+# Test Chaft changes
 
 Chaft spans a Rust workspace, peer-to-peer transports, a Qt/QML desktop
 application, and a static Astro website. Run the smallest focused test while
