@@ -146,6 +146,28 @@ workspace_id="$(json_field "$manifest_json" workspaceId)"
 expected_channel_id="$(json_field "$manifest_json" channels.general)"
 expected_text="$(json_field "$manifest_json" desktopExpectedText)"
 
+# Visual states that intentionally select another room can move away from the
+# seeded general timeline before the smoke harness settles. Wait for the room
+# that the state renders instead of racing that selection.
+case "${CHAFT_SMOKE_UI_STATE:-}" in
+  setup-room-access|private-channel-details|private-channel-access|\
+  private-channel-repair-failed|private-channel-repair-saved|\
+  private-channel-inspector)
+    expected_channel_id="$(json_field "$manifest_json" channels.vault)"
+    expected_text="$(json_field "$manifest_json" channelExpectedText.vault)"
+    ;;
+  channel-archived)
+    expected_channel_id="$(json_field "$manifest_json" channels.design)"
+    expected_text="$(json_field "$manifest_json" channelExpectedText.design)"
+    ;;
+  direct-message)
+    # This state creates a deterministic direct-message room at runtime.
+    # Its screenshot baseline verifies the rendered result.
+    expected_channel_id=
+    expected_text=
+    ;;
+esac
+
 case "$(uname -s)" in
   Linux)
     if [ -z "${DISPLAY:-}" ]; then
