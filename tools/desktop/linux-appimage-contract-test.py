@@ -212,11 +212,27 @@ packaging_script = (
 ).read_text(encoding="utf-8")
 for required_contract in (
     "--library \"$ffi_library\"",
+    'qt_prefix="${QTDIR:-${QT_ROOT_DIR:-}}"',
+    'qt_quick_library="$qt_library_dir/libQt6Quick.so.6"',
+    'LD_LIBRARY_PATH="$qt_library_dir"',
+    'QMAKE="$qt_qmake"',
     "EXTRA_PLATFORM_PLUGINS=libqoffscreen.so",
     "QML_SOURCES_PATHS=",
 ):
     if required_contract not in packaging_script:
         fail(f"AppImage packager is missing required contract: {required_contract}")
+for host_gl_pattern in (
+    "libEGL.so*",
+    "libGL.so*",
+    "libGLdispatch.so*",
+    "libGLX.so*",
+    "libOpenGL.so*",
+):
+    if host_gl_pattern not in packaging_script:
+        fail(
+            "AppImage packager must reject bundled host GL dispatch library: "
+            f"{host_gl_pattern}"
+        )
 
 cmake = (ROOT / "apps" / "desktop-qt" / "CMakeLists.txt").read_text(
     encoding="utf-8"
