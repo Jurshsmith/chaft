@@ -39,8 +39,10 @@ pnpm validate
 ```
 
 This runs Astro's static/type checks, release-manifest tests, and a production
-build against a reserved validation origin. A standalone `pnpm build` fails
-unless `SITE_URL` is set, preventing deployable output with localhost metadata.
+build against a reserved validation origin. It also runs the exact-pinned
+Wrangler version in strict dry-run mode against the route-less Worker
+configuration. A standalone `pnpm build` fails unless `SITE_URL` is set,
+preventing deployable output with localhost metadata.
 
 ## Release manifest contract
 
@@ -132,28 +134,45 @@ published namespace cannot silently diverge from the website evidence.
 The preview manifest intentionally points to GitHub Releases without claiming
 that current development packages are signed production downloads.
 
-## Deployment
+## Deployment foundation
 
-The output in `dist/` is provider-neutral. `public/_headers` and
-`public/_redirects` include Cloudflare Pages-compatible defaults; other static
-hosts may translate them into their native configuration. The production build
-rewrites their route patterns for the configured `SITE_URL` base path. The
-deploy artifact also carries the OFL license for its subsetted Space Grotesk
-fonts under `licenses/`.
+`wrangler.jsonc` defines an asset-only `chaft-website` Worker for Cloudflare
+Workers Static Assets. It has no Worker script, asset binding, route, or Custom
+Domain; `workers_dev` and preview URLs are disabled. Wrangler is an exact
+development dependency, and validation uses dry-run mode only. The production
+build rewrites `_headers` and `_redirects` for the configured `SITE_URL` base
+path and includes the OFL license for its subsetted Space Grotesk fonts.
 
-The `Website` GitHub Actions workflow validates pull requests against the
-reserved `https://website-validation.invalid` origin. On every push to `main`,
-it builds again with the `WEBSITE_SITE_URL` repository variable and uploads
-`dist/` as a `chaft-website-<commit>` artifact. A manual workflow run can
-override that variable with its `site_url` input. Configure the repository
-variable before the first `main` build; the artifact job fails rather than
-publishing output with a placeholder URL when neither value is present.
+The `Website` GitHub Actions workflow always validates pull requests and pushes
+against `https://website-validation.invalid`. A push to `main` builds a
+production candidate only when the `WEBSITE_SITE_URL` repository variable is
+set. While it is unset, validation passes and candidate construction is
+intentionally skipped; no placeholder origin is built. Manual candidate
+generation requires an explicit `site_url` and is never a production trigger.
 
-The workflow deliberately stops at the artifact boundary: download the
-artifact in the chosen static-host provider's deployment job, publish its
-contents at the configured origin/base path, and translate `_headers` and
-`_redirects` when the provider does not support those files. No provider
-credentials or production domain are assumed by this repository.
+Each candidate is uploaded as one atomic `chaft-website-<commit>` bundle:
+
+```text
+artifact-manifest.json
+site/
+  .well-known/chaft-deployment.json
+  ...the complete built static site...
+```
+
+The manifest records the byte size and SHA-256 digest of every path below
+`site/`. The public marker binds the bundle to the source repository, full
+commit, and normalized site URL. Creation and verification reject symlinks,
+non-portable or duplicate paths, extra or missing files, digest mismatches,
+oversized assets, and `website-validation.invalid`. Deployment installs the
+verified `site/` bytes into `dist/`; it does not rebuild them.
+
+The checked-in deploy and rollback workflows are inert scaffolding. Their
+production jobs contain literal `false` conditions, so completed Website runs
+and manual rollback requests cannot read production credentials or mutate
+Cloudflare. Setting `WEBSITE_SITE_URL` enables candidate construction only.
+Removing either hard stop requires the separately reviewed infrastructure,
+domain, governance, credential, and activation change documented in
+`Jurshsmith/chaft-infra`.
 
 Desktop installers do not belong in the website artifact. Publish them as
 immutable GitHub Release assets or through dedicated object storage.
