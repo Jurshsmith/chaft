@@ -412,15 +412,12 @@ const steps = [
   .product-capture :global(picture) {
     display: block;
     width: 100%;
-    aspect-ratio: 144 / 62;
-    overflow: hidden;
   }
 
   .product-capture :global(img) {
+    display: block;
     width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: top;
+    height: auto;
   }
 
   .product-capture figcaption {
@@ -565,10 +562,6 @@ const steps = [
   }
 
   @media (max-width: 680px) {
-    .product-capture :global(picture) {
-      aspect-ratio: 144 / 82;
-    }
-
     .docs-entry__inner {
       grid-template-columns: 1fr;
       align-items: start;
