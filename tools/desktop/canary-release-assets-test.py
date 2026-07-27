@@ -48,6 +48,12 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def qt_source_contract(qt_sha256: str) -> dict[str, object]:
+    contract = assets_tool.expected_qt_source_contract()
+    contract["bundleSha256"] = qt_sha256
+    return contract
+
+
 def write_platform(assets: Path, platform: str, qt_sha256: str) -> None:
     package = assets / PACKAGE_NAMES[platform]
     package.write_bytes(f"{platform} package".encode())
@@ -85,11 +91,7 @@ def write_platform(assets: Path, platform: str, qt_sha256: str) -> None:
                 "dirty": False,
             },
             "qt": {
-                "correspondingSource": {
-                    "bundle": assets_tool.QT_SOURCE_BUNDLE,
-                    "checksum": assets_tool.QT_SOURCE_CHECKSUM,
-                    "bundleSha256": qt_sha256,
-                }
+                "correspondingSource": qt_source_contract(qt_sha256)
             },
             "artifacts": [row],
         },
@@ -158,6 +160,92 @@ class CanaryReleaseAssetsTests(unittest.TestCase):
             qt_verifier=self.qt_verifier,
         )
         self.assertEqual(len(list(self.assets.iterdir())), 14)
+
+    def test_rejects_legacy_qt_source_asset_aliases(self) -> None:
+        provenance_path = (
+            self.assets
+            / assets_tool.stager.METADATA_FILENAMES["windows"]["provenance"]
+        )
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        corresponding_source = provenance["qt"]["correspondingSource"]
+        corresponding_source["bundle"] = corresponding_source.pop("bundleName")
+        corresponding_source["checksum"] = corresponding_source.pop("checksumName")
+        write_json(provenance_path, provenance)
+
+        with self.assertRaisesRegex(
+            assets_tool.CanaryReleaseAssetError,
+            "keys differ from the release contract",
+        ):
+            assets_tool.verify_base_assets(
+                self.assets,
+                version=VERSION,
+                tag=TAG,
+                commit=COMMIT,
+                qt_verifier=self.qt_verifier,
+            )
+
+    def test_rejects_changed_qt_source_contract(self) -> None:
+        provenance_path = (
+            self.assets
+            / assets_tool.stager.METADATA_FILENAMES["macos"]["provenance"]
+        )
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["qt"]["correspondingSource"]["contractSha256"] = "0" * 64
+        write_json(provenance_path, provenance)
+
+        with self.assertRaisesRegex(
+            assets_tool.CanaryReleaseAssetError,
+            "contract differs from the release checkout",
+        ):
+            assets_tool.verify_base_assets(
+                self.assets,
+                version=VERSION,
+                tag=TAG,
+                commit=COMMIT,
+                qt_verifier=self.qt_verifier,
+            )
+
+    def test_rejects_extra_qt_source_contract_key(self) -> None:
+        provenance_path = (
+            self.assets
+            / assets_tool.stager.METADATA_FILENAMES["linux"]["provenance"]
+        )
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["qt"]["correspondingSource"]["unexpected"] = True
+        write_json(provenance_path, provenance)
+
+        with self.assertRaisesRegex(
+            assets_tool.CanaryReleaseAssetError,
+            "keys differ from the release contract",
+        ):
+            assets_tool.verify_base_assets(
+                self.assets,
+                version=VERSION,
+                tag=TAG,
+                commit=COMMIT,
+                qt_verifier=self.qt_verifier,
+            )
+
+    def test_rejects_stale_qt_source_bundle_digest(self) -> None:
+        provenance_path = (
+            self.assets
+            / assets_tool.stager.METADATA_FILENAMES["windows"]["provenance"]
+        )
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["qt"]["correspondingSource"]["bundleSha256"] = "0" * 64
+        write_json(provenance_path, provenance)
+
+        with self.assertRaisesRegex(
+            assets_tool.CanaryReleaseAssetError,
+            "Qt source bundle digest is stale",
+        ):
+            assets_tool.verify_base_assets(
+                self.assets,
+                version=VERSION,
+                tag=TAG,
+                commit=COMMIT,
+                qt_verifier=self.qt_verifier,
+            )
 
     def test_finalizes_and_verifies_exact_19_asset_namespace(self) -> None:
         add_receipts(self.assets)

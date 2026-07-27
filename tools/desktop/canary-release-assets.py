@@ -27,6 +27,7 @@ TOOLS_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = TOOLS_DIRECTORY.parent.parent
 QT_TOOLS_DIRECTORY = REPOSITORY_ROOT / "tools" / "qt"
 sys.path.insert(0, str(QT_TOOLS_DIRECTORY))
+import build_qt as qt_sdk  # noqa: E402
 import source_bundle as qt_source  # noqa: E402
 
 
@@ -144,6 +145,15 @@ def verify_qt_bundle(bundle: Path, checksum: Path) -> None:
         fail(f"Qt corresponding-source bundle verification failed: {error}")
 
 
+def expected_qt_source_contract() -> dict[str, object]:
+    return qt_source.release_contract(
+        QT_TOOLS_DIRECTORY / qt_source.QT_MANIFEST_PATH.name,
+        REPOSITORY_ROOT / "packaging" / "qt",
+        QT_TOOLS_DIRECTORY / "source_bundle.py",
+        recipe_root=REPOSITORY_ROOT,
+    )
+
+
 def provenance_identity(
     path: Path,
     *,
@@ -171,10 +181,22 @@ def provenance_identity(
     corresponding_source = qt.get("correspondingSource")
     if not isinstance(corresponding_source, dict):
         fail(f"{platform} provenance Qt corresponding-source binding is missing")
-    if corresponding_source.get("bundle") != QT_SOURCE_BUNDLE:
-        fail(f"{platform} provenance names an unexpected Qt source bundle")
-    if corresponding_source.get("checksum") != QT_SOURCE_CHECKSUM:
-        fail(f"{platform} provenance names an unexpected Qt source checksum")
+    expected_source = expected_qt_source_contract()
+    if set(corresponding_source) != set(expected_source) | {"bundleSha256"}:
+        fail(
+            f"{platform} provenance Qt corresponding-source keys differ "
+            "from the release contract"
+        )
+    contract_without_bundle = {
+        key: value
+        for key, value in corresponding_source.items()
+        if key != "bundleSha256"
+    }
+    if not qt_sdk.json_exact_equal(contract_without_bundle, expected_source):
+        fail(
+            f"{platform} provenance Qt corresponding-source contract differs "
+            "from the release checkout"
+        )
     if corresponding_source.get("bundleSha256") != qt_bundle_sha256:
         fail(f"{platform} provenance Qt source bundle digest is stale")
     return repository
