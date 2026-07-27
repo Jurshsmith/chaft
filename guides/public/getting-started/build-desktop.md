@@ -4,7 +4,7 @@ description: Build, launch, test, and package the native Qt desktop app from sou
 section: getting-started
 order: 10
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 

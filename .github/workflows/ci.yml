@@ -845,9 +845,12 @@ jobs:
 
       - name: Test release promotion tools
         run: |
+          python3 tools/desktop/canary-release-assets-test.py
           python3 tools/desktop/export-website-release-manifest-test.py
+          python3 tools/desktop/generate-unsigned-canary-receipt-test.py
           python3 tools/desktop/linux-appimage-contract-test.py
           python3 tools/desktop/macos-dmg-smoke-test.py
+          python3 tools/desktop/macos-unsigned-canary-smoke-test.py
           tools/desktop/platform-verification-receipt-smoke.sh
           python3 tools/desktop/release-version-test.py
           python3 tools/desktop/stage-website-release-assets-test.py
@@ -1017,12 +1020,19 @@ jobs:
 
       - name: Build and verify release package
         env:
+          CHAFT_DESKTOP_SKIP_CODESIGN: "0"
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
         shell: bash
         run: >-
           tools/desktop/ci-gates.sh
           --stage package
           "${{ matrix.package-platform }}"
+
+      - name: Verify macOS package has only the reviewed ad-hoc state
+        if: runner.os == 'macOS'
+        run: >-
+          tools/desktop/macos-unsigned-canary-smoke.sh
+          build/desktop-release/package
 
       - name: Upload release package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1088,6 +1098,12 @@ jobs:
       - name: Run portable DMG smoke
         if: runner.os == 'macOS'
         run: tools/desktop/macos-dmg-smoke.sh build/clean-macos-package
+
+      - name: Verify clean macOS unsigned-canary state
+        if: runner.os == 'macOS'
+        run: >-
+          tools/desktop/macos-unsigned-canary-smoke.sh
+          build/clean-macos-package
 
       - name: Run clean ZIP smoke
         if: runner.os == 'Windows'

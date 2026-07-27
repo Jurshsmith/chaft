@@ -21,6 +21,8 @@ CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
 RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
 PROMOTION_PATH = WORKFLOWS / "promote-desktop-release.yml"
+CANARY_PUBLISH_PATH = WORKFLOWS / "publish-desktop-canary.yml"
+CANARY_PROMOTION_PATH = WORKFLOWS / "promote-desktop-canary.yml"
 CACHE_CLEANUP_PATH = WORKFLOWS / "cleanup-pull-request-caches.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
@@ -273,6 +275,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
         cls.release_inputs = RELEASE_INPUTS_PATH.read_text(encoding="utf-8")
         cls.promotion = PROMOTION_PATH.read_text(encoding="utf-8")
+        cls.canary_publish = CANARY_PUBLISH_PATH.read_text(encoding="utf-8")
+        cls.canary_promotion = CANARY_PROMOTION_PATH.read_text(encoding="utf-8")
         cls.cache_cleanup = CACHE_CLEANUP_PATH.read_text(encoding="utf-8")
 
     def test_job_ids_exactly_match_aggregate_contract(self) -> None:
@@ -390,7 +394,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             path.read_text(encoding="utf-8")
             for path in sorted(WORKFLOWS.glob("*.yml"))
         )
-        self.assertEqual(all_workflows.count(f"uses: {RUST_CACHE_ACTION}"), 9)
+        self.assertEqual(all_workflows.count(f"uses: {RUST_CACHE_ACTION}"), 10)
         self.assertEqual(self.ci.count(f"save-if: {MAIN_CACHE_WRITER}"), 2)
         self.assertNotIn(f"save-if: {MAIN_CACHE_WRITER}", self.release_inputs)
 
@@ -517,11 +521,22 @@ class CiWorkflowContractTests(unittest.TestCase):
             "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package",
             clean,
         )
+        self.assertIn(
+            "tools/desktop/macos-unsigned-canary-smoke.sh\n"
+            "          build/clean-macos-package",
+            clean,
+        )
         self.assertLess(
             clean.index("digest-mismatch: error"),
             clean.index(
                 "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
             ),
+        )
+        self.assertLess(
+            clean.index(
+                "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
+            ),
+            clean.index("tools/desktop/macos-unsigned-canary-smoke.sh"),
         )
         self.assertIn(
             "python3 tools/desktop/macos-dmg-smoke-test.py",
@@ -1054,6 +1069,12 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", self.promotion)
 
         prepare = job_block(self.promotion, "prepare")
+        self.assertIn("attestations: read", prepare)
+        self.assertEqual(self.promotion.count("attestations: read"), 1)
+        self.assertIn("github.event.release.prerelease == false", prepare)
+        self.assertIn("Prereleases must use the dedicated canary", prepare)
+        self.assertNotIn('channel="preview"', prepare)
+        self.assertIn('channel="stable"', prepare)
         self.assertIn(
             '[[ "$(jq -r \'.immutable // false\' "${release_json}")" '
             '!= "true" ]]',
@@ -1089,6 +1110,193 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("--trusted-apple-team-id", macos)
         self.assertIn("CHAFT_LINUX_SIGNING_FINGERPRINT", linux)
         self.assertIn("--trusted-fingerprint", linux)
+
+    def test_stable_promotion_publishes_an_exact_branch_for_maintainer_review(
+        self,
+    ) -> None:
+        publish = job_block(self.promotion, "publish")
+        self.assertIn("permissions:\n      contents: write", publish)
+        self.assertNotIn("pull-requests: write", publish)
+        self.assertIn("branch: ${{ steps.branch.outputs.branch }}", publish)
+        self.assertIn("changed: ${{ steps.branch.outputs.changed }}", publish)
+        self.assertIn("head_commit: ${{ steps.branch.outputs.commit }}", publish)
+        self.assertIn(
+            'branch="release/${RELEASE_TAG}-website-manifest"',
+            publish,
+        )
+        self.assertIn("git ls-remote --heads origin", publish)
+        self.assertIn("Promotion branch moved before review handoff.", publish)
+        self.assertIn(
+            "An authenticated maintainer or approved GitHub",
+            publish,
+        )
+        self.assertIn("GITHUB_STEP_SUMMARY", publish)
+        self.assertNotIn("--method POST", publish)
+        self.assertNotIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
+
+    def test_canary_publisher_mutates_only_after_native_base_validation(
+        self,
+    ) -> None:
+        expected_jobs = {
+            "preflight",
+            "qt_source",
+            "build",
+            "actions_smoke",
+            "audit_base",
+            "create_draft",
+            "release_smoke",
+            "finalize_draft",
+            "verify_draft",
+            "publish",
+            "verify_published",
+            "promote_website",
+        }
+        self.assertEqual(workflow_job_ids(self.canary_publish), expected_jobs)
+        self.assertIn("cancel-in-progress: false", self.canary_publish)
+        self.assertIn("permissions:\n  contents: read\n", self.canary_publish)
+
+        before_write, first_write = self.canary_publish.split(
+            "\n  create_draft:\n", 1
+        )
+        for mutation in (
+            "gh release create",
+            "gh release upload",
+            "gh release edit",
+            "--method POST",
+            "--method PATCH",
+        ):
+            self.assertNotIn(mutation, before_write)
+        self.assertIn("--method POST", first_write)
+        self.assertIn('"repos/${GITHUB_REPOSITORY}/releases"', first_write)
+        self.assertIn("gh release upload", first_write)
+
+        draft = job_block(self.canary_publish, "create_draft")
+        self.assertIn("      - audit_base\n", draft)
+        self.assertIn("permissions:\n      contents: write", draft)
+        self.assertIn("-F draft=true", draft)
+        self.assertIn("-F prerelease=true", draft)
+        self.assertIn("-f make_latest=false", draft)
+        self.assertIn("release_id=", draft)
+        self.assertNotIn("--clobber", draft)
+
+    def test_canary_publisher_binds_tag_commit_and_immutable_release(
+        self,
+    ) -> None:
+        preflight = job_block(self.canary_publish, "preflight")
+        self.assertIn("confirm_unsigned_canary", self.canary_publish)
+        self.assertIn("confirm_immutable_releases_enabled", self.canary_publish)
+        self.assertIn("-canary\\.([1-9][0-9]*)", preflight)
+        self.assertNotIn("immutable-releases", preflight)
+        self.assertIn('.name == "Required"', preflight)
+        self.assertIn('.app.slug == "github-actions"', preflight)
+        self.assertIn('.path == ".github/workflows/ci.yml"', preflight)
+        self.assertIn('.event == "push"', preflight)
+        self.assertIn(".head_sha == $commit", preflight)
+        self.assertIn("--allow-missing-tag", preflight)
+        self.assertIn("--expected-commit", preflight)
+
+        draft = job_block(self.canary_publish, "create_draft")
+        self.assertIn("target_commit", self.canary_publish)
+        self.assertIn('-f target_commitish="${TARGET_COMMIT}"', draft)
+        self.assertIn("git/ref/heads/", draft)
+        self.assertIn("ref/tags/${RELEASE_TAG}", draft)
+        self.assertIn("refusing to reuse it", draft)
+
+        published = job_block(self.canary_publish, "verify_published")
+        self.assertIn("attestations: read", published)
+        self.assertEqual(self.canary_publish.count("attestations: read"), 1)
+        self.assertIn(".immutable // false", published)
+        self.assertIn('refs/tags/${RELEASE_TAG}^{commit}', published)
+        self.assertIn("gh release verify", published)
+        self.assertIn("gh release verify-asset", published)
+        self.assertIn("releases/latest", published)
+
+        promotion = job_block(self.canary_publish, "promote_website")
+        self.assertIn("actions: write", promotion)
+        self.assertIn("      - verify_published\n", promotion)
+        self.assertIn("gh workflow run promote-desktop-canary.yml", promotion)
+        self.assertIn('-f tag="${RELEASE_TAG}"', promotion)
+
+    def test_canary_publisher_verifies_all_transfer_boundaries(self) -> None:
+        actions_smoke = job_block(self.canary_publish, "actions_smoke")
+        self.assertIn("digest-mismatch: error", actions_smoke)
+        for smoke in (
+            "appimage-smoke.sh",
+            "macos-dmg-smoke.sh",
+            "macos-unsigned-canary-smoke.sh",
+            "windows-zip-smoke.ps1",
+        ):
+            self.assertIn(smoke, actions_smoke)
+        self.assertLess(
+            actions_smoke.index("macos-dmg-smoke.sh"),
+            actions_smoke.index("macos-unsigned-canary-smoke.sh"),
+        )
+
+        release_smoke = job_block(self.canary_publish, "release_smoke")
+        self.assertIn("releases/assets/${asset_id}", release_smoke)
+        self.assertIn(".digest", release_smoke)
+        self.assertIn("generate-unsigned-canary-receipt.py", release_smoke)
+        for smoke in (
+            "appimage-smoke.sh",
+            "macos-dmg-smoke.sh",
+            "windows-zip-smoke.ps1",
+        ):
+            self.assertIn(smoke, release_smoke)
+
+        finalize = job_block(self.canary_publish, "finalize_draft")
+        self.assertIn("canary-release-assets.py finalize", finalize)
+        self.assertIn("canary-release-assets.py verify-complete", finalize)
+        verify_draft = job_block(self.canary_publish, "verify_draft")
+        self.assertIn("test \"$(jq '.assets | length'", verify_draft)
+        self.assertIn("-eq 19", verify_draft)
+        self.assertIn("releases/assets/${asset_id}", verify_draft)
+
+    def test_canary_promotion_is_read_only_until_bounded_branch_publication(
+        self,
+    ) -> None:
+        self.assertEqual(
+            workflow_job_ids(self.canary_promotion),
+            {"prepare", "publish"},
+        )
+        self.assertIn("workflow_dispatch:", self.canary_promotion)
+        self.assertNotIn("\n  release:\n", self.canary_promotion)
+        self.assertIn("permissions:\n  contents: read\n", self.canary_promotion)
+        self.assertIn("cancel-in-progress: false", self.canary_promotion)
+
+        prepare = job_block(self.canary_promotion, "prepare")
+        self.assertIn("attestations: read", prepare)
+        self.assertEqual(self.canary_promotion.count("attestations: read"), 1)
+        self.assertNotIn("contents: write", prepare)
+        self.assertIn('"prerelease": True', prepare)
+        self.assertIn('"immutable": True', prepare)
+        self.assertIn("exactly 19 assets", prepare)
+        self.assertIn("releases/assets/${asset_id}", prepare)
+        self.assertIn("gh release verify ", prepare)
+        self.assertIn("gh release verify-asset", prepare)
+        self.assertIn("canary-release-assets.py verify-complete", prepare)
+        self.assertIn("--channel canary", prepare)
+        self.assertIn("--release-evidence-dir", prepare)
+        self.assertIn("--windows-signing-state unsigned-canary", prepare)
+        self.assertIn("--macos-signing-state unsigned-canary", prepare)
+        self.assertIn("--linux-signing-state unsigned-canary", prepare)
+        self.assertIn("promotion payload exceeds four MiB", self.canary_promotion)
+
+        publish = job_block(self.canary_promotion, "publish")
+        self.assertIn("contents: write", publish)
+        self.assertNotIn("pull-requests: write", publish)
+        self.assertIn("branch: ${{ steps.branch.outputs.branch }}", publish)
+        self.assertIn("changed: ${{ steps.branch.outputs.changed }}", publish)
+        self.assertIn("head_commit: ${{ steps.branch.outputs.commit }}", publish)
+        self.assertIn('branch="release/${RELEASE_TAG}-website-manifest"', publish)
+        self.assertIn("git ls-remote --heads origin", publish)
+        self.assertIn("Promotion branch moved before review handoff.", publish)
+        self.assertIn(
+            "An authenticated maintainer or approved GitHub",
+            publish,
+        )
+        self.assertIn("GITHUB_STEP_SUMMARY", publish)
+        self.assertNotIn("--method POST", publish)
+        self.assertNotIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
 
 
 class DesktopGateScriptContractTests(unittest.TestCase):

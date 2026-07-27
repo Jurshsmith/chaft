@@ -7,6 +7,40 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GNUInstallDirs)
 
+set(
+    CHAFT_DISTRIBUTION_VERSION
+    "${PROJECT_VERSION}"
+    CACHE STRING
+    "Exact SemVer used in public package filenames; native versions stay PROJECT_VERSION"
+)
+set(CHAFT_SEMVER_IDENTIFIER
+    "(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+)
+string(CONCAT CHAFT_SEMVER_PATTERN
+    "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\."
+    "(0|[1-9][0-9]*)(-${CHAFT_SEMVER_IDENTIFIER}"
+    "(\\.${CHAFT_SEMVER_IDENTIFIER})*)?"
+    "(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+)
+if(NOT CHAFT_DISTRIBUTION_VERSION MATCHES "${CHAFT_SEMVER_PATTERN}")
+    message(FATAL_ERROR
+        "CHAFT_DISTRIBUTION_VERSION must be an exact SemVer value: "
+        "${CHAFT_DISTRIBUTION_VERSION}"
+    )
+endif()
+string(
+    REGEX MATCH
+    "^([0-9]+\\.[0-9]+\\.[0-9]+)"
+    CHAFT_DISTRIBUTION_VERSION_CORE
+    "${CHAFT_DISTRIBUTION_VERSION}"
+)
+if(NOT "${CHAFT_DISTRIBUTION_VERSION_CORE}" STREQUAL "${PROJECT_VERSION}")
+    message(FATAL_ERROR
+        "CHAFT_DISTRIBUTION_VERSION core must match source version "
+        "${PROJECT_VERSION}: ${CHAFT_DISTRIBUTION_VERSION}"
+    )
+endif()
+
 find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
 qt_standard_project_setup(REQUIRES 6.8.4)
 
@@ -285,7 +319,11 @@ install(FILES ${CHAFT_PACKAGE_DOCUMENTATION}
 
 if(APPLE OR WIN32)
     set(CHAFT_DEPLOY_OPTIONS)
-    if(WIN32)
+    if(APPLE)
+        list(APPEND CHAFT_DEPLOY_OPTIONS
+            DEPLOY_TOOL_OPTIONS -codesign=-
+        )
+    elseif(WIN32)
         list(APPEND CHAFT_DEPLOY_OPTIONS
             DEPLOY_TOOL_OPTIONS --include-plugins qoffscreen
         )
@@ -296,20 +334,33 @@ if(APPLE OR WIN32)
         ${CHAFT_DEPLOY_OPTIONS}
     )
     install(SCRIPT ${chaft_desktop_deploy_script})
+    if(APPLE)
+        # macdeployqt signs nested Mach-O files inside-out after adjusting
+        # their install names. Fail before DMG creation unless that final
+        # deployed app has a valid ad-hoc signature.
+        install(SCRIPT
+            "${CMAKE_SOURCE_DIR}/tools/desktop/macos-adhoc-verify.cmake"
+        )
+    endif()
 endif()
 
 set(CPACK_PACKAGE_NAME "Chaft")
 set(CPACK_PACKAGE_VENDOR "Chaft")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VERSION "${CHAFT_DISTRIBUTION_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Native local-first peer-to-peer chat workspace")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Jurshsmith/chaft")
 set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package")
 
 if(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_PACKAGE_FILE_NAME
+        "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-x86_64"
+    )
 elseif(WIN32)
     set(CPACK_GENERATOR "ZIP")
-    set(CPACK_PACKAGE_FILE_NAME "Chaft-${PROJECT_VERSION}-Windows-x86_64")
+    set(CPACK_PACKAGE_FILE_NAME
+        "Chaft-${CHAFT_DISTRIBUTION_VERSION}-Windows-x86_64"
+    )
 endif()
 
 if(APPLE OR WIN32)

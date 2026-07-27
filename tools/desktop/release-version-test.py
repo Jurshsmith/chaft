@@ -83,6 +83,35 @@ class ReleaseVersionTest(unittest.TestCase):
     def test_prints_matching_version(self):
         result = self.run_script("--print-version")
         self.assertEqual(result.stdout.strip(), "1.2.3")
+        result = self.run_script("--print-source-version")
+        self.assertEqual(result.stdout.strip(), "1.2.3")
+
+    def test_prints_validated_distribution_version(self):
+        result = self.run_script(
+            "--distribution-version",
+            "1.2.3-canary.1",
+            "--print-distribution-version",
+        )
+        self.assertEqual(result.stdout.strip(), "1.2.3-canary.1")
+
+    def test_rejects_invalid_or_unrelated_distribution_version(self):
+        invalid = self.run_script(
+            "--distribution-version",
+            "1.2.3-canary.01",
+            "--print-distribution-version",
+            check=False,
+        )
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("exact SemVer", invalid.stderr)
+
+        unrelated = self.run_script(
+            "--distribution-version",
+            "1.2.4-canary.1",
+            "--print-distribution-version",
+            check=False,
+        )
+        self.assertNotEqual(unrelated.returncode, 0)
+        self.assertIn("core must exactly match", unrelated.stderr)
 
     def test_rejects_mismatched_sources(self):
         self.write_versions("1.2.3", "1.2.4", "1.2.3")
@@ -94,7 +123,7 @@ class ReleaseVersionTest(unittest.TestCase):
         self.write_versions("1.2.3-rc.1", "1.2.3-rc.1", "1.2.3-rc.1")
         result = self.run_script("--print-version", check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("stable X.Y.Z", result.stderr)
+        self.assertIn("source version must be a stable X.Y.Z", result.stderr)
 
     def test_validates_tag_and_commit(self):
         self.initialize_git()
@@ -111,7 +140,9 @@ class ReleaseVersionTest(unittest.TestCase):
             str(github_output),
         )
         context = json.loads(result.stdout)
-        self.assertEqual(context["version"], "1.2.3")
+        self.assertEqual(context["schemaVersion"], 2)
+        self.assertEqual(context["sourceVersion"], "1.2.3")
+        self.assertEqual(context["distributionVersion"], "1.2.3")
         self.assertEqual(context["tag"], "v1.2.3")
         self.assertEqual(
             context["repository"], "https://github.com/Jurshsmith/chaft"
@@ -121,11 +152,110 @@ class ReleaseVersionTest(unittest.TestCase):
         self.assertEqual(
             github_output.read_text(encoding="utf-8").splitlines(),
             [
-                "version=1.2.3",
+                "source_version=1.2.3",
+                "distribution_version=1.2.3",
                 "tag=v1.2.3",
                 f"commit={context['commit']}",
             ],
         )
+
+    def test_validates_existing_prerelease_tag(self):
+        self.initialize_git()
+        subprocess.run(
+            ["git", "tag", "v1.2.3-canary.1"], cwd=self.root, check=True
+        )
+        result = self.run_script(
+            "--tag",
+            "v1.2.3-canary.1",
+            "--distribution-version",
+            "1.2.3-canary.1",
+            "--expected-commit",
+            "HEAD",
+        )
+        context = json.loads(result.stdout)
+        self.assertEqual(context["distributionVersion"], "1.2.3-canary.1")
+
+    def test_allows_missing_prerelease_tag_bound_to_expected_commit(self):
+        self.initialize_git()
+        result = self.run_script(
+            "--tag",
+            "v1.2.3-canary.1",
+            "--expected-commit",
+            "HEAD",
+            "--allow-missing-tag",
+        )
+        context = json.loads(result.stdout)
+        self.assertEqual(context["distributionVersion"], "1.2.3-canary.1")
+        expected = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(context["commit"], expected)
+
+    def test_missing_tag_escape_hatch_is_prerelease_only_and_commit_bound(self):
+        self.initialize_git()
+        missing_commit = self.run_script(
+            "--tag",
+            "v1.2.3-canary.1",
+            "--allow-missing-tag",
+            check=False,
+        )
+        self.assertNotEqual(missing_commit.returncode, 0)
+        self.assertIn("requires both --tag and --expected-commit", missing_commit.stderr)
+
+        stable = self.run_script(
+            "--tag",
+            "v1.2.3",
+            "--expected-commit",
+            "HEAD",
+            "--allow-missing-tag",
+            check=False,
+        )
+        self.assertNotEqual(stable.returncode, 0)
+        self.assertIn("restricted to SemVer prerelease tags", stable.stderr)
+
+    def test_missing_tag_escape_hatch_rejects_existing_tag_on_other_commit(self):
+        self.initialize_git()
+        subprocess.run(
+            ["git", "tag", "v1.2.3-canary.1"], cwd=self.root, check=True
+        )
+        (self.root / "after-canary-tag.txt").write_text(
+            "new commit\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", "after-canary-tag.txt"], cwd=self.root, check=True
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "commit after canary tag"],
+            cwd=self.root,
+            env=self.git_environment(),
+            check=True,
+        )
+        result = self.run_script(
+            "--tag",
+            "v1.2.3-canary.1",
+            "--expected-commit",
+            "HEAD",
+            "--allow-missing-tag",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("but expected commit resolves to", result.stderr)
+
+    def test_missing_prerelease_tag_requires_explicit_escape_hatch(self):
+        self.initialize_git()
+        result = self.run_script(
+            "--tag",
+            "v1.2.3-canary.1",
+            "--expected-commit",
+            "HEAD",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refs/tags/v1.2.3-canary.1", result.stderr)
 
     def test_rejects_tag_that_resolves_away_from_expected_commit(self):
         self.initialize_git()
@@ -151,7 +281,7 @@ class ReleaseVersionTest(unittest.TestCase):
         self.initialize_git()
         result = self.run_script("--tag", "v1.2.4", check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected v1.2.3", result.stderr)
+        self.assertIn("core must exactly match", result.stderr)
 
 
 if __name__ == "__main__":

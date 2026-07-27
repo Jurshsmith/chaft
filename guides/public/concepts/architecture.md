@@ -4,7 +4,7 @@ description: How Chaft's local-first desktop, signed event history, storage, and
 section: concepts
 order: 1
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 

@@ -48,7 +48,7 @@ jobs:
       }}
     name: Restore explicit Worker version
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment:
       name: production
       url: ${{ vars.WEBSITE_SITE_URL }}
@@ -203,6 +203,7 @@ jobs:
           digest-mismatch: error
 
       - name: Validate retained rollback target evidence
+        id: target_record
         env:
           EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
           GOVERNANCE_COMMIT: ${{ vars.CHAFT_INFRA_COMMIT }}
@@ -229,9 +230,162 @@ jobs:
             record.cloudflare?.newVersionId !== process.env.TARGET_VERSION_ID ||
             !/^sha256:[a-f0-9]{64}$/.test(record.artifact?.digest) ||
             !/^[a-f0-9]{64}$/.test(record.artifact?.manifestSha256) ||
+            !Number.isSafeInteger(record.artifact?.id) ||
+            record.artifact.id <= 0 ||
+            record.artifact?.name !==
+              `chaft-website-${process.env.EXPECTED_SOURCE_COMMIT}` ||
+            !Number.isSafeInteger(record.source?.workflowRunId) ||
+            record.source.workflowRunId <= 0 ||
             record.verification?.result !== "passed"
           ) {
             throw new Error("retained deployment record does not authorize this rollback target");
+          }
+
+          const release = record.release;
+          let hasRelease = false;
+          if (release !== undefined) {
+            const canary =
+              /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.([1-9]\d*)$/;
+            hasRelease =
+              release !== null &&
+              typeof release === "object" &&
+              ["coming-soon", "published"].includes(release.status) &&
+              canary.test(release.version) &&
+              /^[a-f0-9]{64}$/.test(release.manifestSha256) &&
+              (release.status === "published"
+                ? release.tag === `v${release.version}`
+                : release.tag === null);
+            if (!hasRelease) {
+              throw new Error("retained deployment release identity is malformed");
+            }
+          }
+
+          const outputs = {
+            candidate_artifact_digest: record.artifact.digest,
+            candidate_artifact_id: record.artifact.id,
+            candidate_artifact_name: record.artifact.name,
+            candidate_run_id: record.source.workflowRunId,
+            has_release: String(hasRelease),
+            release_manifest_sha256: hasRelease ? release.manifestSha256 : "",
+            release_status: hasRelease ? release.status : "",
+            release_tag: hasRelease ? (release.tag ?? "") : "",
+            release_version: hasRelease ? release.version : "",
+          };
+          for (const [name, value] of Object.entries(outputs)) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Revalidate the original candidate artifact identity
+        if: steps.target_record.outputs.has_release != 'true'
+        env:
+          CANDIDATE_ARTIFACT_DIGEST: ${{ steps.target_record.outputs.candidate_artifact_digest }}
+          CANDIDATE_ARTIFACT_ID: ${{ steps.target_record.outputs.candidate_artifact_id }}
+          CANDIDATE_ARTIFACT_NAME: ${{ steps.target_record.outputs.candidate_artifact_name }}
+          CANDIDATE_RUN_ID: ${{ steps.target_record.outputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}/artifacts?name=${CANDIDATE_ARTIFACT_NAME}&per_page=100" \
+            > "${RUNNER_TEMP}/target-candidate-artifacts.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/target-candidate-artifacts.json`, "utf8"),
+          );
+          const artifacts = payload.artifacts;
+          if (
+            !Array.isArray(artifacts) ||
+            artifacts.length !== 1 ||
+            artifacts[0].expired !== false ||
+            String(artifacts[0].id) !== process.env.CANDIDATE_ARTIFACT_ID ||
+            artifacts[0].name !== process.env.CANDIDATE_ARTIFACT_NAME ||
+            artifacts[0].digest !== process.env.CANDIDATE_ARTIFACT_DIGEST
+          ) {
+            throw new Error("original candidate artifact no longer matches retained evidence");
+          }
+          NODE
+
+      - name: Download the original candidate artifact for legacy evidence
+        if: steps.target_record.outputs.has_release != 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.target_record.outputs.candidate_artifact_name }}
+          path: ${{ runner.temp }}/target-candidate-artifact
+          run-id: ${{ steps.target_record.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+
+      - name: Install the legacy target artifact without rebuilding
+        if: steps.target_record.outputs.has_release != 'true'
+        working-directory: apps/website
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/target-candidate-artifact
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+          SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
+          TARGET_DIST: ${{ runner.temp }}/target-site-dist
+        run: |
+          set -euo pipefail
+          node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination "${TARGET_DIST}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${EXPECTED_SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}" >/dev/null
+
+      - name: Resolve the exact target release identity
+        id: target_release
+        env:
+          HAS_RETAINED_RELEASE: ${{ steps.target_record.outputs.has_release }}
+          RETAINED_RELEASE_MANIFEST_SHA256: ${{ steps.target_record.outputs.release_manifest_sha256 }}
+          RETAINED_RELEASE_STATUS: ${{ steps.target_record.outputs.release_status }}
+          RETAINED_RELEASE_TAG: ${{ steps.target_record.outputs.release_tag }}
+          RETAINED_RELEASE_VERSION: ${{ steps.target_record.outputs.release_version }}
+          TARGET_DIST: ${{ runner.temp }}/target-site-dist
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+
+          let values;
+          if (process.env.HAS_RETAINED_RELEASE === "true") {
+            values = {
+              release_manifest_sha256:
+                process.env.RETAINED_RELEASE_MANIFEST_SHA256,
+              release_status: process.env.RETAINED_RELEASE_STATUS,
+              release_tag: process.env.RETAINED_RELEASE_TAG,
+              release_version: process.env.RETAINED_RELEASE_VERSION,
+            };
+          } else {
+            const bytes = fs.readFileSync(
+              `${process.env.TARGET_DIST}/releases/current.json`,
+            );
+            const release = JSON.parse(bytes.toString("utf8"));
+            const canary =
+              /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.([1-9]\d*)$/;
+            if (
+              release.schemaVersion !== 2 ||
+              release.channel !== "canary" ||
+              !canary.test(release.version) ||
+              !["coming-soon", "published"].includes(release.status) ||
+              (release.status === "published"
+                ? release.tag !== `v${release.version}`
+                : release.tag !== null)
+            ) {
+              throw new Error("legacy target release manifest is unsupported");
+            }
+            values = {
+              release_manifest_sha256:
+                createHash("sha256").update(bytes).digest("hex"),
+              release_status: release.status,
+              release_tag: release.tag ?? "",
+              release_version: release.version,
+            };
+          }
+          for (const [name, value] of Object.entries(values)) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
           }
           NODE
 
@@ -455,14 +609,31 @@ jobs:
         working-directory: apps/website
         env:
           EXPECTED_COMMIT: ${{ inputs.expected_source_commit }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ steps.target_release.outputs.release_manifest_sha256 }}
+          EXPECTED_RELEASE_STATUS: ${{ steps.target_release.outputs.release_status }}
+          EXPECTED_RELEASE_TAG: ${{ steps.target_release.outputs.release_tag }}
+          EXPECTED_RELEASE_VERSION: ${{ steps.target_release.outputs.release_version }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
         run: |
           set -euo pipefail
+          release_arguments=(
+            --release-manifest-sha256 "${EXPECTED_RELEASE_MANIFEST_SHA256}"
+            --release-status "${EXPECTED_RELEASE_STATUS}"
+            --release-version "${EXPECTED_RELEASE_VERSION}"
+          )
+          if [[ "${EXPECTED_RELEASE_STATUS}" == "published" ]]; then
+            test "${EXPECTED_RELEASE_TAG}" = "v${EXPECTED_RELEASE_VERSION}"
+            release_arguments+=(--release-tag "${EXPECTED_RELEASE_TAG}")
+          else
+            test "${EXPECTED_RELEASE_STATUS}" = "coming-soon"
+            test -z "${EXPECTED_RELEASE_TAG}"
+          fi
           node scripts/verify-public-deployment.mjs \
             --site-url "${SITE_URL}" \
             --alternate-site-url "https://www.chaft.ai" \
             --repository "${GITHUB_REPOSITORY}" \
             --commit "${EXPECTED_COMMIT}" \
+            "${release_arguments[@]}" \
             --attempts 12 \
             --delay-ms 5000 \
             --output "${RUNNER_TEMP}/public-verification.json"
@@ -476,6 +647,10 @@ jobs:
           INCIDENT_ID: ${{ inputs.incident_id }}
           PREVIOUS_DEPLOYMENT_ID: ${{ steps.inspect.outputs.previous_deployment_id }}
           REASON: ${{ inputs.reason }}
+          RELEASE_MANIFEST_SHA256: ${{ steps.target_release.outputs.release_manifest_sha256 }}
+          RELEASE_STATUS: ${{ steps.target_release.outputs.release_status }}
+          RELEASE_TAG: ${{ steps.target_release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.target_release.outputs.release_version }}
           SITE_URL: ${{ vars.WEBSITE_SITE_URL }}
           SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
           TARGET_EVIDENCE_DIGEST: ${{ steps.evidence.outputs.artifact_digest }}
@@ -510,6 +685,12 @@ jobs:
               versionId: process.env.TARGET_VERSION_ID,
               retainedEvidenceArtifactId: Number(process.env.TARGET_EVIDENCE_ID),
               retainedEvidenceArtifactDigest: process.env.TARGET_EVIDENCE_DIGEST,
+              release: {
+                status: process.env.RELEASE_STATUS,
+                version: process.env.RELEASE_VERSION,
+                tag: process.env.RELEASE_TAG || null,
+                manifestSha256: process.env.RELEASE_MANIFEST_SHA256,
+              },
             },
             cloudflare: {
               accountId: process.env.CLOUDFLARE_ACCOUNT_ID,

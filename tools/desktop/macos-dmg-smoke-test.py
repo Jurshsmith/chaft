@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,9 @@ class MacosDmgSmokeTests(unittest.TestCase):
             self.tmp_dir,
         ):
             directory.mkdir(parents=True)
-        (self.package_dir / "Chaft-test-macOS.dmg").write_bytes(b"fake dmg")
+        (self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg").write_bytes(
+            b"fake dmg"
+        )
         self.app = self.volume / "ChaftDesktop.app"
         self.binary = self.app / "Contents" / "MacOS" / "ChaftDesktop"
         self.compliance = (
@@ -55,8 +58,13 @@ class MacosDmgSmokeTests(unittest.TestCase):
         (self.app / "Contents" / "Frameworks").mkdir(parents=True)
         (self.app / "Contents" / "PlugIns" / "platforms").mkdir(parents=True)
         self.compliance.mkdir(parents=True)
-        (self.app / "Contents" / "Info.plist").write_text(
-            "synthetic plist\n", encoding="utf-8"
+        (self.app / "Contents" / "Info.plist").write_bytes(
+            plistlib.dumps(
+                {
+                    "CFBundleShortVersionString": "0.1.0",
+                    "CFBundleVersion": "0.1.0",
+                }
+            )
         )
         (
             self.app
@@ -255,12 +263,35 @@ class MacosDmgSmokeTests(unittest.TestCase):
         self.assertIn("macOS DMG smoke timed out after 1s", completed.stderr)
         self.assertEqual(self.receipt.read_text(encoding="utf-8"), "started\n")
 
+    def test_accepts_prerelease_distribution_name_with_stable_embedded_version(
+        self,
+    ) -> None:
+        stable_path = self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg"
+        canary_path = self.package_dir / "Chaft-0.1.0-canary.1-macOS-x86_64.dmg"
+        stable_path.rename(canary_path)
+        completed = self.run_smoke(
+            extra_environment={
+                "CHAFT_SOURCE_VERSION": "0.1.0",
+                "CHAFT_DISTRIBUTION_VERSION": "0.1.0-canary.1",
+            }
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(canary_path.name, completed.stdout)
+
+    def test_rejects_filename_that_omits_distribution_version(self) -> None:
+        stable_path = self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg"
+        wrong_path = self.package_dir / "Chaft-test-macOS.dmg"
+        stable_path.rename(wrong_path)
+        completed = self.run_smoke()
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("expected DMG filename", completed.stderr)
+
     @unittest.skipUnless(
         RUN_NATIVE_DMG_TEST,
         "set CHAFT_RUN_NATIVE_DMG_TEST=1 on macOS for native hdiutil",
     )
     def test_native_hdiutil_mount_copy_detach_and_launch(self) -> None:
-        dmg_path = self.package_dir / "Chaft-test-macOS.dmg"
+        dmg_path = self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg"
         dmg_path.unlink()
         created = subprocess.run(
             [

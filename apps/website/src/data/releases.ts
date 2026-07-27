@@ -6,14 +6,17 @@ const rawHistoricalManifests = import.meta.glob("./release-history/*.json", {
 }) as Record<string, unknown>;
 
 export const operatingSystems = ["windows", "macos", "linux"] as const;
-export const releaseChannels = ["preview", "stable"] as const;
+export const releaseChannels = ["canary", "stable"] as const;
 export const releaseStatuses = ["coming-soon", "published"] as const;
 export const signingStatuses = [
   "pending",
+  "unsigned-canary",
   "checksummed",
   "signed",
   "notarized",
 ] as const;
+export const unsignedCanaryWarning =
+  "Do not use Chaft canary builds for sensitive or production communication.";
 
 export type OperatingSystem = (typeof operatingSystems)[number];
 export type ReleaseChannel = (typeof releaseChannels)[number];
@@ -74,6 +77,13 @@ export interface ReleaseAssetEvidence {
   verification: ReleaseEvidenceFile | null;
 }
 
+export interface ReleaseLevelEvidence {
+  qtSource: ReleaseEvidenceFile;
+  qtSourceChecksums: ReleaseEvidenceFile;
+  inventory: ReleaseEvidenceFile;
+  aggregateChecksums: ReleaseEvidenceFile;
+}
+
 export interface ReleaseManifest {
   schemaVersion: 2;
   channel: ReleaseChannel;
@@ -84,6 +94,7 @@ export interface ReleaseManifest {
   commit: string | null;
   releaseUrl: string;
   sourceUrl: string;
+  releaseEvidence: ReleaseLevelEvidence | null;
   assets: ReleaseAsset[];
 }
 
@@ -93,6 +104,16 @@ const semanticVersionPattern = new RegExp(
     "(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?" +
     "(?:\\+(?:[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$",
 );
+const canaryVersionPattern = new RegExp(
+  "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)-canary\\.([1-9]\\d*)$",
+);
+const stableVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const releaseEvidenceFilenames = {
+  qtSource: "Chaft-Qt-6.8.4-corresponding-source.zip",
+  qtSourceChecksums: "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+  inventory: "chaft-desktop-release-inventory.json",
+  aggregateChecksums: "chaft-desktop-release-SHA256SUMS",
+} as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -268,6 +289,23 @@ function validatePublishedReleaseCoherence(release: ReleaseManifest): void {
       );
     }
   }
+
+  if (release.releaseEvidence !== null) {
+    for (const [kind, evidence] of Object.entries(release.releaseEvidence)) {
+      requireExactGitHubUrl(
+        evidence.url,
+        source.origin,
+        [
+          ...repositorySegments,
+          "releases",
+          "download",
+          release.tag,
+          evidence.filename,
+        ],
+        `release.releaseEvidence.${kind}.url`,
+      );
+    }
+  }
 }
 
 function parseEnum<const T extends readonly string[]>(
@@ -309,6 +347,65 @@ function parseEvidenceFile(
   return { filename, url, sizeBytes, sha256 };
 }
 
+function parseReleaseEvidence(
+  value: unknown,
+  channel: ReleaseChannel,
+  status: ReleaseStatus,
+): ReleaseLevelEvidence | null {
+  if (value === null) {
+    if (channel === "canary" && status === "published") {
+      throw new Error(
+        "release.releaseEvidence is required for a published canary release",
+      );
+    }
+    return null;
+  }
+  if (channel !== "canary" || status !== "published") {
+    throw new Error(
+      "release.releaseEvidence is allowed only for a published canary release",
+    );
+  }
+  if (!isRecord(value)) {
+    throw new Error("release.releaseEvidence must be null or an object");
+  }
+
+  const expectedKeys = Object.keys(releaseEvidenceFilenames);
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    expectedKeys.some((key) => !actualKeys.includes(key))
+  ) {
+    throw new Error(
+      `release.releaseEvidence must contain exactly: ${expectedKeys.join(", ")}`,
+    );
+  }
+
+  const parsed = Object.fromEntries(
+    Object.entries(releaseEvidenceFilenames).map(([key, expectedFilename]) => {
+      const evidence = parseEvidenceFile(
+        value[key],
+        `release.releaseEvidence.${key}`,
+      );
+      if (evidence.filename !== expectedFilename) {
+        throw new Error(
+          `release.releaseEvidence.${key}.filename must equal ${expectedFilename}`,
+        );
+      }
+      return [key, evidence];
+    }),
+  ) as unknown as ReleaseLevelEvidence;
+
+  const filenames = Object.values(parsed).map((evidence) => evidence.filename);
+  const urls = Object.values(parsed).map((evidence) => evidence.url);
+  if (new Set(filenames).size !== filenames.length) {
+    throw new Error("release.releaseEvidence filenames must be unique");
+  }
+  if (new Set(urls).size !== urls.length) {
+    throw new Error("release.releaseEvidence URLs must be unique");
+  }
+  return parsed;
+}
+
 function parseAssetEvidence(
   value: unknown,
   context: string,
@@ -316,6 +413,7 @@ function parseAssetEvidence(
   artifactFilename: string | null,
   available: boolean,
   signingStatus: SigningStatus,
+  channel: ReleaseChannel,
 ): ReleaseAssetEvidence {
   if (!isRecord(value)) throw new Error(`${context} must be an object`);
   const nullableEvidence = (key: string): ReleaseEvidenceFile | null => {
@@ -355,7 +453,9 @@ function parseAssetEvidence(
   }
   if (
     available &&
-    (signingStatus === "signed" || signingStatus === "notarized") &&
+    (signingStatus === "unsigned-canary" ||
+      signingStatus === "signed" ||
+      signingStatus === "notarized") &&
     verification === null
   ) {
     throw new Error(
@@ -365,6 +465,20 @@ function parseAssetEvidence(
   if (available && signingStatus === "checksummed" && verification !== null) {
     throw new Error(
       `${context}.verification must be null for a checksummed-only artifact`,
+    );
+  }
+  if (available && signingStatus === "unsigned-canary" && signature !== null) {
+    throw new Error(
+      `${context}.signature must be null for an unsigned canary artifact`,
+    );
+  }
+  if (
+    available &&
+    channel === "canary" &&
+    verification === null
+  ) {
+    throw new Error(
+      `${context}.verification is required for an unsigned canary artifact`,
     );
   }
   if (available && os === "linux" && signingStatus === "signed" && signature === null) {
@@ -398,7 +512,12 @@ function parseAssetEvidence(
   return { checksums, sbom, provenance, signature, verification };
 }
 
-function parseAsset(value: unknown, index: number): ReleaseAsset {
+function parseAsset(
+  value: unknown,
+  index: number,
+  channel: ReleaseChannel,
+  status: ReleaseStatus,
+): ReleaseAsset {
   const context = `release.assets[${index}]`;
   if (!isRecord(value)) throw new Error(`${context} must be an object`);
 
@@ -459,15 +578,31 @@ function parseAsset(value: unknown, index: number): ReleaseAsset {
     throw new Error(`${context}.signingStatus must be pending while unavailable`);
   }
   if (available) {
-    const requiredSigningState: Record<OperatingSystem, readonly SigningStatus[]> = {
-      windows: ["signed"],
-      macos: ["notarized"],
-      linux: ["checksummed", "signed"],
-    };
-    if (!requiredSigningState[os].includes(signingStatus)) {
+    if (status !== "published") {
       throw new Error(
-        `${context}.signingStatus is not sufficient for an available ${os} artifact`,
+        `release.status must be published before ${context}.signingStatus may be final`,
       );
+    }
+    if (channel === "canary") {
+      if (signingStatus !== "unsigned-canary") {
+        throw new Error(
+          `${context}.signingStatus must be unsigned-canary for a canary release`,
+        );
+      }
+    } else {
+      const requiredSigningState: Record<
+        OperatingSystem,
+        readonly SigningStatus[]
+      > = {
+        windows: ["signed"],
+        macos: ["notarized"],
+        linux: ["checksummed", "signed"],
+      };
+      if (!requiredSigningState[os].includes(signingStatus)) {
+        throw new Error(
+          `${context}.signingStatus is not sufficient for an available stable ${os} artifact`,
+        );
+      }
     }
     if (decodedPathSegments(new URL(url), `${context}.url`).at(-1) !== filename) {
       throw new Error(`${context}.url must point directly to its final filename`);
@@ -480,6 +615,7 @@ function parseAsset(value: unknown, index: number): ReleaseAsset {
     filename,
     available,
     signingStatus,
+    channel,
   );
 
   return {
@@ -507,7 +643,54 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     throw new Error("release.assets must contain at least one asset");
   }
 
-  const assets = value.assets.map(parseAsset);
+  const channel = parseEnum(value.channel, releaseChannels, "release.channel");
+  const status = parseEnum(value.status, releaseStatuses, "release.status");
+  const version = parseVersion(value.version);
+  if (channel === "canary" && !canaryVersionPattern.test(version)) {
+    throw new Error(
+      "release.version must be an exact X.Y.Z-canary.N version with N greater than zero for the canary channel",
+    );
+  }
+  if (channel === "stable" && !stableVersionPattern.test(version)) {
+    throw new Error(
+      "release.version must be an exact X.Y.Z version for the stable channel",
+    );
+  }
+
+  const tag = nullableString(value, "tag", "release");
+  if (tag !== null && tag !== `v${version}`) {
+    throw new Error(`release.tag must equal v${version}`);
+  }
+
+  const publishedAt = nullableString(value, "publishedAt", "release");
+  if (status === "published" && publishedAt === null) {
+    throw new Error("release.publishedAt is required for a published release");
+  }
+  if (status === "coming-soon" && publishedAt !== null) {
+    throw new Error("release.publishedAt must be null while a release is coming soon");
+  }
+  if (publishedAt !== null && !isRfc3339DateTime(publishedAt)) {
+    throw new Error(
+      "release.publishedAt must be an RFC 3339 date-time with a timezone",
+    );
+  }
+
+  const commit = nullableString(value, "commit", "release");
+  if (commit !== null && !/^[a-f0-9]{40,64}$/i.test(commit)) {
+    throw new Error("release.commit must be a 40-to-64-character hexadecimal revision");
+  }
+  if (status === "published" && commit === null) {
+    throw new Error("release.commit is required for a published release");
+  }
+  if (status === "coming-soon" && (tag !== null || commit !== null)) {
+    throw new Error(
+      "release.tag and release.commit must be null while a release is coming soon",
+    );
+  }
+
+  const assets = value.assets.map((asset, index) =>
+    parseAsset(asset, index, channel, status),
+  );
   for (const os of operatingSystems) {
     if (!assets.some((asset) => asset.os === os)) {
       throw new Error(`release.assets must include a ${os} option`);
@@ -526,16 +709,6 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     throw new Error("available release asset URLs must be unique");
   }
 
-  const status = parseEnum(value.status, releaseStatuses, "release.status");
-  const publishedAt = nullableString(value, "publishedAt", "release");
-  if (status === "published" && publishedAt === null) {
-    throw new Error("release.publishedAt is required for a published release");
-  }
-  if (publishedAt !== null && !isRfc3339DateTime(publishedAt)) {
-    throw new Error(
-      "release.publishedAt must be an RFC 3339 date-time with a timezone",
-    );
-  }
   if (status !== "published" && assets.some((asset) => asset.available)) {
     throw new Error("release.status must be published before an asset can be available");
   }
@@ -546,23 +719,15 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     throw new Error("a published release must include an available asset for every platform");
   }
 
-  const commit = nullableString(value, "commit", "release");
-  if (commit !== null && !/^[a-f0-9]{40,64}$/i.test(commit)) {
-    throw new Error("release.commit must be a 40-to-64-character hexadecimal revision");
-  }
-  if (status === "published" && commit === null) {
-    throw new Error("release.commit is required for a published release");
-  }
-
-  const version = parseVersion(value.version);
-  const tag = nullableString(value, "tag", "release");
-  if (tag !== null && tag !== `v${version}`) {
-    throw new Error(`release.tag must equal v${version}`);
-  }
+  const releaseEvidence = parseReleaseEvidence(
+    value.releaseEvidence,
+    channel,
+    status,
+  );
 
   const release: ReleaseManifest = {
     schemaVersion: 2,
-    channel: parseEnum(value.channel, releaseChannels, "release.channel"),
+    channel,
     status,
     version,
     tag,
@@ -576,6 +741,7 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
       requireString(value, "sourceUrl", "release"),
       "release.sourceUrl",
     ),
+    releaseEvidence,
     assets,
   };
 
@@ -647,6 +813,16 @@ export function formatBytes(bytes: number | null): string {
     unitIndex += 1;
   }
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+export function formatSigningStatus(status: SigningStatus): string {
+  return {
+    pending: "Signing pending",
+    "unsigned-canary": "Unsigned canary",
+    checksummed: "Checksummed",
+    signed: "Signed",
+    notarized: "Signed and notarized",
+  }[status];
 }
 
 export const currentRelease = validateReleaseManifest(rawManifest);

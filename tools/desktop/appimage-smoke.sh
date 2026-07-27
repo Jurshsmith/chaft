@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+
 usage() {
   printf 'usage: %s APPIMAGE_OR_PACKAGE_DIRECTORY\n' "$0" >&2
 }
@@ -32,6 +34,22 @@ fi
 
 if [ ! -f "$appimage" ]; then
   printf 'AppImage not found: %s\n' "$appimage" >&2
+  exit 1
+fi
+
+source_version="$(
+  python3 "$script_dir/release-version.py" --print-source-version
+)"
+distribution_version="${CHAFT_DISTRIBUTION_VERSION:-$source_version}"
+distribution_version="$(
+  python3 "$script_dir/release-version.py" \
+    --distribution-version "$distribution_version" \
+    --print-distribution-version
+)"
+expected_name="Chaft-$distribution_version-Linux-x86_64.AppImage"
+if [ "$(basename "$appimage")" != "$expected_name" ]; then
+  printf 'expected AppImage filename %s, got %s\n' \
+    "$expected_name" "$(basename "$appimage")" >&2
   exit 1
 fi
 

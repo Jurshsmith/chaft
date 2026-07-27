@@ -16,6 +16,10 @@ const output = argument("--output");
 const options = {
   alternateSiteUrl: argument("--alternate-site-url"),
   expectedCommit: argument("--commit"),
+  expectedReleaseManifestSha256: argument("--release-manifest-sha256"),
+  expectedReleaseStatus: argument("--release-status"),
+  expectedReleaseTag: argument("--release-tag"),
+  expectedReleaseVersion: argument("--release-version"),
   repository: argument("--repository"),
   siteUrl: argument("--site-url"),
 };

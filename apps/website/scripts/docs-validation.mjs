@@ -36,7 +36,7 @@ export const GUIDE_SECTIONS = Object.freeze([
 ]);
 
 export const GUIDE_AUDIENCES = Object.freeze(["users", "contributors", "operators"]);
-export const GUIDE_STATUSES = Object.freeze(["preview", "stable", "deprecated"]);
+export const GUIDE_STATUSES = Object.freeze(["canary", "stable", "deprecated"]);
 
 const SAFE_SECRET_INPUT_SUFFIXES = Object.freeze([
   "-file",

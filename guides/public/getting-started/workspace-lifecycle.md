@@ -4,7 +4,7 @@ description: Use Chaft's current desktop flows to create, join, recover, and adm
 section: getting-started
 order: 20
 audience: users
-status: preview
+status: canary
 draft: false
 ---
 
@@ -15,10 +15,10 @@ local-first and peer-to-peer; joining a workspace requires explicit material
 from someone with access. Broad distributed discovery is intentionally not part
 of this phase.
 
-Chaft is still in preview. Use test or non-critical workspaces, retain separate
-backups of important material, and expect credential formats and UI wording to
-evolve. The flows below are implemented, but offline delivery still relies on
-explicit file, link, or request handoff between people.
+Chaft is still at the canary stage. Use test or non-critical workspaces, retain
+separate backups of important material, and expect credential formats and UI
+wording to evolve. The flows below are implemented, but offline delivery still
+relies on explicit file, link, or request handoff between people.
 
 Return to the [public guide index](../index.md). If the desktop app is not
 running yet, start with [Build Chaft Desktop](build-desktop.md).

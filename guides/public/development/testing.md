@@ -4,7 +4,7 @@ description: Choose and run the Rust, replication, desktop, website, and release
 section: development
 order: 10
 audience: contributors
-status: preview
+status: canary
 draft: false
 ---
 
@@ -166,9 +166,12 @@ The release tools also have platform-independent regression checks:
 
 ```sh
 tools/desktop/release-metadata-smoke.sh
+python3 tools/desktop/canary-release-assets-test.py
 python3 tools/desktop/export-website-release-manifest-test.py
+python3 tools/desktop/generate-unsigned-canary-receipt-test.py
 python3 tools/desktop/linux-appimage-contract-test.py
 python3 tools/desktop/macos-dmg-smoke-test.py
+python3 tools/desktop/macos-unsigned-canary-smoke-test.py
 tools/desktop/platform-verification-receipt-smoke.sh
 python3 tools/desktop/release-version-test.py
 python3 tools/desktop/stage-website-release-assets-test.py

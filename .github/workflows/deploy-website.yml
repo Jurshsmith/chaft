@@ -40,6 +40,10 @@ jobs:
       artifact_size: ${{ steps.artifact.outputs.artifact_size }}
       artifact_manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
       governance_commit: ${{ steps.identity.outputs.governance_commit }}
+      release_manifest_sha256: ${{ steps.verify.outputs.release_manifest_sha256 }}
+      release_status: ${{ steps.verify.outputs.release_status }}
+      release_tag: ${{ steps.verify.outputs.release_tag }}
+      release_version: ${{ steps.verify.outputs.release_version }}
       site_url: ${{ steps.identity.outputs.site_url }}
       source_commit: ${{ steps.identity.outputs.source_commit }}
     timeout-minutes: 15
@@ -199,6 +203,39 @@ jobs:
             process.stdout.write(value.manifestSha256);
           ' "${verification}")"
           echo "manifest_sha256=${manifest_sha256}" >> "${GITHUB_OUTPUT}"
+          node - <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const path = "dist/releases/current.json";
+          const bytes = fs.readFileSync(path);
+          const release = JSON.parse(bytes.toString("utf8"));
+          const canary =
+            /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-canary\.([1-9]\d*)$/;
+          if (
+            release.schemaVersion !== 2 ||
+            release.channel !== "canary" ||
+            !canary.test(release.version) ||
+            !["coming-soon", "published"].includes(release.status)
+          ) {
+            throw new Error("candidate release manifest has an unsupported identity");
+          }
+          if (
+            (release.status === "published" &&
+              release.tag !== `v${release.version}`) ||
+            (release.status === "coming-soon" && release.tag !== null)
+          ) {
+            throw new Error("candidate release tag is incoherent with its status");
+          }
+          const values = {
+            release_manifest_sha256: createHash("sha256").update(bytes).digest("hex"),
+            release_status: release.status,
+            release_tag: release.tag ?? "",
+            release_version: release.version,
+          };
+          for (const [name, value] of Object.entries(values)) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
           node scripts/deployment-artifact-cli.mjs compare \
             --artifact "${ARTIFACT_DIRECTORY}" \
             --destination dist \
@@ -224,7 +261,7 @@ jobs:
     name: Deploy approved Worker version
     needs: preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment:
       name: production
       url: ${{ needs.preflight.outputs.site_url }}
@@ -280,6 +317,17 @@ jobs:
             process.stdout.write(value.manifestSha256);
           ' "${verification}")"
           test "${manifest_sha256}" = "${EXPECTED_MANIFEST_SHA256}"
+          release_manifest_sha256="$(node -e '
+            const crypto = require("node:crypto");
+            const fs = require("node:fs");
+            process.stdout.write(
+              crypto.createHash("sha256")
+                .update(fs.readFileSync("dist/releases/current.json"))
+                .digest("hex"),
+            );
+          ')"
+          test "${release_manifest_sha256}" = \
+            "${{ needs.preflight.outputs.release_manifest_sha256 }}"
           pnpm validate:wrangler
           node scripts/deployment-artifact-cli.mjs compare \
             --artifact "${ARTIFACT_DIRECTORY}" \
@@ -571,14 +619,31 @@ jobs:
         working-directory: apps/website
         env:
           EXPECTED_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.preflight.outputs.release_manifest_sha256 }}
+          EXPECTED_RELEASE_STATUS: ${{ needs.preflight.outputs.release_status }}
+          EXPECTED_RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          EXPECTED_RELEASE_VERSION: ${{ needs.preflight.outputs.release_version }}
           SITE_URL: ${{ needs.preflight.outputs.site_url }}
         run: |
           set -euo pipefail
+          release_arguments=(
+            --release-manifest-sha256 "${EXPECTED_RELEASE_MANIFEST_SHA256}"
+            --release-status "${EXPECTED_RELEASE_STATUS}"
+            --release-version "${EXPECTED_RELEASE_VERSION}"
+          )
+          if [[ "${EXPECTED_RELEASE_STATUS}" == "published" ]]; then
+            test "${EXPECTED_RELEASE_TAG}" = "v${EXPECTED_RELEASE_VERSION}"
+            release_arguments+=(--release-tag "${EXPECTED_RELEASE_TAG}")
+          else
+            test "${EXPECTED_RELEASE_STATUS}" = "coming-soon"
+            test -z "${EXPECTED_RELEASE_TAG}"
+          fi
           node scripts/verify-public-deployment.mjs \
             --site-url "${SITE_URL}" \
             --alternate-site-url "https://www.chaft.ai" \
             --repository "${GITHUB_REPOSITORY}" \
             --commit "${EXPECTED_COMMIT}" \
+            "${release_arguments[@]}" \
             --attempts 12 \
             --delay-ms 5000 \
             --output "${RUNNER_TEMP}/public-verification.json"
@@ -595,6 +660,10 @@ jobs:
           GOVERNANCE_COMMIT: ${{ needs.preflight.outputs.governance_commit }}
           PREVIOUS_DEPLOYMENT_ID: ${{ steps.before.outputs.previous_deployment_id }}
           PREVIOUS_VERSION_ID: ${{ steps.before.outputs.previous_version_id }}
+          RELEASE_MANIFEST_SHA256: ${{ needs.preflight.outputs.release_manifest_sha256 }}
+          RELEASE_STATUS: ${{ needs.preflight.outputs.release_status }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.release_version }}
           SITE_URL: ${{ needs.preflight.outputs.site_url }}
           SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -630,6 +699,12 @@ jobs:
               digest: process.env.ARTIFACT_DIGEST,
               sizeInBytes: Number(process.env.ARTIFACT_SIZE),
               manifestSha256: process.env.ARTIFACT_MANIFEST_SHA256,
+            },
+            release: {
+              status: process.env.RELEASE_STATUS,
+              version: process.env.RELEASE_VERSION,
+              tag: process.env.RELEASE_TAG || null,
+              manifestSha256: process.env.RELEASE_MANIFEST_SHA256,
             },
             cloudflare: {
               accountId: process.env.CLOUDFLARE_ACCOUNT_ID,

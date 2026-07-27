@@ -4,7 +4,7 @@ description: What Chaft protects today, what remains visible, and which early-st
 section: concepts
 order: 2
 audience: users
-status: preview
+status: canary
 draft: false
 ---
 

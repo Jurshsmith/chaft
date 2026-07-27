@@ -47,7 +47,7 @@ function guideSource(
     section,
     order,
     audience = "users",
-    status = "preview",
+    status = "canary",
     draft = false,
   },
   body,

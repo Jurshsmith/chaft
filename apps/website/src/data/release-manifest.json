@@ -1,13 +1,14 @@
 {
   "schemaVersion": 2,
-  "channel": "preview",
+  "channel": "canary",
   "status": "coming-soon",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-canary.1",
   "tag": null,
   "publishedAt": null,
   "commit": null,
   "releaseUrl": "https://github.com/Jurshsmith/chaft/releases",
   "sourceUrl": "https://github.com/Jurshsmith/chaft",
+  "releaseEvidence": null,
   "assets": [
     {
       "id": "windows-x86_64",

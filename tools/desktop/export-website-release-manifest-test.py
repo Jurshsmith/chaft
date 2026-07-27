@@ -291,6 +291,135 @@ def write_verification_receipt(
     return path
 
 
+def write_unsigned_canary_receipt(
+    root: Path,
+    platform: str,
+    package_dir: Path,
+    *,
+    version: str,
+    tag: str,
+    release_id: int,
+    asset_id: int,
+) -> Path:
+    receipt_dir = root / "unsigned-canary-receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    package = next(
+        path
+        for path in package_dir.iterdir()
+        if exporter.package_description(path.name) is not None
+    )
+    receipt = {
+        "schemaVersion": exporter.unsigned_canary.SCHEMA_VERSION,
+        "platform": platform,
+        "verificationType": exporter.unsigned_canary.VERIFICATION_TYPE,
+        "status": exporter.unsigned_canary.STATUS,
+        "signingStatus": exporter.unsigned_canary.SIGNING_STATUS,
+        "signatureVerification": (
+            exporter.unsigned_canary.SIGNATURE_VERIFICATION[platform]
+        ),
+        "signatureAndNotarization": dict(
+            exporter.unsigned_canary.SIGNATURE_AND_NOTARIZATION[platform]
+        ),
+        "productionEligible": False,
+        "warning": exporter.unsigned_canary.WARNING,
+        "version": version,
+        "tag": tag,
+        "commit": COMMIT,
+        "repository": REPOSITORY,
+        "architecture": "x86_64",
+        "verifiedAt": "2026-07-18T12:34:56Z",
+        "release": {"id": release_id},
+        "asset": {
+            "id": asset_id,
+            "filename": package.name,
+            "sizeBytes": package.stat().st_size,
+            "sha256": sha256(package),
+        },
+        "runner": {
+            "os": exporter.unsigned_canary.RUNNER_OS[platform],
+            "architecture": "x86_64",
+            "workflowRunId": 1234,
+            "workflowRunAttempt": 1,
+        },
+        "smoke": {
+            "status": exporter.unsigned_canary.STATUS,
+            "command": f"synthetic {platform} packaged-app smoke",
+        },
+        "receiptGenerator": {
+            "name": "Chaft unsigned-canary receipt generator",
+            "version": "1",
+        },
+    }
+    path = receipt_dir / exporter.VERIFICATION_RECEIPT_FILENAMES[platform]
+    write_json(path, receipt)
+    return path
+
+
+def write_canary_release_evidence(
+    root: Path,
+    *,
+    package_dirs: dict[str, Path],
+    receipts: dict[str, Path],
+    version: str,
+    tag: str,
+    release_id: int,
+) -> Path:
+    directory = root / "release-evidence"
+    directory.mkdir(parents=True)
+    qt_source = directory / exporter.RELEASE_EVIDENCE_FILENAMES["qtSource"]
+    qt_source.write_bytes(b"synthetic corresponding Qt source\n")
+    qt_checksums = (
+        directory / exporter.RELEASE_EVIDENCE_FILENAMES["qtSourceChecksums"]
+    )
+    qt_checksums.write_text(
+        f"{sha256(qt_source)}  {qt_source.name}\n",
+        encoding="utf-8",
+    )
+
+    release_assets = [
+        path
+        for package_dir in package_dirs.values()
+        for path in package_dir.iterdir()
+        if path.is_file()
+    ]
+    release_assets.extend(receipts.values())
+    release_assets.extend((qt_source, qt_checksums))
+    inventory = {
+        "schemaVersion": exporter.CANARY_INVENTORY_SCHEMA,
+        "channel": "canary",
+        "signingStatus": exporter.CANARY_SIGNING_STATE,
+        "warning": exporter.unsigned_canary.WARNING,
+        "repository": REPOSITORY,
+        "version": version,
+        "tag": tag,
+        "commit": COMMIT,
+        "releaseId": release_id,
+        "assetCount": len(release_assets),
+        "assets": [
+            {
+                "filename": path.name,
+                "sizeBytes": path.stat().st_size,
+                "sha256": sha256(path),
+            }
+            for path in sorted(release_assets, key=lambda item: item.name)
+        ],
+    }
+    inventory_path = directory / exporter.RELEASE_EVIDENCE_FILENAMES["inventory"]
+    write_json(inventory_path, inventory)
+    aggregate_path = (
+        directory / exporter.RELEASE_EVIDENCE_FILENAMES["aggregateChecksums"]
+    )
+    aggregate_assets = [*release_assets, inventory_path]
+    aggregate_path.write_text(
+        "".join(
+            f"{sha256(path)}  {path.name}\n"
+            for path in sorted(aggregate_assets, key=lambda item: item.name)
+        ),
+        encoding="utf-8",
+    )
+    return directory
+
+
 def no_op_verifier(
     _package_dir: Path,
     _platform: str,
@@ -397,6 +526,74 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         self.assertEqual(linux["signingStatus"], "checksummed")
         self.assertIsNone(linux["evidence"]["signature"])
         self.assertIsNone(linux["evidence"]["verification"])
+
+    def test_builds_exact_unsigned_canary_manifest_with_release_evidence(self) -> None:
+        version = f"{VERSION}-canary.1"
+        tag = f"v{version}"
+        canary_root = self.root / "canary"
+        canary_root.mkdir()
+        package_dirs = {
+            platform: write_platform_package(
+                canary_root, platform, version=version
+            )
+            for platform in exporter.PLATFORMS
+        }
+        release_id = 4321
+        receipts = {
+            platform: write_unsigned_canary_receipt(
+                canary_root,
+                platform,
+                package_dirs[platform],
+                version=version,
+                tag=tag,
+                release_id=release_id,
+                asset_id=100 + index,
+            )
+            for index, platform in enumerate(exporter.PLATFORMS)
+        }
+        release_evidence = write_canary_release_evidence(
+            canary_root,
+            package_dirs=package_dirs,
+            receipts=receipts,
+            version=version,
+            tag=tag,
+            release_id=release_id,
+        )
+
+        manifest = self.build(
+            tag=tag,
+            channel="canary",
+            package_directories=package_dirs,
+            signing_states={
+                platform: "unsigned-canary"
+                for platform in exporter.PLATFORMS
+            },
+            verification_receipts=receipts,
+            trusted_verification_receipts={
+                platform: None for platform in exporter.PLATFORMS
+            },
+            publisher_identities={
+                platform: None for platform in exporter.PLATFORMS
+            },
+            release_evidence_directory=release_evidence,
+        )
+
+        self.assertEqual(manifest["channel"], "canary")
+        self.assertEqual(manifest["tag"], tag)
+        self.assertEqual(
+            set(manifest["releaseEvidence"]),
+            set(exporter.RELEASE_EVIDENCE_FILENAMES),
+        )
+        for asset in manifest["assets"]:
+            self.assertEqual(asset["signingStatus"], "unsigned-canary")
+            self.assertIsNone(asset["evidence"]["signature"])
+            self.assertIsNotNone(asset["evidence"]["verification"])
+
+    def test_canary_channel_rejects_stable_tags_before_publication(self) -> None:
+        with self.assertRaisesRegex(
+            exporter.ManifestExportError, "exact vX.Y.Z-canary.N"
+        ):
+            self.build(channel="canary")
 
     def test_invokes_platform_metadata_verifier_for_every_directory(self) -> None:
         calls: list[tuple[Path, str]] = []
@@ -807,12 +1004,12 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         output = self.root / "release-manifest.json"
         manifest = self.build()
         changed = dict(manifest)
-        changed["channel"] = "preview"
+        changed["channel"] = "canary"
         write_json(output, changed)
         with self.assertRaisesRegex(exporter.ManifestExportError, "refusing to mutate"):
             exporter.publish_manifest(output, manifest)
 
-    def test_stable_current_is_not_displaced_by_preview(self) -> None:
+    def test_stable_current_is_not_displaced_by_canary(self) -> None:
         output = self.root / "data" / "release-manifest.json"
         output.parent.mkdir()
         stable = dict(self.build())
@@ -820,13 +1017,16 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         stable["tag"] = "v1.2.2"
         stable["channel"] = "stable"
         write_json(output, stable)
-        preview = dict(self.build(channel="preview"))
+        canary = dict(self.build())
+        canary["channel"] = "canary"
+        canary["version"] = f"{VERSION}-canary.1"
+        canary["tag"] = f"{TAG}-canary.1"
 
-        exporter.publish_manifest(output, preview)
+        exporter.publish_manifest(output, canary)
 
         self.assertEqual(json.loads(output.read_text(encoding="utf-8")), stable)
-        archived = output.parent / "release-history" / f"{VERSION}.json"
-        self.assertEqual(json.loads(archived.read_text(encoding="utf-8")), preview)
+        archived = output.parent / "release-history" / f"{VERSION}-canary.1.json"
+        self.assertEqual(json.loads(archived.read_text(encoding="utf-8")), canary)
 
     def test_refuses_same_channel_downgrade_and_republished_history_mutation(self) -> None:
         output = self.root / "data" / "release-manifest.json"
@@ -840,8 +1040,11 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         with self.assertRaisesRegex(exporter.ManifestExportError, "non-newer"):
             exporter.publish_manifest(output, self.build())
 
-        archived = dict(self.build(channel="preview"))
-        write_json(history / f"{VERSION}.json", archived)
+        archived = dict(self.build())
+        archived["channel"] = "canary"
+        archived["version"] = f"{VERSION}-canary.1"
+        archived["tag"] = f"{TAG}-canary.1"
+        write_json(history / f"{VERSION}-canary.1.json", archived)
         changed = dict(archived)
         changed["publishedAt"] = "2026-07-19T12:34:56Z"
         with self.assertRaisesRegex(exporter.ManifestExportError, "refusing to mutate"):

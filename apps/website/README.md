@@ -108,10 +108,13 @@ public receipts before it generates the manifest and runs `pnpm validate`.
 
 The final publication job does not install dependencies or execute repository
 Python. It can copy only the checksummed manifest/history payload, pushes a
-descriptive `release/v<version>-website-manifest` branch, and opens a pull
-request rather than mutating `main` directly. Actions used by this release
-workflow are pinned to full commits. A repeated run is idempotent when the
-default branch or an existing open promotion branch already contains the same
+descriptive `release/v<version>-website-manifest` branch, verifies its exact
+remote head, and records a review handoff rather than mutating `main` directly.
+It intentionally does not create a pull request with `GITHUB_TOKEN`: an
+authenticated maintainer or approved GitHub integration must recheck the
+reported branch and commit, then open the pull request. Actions used by this
+release workflow are pinned to full commits. A repeated run is idempotent when
+the default branch or an existing promotion branch already contains the same
 immutable manifest.
 
 ## Release repository configuration
@@ -119,9 +122,7 @@ immutable manifest.
 Before the first production promotion:
 
 1. Enable GitHub immutable releases for the repository.
-2. Enable **Allow GitHub Actions to create and approve pull requests** in the
-   repository's Actions settings.
-3. Add these Actions secrets:
+2. Add these Actions secrets:
 
    - `CHAFT_WINDOWS_SIGNER_THUMBPRINT`: the exact 40-hex SHA-1 or 64-hex SHA-256
      signer-certificate thumbprint required on every Windows payload.
@@ -132,6 +133,11 @@ Before the first production promotion:
    - `CHAFT_LINUX_SIGNING_KEYRING_BASE64`: base64 of the exact public keyring
      used for Linux verification, also required only for signed Linux. Never
      place a private signing key in this value.
+
+Keep the repository's default workflow permission read-only. The promotion
+jobs receive only the narrow `contents: write` permission required to publish
+their verified manifest branches; they do not require or request permission to
+create or approve pull requests.
 
 The Linux public receipt must be generated with the same keyring bytes stored
 locally as `chaft-desktop-linux-signing-keyring.gpg`; the promotion runner uses
@@ -153,7 +159,7 @@ detached signature for every package. A checksummed-only Linux release must not
 include detached signatures. Unexpected assets stop the promotion so the
 published namespace cannot silently diverge from the website evidence.
 
-The preview manifest intentionally points to GitHub Releases without claiming
+The canary manifest intentionally points to GitHub Releases without claiming
 that current development packages are signed production downloads.
 
 ## Deployment foundation

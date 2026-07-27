@@ -4,7 +4,7 @@ description: Build, evaluate, understand, and contribute to the Chaft desktop ap
 section: getting-started
 order: 0
 audience: users
-status: preview
+status: canary
 draft: false
 ---
 
