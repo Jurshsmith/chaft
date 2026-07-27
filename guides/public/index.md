@@ -18,8 +18,9 @@ or inspect how its local-first security and replication model works.
 
 ## Start here
 
-- **Evaluate Chaft:** [build the desktop app from source](getting-started/build-desktop.md),
-  then [create or join a test workspace](getting-started/workspace-lifecycle.md).
+- **Evaluate Chaft:** [download the public unsigned canary](https://chaft.ai/download/)
+  or [build the desktop app from source](getting-started/build-desktop.md), then
+  [create or join a test workspace](getting-started/workspace-lifecycle.md).
 - **Review the trust model:** read the [security model](concepts/security-model.md)
   and [networking model](concepts/networking-and-replication.md).
 - **Contribute:** start with

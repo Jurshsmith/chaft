@@ -104,6 +104,12 @@ all participating devices have been updated.
 If you open a workspace request card, Chaft prepares an access request instead
 of joining immediately.
 
+A secure invite does not contain the workspace content key. The joining device
+signs its claim and provides a response-encryption key. The inviter validates
+the invite's expiry, revocation state, remaining capacity, and device/request
+uniqueness before encrypting access for that device. Another device cannot
+import the response.
+
 ## Import a decryption key kit
 
 1. Choose `Key kit` from the first-run or workspace-entry screen.
@@ -132,6 +138,8 @@ credentials immediately.
 Chaft checks for a response while the app is open and the admin is reachable.
 If direct delivery fails, exchange the request and response through the same
 trusted channel. Chaft does not provide automatic global discovery.
+Pending requests with a saved admin endpoint can check for responses in the
+background while Chaft is open; the manual `Check` action remains available.
 
 ## Approve or decline requests
 
@@ -146,6 +154,11 @@ Owners and admins can process join requests.
 
 Chaft attempts direct delivery while both apps are reachable. Otherwise, send
 the generated response through the same trusted channel used for the request.
+Chaft records approvals and declines as signed workspace events. Direct decline
+or closure notices are currently unsigned, so confirm them with a workspace
+admin. Stable request and invite identifiers make repeated delivery safe, and
+an approved response returns to the normal join flow with the original display
+name preserved.
 
 ## Manage roles
 
