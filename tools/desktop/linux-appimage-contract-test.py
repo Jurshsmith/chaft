@@ -470,7 +470,7 @@ macos_sign_script = (
 for required_contract in (
     '"$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/ChaftDesktop.app"',
     '"/usr/bin/codesign"',
-    'COMMAND "/usr/bin/test" -x "${CHAFT_CODESIGN_EXECUTABLE}"',
+    'COMMAND "/bin/test" -x "${CHAFT_CODESIGN_EXECUTABLE}"',
     "--deep",
     "--verify",
     "--strict",
