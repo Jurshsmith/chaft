@@ -1,53 +1,118 @@
 {
   "schemaVersion": 2,
   "channel": "canary",
-  "status": "coming-soon",
+  "status": "published",
   "version": "0.1.0-canary.1",
-  "tag": null,
-  "publishedAt": null,
-  "commit": null,
-  "releaseUrl": "https://github.com/Jurshsmith/chaft/releases",
+  "tag": "v0.1.0-canary.1",
+  "publishedAt": "2026-07-27T08:21:20Z",
+  "commit": "d021e7d0ea7b143a32ab49529790abc886f0f06c",
+  "releaseUrl": "https://github.com/Jurshsmith/chaft/releases/tag/v0.1.0-canary.1",
   "sourceUrl": "https://github.com/Jurshsmith/chaft",
-  "releaseEvidence": null,
+  "releaseEvidence": {
+    "qtSource": {
+      "filename": "Chaft-Qt-6.8.4-corresponding-source.zip",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-Qt-6.8.4-corresponding-source.zip",
+      "sizeBytes": 89469485,
+      "sha256": "21255c8ee192722ccc7d0b42916bcd7eb8e3be3aeea893a90b8d2614b6acd123"
+    },
+    "qtSourceChecksums": {
+      "filename": "Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-Qt-6.8.4-corresponding-source.zip.sha256",
+      "sizeBytes": 106,
+      "sha256": "869b9534c7128d24a4acf2109a8eb61bbd4586a3721039dc872acbe737fef3e0"
+    },
+    "inventory": {
+      "filename": "chaft-desktop-release-inventory.json",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-release-inventory.json",
+      "sizeBytes": 4492,
+      "sha256": "e19676f9ff96f0ca2dc6bf083f809345628856654a455c76d8c771256356ac08"
+    },
+    "aggregateChecksums": {
+      "filename": "chaft-desktop-release-SHA256SUMS",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-release-SHA256SUMS",
+      "sizeBytes": 1858,
+      "sha256": "bee0546e421db1e7c5404fb18a7cb714cf0ac4c42839a0c098c7f2604a292879"
+    }
+  },
   "assets": [
     {
-      "id": "windows-x86_64",
+      "id": "windows-x86_64-zip",
       "os": "windows",
       "platformLabel": "Windows",
       "arch": "x86_64",
       "format": "zip",
-      "filename": null,
-      "url": "https://github.com/Jurshsmith/chaft/releases",
-      "available": false,
-      "sizeBytes": null,
-      "sha256": null,
-      "signingStatus": "pending",
+      "filename": "Chaft-0.1.0-canary.1-Windows-x86_64.zip",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-0.1.0-canary.1-Windows-x86_64.zip",
+      "available": true,
+      "sizeBytes": 72628045,
+      "sha256": "535fca40cdb216c371f2f34aa39579143bc101d53722d2b013dd2840433e0602",
+      "signingStatus": "unsigned-canary",
       "evidence": {
-        "checksums": null,
-        "sbom": null,
-        "provenance": null,
+        "checksums": {
+          "filename": "chaft-desktop-windows-SHA256SUMS",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-windows-SHA256SUMS",
+          "sizeBytes": 107,
+          "sha256": "ea221c4571ccc6ce68dbf6946a1a8e23aa58d209bd331e8fa036b42359effeac"
+        },
+        "sbom": {
+          "filename": "chaft-desktop-windows-sbom.cdx.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-windows-sbom.cdx.json",
+          "sizeBytes": 261760,
+          "sha256": "a700975c6d6b11cdfdf57c8a28a5c7b078561ee3a51ac6a7b5cbf3d7dc38e6c4"
+        },
+        "provenance": {
+          "filename": "chaft-desktop-windows-provenance.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-windows-provenance.json",
+          "sizeBytes": 15426,
+          "sha256": "4cbe86ca27d83d726a84d9b4fe80f0f2e40763047c83743aba6134d35afa1dbb"
+        },
         "signature": null,
-        "verification": null
+        "verification": {
+          "filename": "chaft-desktop-windows-verification.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-windows-verification.json",
+          "sizeBytes": 1427,
+          "sha256": "27df2cd492cc89e7e68b7d4c2cef262ae176d587c385d086e53778a91f49c009"
+        }
       }
     },
     {
-      "id": "macos-x86_64",
+      "id": "macos-x86_64-dmg",
       "os": "macos",
       "platformLabel": "macOS",
       "arch": "x86_64",
       "format": "dmg",
-      "filename": null,
-      "url": "https://github.com/Jurshsmith/chaft/releases",
-      "available": false,
-      "sizeBytes": null,
-      "sha256": null,
-      "signingStatus": "pending",
+      "filename": "Chaft-0.1.0-canary.1-macOS-x86_64.dmg",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-0.1.0-canary.1-macOS-x86_64.dmg",
+      "available": true,
+      "sizeBytes": 39157933,
+      "sha256": "70944e0ada5edbb7eac97e79d3e860a55b9cdff0d92490d6eb1eaec322168d98",
+      "signingStatus": "unsigned-canary",
       "evidence": {
-        "checksums": null,
-        "sbom": null,
-        "provenance": null,
+        "checksums": {
+          "filename": "chaft-desktop-macos-SHA256SUMS",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-macos-SHA256SUMS",
+          "sizeBytes": 104,
+          "sha256": "73c0c9d4dc8aab77eeb02c4f43356b1902d5546bdae3d5122d3ef6c73dd822be"
+        },
+        "sbom": {
+          "filename": "chaft-desktop-macos-sbom.cdx.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-macos-sbom.cdx.json",
+          "sizeBytes": 251638,
+          "sha256": "8a6ce01515a510a9fd52e584cd4ae5fc0471fa7b26258a75a279dd2a1199be18"
+        },
+        "provenance": {
+          "filename": "chaft-desktop-macos-provenance.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-macos-provenance.json",
+          "sizeBytes": 15829,
+          "sha256": "916ad52a3d4746f9908d1708da462fafb0e892992493ade9f0292fdf3e7b49c4"
+        },
         "signature": null,
-        "verification": null
+        "verification": {
+          "filename": "chaft-desktop-macos-verification.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-macos-verification.json",
+          "sizeBytes": 1416,
+          "sha256": "7ec323eb14667339383de44a56ef82f60ae5a6ca03c10face6b534be220d14c9"
+        }
       }
     },
     {
@@ -56,18 +121,38 @@
       "platformLabel": "Linux",
       "arch": "x86_64",
       "format": "appimage",
-      "filename": null,
-      "url": "https://github.com/Jurshsmith/chaft/releases",
-      "available": false,
-      "sizeBytes": null,
-      "sha256": null,
-      "signingStatus": "pending",
+      "filename": "Chaft-0.1.0-canary.1-Linux-x86_64.AppImage",
+      "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/Chaft-0.1.0-canary.1-Linux-x86_64.AppImage",
+      "available": true,
+      "sizeBytes": 57670136,
+      "sha256": "f0834361cdcaa0f7917020c4f241dc66d15b777f0f66dcef64cba9f922c92438",
+      "signingStatus": "unsigned-canary",
       "evidence": {
-        "checksums": null,
-        "sbom": null,
-        "provenance": null,
+        "checksums": {
+          "filename": "chaft-desktop-linux-SHA256SUMS",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-linux-SHA256SUMS",
+          "sizeBytes": 109,
+          "sha256": "08c32144f885ecc7b24ea3c57dd730b52933f681c013d2440cda50774407cb2d"
+        },
+        "sbom": {
+          "filename": "chaft-desktop-linux-sbom.cdx.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-linux-sbom.cdx.json",
+          "sizeBytes": 251663,
+          "sha256": "b070b4bd6e7e7eec22b4c11191b91c399e09b01b46311c29f3a69415222edacf"
+        },
+        "provenance": {
+          "filename": "chaft-desktop-linux-provenance.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-linux-provenance.json",
+          "sizeBytes": 17140,
+          "sha256": "c84b69d9dd83b455dbd021342052e7bf4baa36002ce58a7321763c3b822c809e"
+        },
         "signature": null,
-        "verification": null
+        "verification": {
+          "filename": "chaft-desktop-linux-verification.json",
+          "url": "https://github.com/Jurshsmith/chaft/releases/download/v0.1.0-canary.1/chaft-desktop-linux-verification.json",
+          "sizeBytes": 1377,
+          "sha256": "5e62b9f46a73ab94d015e21f3e8c224901320db921cf380e1c751d279e944195"
+        }
       }
     }
   ]
