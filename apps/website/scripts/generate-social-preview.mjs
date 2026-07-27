@@ -22,7 +22,7 @@ const overlay = Buffer.from(`
     <circle cx="82" cy="210" r="6" fill="#d8563f"/>
     <text x="102" y="217" fill="#17211f"
           font-family="Arial, Helvetica, sans-serif" font-size="18"
-          font-weight="700" letter-spacing="1.4">OPEN SOURCE · CANARY</text>
+          font-weight="700" letter-spacing="1.4">OPEN SOURCE · SMALL TEAMS</text>
     <text x="77" y="306" fill="#17211f"
           font-family="Arial, Helvetica, sans-serif" font-size="58"
           font-weight="500" letter-spacing="-2">Team chat that runs</text>

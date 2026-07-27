@@ -26,8 +26,10 @@ or inspect how its local-first security and replication model works.
   [CONTRIBUTING.md](https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md)
   and the [testing guide](development/testing.md).
 
-Public Windows, macOS, and Linux packages are not available yet. CI artifacts
-are temporary development inputs, not supported downloads.
+The first public Windows, macOS, and Linux packages are available from the
+[Chaft download page](https://chaft.ai/download/). They are immutable,
+unsigned canary builds for evaluation with non-sensitive data. CI artifacts
+remain temporary development inputs, not supported downloads.
 
 ## Use Chaft
 
