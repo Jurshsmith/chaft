@@ -88,5 +88,5 @@ Chaft uses descriptive filenames for saved handoff material:
 - Never attach credentials, keys, passphrases, or message content to public
   issues.
 
-See [Create, join, and administer a workspace](../getting-started/workspace-lifecycle.md)
-for the user flows that create and consume these files.
+See [Workspace lifecycle](../getting-started/workspace-lifecycle.md) for the
+user flows that create and consume these files.

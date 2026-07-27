@@ -18,13 +18,15 @@ const isLong = visibleHeadings.length > 6;
   isLong ? (
     <details class="docs-toc docs-toc--collapsible">
       <summary>On this page · {visibleHeadings.length} sections</summary>
-      <ol>
-        {visibleHeadings.map((heading) => (
-          <li>
-            <a href={`#${heading.slug}`}>{heading.text}</a>
-          </li>
-        ))}
-      </ol>
+      <nav aria-label="On this page">
+        <ol>
+          {visibleHeadings.map((heading) => (
+            <li>
+              <a href={`#${heading.slug}`}>{heading.text}</a>
+            </li>
+          ))}
+        </ol>
+      </nav>
     </details>
   ) : (
     <nav class="docs-toc" aria-label="On this page">
@@ -74,6 +76,12 @@ const isLong = visibleHeadings.length > 6;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+
+  .docs-toc--collapsible summary:focus-visible {
+    border-radius: var(--radius-sm);
+    outline: 2px solid var(--accent);
+    outline-offset: 0.25rem;
   }
 
   .docs-toc--collapsible ol {
