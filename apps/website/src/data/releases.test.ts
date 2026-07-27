@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import rawManifest from "./release-manifest.json";
 import {
-  allReleases,
   buildReleaseCollection,
   currentRelease,
   formatBytes,
@@ -17,6 +16,39 @@ interface PublishedReleaseOptions {
   artifactTag?: string;
   publishedAt?: string;
   channel?: "canary" | "stable";
+}
+
+function comingSoonCanaryRelease(version = rawManifest.version): any {
+  const sourceUrl = rawManifest.sourceUrl.replace(/\/$/, "");
+  const releaseUrl = `${sourceUrl}/releases`;
+  return {
+    ...structuredClone(rawManifest),
+    channel: "canary",
+    status: "coming-soon",
+    version,
+    tag: null,
+    publishedAt: null,
+    commit: null,
+    releaseUrl,
+    sourceUrl,
+    releaseEvidence: null,
+    assets: rawManifest.assets.map((asset) => ({
+      ...asset,
+      filename: null,
+      url: releaseUrl,
+      available: false,
+      sizeBytes: null,
+      sha256: null,
+      signingStatus: "pending",
+      evidence: {
+        checksums: null,
+        sbom: null,
+        provenance: null,
+        signature: null,
+        verification: null,
+      },
+    })),
+  };
 }
 
 function publishedRelease({
@@ -77,8 +109,7 @@ function publishedRelease({
   };
 }
 
-function publishedCanaryRelease(): any {
-  const version = "0.1.0-canary.1";
+function publishedCanaryRelease(version = "0.1.0-canary.1"): any {
   const tag = `v${version}`;
   const release = publishedRelease({
     channel: "canary",
@@ -118,16 +149,27 @@ function publishedCanaryRelease(): any {
 }
 
 describe("release manifest", () => {
-  it("validates the checked-in canary manifest", () => {
-    expect(validateReleaseManifest(rawManifest)).toEqual(currentRelease);
-    expect(currentRelease.channel).toBe("canary");
-    expect(currentRelease.tag).toBeNull();
+  it("validates the checked-in canary manifest in its declared state", () => {
+    const release = validateReleaseManifest(rawManifest);
+    expect(release).toEqual(currentRelease);
+    expect(release.channel).toBe("canary");
+    if (release.status === "published") {
+      expect(release.tag).toBe(`v${release.version}`);
+      expect(
+        operatingSystems.every((os) =>
+          release.assets.some((asset) => asset.os === os && asset.available),
+        ),
+      ).toBe(true);
+    } else {
+      expect(release.tag).toBeNull();
+      expect(release.assets.every((asset) => !asset.available)).toBe(true);
+    }
   });
 
-  it("exposes the current manifest when no history files exist", () => {
-    expect(allReleases.map((release) => release.version)).toEqual([
-      currentRelease.version,
-    ]);
+  it("builds a current-only collection when no history files exist", () => {
+    expect(
+      buildReleaseCollection(rawManifest, {}).map((release) => release.version),
+    ).toEqual([currentRelease.version]);
   });
 
   it("contains a statically rendered option for every supported platform", () => {
@@ -161,13 +203,13 @@ describe("release manifest", () => {
   );
 
   it("rejects an available artifact without final integrity metadata", () => {
-    const invalid = structuredClone(rawManifest);
+    const invalid = comingSoonCanaryRelease();
     invalid.assets[0]!.available = true;
     expect(() => validateReleaseManifest(invalid)).toThrow(/filename, sizeBytes, and sha256/);
   });
 
   it("rejects an available artifact whose signing state is still pending", () => {
-    const invalid = structuredClone(rawManifest);
+    const invalid = comingSoonCanaryRelease();
     Object.assign(invalid.assets[0]!, {
       available: true,
       filename: "Chaft-0.1.0-canary.1-Windows.zip",
@@ -231,14 +273,8 @@ describe("release manifest", () => {
   });
 
   it("rejects a published release until every platform has an available asset", () => {
-    const invalid = {
-      ...structuredClone(rawManifest),
-      status: "published",
-      tag: `v${rawManifest.version}`,
-      publishedAt: "2026-07-18T10:00:00Z",
-      commit: "a".repeat(40),
-      releaseUrl: `https://github.com/Jurshsmith/chaft/releases/tag/v${rawManifest.version}`,
-    };
+    const invalid = publishedCanaryRelease();
+    invalid.assets[0] = comingSoonCanaryRelease().assets[0];
     expect(() => validateReleaseManifest(invalid)).toThrow(/every platform/);
   });
 
@@ -358,14 +394,14 @@ describe("release history", () => {
     });
 
     expect(releases.map((release) => release.version)).toEqual([
-      "0.1.0-canary.1",
+      currentRelease.version,
       "0.0.9",
       "0.0.8",
     ]);
   });
 
   it("rejects duplicate versions across current and historical manifests", () => {
-    const duplicate = publishedCanaryRelease();
+    const duplicate = publishedCanaryRelease(rawManifest.version);
     expect(() =>
       buildReleaseCollection(rawManifest, {
         [`./release-history/${rawManifest.version}.json`]: duplicate,
@@ -374,9 +410,10 @@ describe("release history", () => {
   });
 
   it("rejects a historical manifest that has not been published", () => {
+    const historical = comingSoonCanaryRelease("0.0.1-canary.1");
     expect(() =>
       buildReleaseCollection(rawManifest, {
-        [`./release-history/${rawManifest.version}.json`]: rawManifest,
+        "./release-history/0.0.1-canary.1.json": historical,
       }),
     ).toThrow(/must be published/);
   });
