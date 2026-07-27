@@ -1,6 +1,7 @@
 ---
 import PageHero from "../components/PageHero.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { sitePath } from "../lib/site-path";
 
 const description =
   "Chaft's current security model, known canary-stage limits, and private vulnerability reporting process.";
@@ -8,21 +9,31 @@ const description =
 
 <BaseLayout title="Security" description={description}>
   <PageHero
-    eyebrow="Public security posture"
-    title="Security claims should be inspectable."
-    lede="Chaft handles cryptography, signed history, local secret state, and untrusted peer input. The public site reflects the current implementation without treating unfinished release gates as guarantees."
+    eyebrow="Security status · Unaudited canary"
+    title="What Chaft protects today."
+    lede="Chaft encrypts message and attachment content, verifies signed history, and treats peers as untrusted. It has not completed an independent security audit and is not ready for sensitive production use."
   >
     <div class="button-row">
       <a class="button" href="https://github.com/Jurshsmith/chaft/security/advisories/new">Report privately</a>
-      <a class="button button--secondary" href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md">Full policy</a>
+      <a class="button button--secondary" href={sitePath("/docs/concepts/security-model/")}>Security model</a>
+      <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md">Full policy</a>
     </div>
   </PageHero>
+
+  <section class="security-summary" aria-label="Current security status">
+    <dl class="shell security-summary__inner">
+      <div><dt>Stage</dt><dd>Canary</dd></div>
+      <div><dt>Independent audit</dt><dd>Not completed</dd></div>
+      <div><dt>Sensitive use</dt><dd>Not recommended</dd></div>
+      <div><dt>Reporting</dt><dd>Private advisories</dd></div>
+    </dl>
+  </section>
 
   <section class="section">
     <div class="shell security-grid">
       <div>
-        <p class="eyebrow">Current model</p>
-        <h2>The invariants Chaft is being built to preserve.</h2>
+        <p class="eyebrow">Implemented today</p>
+        <h2>Current security properties.</h2>
       </div>
       <ul class="invariant-list">
         <li><span>01</span><p>No central server is authoritative for workspace history.</p></li>
@@ -37,22 +48,21 @@ const description =
   <section class="section section--deep">
     <div class="shell limits">
       <div>
-        <span class="status">Canary limits</span>
-        <h2>Not yet cleared for sensitive production communication.</h2>
+        <span class="status">Not protected yet</span>
+        <h2>Why the canary is not production-ready.</h2>
       </div>
       <div class="prose">
         <p>
-          Production desktop builds still need complete OS keychain or user-unlocked
-          vault integration for local identity and secret handling.
+          Chaft has not completed an independent security audit. OS-backed keychain or
+          user-unlocked vault integration for local identity and secrets is also incomplete.
         </p>
         <p>
-          Public relay and discovery remain default-deny while the native peer transport
-          matures. Packaging, code signing, notarization, and update delivery remain
-          incomplete production release gates.
+          Public relay and discovery remain default-deny. Production packaging, platform
+          signing, notarization, and trusted update delivery remain release gates.
         </p>
         <p>
-          Security fixes currently target the main branch until tagged, signed releases
-          exist.
+          Security fixes currently target the main branch until a supported public release
+          channel exists.
         </p>
       </div>
     </div>
@@ -78,6 +88,41 @@ const description =
 </BaseLayout>
 
 <style>
+  .security-summary {
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+  }
+
+  .security-summary__inner {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-block: 0;
+  }
+
+  .security-summary__inner div {
+    display: grid;
+    gap: 0.35rem;
+    padding: 1.2rem clamp(0.8rem, 2vw, 1.5rem);
+    border-inline-start: 1px solid var(--border-subtle);
+  }
+
+  .security-summary__inner div:last-child {
+    border-inline-end: 1px solid var(--border-subtle);
+  }
+
+  .security-summary dt {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+  }
+
+  .security-summary dd {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 0.88rem;
+  }
+
   .security-grid,
   .limits,
   .report__inner {
@@ -129,6 +174,14 @@ const description =
   }
 
   @media (max-width: 800px) {
+    .security-summary__inner {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .security-summary__inner div:nth-child(n + 3) {
+      border-top: 1px solid var(--border-subtle);
+    }
+
     .security-grid,
     .limits,
     .report__inner {

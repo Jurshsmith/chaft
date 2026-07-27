@@ -5,26 +5,26 @@ import { sitePath } from "../lib/site-path";
 <aside class="early-access" aria-labelledby="early-access-title">
   <div>
     <span class="status">Canary</span>
-    <h2 id="early-access-title">Help test the thesis.</h2>
+    <h2 id="early-access-title">Test Chaft safely.</h2>
   </div>
   <div class="early-access__copy">
     <p>
-      Chaft is experimental software. Public packages, production signing,
-      notarization, and update delivery are still release gates.
+      Chaft is unaudited canary software. Do not use it for sensitive or
+      production communication.
     </p>
     <p>
-      Use non-sensitive data. When reporting a problem, include your operating system
-      and source revision, then remove credentials, local paths, and message content
+      Use a test workspace. When reporting a problem, include your operating system
+      and source revision, and remove credentials, local paths, and message content
       from logs.
     </p>
     <div class="button-row">
       <a class="button" href={sitePath("/docs/getting-started/build-desktop/")}>
-        Build the canary
+        Build from source
       </a>
       <a class="button button--secondary" href="https://github.com/Jurshsmith/chaft/issues">
         Report an issue
       </a>
-      <a class="button button--quiet" href={sitePath("/security/")}>Security posture</a>
+      <a class="button button--quiet" href={sitePath("/security/")}>Review security limits</a>
     </div>
   </div>
 </aside>

@@ -7,13 +7,15 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Chaft canary builds for Windows, macOS, and Linux, with checksums and explicit unsigned-canary evidence.";
+  "Chaft canary downloads for Windows, macOS, and Linux, with package availability, checksums, evidence, and signing status.";
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
 ---
 
-<BaseLayout title={hasPublishedDownloads ? "Download" : "Canary builds"} description={description}>
+<BaseLayout title="Download" description={description}>
   <PageHero
-    eyebrow={`Canary stage · ${currentRelease.version}`}
+    eyebrow={hasPublishedDownloads
+      ? `Canary · v${currentRelease.version}`
+      : "Canary · Packages pending"}
     title={hasPublishedDownloads
       ? "Choose an unsigned Chaft canary."
       : "Canary packages are being prepared."}
@@ -28,10 +30,10 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
           ? "#platforms"
           : sitePath("/docs/getting-started/build-desktop/")}
       >
-        {hasPublishedDownloads ? "Choose a platform" : "Build the canary"}
+        {hasPublishedDownloads ? "Choose a platform" : "Build from source"}
       </a>
       <a class="button button--secondary" href={currentRelease.releaseUrl}>
-        Follow GitHub releases
+        {hasPublishedDownloads ? "View GitHub release" : "Watch GitHub releases"}
       </a>
     </div>
   </PageHero>
@@ -46,7 +48,7 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
           <strong>{currentRelease.status === "published" ? "Current canary" : "Current canary candidate"}</strong>
           <span class="mono">v{currentRelease.version}</span>
         </div>
-        <a href={sitePath(`/releases/${currentRelease.version}/`)}>Manifest details →</a>
+        <a href={sitePath(`/releases/${currentRelease.version}/`)}>View details →</a>
       </div>
       <DownloadGrid />
     </div>
@@ -56,30 +58,30 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
     <div class="shell">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Release standard</p>
-          <h2>Canary integrity now; stable signing remains a separate gate.</h2>
+          <p class="eyebrow">Release evidence</p>
+          <h2>Know exactly what you are downloading.</h2>
         </div>
         <p>
-          The website is designed to consume release output generated in this repository.
-          It does not manufacture checksums, infer signing, or discover “latest” in your browser.
+          Every published package identifies its exact bytes, source revision, integrity
+          evidence, and platform signing state.
         </p>
       </div>
 
       <div class="delivery-grid">
         <article>
-          <span class="mono">macOS</span>
-          <h3>Native DMG canary</h3>
-          <p>The canary is smoke-tested on macOS but unsigned. Developer ID signing and notarization remain mandatory for a stable release.</p>
+          <span class="mono">01</span>
+          <h3>Exact package</h3>
+          <p>The version, architecture, filename, format, and byte size are shown before download.</p>
         </article>
         <article>
-          <span class="mono">Windows</span>
-          <h3>Native ZIP canary</h3>
-          <p>The canary is smoke-tested on Windows but has no Authenticode signature. Stable delivery keeps trusted signing as a hard gate.</p>
+          <span class="mono">02</span>
+          <h3>Integrity evidence</h3>
+          <p>Checksums, an SBOM, source and build provenance, and native verification receipts accompany the package.</p>
         </article>
         <article>
-          <span class="mono">Linux</span>
-          <h3>Portable packaging</h3>
-          <p>The AppImage is smoke-tested on Linux and ships with checksums, but the canary has no OpenPGP detached signature.</p>
+          <span class="mono">03</span>
+          <h3>Signing state</h3>
+          <p>The page states whether each package is an unsigned canary, signed, or notarized. It never implies a stronger state.</p>
         </article>
       </div>
     </div>
@@ -89,20 +91,34 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
     <div class="shell verification">
       <div>
         <p class="eyebrow">Verify before opening</p>
-        <h2>Checksums cover the exact package bytes presented here.</h2>
+        <h2>Compare the package checksum.</h2>
       </div>
       <div class="prose">
         <p>
-          Published releases will include a platform-qualified
-          <strong>SHA256SUMS</strong> file, a CycloneDX SBOM, source and build
-          provenance, and a native packaged-app smoke receipt. The receipt explicitly
-          records that signing and notarization were not performed; it is not signature
-          evidence.
+          Every published package includes a SHA-256 digest and a platform-qualified
+          <strong>SHA256SUMS</strong> file, plus a CycloneDX SBOM, source and build
+          provenance, and a native packaged-app smoke receipt. Calculate the digest
+          locally, then compare it with the value shown on the download card and in
+          the release evidence.
         </p>
-        <pre><code>sha256sum -c chaft-desktop-&lt;platform&gt;-SHA256SUMS</code></pre>
+        <div class="verification-commands">
+          <div>
+            <strong>Linux</strong>
+            <pre><code>sha256sum &lt;package-file&gt;</code></pre>
+          </div>
+          <div>
+            <strong>macOS</strong>
+            <pre><code>shasum -a 256 &lt;package-file&gt;</code></pre>
+          </div>
+          <div>
+            <strong>Windows PowerShell</strong>
+            <pre><code>Get-FileHash &lt;package-file&gt; -Algorithm SHA256</code></pre>
+          </div>
+        </div>
         <p>
-          Stable publication remains blocked until its platform-specific signing and
-          notarization policy is satisfied.
+          The canary receipt explicitly records that signing and notarization were not
+          performed; it is not signature evidence. Stable publication remains blocked
+          until its platform-specific signing and notarization policy is satisfied.
         </p>
       </div>
     </div>
@@ -174,6 +190,8 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
 
   pre {
     overflow-x: auto;
+    max-width: 100%;
+    margin: 0;
     padding: 1rem;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -181,6 +199,24 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
     color: var(--secure);
     font-family: var(--font-mono);
     font-size: 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .verification-commands {
+    display: grid;
+    gap: 1rem;
+    margin-block: 1.5rem;
+  }
+
+  .verification-commands > div {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .verification-commands strong {
+    font-size: 0.84rem;
   }
 
   @media (max-width: 800px) {

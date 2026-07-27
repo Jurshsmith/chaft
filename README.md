@@ -1,8 +1,11 @@
 # Chaft
 
-Chaft is an experimental, P2P-first Slack alternative for small and early-stage teams. It keeps workspace history local, encrypts message and attachment content before replication, and synchronizes signed history directly between peers.
+Chaft is experimental, open-source team chat for small teams. It keeps workspace
+history on participating devices, encrypts message and attachment content before
+replication, and syncs signed history directly between trusted peers.
 
-Chaft is testing a simple thesis: as AI-assisted development reduces the cost of creating software, peer-to-peer architecture can reduce the recurring cost of sustaining it. By shifting most storage, compute, and replication to the devices using the product, essential team collaboration may be able to remain free within clear, deliberate limits.
+Participating devices provide most storage, compute, and replication, reducing
+recurring infrastructure costs while making the model's tradeoffs explicit.
 
 > **Warning**
 >
@@ -74,10 +77,10 @@ Chaft treats each device as an independent participant:
 - SQLite, FTS5, and content-addressed blob storage keep the local app usable
   without a continuously reachable service.
 
-Direct TCP and native Iroh transports support local and explicit peer
-connections today. Public relay and discovery policy remains default-deny while
-those paths mature. The intended system has no central authority, but optional
-replica infrastructure may improve availability.
+Direct TCP and native Iroh transports support local and explicit peer connections
+today. Public relay and discovery remain default-deny. No central application
+server is authoritative for workspace history; optional replicas may improve
+availability.
 
 Read the [architecture](guides/public/concepts/architecture.md),
 [security model](guides/public/concepts/security-model.md), and
@@ -281,9 +284,8 @@ Treat every peer, replica, imported artifact, and signed event as untrusted
 until validation succeeds. Keep runtime identity files, recovery bundles,
 private keys, databases, and passphrase files out of Git.
 
-Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
-Do not open a public issue for key exposure, plaintext leakage, signature or
-authorization bypass, unsafe parsing, or denial-of-service findings.
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Do
+not open a public issue for key exposure, plaintext leakage, signature or authorization bypass, unsafe parsing, or denial-of-service findings.
 
 ## Contributing
 
@@ -291,10 +293,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Keep
 changes focused, add tests at the affected boundary, and report the exact
 validation commands run.
 
-Pull requests should call out security, storage, wire-format, migration,
-release, and UI-thread implications where relevant.
+Pull requests should call out security, storage, wire-format, migration, release, and UI-thread implications where relevant.
 
 ## License
 
-Chaft is licensed under the
-[GNU Affero General Public License v3.0 or later](LICENSE).
+Chaft is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE).

@@ -1,5 +1,5 @@
 ---
-title: Create, join, and administer a workspace
+title: Workspace lifecycle
 description: Use Chaft's current desktop flows to create, join, recover, and administer a workspace.
 section: getting-started
 order: 20
@@ -8,22 +8,21 @@ status: canary
 draft: false
 ---
 
-# Create, join, and administer a workspace
+# Workspace lifecycle
 
-This guide covers the current desktop workspace lifecycle. Chaft workspaces are
-local-first and peer-to-peer; joining a workspace requires explicit material
-from someone with access. Broad distributed discovery is intentionally not part
-of this phase.
+Use this guide to create, join, and administer a non-sensitive test workspace.
+Joining requires an invite or request handoff from someone who already has
+access.
 
-Chaft is still at the canary stage. Use test or non-critical workspaces, retain
-separate backups of important material, and expect credential formats and UI
-wording to evolve. The flows below are implemented, but offline delivery still
-relies on explicit file, link, or request handoff between people.
+> Chaft is unaudited canary software. Use non-sensitive test workspaces, keep
+> separate backups, and expect credential formats and interface wording to
+> change. Offline delivery still relies on explicit file, link, or request
+> handoff between people.
 
-Return to the [public guide index](../index.md). If the desktop app is not
-running yet, start with [Build Chaft Desktop](build-desktop.md).
+If the desktop app is not running, start with
+[Build Chaft Desktop](build-desktop.md).
 
-## Before You Begin
+## Before you begin
 
 - Give every person or test device its own runtime. Two peers that reuse the
   same device identity are not a valid multi-device test.
@@ -35,7 +34,7 @@ running yet, start with [Build Chaft Desktop](build-desktop.md).
 Chaft does not currently provide automatic global workspace discovery, hosted
 account recovery, or root ownership transfer.
 
-## First Run
+## First run
 
 A fresh Chaft runtime starts with no joined workspace. This is expected. The
 first screen lets you:
@@ -46,11 +45,7 @@ first screen lets you:
 - import a decryption key kit to unlock matching history,
 - or return later if you do not have credentials yet.
 
-The seeded `Chaft Visual Smoke` workspace is only for deterministic visual
-smoke testing. Launch it explicitly with `--smoke-workspace`; it should not be
-the default user state.
-
-## Create a Workspace
+## Create a workspace
 
 1. Launch the desktop app with a fresh runtime:
 
@@ -64,21 +59,12 @@ the default user state.
    it to the clipboard alone does not complete the safety checkpoint.
 5. Use a long, unique passphrase and keep it separate from the exported file.
 
-The user-facing decryption key kit uses the existing `.chaftrecovery` file
-format and recovery-bundle APIs. It contains the manual workspace key ring and
-the private-room key rings available on the exporting device. It does not
-contain the device signing identity, workspace membership authorization,
-OpenMLS private group state, or root ownership.
+A decryption key kit can unlock matching history, but it does not authorize a
+new device or transfer ownership. Store it separately from its passphrase. See
+[Credential files and decryption key kits](../reference/credential-files.md)
+for the complete boundary.
 
-Treat the kit as sensitive decryption material, not as a complete account or
-workspace recovery mechanism. The kit supplies decryption keys, but a fresh
-device must also be authorized before Chaft can show, send, or administer
-workspace content. Once authorized, matching ciphertext can be decrypted when
-history is available locally or from a reachable peer. Save a fresh kit after
-key rotation or gaining access to another private room so it contains the latest
-available key rings.
-
-## Share Workspace Access
+## Invite teammates
 
 Do not share a decryption key kit with teammates. To authorize another person
 or device:
@@ -93,27 +79,15 @@ or device:
 4. Send that same artifact privately to each intended joiner. You do not need
    to generate a separate invite for every person.
 
-The invite contains a bounded capability, workspace metadata, and the admin's
-signed routing details. It does not contain the workspace key and does not need
-recipient device IDs in advance. Each successful device consumes one join from
-the shared limit. Treat the artifact as a bearer credential until it expires,
-is revoked, or reaches its maximum: anyone who receives it can consume one of
-the remaining joins.
+Treat an invite as a bearer credential until it expires, is revoked, or reaches
+its maximum. Anyone who receives it may consume one of the remaining joins.
 
 Capacities above 20 require every workspace device to run a build that supports
 100-join invites. Older builds enforce the previous 20-join protocol bound and
 can reject higher-capacity invite events. Keep the maximum at 20 or fewer until
 all participating devices have been updated.
 
-The recipient opens the invite in `Join workspace`, confirms the display name
-teammates will see, and chooses `Join workspace`. Their device signs the request
-and supplies a response-encryption key. The admin's
-runtime verifies the capability, expiry, revocation state, remaining capacity,
-and device/request uniqueness before adding that device. The returned workspace
-key is encrypted for the claiming device and signed by the expected admin.
-Another device cannot import the response.
-
-## Join a Workspace
+## Join a workspace
 
 1. Launch the desktop app.
 2. Choose `Join workspace`.
@@ -127,11 +101,10 @@ Another device cannot import the response.
 6. Choose `Join workspace`. Chaft completes delivery automatically when the
    inviter is reachable and offers manual transfer only as a fallback.
 
-If the credential is a workspace card, the app prepares an access request
-instead of joining immediately. A secure invite prepares a cryptographic claim;
-it never imports a key directly from the invite file.
+If you open a workspace request card, Chaft prepares an access request instead
+of joining immediately.
 
-## Import a Decryption Key Kit
+## Import a decryption key kit
 
 1. Choose `Key kit` from the first-run or workspace-entry screen.
 2. Open or paste the passphrase-protected `.chaftrecovery` file.
@@ -140,35 +113,11 @@ it never imports a key directly from the invite file.
    available locally.
 5. Choose `Import keys`.
 
-The underlying credential remains a recovery bundle for schema/API
-compatibility. Import installs only its contained key rings. Matching history
-must already exist locally or come from a reachable peer, and a fresh device
-must be authorized before Chaft can show it. Import does not replace the fresh
-device identity, authorize that device, or transfer root ownership; use the
-normal invite flow when authorization is needed.
+Import installs only the key rings contained in the kit. Matching encrypted
+history must already exist locally or arrive from a reachable peer. A fresh
+device must still be authorized through the normal invite flow.
 
-## Credential Files
-
-Chaft saves user-facing handoff material with explicit extensions:
-
-- invites: `Chaft - <workspace> - Invite - <label> - <date>.chaftinvite`,
-- access requests: `Chaft - <workspace> - Access Request - <person> - <date>.chaftrequest`,
-- workspace request cards: `Chaft - <workspace> - Request Card - <date>.chaftworkspace`,
-- workspace access files: `Chaft - <workspace> - Access File - <date>.chaftaccess`,
-- decryption key kits: `Chaft - <workspace> - Decryption Key Kit.chaftrecovery`.
-
-The `.chaftrecovery` extension and recovery-bundle schema/API names remain
-unchanged for compatibility. The open/import flows also accept older JSON
-exports. Treat decryption key kits as private key material, not invitations;
-store the kit privately, keep its passphrase separate from the file, and never
-send the kit as an invite.
-Legacy workspace access files still grant workspace access and should only go
-to the intended teammate or device. Current secure invite files do not contain
-the workspace key, but must still be shared privately because their remaining
-claims are bearer-held. Older invites and invites created with the default
-limit allow one claim.
-
-## Request Access
+## Request access
 
 Use request access when a workspace allows requests but does not hand over join
 credentials immediately.
@@ -180,37 +129,11 @@ credentials immediately.
    admin out of band.
 5. Wait for an admin to approve or decline the request.
 
-The current phase supports explicit request handoff and direct delivery
-fallbacks. If your device is already hosting a direct peer endpoint, the request
-also advertises that response route so a later approval invite can be queued
-back to your device when both apps are reachable. Decline and close responses
-can use the same route to update the pending request card. Pending request cards
-with a saved admin endpoint can also check for approval responses in the
-background while Chaft is open; the manual `Check` action remains available.
-Received encrypted access opens the join dialog with the response already
-loaded and the original display name preserved; the name is not requested
-again. Fully asynchronous discovery,
-multi-hop request propagation across offline peers, and automatic approval import
-are later transport-hardening work.
+Chaft checks for a response while the app is open and the admin is reachable.
+If direct delivery fails, exchange the request and response through the same
+trusted channel. Chaft does not provide automatic global discovery.
 
-## Invite a Member
-
-Admins and owners can invite normal members. Owners control admin-level access.
-
-1. Open the workspace.
-2. Open `Setup`.
-3. Go to the people/access area.
-4. Choose the role and expiry. Select `Single-use`, or select `Group` and
-   set `Maximum joins` from 2 through 100 using a preset or custom value.
-   Optionally add an internal invite label; this does not name any recipient.
-5. Copy the invite or save it as a file for offline transfer.
-6. For a group invite, send the same invite artifact to every intended joiner
-   through trusted channels. Each joining device consumes one join.
-
-The invitee chooses their own display name in the `Join workspace` flow. Chaft
-binds the resulting membership and encrypted access response to that device.
-
-## Approve or Decline Requests
+## Approve or decline requests
 
 Owners and admins can process join requests.
 
@@ -221,15 +144,10 @@ Owners and admins can process join requests.
 4. If the requester is not reachable, save or copy the generated invite package
    and send it out of band.
 
-Approvals and declines are signed workspace events. Duplicate deliveries should
-be safe because request and invite IDs are stable. When a request includes a
-response route, Chaft queues approval invite delivery or decline/close response
-delivery to that route while the app is open; otherwise use the same trusted
-out-of-band channel the requester used. The requester confirms the received
-access through the normal join flow. When delivery returns directly, the join
-dialog opens with the response loaded and correlated by its request ID.
+Chaft attempts direct delivery while both apps are reachable. Otherwise, send
+the generated response through the same trusted channel used for the request.
 
-## Manage Roles
+## Manage roles
 
 Current role policy:
 
@@ -246,7 +164,7 @@ day-to-day member access. See the
 [workspace administration policy](https://github.com/Jurshsmith/chaft/blob/main/guides/workspace-admin-policy.md)
 for the full owner/admin/member policy.
 
-## Remove Members and Rotate Access
+## Remove members and rotate access
 
 When someone should no longer read future messages:
 

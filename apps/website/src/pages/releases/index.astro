@@ -12,13 +12,17 @@ const description = "Chaft canary and desktop release status, artifacts, and int
 const isUnsignedCanary =
   currentRelease.channel === "canary" &&
   currentRelease.status === "published";
+
+function channelLabel(channel: string): string {
+  return channel === "canary" ? "Canary" : "Stable";
+}
 ---
 
 <BaseLayout title="Releases" description={description}>
   <PageHero
-    eyebrow="Release channel"
-    title="Every canary should explain where it came from."
-    lede="Chaft release pages come from a validated manifest. An artifact cannot be marked available until its final package metadata and integrity state are present."
+    eyebrow="Release history"
+    title="Know exactly what you are downloading."
+    lede="Every public Chaft package is tied to an immutable GitHub Release and shows its checksum, source revision, build evidence, and signing state."
   />
 
   {isUnsignedCanary && (
@@ -43,22 +47,29 @@ const isUnsignedCanary =
               <div class="release-card__heading">
                 <span class="status">
                   {isCurrent
-                    ? release.status === "published" ? "Current release" : "Canary packages pending"
+                    ? release.status === "published" ? "Current release" : "Packages pending"
                     : "Archived release"}
                 </span>
-                <span class="mono">{release.channel}</span>
+                <span class="mono">{channelLabel(release.channel)}</span>
               </div>
               <div>
-                <p class="release-card__version">v{release.version}</p>
-                <h2>{isCurrent ? "Current canary manifest" : `Chaft ${release.version}`}</h2>
+                <p class="release-card__version">
+                  {release.status === "published" ? "Version" : "Source version"} · v{release.version}
+                </p>
+                <h2>
+                  {isCurrent && release.status !== "published"
+                    ? "No public canary yet"
+                    : `Chaft ${release.version}`}
+                </h2>
                 <p>
-                  {release.assets.length} platform definitions · Windows, macOS, and Linux
+                  Windows, macOS, and Linux packages
+                  {release.status === "published" ? " are available." : " are still being validated."}
                 </p>
               </div>
               <div class="release-card__links">
                 <a class="button" href={sitePath(`/releases/${release.version}/`)}>View release details</a>
                 <a class="button button--secondary" href={sitePath(`/releases/${release.version}.json`)}>
-                  Read version JSON
+                  Version JSON
                 </a>
               </div>
             </article>
@@ -71,15 +82,15 @@ const isUnsignedCanary =
   <section class="section section--deep">
     <div class="shell pipeline">
       <div>
-        <p class="eyebrow">Publication contract</p>
-        <h2>The site is the last consumer, not the source of release truth.</h2>
+        <p class="eyebrow">Publication standard</p>
+        <h2>What accompanies a public release.</h2>
       </div>
       <ol>
-        <li><span>01</span>Build and smoke packages on native platform runners.</li>
-        <li><span>02</span>For canaries, record signing as not performed; for stable, enforce native signing and notarization.</li>
-        <li><span>03</span>Generate SHA-256, SBOM, provenance, smoke receipts, inventory, and corresponding-source evidence.</li>
-        <li><span>04</span>Publish an immutable GitHub Release.</li>
-        <li><span>05</span>Validate the manifest and rebuild this static site.</li>
+        <li><span>01</span>Native builds and packaged-app smoke tests for every platform.</li>
+        <li><span>02</span>Final filenames, byte sizes, and SHA-256 digests.</li>
+        <li><span>03</span>SBOMs, provenance, smoke receipts, inventory, and corresponding-source evidence.</li>
+        <li><span>04</span>An explicit unsigned-canary state, or enforced signing and notarization for stable releases.</li>
+        <li><span>05</span>Immutable GitHub Release assets reflected by the website manifest.</li>
       </ol>
     </div>
   </section>

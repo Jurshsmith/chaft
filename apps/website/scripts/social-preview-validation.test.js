@@ -57,10 +57,10 @@ afterEach(() => {
 
 describe("social preview validation", () => {
   it.each([
-    ["https://chaft.ai", "https://chaft.ai/og-chaft-v2.png"],
+    ["https://chaft.ai", "https://chaft.ai/og-chaft-v3.png"],
     [
       "https://example.com/chaft-preview",
-      "https://example.com/chaft-preview/og-chaft-v2.png",
+      "https://example.com/chaft-preview/og-chaft-v3.png",
     ],
   ])("decodes the image and accepts the emitted absolute URL for %s", async (siteUrl, imageUrl) => {
     const distDirectory = fixture(siteUrl, imageUrl);

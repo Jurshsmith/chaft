@@ -43,7 +43,7 @@ const {
 
       <article class="docs-article">
         <DocsBreadcrumbs section={section} title={title} isIndex={currentId === "index"} />
-        <DocsStatus status={status} audience={audience} />
+        <DocsStatus section={section} status={status} audience={audience} />
         <DocsTableOfContents headings={headings} />
         <div class="docs-prose">
           <slot />
@@ -210,6 +210,11 @@ const {
     background: var(--surface-raised);
     color: var(--text-strong);
     font-weight: 500;
+  }
+
+  .docs-prose :global(table a) {
+    word-break: normal;
+    overflow-wrap: normal;
   }
 
   .docs-prose :global(hr) {

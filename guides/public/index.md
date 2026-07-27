@@ -1,6 +1,6 @@
 ---
-title: Chaft public guides
-description: Build, evaluate, understand, and contribute to the Chaft desktop application.
+title: Chaft guides
+description: Build the Chaft canary, create a test workspace, understand its security model, or contribute to the project.
 section: getting-started
 order: 0
 audience: users
@@ -8,78 +8,73 @@ status: canary
 draft: false
 ---
 
-# Chaft public guides
+# Chaft guides
 
-Chaft is an experimental P2P-first Slack alternative for small teams. It
-combines local-first storage, end-to-end encrypted content, and peer-to-peer
-replication to explore whether essential collaboration software can stay free
-within deliberate limits.
+Use these guides to build and test the current Chaft canary, create a workspace,
+or inspect how its local-first security and replication model works.
 
-The codebase is at the canary stage: interfaces can change, peer connectivity
-is intentionally explicit, and you should not rely on Chaft as the only copy of
-important data.
+> Chaft is unaudited canary software. Use non-sensitive test data, keep separate
+> backups, and expect interfaces and credential formats to change.
 
-These guides describe behavior that exists in the repository today. They do not
-promise a stable release schedule, unattended internet-wide discovery, or
-production support.
+## Start here
 
-## Choose a starting point
+- **Evaluate Chaft:** [build the desktop app from source](getting-started/build-desktop.md),
+  then [create or join a test workspace](getting-started/workspace-lifecycle.md).
+- **Review the trust model:** read the [security model](concepts/security-model.md)
+  and [networking model](concepts/networking-and-replication.md).
+- **Contribute:** start with
+  [CONTRIBUTING.md](https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md)
+  and the [testing guide](development/testing.md).
 
-| Goal | Guide |
-| --- | --- |
-| Build and launch the native desktop app from source | [Build Chaft Desktop](getting-started/build-desktop.md) |
-| Create, join, and administer a workspace | [Workspace lifecycle](getting-started/workspace-lifecycle.md) |
-| Contribute changes to the project | [Contributing](https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md) |
+Public Windows, macOS, and Linux packages are not available yet. CI artifacts
+are temporary development inputs, not supported downloads.
 
-If you are evaluating the app for the first time, build it on a supported
-native development host, launch it with a fresh local runtime, and then follow
-the workspace lifecycle guide.
+## Use Chaft
 
-## Understand the system
+- [Build Chaft Desktop](getting-started/build-desktop.md) covers native
+  prerequisites, launch commands, and local package checks.
+- [Workspace lifecycle](getting-started/workspace-lifecycle.md) covers workspace
+  creation, invitations, access requests, roles, and removal.
+- [Credential files and decryption key kits](reference/credential-files.md)
+  explains every handoff file and what it does—and does not—authorize.
 
-- [Architecture](concepts/architecture.md) explains the desktop, Rust runtime,
-  local stores, signed event model, and networking boundary.
-- [Security model](concepts/security-model.md) separates current protections
-  from canary-stage limitations and operational responsibilities.
-- [Networking and replication](concepts/networking-and-replication.md) explains
-  explicit peer routes, synchronization, and untrusted replica behavior.
+## Understand Chaft
+
+- [Architecture](concepts/architecture.md): desktop, Rust runtime, local stores,
+  signed history, and networking boundaries.
+- [Security model](concepts/security-model.md): implemented protections,
+  current limitations, and safe secret handling.
+- [Networking and replication](concepts/networking-and-replication.md):
+  explicit peer routes, synchronization, and untrusted replicas.
 
 ## Develop and release
 
-- [Testing Chaft](development/testing.md) maps Rust, replication, desktop,
-  website, and release changes to the checks they require.
-- [Release process](development/release-process.md) distinguishes temporary CI
-  packages from verified public GitHub Release downloads.
+- [Testing Chaft](development/testing.md) maps changes to their required checks.
+- [Release process](development/release-process.md) explains the difference
+  between temporary CI artifacts and public GitHub Release downloads.
 
 ## Reference
 
-- [CLI reference](reference/cli.md) covers common developer commands and safe
-  prompt, standard-input, and owner-only file handling for passphrases.
-- [Portable workspace export](reference/portable-workspace-export.md) defines
-  the readable plaintext export and its privacy and completeness contract.
+- [CLI reference](reference/cli.md)
+- [Credential files and decryption key kits](reference/credential-files.md)
+- [Portable workspace export](reference/portable-workspace-export.md)
 
-## Canary boundaries
+## Canary limits
 
-- Chaft stores runtime state locally and synchronizes with explicitly supplied
-  peers. A central service does not silently recover a device or discover every
-  workspace.
-- Invites, access files, request packages, and decryption key kits are sensitive
-  handoff material. Share them through a trusted channel and keep decryption key
-  kits separate from their passphrases.
-- A decryption key kit is not an account backup. It does not authorize a new
-  device, transfer ownership, or include every kind of private state.
-- Removal and key rotation protect future access. They do not retract content
-  that another device already received.
-- Locally built packages are development artifacts. Do not present them as
-  official signed releases.
+- Devices must be reachable directly or through an explicitly configured
+  replica to exchange new history.
+- Chaft does not provide hosted account recovery, global workspace discovery,
+  guaranteed delivery, or production support.
+- Removing a member and rotating keys protects future access; it cannot retract
+  content already received by another device.
 
-## Before reporting a problem
+See the [security model](concepts/security-model.md) for the complete current
+boundary.
 
-Record the operating system, CPU architecture, Qt version, Rust version, the
-command or UI action that failed, and a minimal reproduction. Remove workspace
-credentials, passphrases, local paths, and message content before sharing logs
-or screenshots.
+## Report a problem
 
-For build failures, start with the preflight and troubleshooting sections in
-[Build Chaft Desktop](getting-started/build-desktop.md). For access or recovery
-questions, start with [Workspace lifecycle](getting-started/workspace-lifecycle.md).
+Include the operating system, source revision, failed action, and minimal
+reproduction. Remove credentials, passphrases, local paths, and message content
+from logs and screenshots. Report security findings through the
+[private security process](https://github.com/Jurshsmith/chaft/security/advisories/new),
+not a public issue.

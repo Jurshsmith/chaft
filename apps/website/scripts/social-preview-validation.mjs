@@ -6,11 +6,11 @@ import sharp from "sharp";
 
 import { deploymentMountPath } from "./deployment-artifact.mjs";
 
-export const SOCIAL_IMAGE_FILENAME = "og-chaft-v2.png";
+export const SOCIAL_IMAGE_FILENAME = "og-chaft-v3.png";
 export const SOCIAL_IMAGE_WIDTH = 1200;
 export const SOCIAL_IMAGE_HEIGHT = 630;
 export const HOME_SOCIAL_TITLE =
-  "Chaft — P2P-first team chat designed to stay free.";
+  "Chaft — Open-source team chat that runs on your devices.";
 
 function fail(message) {
   throw new Error(`social preview validation failed: ${message}`);

@@ -1,14 +1,23 @@
 ---
 interface Props {
+  section: string;
   status: string;
   audience: string;
 }
 
-const { status, audience } = Astro.props;
+const { section, status, audience } = Astro.props;
 
 const statusLabels: Record<string, string> = {
   canary: "Canary",
   stable: "Stable",
+  deprecated: "Deprecated",
+};
+
+const sectionLabels: Record<string, string> = {
+  "getting-started": "Getting started",
+  concepts: "Concept",
+  development: "Development",
+  reference: "Reference",
 };
 
 const audienceLabels: Record<string, string> = {
@@ -18,11 +27,12 @@ const audienceLabels: Record<string, string> = {
 };
 
 const statusLabel = statusLabels[status] ?? status;
+const sectionLabel = sectionLabels[section] ?? section;
 const audienceLabel = audienceLabels[audience] ?? audience;
 ---
 
-<div class="docs-status" aria-label={`${statusLabel}; ${audienceLabel}`}>
-  <span>Reference</span>
+<div class="docs-status" aria-label={`${sectionLabel}; ${statusLabel}; ${audienceLabel}`}>
+  <span>{sectionLabel}</span>
   <span class:list={[`docs-status__state`, `docs-status__state--${status}`]}>
     {statusLabel}
   </span>
