@@ -406,11 +406,11 @@ from pathlib import Path
 path = Path(sys.argv[1])
 provenance = json.loads(path.read_text(encoding="utf-8"))
 for item in provenance.get("materials", []):
-    if item.get("name") == "Cargo.toml":
+    if item.get("name") == "tools/desktop/macos-adhoc-verify.cmake":
         item["sha256"] = "0" * 64
         break
 else:
-    raise SystemExit("Cargo.toml provenance material row missing")
+    raise SystemExit("macOS ad-hoc verification provenance material row missing")
 path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 expect_failure "stale provenance source material" \

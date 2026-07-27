@@ -208,6 +208,7 @@ class PathClassificationTests(unittest.TestCase):
             "tools/desktop/generate-unsigned-canary-receipt.py",
             "tools/desktop/install-linux-package-dependencies.sh",
             "tools/desktop/linux-appimage-contract-test.py",
+            "tools/desktop/macos-adhoc-verify.cmake",
             "tools/desktop/macos-dmg-smoke-test.py",
             "tools/desktop/macos-dmg-smoke.sh",
             "tools/desktop/macos-unsigned-canary-smoke-test.py",

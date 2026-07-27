@@ -39,6 +39,7 @@ SOURCE_MATERIALS = (
     "Cargo.lock",
     "Cargo.toml",
     "apps/desktop-qt/CMakeLists.txt",
+    "tools/desktop/macos-adhoc-verify.cmake",
 )
 
 

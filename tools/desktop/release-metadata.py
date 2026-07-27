@@ -409,7 +409,12 @@ def source_context(root):
 
 def material_rows(root):
     rows = []
-    for relative in ("Cargo.lock", "Cargo.toml", "apps/desktop-qt/CMakeLists.txt"):
+    for relative in (
+        "Cargo.lock",
+        "Cargo.toml",
+        "apps/desktop-qt/CMakeLists.txt",
+        "tools/desktop/macos-adhoc-verify.cmake",
+    ):
         path = root / relative
         if path.is_file():
             rows.append(
