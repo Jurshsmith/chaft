@@ -20,6 +20,17 @@ const platformCodes = {
   macos: "mac",
   linux: "linux",
 } as const;
+
+const formatLabels: Record<string, string> = {
+  appimage: "AppImage",
+  dmg: "DMG",
+  exe: "EXE",
+  msi: "MSI",
+  tar: "TAR",
+  tgz: "TGZ",
+  zip: "ZIP",
+};
+
 ---
 
 {isUnsignedCanary && (
@@ -41,7 +52,7 @@ const platformCodes = {
         <h3>{asset.platformLabel}</h3>
         <p class="asset-meta">
           <span>{asset.arch}</span>
-          <span>{asset.format.toUpperCase()}</span>
+          <span>{formatLabels[asset.format] ?? asset.format}</span>
           <span>{formatBytes(asset.sizeBytes)}</span>
           <span>{formatSigningStatus(asset.signingStatus)}</span>
         </p>
@@ -57,20 +68,18 @@ const platformCodes = {
           <code>{asset.sha256}</code>
         </p>
       )}
-      <a
-        class:list={["download-action", { "download-action--pending": !asset.available }]}
-        href={asset.url}
-        target={!asset.available ? "_blank" : undefined}
-        rel={!asset.available ? "noreferrer" : undefined}
-        aria-label={
-          asset.available
-            ? `Download Chaft ${currentRelease.version} for ${asset.platformLabel}`
-            : `Follow Chaft releases for ${asset.platformLabel} (opens in a new tab)`
-        }
-      >
-        {asset.available ? `Download .${asset.format}` : "Follow releases"}
-        <span aria-hidden="true">→</span>
-      </a>
+      {asset.available ? (
+        <a
+          class="download-action"
+          href={asset.url}
+          aria-label={`Download Chaft ${currentRelease.version} for ${asset.platformLabel}`}
+        >
+          Download {formatLabels[asset.format] ?? asset.format}
+          <span aria-hidden="true">→</span>
+        </a>
+      ) : (
+        <span class="download-action download-action--pending">Package pending</span>
+      )}
     </article>
   ))}
 </div>
@@ -258,7 +267,8 @@ const platformCodes = {
   }
 
   .download-action--pending {
-    color: var(--text-soft);
+    color: var(--text-faint);
+    font-weight: 400;
   }
 
   .download-grid--compact .download-card {

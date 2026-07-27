@@ -20,12 +20,12 @@ const siteName = "Chaft";
 const fullTitle = title === siteName ? title : `${title} · ${siteName}`;
 const socialTitle =
   title === siteName
-    ? "Chaft — P2P-first team chat designed to stay free."
+    ? "Chaft — Open-source team chat that runs on your devices."
     : fullTitle;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url);
-const socialImage = new URL(sitePath("/og-chaft-v2.png"), Astro.site ?? Astro.url);
+const socialImage = new URL(sitePath("/og-chaft-v3.png"), Astro.site ?? Astro.url);
 const socialImageAlt =
-  "Chaft logo beside a peer network and the message: Team chat designed to stay free.";
+  "Chaft logo beside a peer network and the message: Team chat that runs on your devices.";
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
 ---
 

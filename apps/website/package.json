@@ -17,6 +17,7 @@
     "artifact:compare": "node scripts/deployment-artifact-cli.mjs compare",
     "deployment:verify-public": "node scripts/verify-public-deployment.mjs",
     "deployment:validate-governance": "node scripts/governance-validation.mjs",
+    "generate:social-preview": "node scripts/generate-social-preview.mjs",
     "preview": "astro preview",
     "check": "pnpm run check:astro && pnpm run check:tsgo",
     "check:astro": "astro check",

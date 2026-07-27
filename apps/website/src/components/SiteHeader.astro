@@ -2,7 +2,6 @@
 import { Image } from "astro:assets";
 
 import mark from "../../../desktop-qt/resources/branding/chaft-mark.png";
-import { currentRelease } from "../data/releases";
 import { sitePath } from "../lib/site-path";
 
 interface HeaderLink {
@@ -22,9 +21,7 @@ const links: HeaderLink[] = [
 ];
 
 const downloadHref = sitePath("/download/");
-const downloadLabel = currentRelease.assets.some((asset) => asset.available)
-  ? "Download"
-  : "Canary";
+const downloadLabel = "Download";
 
 function isCurrentLink(link: HeaderLink): boolean {
   if (link.external) return false;
