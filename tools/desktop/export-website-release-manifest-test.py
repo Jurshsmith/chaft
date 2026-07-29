@@ -33,15 +33,19 @@ REPOSITORY = "Jurshsmith/chaft"
 WINDOWS_SIGNER = "A" * 40
 APPLE_TEAM_ID = "AB12CD34EF"
 LINUX_SIGNER = "B" * 40
+WINDOWS_TARGET = "windows-x86_64"
+MACOS_X86_64_TARGET = "macos-x86_64"
+MACOS_ARM64_TARGET = "macos-arm64"
+LINUX_TARGET = "linux-x86_64"
 PACKAGE_NAMES = {
-    "windows": f"Chaft-{VERSION}-Windows.msi",
-    "macos": f"Chaft-{VERSION}-macOS.dmg",
-    "linux": f"Chaft-{VERSION}-Linux.AppImage",
+    target_name: exporter.release_targets.TARGET_BY_NAME[target_name].package_name(VERSION)
+    for target_name in exporter.TARGETS
 }
 PACKAGE_FORMATS = {
-    "windows": "windows-msi",
-    "macos": "macos-dmg",
-    "linux": "linux-appimage",
+    WINDOWS_TARGET: "windows-zip",
+    MACOS_X86_64_TARGET: "macos-dmg",
+    MACOS_ARM64_TARGET: "macos-dmg",
+    LINUX_TARGET: "linux-appimage",
 }
 
 
@@ -74,7 +78,7 @@ def write_json(path: Path, value: object) -> None:
 
 def write_platform_package(
     root: Path,
-    platform: str,
+    target_name: str,
     *,
     version: str = VERSION,
     commit: str = COMMIT,
@@ -82,9 +86,11 @@ def write_platform_package(
     with_signature: bool = False,
     provenance_package_format: str | None = None,
 ) -> Path:
-    package_dir = root / f"{platform}-package"
+    target = exporter.release_targets.TARGET_BY_NAME[target_name]
+    platform = target.platform
+    package_dir = root / f"{target_name}-package"
     package_dir.mkdir(parents=True)
-    package_name = PACKAGE_NAMES[platform].replace(VERSION, version)
+    package_name = target.package_name(version)
     package_path = package_dir / package_name
     package_path.write_bytes(
         elf_payload()
@@ -94,7 +100,7 @@ def write_platform_package(
     artifacts = [
         {
             "name": package_name,
-            "packageFormat": provenance_package_format or PACKAGE_FORMATS[platform],
+            "packageFormat": provenance_package_format or PACKAGE_FORMATS[target_name],
             "sizeBytes": package_path.stat().st_size,
             "sha256": sha256(package_path),
         }
@@ -113,7 +119,7 @@ def write_platform_package(
             }
         )
 
-    names = exporter.METADATA_FILENAMES[platform]
+    names = exporter.METADATA_FILENAMES[target_name]
     checksum_path = package_dir / names["checksums"]
     checksum_path.write_text(
         "".join(f"{row['sha256']}  {row['name']}\n" for row in artifacts),
@@ -123,16 +129,18 @@ def write_platform_package(
     write_json(
         package_dir / names["provenance"],
         {
-            "schemaVersion": "chaft.desktop.provenance.v1",
+            "schemaVersion": "chaft.desktop.provenance.v2",
             "profile": "release",
+            "packageTarget": target_name,
             "packagePlatform": platform,
+            "packageArchitecture": target.architecture,
             "version": version,
             "source": {
                 "commit": commit,
                 "repository": repository,
                 "dirty": False,
             },
-            "platform": {"machine": "x86_64"},
+            "platform": {"machine": target.architecture},
             "artifacts": artifacts,
         },
     )
@@ -141,15 +149,18 @@ def write_platform_package(
 
 def write_verification_receipt(
     root: Path,
-    platform: str,
+    target_name: str,
     package_dir: Path,
     *,
     version: str = VERSION,
     tag: str = TAG,
     commit: str = COMMIT,
-    architecture: str = "x86_64",
+    architecture: str | None = None,
     stale_hash: bool = False,
 ) -> Path:
+    target = exporter.release_targets.TARGET_BY_NAME[target_name]
+    platform = target.platform
+    architecture = architecture or target.architecture
     receipt_dir = root / "verification-receipts"
     receipt_dir.mkdir(parents=True, exist_ok=True)
     package_paths = sorted(
@@ -264,11 +275,12 @@ def write_verification_receipt(
             }
             for path in package_paths
         ]
-    path = receipt_dir / exporter.VERIFICATION_RECEIPT_FILENAMES[platform]
+    path = receipt_dir / exporter.VERIFICATION_RECEIPT_FILENAMES[target_name]
     write_json(
         path,
         {
-            "schemaVersion": "chaft.desktop.platform-verification.v1",
+            "schemaVersion": "chaft.desktop.platform-verification.v2",
+            "target": target_name,
             "platform": platform,
             "verificationType": exporter.VERIFICATION_TYPES[platform],
             "status": "verified",
@@ -293,7 +305,7 @@ def write_verification_receipt(
 
 def write_unsigned_canary_receipt(
     root: Path,
-    platform: str,
+    target_name: str,
     package_dir: Path,
     *,
     version: str,
@@ -301,6 +313,8 @@ def write_unsigned_canary_receipt(
     release_id: int,
     asset_id: int,
 ) -> Path:
+    target = exporter.release_targets.TARGET_BY_NAME[target_name]
+    platform = target.platform
     receipt_dir = root / "unsigned-canary-receipts"
     receipt_dir.mkdir(parents=True, exist_ok=True)
     package = next(
@@ -310,6 +324,7 @@ def write_unsigned_canary_receipt(
     )
     receipt = {
         "schemaVersion": exporter.unsigned_canary.SCHEMA_VERSION,
+        "target": target_name,
         "platform": platform,
         "verificationType": exporter.unsigned_canary.VERIFICATION_TYPE,
         "status": exporter.unsigned_canary.STATUS,
@@ -326,7 +341,7 @@ def write_unsigned_canary_receipt(
         "tag": tag,
         "commit": COMMIT,
         "repository": REPOSITORY,
-        "architecture": "x86_64",
+        "architecture": target.architecture,
         "verifiedAt": "2026-07-18T12:34:56Z",
         "release": {"id": release_id},
         "asset": {
@@ -337,7 +352,7 @@ def write_unsigned_canary_receipt(
         },
         "runner": {
             "os": exporter.unsigned_canary.RUNNER_OS[platform],
-            "architecture": "x86_64",
+            "architecture": target.architecture,
             "workflowRunId": 1234,
             "workflowRunAttempt": 1,
         },
@@ -350,7 +365,7 @@ def write_unsigned_canary_receipt(
             "version": "1",
         },
     }
-    path = receipt_dir / exporter.VERIFICATION_RECEIPT_FILENAMES[platform]
+    path = receipt_dir / exporter.VERIFICATION_RECEIPT_FILENAMES[target_name]
     write_json(path, receipt)
     return path
 
@@ -384,6 +399,36 @@ def write_canary_release_evidence(
     ]
     release_assets.extend(receipts.values())
     release_assets.extend((qt_source, qt_checksums))
+    claims: dict[str, dict[str, str]] = {
+        qt_source.name: {"kind": "qt-corresponding-source"},
+        qt_checksums.name: {
+            "kind": "qt-corresponding-source-checksum"
+        },
+    }
+    metadata_kinds = {
+        "checksums": "platform-checksums",
+        "sbom": "sbom",
+        "provenance": "provenance",
+    }
+    for target_name, package_dir in package_dirs.items():
+        target = exporter.release_targets.TARGET_BY_NAME[target_name]
+        target_claim = {
+            "target": target_name,
+            "platform": target.platform,
+        }
+        claims[target.package_name(version)] = {
+            "kind": "package",
+            **target_claim,
+        }
+        for key, filename in target.metadata_names.items():
+            claims[filename] = {
+                "kind": metadata_kinds[key],
+                **target_claim,
+            }
+        claims[receipts[target_name].name] = {
+            "kind": "unsigned-canary-verification",
+            **target_claim,
+        }
     inventory = {
         "schemaVersion": exporter.CANARY_INVENTORY_SCHEMA,
         "channel": "canary",
@@ -400,6 +445,7 @@ def write_canary_release_evidence(
                 "filename": path.name,
                 "sizeBytes": path.stat().st_size,
                 "sha256": sha256(path),
+                **claims[path.name],
             }
             for path in sorted(release_assets, key=lambda item: item.name)
         ],
@@ -434,37 +480,53 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="chaft-release-export-test-")
         self.root = Path(self.temporary.name)
         self.package_dirs = {
-            platform: write_platform_package(self.root, platform)
-            for platform in exporter.PLATFORMS
+            target_name: write_platform_package(self.root, target_name)
+            for target_name in exporter.TARGETS
         }
         self.receipts = {
-            "windows": write_verification_receipt(
-                self.root, "windows", self.package_dirs["windows"]
+            WINDOWS_TARGET: write_verification_receipt(
+                self.root, WINDOWS_TARGET, self.package_dirs[WINDOWS_TARGET]
             ),
-            "macos": write_verification_receipt(
-                self.root, "macos", self.package_dirs["macos"]
+            MACOS_X86_64_TARGET: write_verification_receipt(
+                self.root,
+                MACOS_X86_64_TARGET,
+                self.package_dirs[MACOS_X86_64_TARGET],
             ),
-            "linux": None,
+            MACOS_ARM64_TARGET: write_verification_receipt(
+                self.root,
+                MACOS_ARM64_TARGET,
+                self.package_dirs[MACOS_ARM64_TARGET],
+            ),
+            LINUX_TARGET: None,
         }
         trusted_root = self.root / "trusted-native-rerun"
         self.trusted_receipts = {
-            "windows": write_verification_receipt(
-                trusted_root, "windows", self.package_dirs["windows"]
+            WINDOWS_TARGET: write_verification_receipt(
+                trusted_root, WINDOWS_TARGET, self.package_dirs[WINDOWS_TARGET]
             ),
-            "macos": write_verification_receipt(
-                trusted_root, "macos", self.package_dirs["macos"]
+            MACOS_X86_64_TARGET: write_verification_receipt(
+                trusted_root,
+                MACOS_X86_64_TARGET,
+                self.package_dirs[MACOS_X86_64_TARGET],
             ),
-            "linux": None,
+            MACOS_ARM64_TARGET: write_verification_receipt(
+                trusted_root,
+                MACOS_ARM64_TARGET,
+                self.package_dirs[MACOS_ARM64_TARGET],
+            ),
+            LINUX_TARGET: None,
         }
         self.architectures = {
-            "windows": "amd64",
-            "macos": "x86_64",
-            "linux": "x64",
+            WINDOWS_TARGET: "amd64",
+            MACOS_X86_64_TARGET: "x86_64",
+            MACOS_ARM64_TARGET: "arm64",
+            LINUX_TARGET: "x64",
         }
         self.signing_states = {
-            "windows": "signed",
-            "macos": "notarized",
-            "linux": "checksummed",
+            WINDOWS_TARGET: "signed",
+            MACOS_X86_64_TARGET: "notarized",
+            MACOS_ARM64_TARGET: "notarized",
+            LINUX_TARGET: "checksummed",
         }
         self.publisher_identities = {
             "windows": WINDOWS_SIGNER,
@@ -507,22 +569,29 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
             f"https://github.com/{REPOSITORY}/releases/tag/{TAG}",
         )
         assets = manifest["assets"]
-        self.assertEqual(len(assets), 3)
-        by_platform = {asset["os"]: asset for asset in assets}
-        windows = by_platform["windows"]
-        self.assertEqual(windows["format"], "msi")
+        self.assertEqual(len(assets), 4)
+        by_id = {asset["id"]: asset for asset in assets}
+        windows = by_id[f"{WINDOWS_TARGET}-zip"]
+        self.assertEqual(windows["format"], "zip")
         self.assertEqual(windows["arch"], "x86_64")
         self.assertEqual(
-            windows["sha256"], sha256(self.package_dirs["windows"] / PACKAGE_NAMES["windows"])
+            windows["sha256"],
+            sha256(
+                self.package_dirs[WINDOWS_TARGET] / PACKAGE_NAMES[WINDOWS_TARGET]
+            ),
         )
-        self.assertTrue(windows["url"].endswith(f"/{PACKAGE_NAMES['windows']}"))
+        self.assertTrue(
+            windows["url"].endswith(f"/{PACKAGE_NAMES[WINDOWS_TARGET]}")
+        )
         self.assertIsNotNone(windows["evidence"]["verification"])
         self.assertTrue(
             windows["evidence"]["checksums"]["url"].endswith(
-                "/chaft-desktop-windows-SHA256SUMS"
+                "/chaft-desktop-windows-x86_64-SHA256SUMS"
             )
         )
-        linux = by_platform["linux"]
+        self.assertEqual(by_id[f"{MACOS_X86_64_TARGET}-dmg"]["arch"], "x86_64")
+        self.assertEqual(by_id[f"{MACOS_ARM64_TARGET}-dmg"]["arch"], "arm64")
+        linux = by_id[f"{LINUX_TARGET}-appimage"]
         self.assertEqual(linux["signingStatus"], "checksummed")
         self.assertIsNone(linux["evidence"]["signature"])
         self.assertIsNone(linux["evidence"]["verification"])
@@ -533,23 +602,23 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         canary_root = self.root / "canary"
         canary_root.mkdir()
         package_dirs = {
-            platform: write_platform_package(
-                canary_root, platform, version=version
+            target_name: write_platform_package(
+                canary_root, target_name, version=version
             )
-            for platform in exporter.PLATFORMS
+            for target_name in exporter.TARGETS
         }
         release_id = 4321
         receipts = {
-            platform: write_unsigned_canary_receipt(
+            target_name: write_unsigned_canary_receipt(
                 canary_root,
-                platform,
-                package_dirs[platform],
+                target_name,
+                package_dirs[target_name],
                 version=version,
                 tag=tag,
                 release_id=release_id,
                 asset_id=100 + index,
             )
-            for index, platform in enumerate(exporter.PLATFORMS)
+            for index, target_name in enumerate(exporter.TARGETS)
         }
         release_evidence = write_canary_release_evidence(
             canary_root,
@@ -565,12 +634,12 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
             channel="canary",
             package_directories=package_dirs,
             signing_states={
-                platform: "unsigned-canary"
-                for platform in exporter.PLATFORMS
+                target_name: "unsigned-canary"
+                for target_name in exporter.TARGETS
             },
             verification_receipts=receipts,
             trusted_verification_receipts={
-                platform: None for platform in exporter.PLATFORMS
+                target_name: None for target_name in exporter.TARGETS
             },
             publisher_identities={
                 platform: None for platform in exporter.PLATFORMS
@@ -588,6 +657,85 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
             self.assertEqual(asset["signingStatus"], "unsigned-canary")
             self.assertIsNone(asset["evidence"]["signature"])
             self.assertIsNotNone(asset["evidence"]["verification"])
+
+    def test_canary_inventory_requires_exact_target_classification(self) -> None:
+        version = f"{VERSION}-canary.1"
+        tag = f"v{version}"
+        for field, replacement in (
+            ("kind", "sbom"),
+            ("target", MACOS_X86_64_TARGET),
+            ("platform", "windows"),
+        ):
+            with self.subTest(field=field):
+                canary_root = self.root / f"inventory-{field}"
+                canary_root.mkdir()
+                package_dirs = {
+                    target_name: write_platform_package(
+                        canary_root,
+                        target_name,
+                        version=version,
+                    )
+                    for target_name in exporter.TARGETS
+                }
+                receipts = {
+                    target_name: write_unsigned_canary_receipt(
+                        canary_root,
+                        target_name,
+                        package_dirs[target_name],
+                        version=version,
+                        tag=tag,
+                        release_id=4321,
+                        asset_id=100 + index,
+                    )
+                    for index, target_name in enumerate(exporter.TARGETS)
+                }
+                release_evidence = write_canary_release_evidence(
+                    canary_root,
+                    package_dirs=package_dirs,
+                    receipts=receipts,
+                    version=version,
+                    tag=tag,
+                    release_id=4321,
+                )
+                inventory_path = (
+                    release_evidence
+                    / exporter.RELEASE_EVIDENCE_FILENAMES["inventory"]
+                )
+                inventory = json.loads(
+                    inventory_path.read_text(encoding="utf-8")
+                )
+                row = next(
+                    item
+                    for item in inventory["assets"]
+                    if item.get("target") == MACOS_ARM64_TARGET
+                    and item.get("kind") == "package"
+                )
+                row[field] = replacement
+                write_json(inventory_path, inventory)
+
+                with self.assertRaisesRegex(
+                    exporter.ManifestExportError,
+                    f"inventory {field} is incoherent",
+                ):
+                    self.build(
+                        tag=tag,
+                        channel="canary",
+                        package_directories=package_dirs,
+                        signing_states={
+                            target_name: "unsigned-canary"
+                            for target_name in exporter.TARGETS
+                        },
+                        verification_receipts=receipts,
+                        trusted_verification_receipts={
+                            target_name: None
+                            for target_name in exporter.TARGETS
+                        },
+                        publisher_identities={
+                            platform: None
+                            for platform in exporter.PLATFORMS
+                        },
+                        release_evidence_directory=release_evidence,
+                    )
 
     def test_canary_channel_rejects_stable_tags_before_publication(self) -> None:
         with self.assertRaisesRegex(
@@ -612,26 +760,26 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                (self.package_dirs[platform].resolve(), platform)
-                for platform in exporter.PLATFORMS
+                (self.package_dirs[target_name].resolve(), target_name)
+                for target_name in exporter.TARGETS
             ],
         )
 
     def test_rejects_package_bytes_changed_after_metadata_verification(self) -> None:
-        package = self.package_dirs["linux"] / PACKAGE_NAMES["linux"]
+        package = self.package_dirs[LINUX_TARGET] / PACKAGE_NAMES[LINUX_TARGET]
         package.write_bytes(package.read_bytes() + b"tampered\n")
         with self.assertRaisesRegex(exporter.ManifestExportError, "metadata is stale"):
             self.build()
 
     def test_rejects_platform_version_and_tag_incoherence(self) -> None:
-        self.package_dirs["linux"] = write_platform_package(
-            self.root / "other-version", "linux", version="1.2.4"
+        self.package_dirs[LINUX_TARGET] = write_platform_package(
+            self.root / "other-version", LINUX_TARGET, version="1.2.4"
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "versions do not agree"):
             self.build()
 
-        self.package_dirs["linux"] = write_platform_package(
-            self.root / "tag-version", "linux"
+        self.package_dirs[LINUX_TARGET] = write_platform_package(
+            self.root / "tag-version", LINUX_TARGET
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "requested tag"):
             self.build(tag="v1.2.4")
@@ -640,17 +788,17 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         mismatched_commit = "f" * 40
         replacement_root = self.root / "other-commit"
         replacement_root.mkdir()
-        self.package_dirs["linux"] = write_platform_package(
-            replacement_root, "linux", commit=mismatched_commit
+        self.package_dirs[LINUX_TARGET] = write_platform_package(
+            replacement_root, LINUX_TARGET, commit=mismatched_commit
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "commits do not agree"):
             self.build()
 
         repository_root = self.root / "other-repository"
         repository_root.mkdir()
-        self.package_dirs["linux"] = write_platform_package(
+        self.package_dirs[LINUX_TARGET] = write_platform_package(
             repository_root,
-            "linux",
+            LINUX_TARGET,
             repository="https://github.com/example/not-chaft.git",
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "does not match requested"):
@@ -703,37 +851,37 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
 
     def test_native_signing_states_require_coherent_verification_receipts(self) -> None:
         receipts = dict(self.receipts)
-        receipts["windows"] = None
+        receipts[WINDOWS_TARGET] = None
         with self.assertRaisesRegex(exporter.ManifestExportError, "requires.*receipt"):
             self.build(verification_receipts=receipts)
 
         trusted_receipts = dict(self.trusted_receipts)
-        trusted_receipts["windows"] = None
+        trusted_receipts[WINDOWS_TARGET] = None
         with self.assertRaisesRegex(
             exporter.ManifestExportError, "requires a trusted native.*receipt"
         ):
             self.build(trusted_verification_receipts=trusted_receipts)
 
-        receipts["windows"] = write_verification_receipt(
+        receipts[WINDOWS_TARGET] = write_verification_receipt(
             self.root,
-            "windows",
-            self.package_dirs["windows"],
+            WINDOWS_TARGET,
+            self.package_dirs[WINDOWS_TARGET],
             stale_hash=True,
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "exact verified package set"):
             self.build(verification_receipts=receipts)
 
-        receipts["windows"] = write_verification_receipt(
+        receipts[WINDOWS_TARGET] = write_verification_receipt(
             self.root,
-            "windows",
-            self.package_dirs["windows"],
+            WINDOWS_TARGET,
+            self.package_dirs[WINDOWS_TARGET],
             architecture="arm64",
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "architecture does not match"):
             self.build(verification_receipts=receipts)
 
     def test_rejects_public_receipt_with_forged_native_verification_details(self) -> None:
-        public_path = self.receipts["windows"]
+        public_path = self.receipts[WINDOWS_TARGET]
         assert public_path is not None
         public = json.loads(public_path.read_text(encoding="utf-8"))
         # Preserve the package, tag, architecture, and pinned publisher identity while
@@ -752,8 +900,8 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
     def test_manifest_links_public_receipt_and_allows_operational_rerun_differences(
         self,
     ) -> None:
-        trusted_path = self.trusted_receipts["windows"]
-        public_path = self.receipts["windows"]
+        trusted_path = self.trusted_receipts[WINDOWS_TARGET]
+        public_path = self.receipts[WINDOWS_TARGET]
         assert trusted_path is not None and public_path is not None
         trusted = json.loads(trusted_path.read_text(encoding="utf-8"))
         trusted["verifiedAt"] = "2026-07-18T12:45:00Z"
@@ -778,8 +926,8 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
     def test_detached_sidecar_alone_does_not_claim_linux_signed(self) -> None:
         signed_root = self.root / "signed-linux"
         signed_root.mkdir()
-        self.package_dirs["linux"] = write_platform_package(
-            signed_root, "linux", with_signature=True
+        self.package_dirs[LINUX_TARGET] = write_platform_package(
+            signed_root, LINUX_TARGET, with_signature=True
         )
         with self.assertRaisesRegex(
             exporter.ManifestExportError,
@@ -788,19 +936,19 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
             self.build()
 
         signing_states = dict(self.signing_states)
-        signing_states["linux"] = "signed"
+        signing_states[LINUX_TARGET] = "signed"
         with self.assertRaisesRegex(exporter.ManifestExportError, "requires.*receipt"):
             self.build(signing_states=signing_states)
 
         receipts = dict(self.receipts)
-        receipts["linux"] = write_verification_receipt(
-            self.root, "linux", self.package_dirs["linux"]
+        receipts[LINUX_TARGET] = write_verification_receipt(
+            self.root, LINUX_TARGET, self.package_dirs[LINUX_TARGET]
         )
         trusted_receipts = dict(self.trusted_receipts)
-        trusted_receipts["linux"] = write_verification_receipt(
+        trusted_receipts[LINUX_TARGET] = write_verification_receipt(
             self.root / "trusted-signed-linux",
-            "linux",
-            self.package_dirs["linux"],
+            LINUX_TARGET,
+            self.package_dirs[LINUX_TARGET],
         )
         manifest = self.build(
             signing_states=signing_states,
@@ -816,10 +964,12 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         self.assertEqual(linux["evidence"]["signature"]["format"], "sig")
         self.assertIsNotNone(linux["evidence"]["verification"])
 
-        signature_path = self.package_dirs["linux"] / f"{PACKAGE_NAMES['linux']}.sig"
+        signature_path = (
+            self.package_dirs[LINUX_TARGET] / f"{PACKAGE_NAMES[LINUX_TARGET]}.sig"
+        )
         signature_path.write_bytes(b"substituted signature bytes\n")
-        names = exporter.METADATA_FILENAMES["linux"]
-        provenance_path = self.package_dirs["linux"] / names["provenance"]
+        names = exporter.METADATA_FILENAMES[LINUX_TARGET]
+        provenance_path = self.package_dirs[LINUX_TARGET] / names["provenance"]
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         signature_row = next(
             row
@@ -829,7 +979,7 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
         signature_row["sizeBytes"] = signature_path.stat().st_size
         signature_row["sha256"] = sha256(signature_path)
         write_json(provenance_path, provenance)
-        checksum_path = self.package_dirs["linux"] / names["checksums"]
+        checksum_path = self.package_dirs[LINUX_TARGET] / names["checksums"]
         checksum_path.write_text(
             "".join(
                 f"{row['sha256']}  {row['name']}\n"
@@ -857,10 +1007,10 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
     def test_rejects_format_metadata_that_disagrees_with_filename(self) -> None:
         replacement_root = self.root / "wrong-format"
         replacement_root.mkdir()
-        self.package_dirs["windows"] = write_platform_package(
+        self.package_dirs[WINDOWS_TARGET] = write_platform_package(
             replacement_root,
-            "windows",
-            provenance_package_format="windows-zip",
+            WINDOWS_TARGET,
+            provenance_package_format="windows-msi",
         )
         with self.assertRaisesRegex(exporter.ManifestExportError, "packageFormat is incoherent"):
             self.build()
@@ -871,19 +1021,25 @@ class WebsiteReleaseManifestExportTests(unittest.TestCase):
 
     def test_linux_checksummed_architecture_is_bound_to_appimage_payload(self) -> None:
         architectures = dict(self.architectures)
-        architectures["linux"] = "arm64"
-        with self.assertRaisesRegex(exporter.ManifestExportError, "payload architecture"):
+        architectures[LINUX_TARGET] = "arm64"
+        with self.assertRaisesRegex(
+            exporter.ManifestExportError,
+            "architecture must be x86_64",
+        ):
             self.build(architectures=architectures)
 
     def test_linux_checksummed_architecture_must_also_match_provenance(self) -> None:
         provenance_path = (
-            self.package_dirs["linux"]
-            / exporter.METADATA_FILENAMES["linux"]["provenance"]
+            self.package_dirs[LINUX_TARGET]
+            / exporter.METADATA_FILENAMES[LINUX_TARGET]["provenance"]
         )
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         provenance["platform"]["machine"] = "arm64"
         write_json(provenance_path, provenance)
-        with self.assertRaisesRegex(exporter.ManifestExportError, "platform.machine"):
+        with self.assertRaisesRegex(
+            exporter.ManifestExportError,
+            "provenance host architecture",
+        ):
             self.build()
 
     def test_linux_appimage_architecture_is_read_from_elf_header(self) -> None:

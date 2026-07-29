@@ -37,13 +37,14 @@ jobs:
       pull-requests: read
     outputs:
       channel: ${{ steps.release.outputs.channel }}
-      linux_arch: ${{ steps.stage.outputs.linux_arch }}
-      linux_signed: ${{ steps.stage.outputs.linux_signed }}
-      macos_arch: ${{ steps.stage.outputs.macos_arch }}
+      linux_x86_64_arch: ${{ steps.stage.outputs.linux_x86_64_arch }}
+      linux_x86_64_signed: ${{ steps.stage.outputs.linux_x86_64_signed }}
+      macos_arm64_arch: ${{ steps.stage.outputs.macos_arm64_arch }}
+      macos_x86_64_arch: ${{ steps.stage.outputs.macos_x86_64_arch }}
       policy_commit: ${{ steps.release.outputs.policy_commit }}
       published_at: ${{ steps.release.outputs.published_at }}
       tag_commit: ${{ steps.release.outputs.tag_commit }}
-      windows_arch: ${{ steps.stage.outputs.windows_arch }}
+      windows_x86_64_arch: ${{ steps.stage.outputs.windows_x86_64_arch }}
     steps:
       - name: Checkout the current default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,10 +187,15 @@ jobs:
 
           release_source="${RUNNER_TEMP}/release-source"
           source_assets="${RUNNER_TEMP}/qt-corresponding-source"
-          for platform in linux macos windows; do
+          for target in \
+            windows-x86_64 \
+            macos-x86_64 \
+            macos-arm64 \
+            linux-x86_64
+          do
             python3 tools/desktop/verify-release-metadata.py release \
-              --package-dir "${staged}/${platform}-package" \
-              --platform "${platform}" \
+              --package-dir "${staged}/${target}-package" \
+              --target "${target}" \
               --source-root "${release_source}" \
               --expected-commit "${VERIFIED_RELEASE_COMMIT}" \
               --require-clean \
@@ -199,78 +205,93 @@ jobs:
                 "${source_assets}/Chaft-Qt-6.8.4-corresponding-source.zip.sha256"
           done
 
-          normalize_architecture() {
-            case "${1,,}" in
-              amd64|x64|x86-64|x86_64) printf 'x86_64\n' ;;
-              aarch64|arm64) printf 'arm64\n' ;;
-              universal|universal2) printf 'universal\n' ;;
-              *) return 1 ;;
-            esac
+          exact_architecture() {
+            local target="$1"
+            local expected="$2"
+            local evidence="$3"
+            local query="$4"
+            local actual
+            actual="$(jq -er "${query} | strings" "${evidence}")" || {
+              echo "::error::${target} architecture evidence is missing."
+              exit 1
+            }
+            if [[ "${actual}" != "${expected}" ]]; then
+              echo "::error::${target} architecture must be exactly ${expected}, found ${actual}."
+              exit 1
+            fi
+            printf '%s\n' "${actual}"
           }
 
-          windows_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
-            "${receipts}/chaft-desktop-windows-verification.json")")" || {
-            echo "::error::Windows receipt architecture is unsupported."
-            exit 1
-          }
-          if [[ "${windows_arch}" == "universal" ]]; then
-            echo "::error::Windows receipt cannot declare a universal architecture."
-            exit 1
-          fi
-          macos_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
-            "${receipts}/chaft-desktop-macos-verification.json")")" || {
-            echo "::error::macOS receipt architecture is unsupported."
-            exit 1
-          }
-          linux_receipt="${receipts}/chaft-desktop-linux-verification.json"
+          windows_x86_64_arch="$(exact_architecture \
+            windows-x86_64 \
+            x86_64 \
+            "${receipts}/chaft-desktop-windows-x86_64-verification.json" \
+            '.architecture')"
+          macos_x86_64_arch="$(exact_architecture \
+            macos-x86_64 \
+            x86_64 \
+            "${receipts}/chaft-desktop-macos-x86_64-verification.json" \
+            '.architecture')"
+          macos_arm64_arch="$(exact_architecture \
+            macos-arm64 \
+            arm64 \
+            "${receipts}/chaft-desktop-macos-arm64-verification.json" \
+            '.architecture')"
+          linux_receipt="${receipts}/chaft-desktop-linux-x86_64-verification.json"
           if [[ -f "${linux_receipt}" ]]; then
-            linux_arch="$(normalize_architecture "$(jq -er '.architecture | strings' \
-              "${linux_receipt}")")" || {
-              echo "::error::Linux receipt architecture is unsupported."
-              exit 1
-            }
-            linux_signed="true"
+            linux_x86_64_arch="$(exact_architecture \
+              linux-x86_64 \
+              x86_64 \
+              "${linux_receipt}" \
+              '.architecture')"
+            linux_x86_64_signed="true"
           else
-            linux_arch="$(normalize_architecture "$(jq -er '.platform.machine | strings' \
-              "${staged}/linux-package/chaft-desktop-linux-provenance.json")")" || {
-              echo "::error::Linux provenance architecture is unsupported."
-              exit 1
-            }
-            linux_signed="false"
-          fi
-          if [[ "${linux_arch}" == "universal" ]]; then
-            echo "::error::Linux packages cannot declare a universal architecture."
-            exit 1
+            linux_x86_64_arch="$(exact_architecture \
+              linux-x86_64 \
+              x86_64 \
+              "${staged}/linux-x86_64-package/chaft-desktop-linux-x86_64-provenance.json" \
+              '.packageArchitecture')"
+            linux_x86_64_signed="false"
           fi
 
-          echo "windows_arch=${windows_arch}" >> "${GITHUB_OUTPUT}"
-          echo "macos_arch=${macos_arch}" >> "${GITHUB_OUTPUT}"
-          echo "linux_arch=${linux_arch}" >> "${GITHUB_OUTPUT}"
-          echo "linux_signed=${linux_signed}" >> "${GITHUB_OUTPUT}"
+          echo "windows_x86_64_arch=${windows_x86_64_arch}" >> "${GITHUB_OUTPUT}"
+          echo "macos_x86_64_arch=${macos_x86_64_arch}" >> "${GITHUB_OUTPUT}"
+          echo "macos_arm64_arch=${macos_arm64_arch}" >> "${GITHUB_OUTPUT}"
+          echo "linux_x86_64_arch=${linux_x86_64_arch}" >> "${GITHUB_OUTPUT}"
+          echo "linux_x86_64_signed=${linux_x86_64_signed}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload staged Windows inputs
+      - name: Upload staged Windows x86-64 inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-windows-input
-          path: ${{ runner.temp }}/release-staged/windows-package
+          name: release-windows-x86_64-input
+          path: ${{ runner.temp }}/release-staged/windows-x86_64-package
           if-no-files-found: error
           compression-level: 0
           archive: true
 
-      - name: Upload staged macOS inputs
+      - name: Upload staged macOS Intel inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-macos-input
-          path: ${{ runner.temp }}/release-staged/macos-package
+          name: release-macos-x86_64-input
+          path: ${{ runner.temp }}/release-staged/macos-x86_64-package
           if-no-files-found: error
           compression-level: 0
           archive: true
 
-      - name: Upload staged Linux inputs
+      - name: Upload staged macOS Apple Silicon inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-linux-input
-          path: ${{ runner.temp }}/release-staged/linux-package
+          name: release-macos-arm64-input
+          path: ${{ runner.temp }}/release-staged/macos-arm64-package
+          if-no-files-found: error
+          compression-level: 0
+          archive: true
+
+      - name: Upload staged Linux x86-64 inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux-x86_64-input
+          path: ${{ runner.temp }}/release-staged/linux-x86_64-package
           if-no-files-found: error
           compression-level: 0
           archive: true
@@ -296,18 +317,17 @@ jobs:
           ref: ${{ needs.prepare.outputs.policy_commit }}
           persist-credentials: false
 
-      - name: Download the staged Windows package
+      - name: Download the staged Windows x86-64 package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-windows-input
-          path: ${{ runner.temp }}/windows-package
+          name: release-windows-x86_64-input
+          path: ${{ runner.temp }}/windows-x86_64-package
           digest-mismatch: error
 
       - name: Run native Authenticode verification
         shell: bash
         env:
           TRUSTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.CHAFT_WINDOWS_SIGNER_THUMBPRINT }}
-          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.windows_arch }}
           VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
         run: |
           set -euo pipefail
@@ -317,25 +337,77 @@ jobs:
           fi
           mkdir "${RUNNER_TEMP}/trusted-receipts"
           python3 tools/desktop/generate-platform-verification-receipt.py \
-            --platform windows \
-            --package-dir "${RUNNER_TEMP}/windows-package" \
-            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-windows-verification.json" \
+            --target windows-x86_64 \
+            --package-dir "${RUNNER_TEMP}/windows-x86_64-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-windows-x86_64-verification.json" \
             --version "${RELEASE_TAG#v}" \
             --tag "${RELEASE_TAG}" \
             --commit "${VERIFIED_COMMIT}" \
-            --architecture "${VERIFIED_ARCHITECTURE}" \
             --trusted-windows-signer-thumbprint "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}"
 
       - name: Upload trusted Windows verification result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trusted-windows-receipt
-          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-windows-verification.json
+          name: trusted-windows-x86_64-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-windows-x86_64-verification.json
           if-no-files-found: error
           archive: true
 
-  verify_macos:
-    name: Reverify notarization and signing on macOS
+  verify_macos_x86_64:
+    name: Reverify notarization and signing on macOS Intel
+    needs: prepare
+    runs-on: macos-15-intel
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted verification code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.policy_commit }}
+          persist-credentials: false
+
+      - name: Download the staged macOS Intel package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-macos-x86_64-input
+          path: ${{ runner.temp }}/macos-x86_64-package
+          digest-mismatch: error
+
+      - name: Run native Intel Apple verification
+        shell: bash
+        env:
+          TRUSTED_APPLE_TEAM_ID: ${{ secrets.CHAFT_APPLE_TEAM_ID }}
+          VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TRUSTED_APPLE_TEAM_ID}" ]]; then
+            echo "::error::Configure the CHAFT_APPLE_TEAM_ID Actions secret."
+            exit 1
+          fi
+          if [[ "$(uname -m)" != "x86_64" ]]; then
+            echo "::error::macOS Intel verification requires a native x86_64 runner."
+            exit 1
+          fi
+          mkdir "${RUNNER_TEMP}/trusted-receipts"
+          python3 tools/desktop/generate-platform-verification-receipt.py \
+            --target macos-x86_64 \
+            --package-dir "${RUNNER_TEMP}/macos-x86_64-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-macos-x86_64-verification.json" \
+            --version "${RELEASE_TAG#v}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${VERIFIED_COMMIT}" \
+            --trusted-apple-team-id "${TRUSTED_APPLE_TEAM_ID}"
+
+      - name: Upload trusted macOS Intel verification result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trusted-macos-x86_64-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-macos-x86_64-verification.json
+          if-no-files-found: error
+          archive: true
+
+  verify_macos_arm64:
+    name: Reverify notarization and signing on macOS Apple Silicon
     needs: prepare
     runs-on: macos-15
     permissions:
@@ -347,18 +419,17 @@ jobs:
           ref: ${{ needs.prepare.outputs.policy_commit }}
           persist-credentials: false
 
-      - name: Download the staged macOS package
+      - name: Download the staged macOS Apple Silicon package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-macos-input
-          path: ${{ runner.temp }}/macos-package
+          name: release-macos-arm64-input
+          path: ${{ runner.temp }}/macos-arm64-package
           digest-mismatch: error
 
-      - name: Run native Apple verification
+      - name: Run native Apple Silicon verification
         shell: bash
         env:
           TRUSTED_APPLE_TEAM_ID: ${{ secrets.CHAFT_APPLE_TEAM_ID }}
-          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.macos_arch }}
           VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
         run: |
           set -euo pipefail
@@ -366,54 +437,56 @@ jobs:
             echo "::error::Configure the CHAFT_APPLE_TEAM_ID Actions secret."
             exit 1
           fi
+          if [[ "$(uname -m)" != "arm64" ]]; then
+            echo "::error::macOS Apple Silicon verification requires a native arm64 runner."
+            exit 1
+          fi
           mkdir "${RUNNER_TEMP}/trusted-receipts"
           python3 tools/desktop/generate-platform-verification-receipt.py \
-            --platform macos \
-            --package-dir "${RUNNER_TEMP}/macos-package" \
-            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-macos-verification.json" \
+            --target macos-arm64 \
+            --package-dir "${RUNNER_TEMP}/macos-arm64-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-macos-arm64-verification.json" \
             --version "${RELEASE_TAG#v}" \
             --tag "${RELEASE_TAG}" \
             --commit "${VERIFIED_COMMIT}" \
-            --architecture "${VERIFIED_ARCHITECTURE}" \
             --trusted-apple-team-id "${TRUSTED_APPLE_TEAM_ID}"
 
-      - name: Upload trusted macOS verification result
+      - name: Upload trusted macOS Apple Silicon verification result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trusted-macos-receipt
-          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-macos-verification.json
+          name: trusted-macos-arm64-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-macos-arm64-verification.json
           if-no-files-found: error
           archive: true
 
   verify_linux:
-    name: Reverify signed Linux packages
+    name: Reverify signed Linux x86-64 packages
     needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout trusted verification code
-        if: needs.prepare.outputs.linux_signed == 'true'
+        if: needs.prepare.outputs.linux_x86_64_signed == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.policy_commit }}
           persist-credentials: false
 
-      - name: Download the staged Linux package
-        if: needs.prepare.outputs.linux_signed == 'true'
+      - name: Download the staged Linux x86-64 package
+        if: needs.prepare.outputs.linux_x86_64_signed == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-linux-input
-          path: ${{ runner.temp }}/linux-package
+          name: release-linux-x86_64-input
+          path: ${{ runner.temp }}/linux-x86_64-package
           digest-mismatch: error
 
       - name: Run native OpenPGP and ELF verification
-        if: needs.prepare.outputs.linux_signed == 'true'
+        if: needs.prepare.outputs.linux_x86_64_signed == 'true'
         shell: bash
         env:
           TRUSTED_KEYRING_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_KEYRING_BASE64 }}
           TRUSTED_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
-          VERIFIED_ARCHITECTURE: ${{ needs.prepare.outputs.linux_arch }}
           VERIFIED_COMMIT: ${{ needs.prepare.outputs.tag_commit }}
         run: |
           set -euo pipefail
@@ -426,35 +499,35 @@ jobs:
           printf '%s' "${TRUSTED_KEYRING_BASE64}" | base64 --decode > "${keyring}"
           test -s "${keyring}"
           python3 tools/desktop/generate-platform-verification-receipt.py \
-            --platform linux \
-            --package-dir "${RUNNER_TEMP}/linux-package" \
-            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-linux-verification.json" \
+            --target linux-x86_64 \
+            --package-dir "${RUNNER_TEMP}/linux-x86_64-package" \
+            --output "${RUNNER_TEMP}/trusted-receipts/chaft-desktop-linux-x86_64-verification.json" \
             --version "${RELEASE_TAG#v}" \
             --tag "${RELEASE_TAG}" \
             --commit "${VERIFIED_COMMIT}" \
-            --architecture "${VERIFIED_ARCHITECTURE}" \
             --trusted-keyring "${keyring}" \
             --trusted-fingerprint "${TRUSTED_LINUX_SIGNING_FINGERPRINT}"
 
-      - name: Upload trusted Linux verification result
-        if: needs.prepare.outputs.linux_signed == 'true'
+      - name: Upload trusted Linux x86-64 verification result
+        if: needs.prepare.outputs.linux_x86_64_signed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trusted-linux-receipt
-          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-linux-verification.json
+          name: trusted-linux-x86_64-receipt
+          path: ${{ runner.temp }}/trusted-receipts/chaft-desktop-linux-x86_64-verification.json
           if-no-files-found: error
           archive: true
 
-      - name: Record checksummed-only Linux policy
-        if: needs.prepare.outputs.linux_signed != 'true'
-        run: echo "Linux has no signing receipt; the exporter will verify package architecture directly."
+      - name: Record checksummed-only Linux x86-64 policy
+        if: needs.prepare.outputs.linux_x86_64_signed != 'true'
+        run: echo "Linux x86-64 has no signing receipt; the exporter will verify package architecture directly."
 
   export:
     name: Export and validate the static website
     needs:
       - prepare
       - verify_windows
-      - verify_macos
+      - verify_macos_x86_64
+      - verify_macos_arm64
       - verify_linux
     runs-on: ubuntu-latest
     permissions:
@@ -486,22 +559,29 @@ jobs:
       - name: Download trusted Windows receipt
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: trusted-windows-receipt
+          name: trusted-windows-x86_64-receipt
           path: ${{ runner.temp }}/trusted-receipts
           digest-mismatch: error
 
-      - name: Download trusted macOS receipt
+      - name: Download trusted macOS Intel receipt
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: trusted-macos-receipt
+          name: trusted-macos-x86_64-receipt
           path: ${{ runner.temp }}/trusted-receipts
           digest-mismatch: error
 
-      - name: Download trusted Linux receipt
-        if: needs.prepare.outputs.linux_signed == 'true'
+      - name: Download trusted macOS Apple Silicon receipt
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: trusted-linux-receipt
+          name: trusted-macos-arm64-receipt
+          path: ${{ runner.temp }}/trusted-receipts
+          digest-mismatch: error
+
+      - name: Download trusted Linux x86-64 receipt
+        if: needs.prepare.outputs.linux_x86_64_signed == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: trusted-linux-x86_64-receipt
           path: ${{ runner.temp }}/trusted-receipts
           digest-mismatch: error
 
@@ -514,9 +594,10 @@ jobs:
           TRUSTED_APPLE_TEAM_ID: ${{ secrets.CHAFT_APPLE_TEAM_ID }}
           TRUSTED_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
           TRUSTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.CHAFT_WINDOWS_SIGNER_THUMBPRINT }}
-          VERIFIED_LINUX_ARCHITECTURE: ${{ needs.prepare.outputs.linux_arch }}
-          VERIFIED_MACOS_ARCHITECTURE: ${{ needs.prepare.outputs.macos_arch }}
-          VERIFIED_WINDOWS_ARCHITECTURE: ${{ needs.prepare.outputs.windows_arch }}
+          VERIFIED_LINUX_X86_64_ARCHITECTURE: ${{ needs.prepare.outputs.linux_x86_64_arch }}
+          VERIFIED_MACOS_ARM64_ARCHITECTURE: ${{ needs.prepare.outputs.macos_arm64_arch }}
+          VERIFIED_MACOS_X86_64_ARCHITECTURE: ${{ needs.prepare.outputs.macos_x86_64_arch }}
+          VERIFIED_WINDOWS_X86_64_ARCHITECTURE: ${{ needs.prepare.outputs.windows_x86_64_arch }}
         run: |
           set -euo pipefail
           if [[ -z "${TRUSTED_WINDOWS_SIGNER_THUMBPRINT}" || -z "${TRUSTED_APPLE_TEAM_ID}" ]]; then
@@ -530,15 +611,15 @@ jobs:
           trusted_receipts="${RUNNER_TEMP}/trusted-receipts"
           linux_receipt_args=()
           linux_identity_args=()
-          if [[ "${{ needs.prepare.outputs.linux_signed }}" == "true" ]]; then
+          if [[ "${{ needs.prepare.outputs.linux_x86_64_signed }}" == "true" ]]; then
             if [[ -z "${TRUSTED_LINUX_SIGNING_FINGERPRINT}" ]]; then
               echo "::error::Configure the CHAFT_LINUX_SIGNING_FINGERPRINT Actions secret."
               exit 1
             fi
             linux_signing_state="signed"
             linux_receipt_args=(
-              --linux-verification-receipt "${public_receipts}/chaft-desktop-linux-verification.json"
-              --linux-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-linux-verification.json"
+              --linux-x86_64-verification-receipt "${public_receipts}/chaft-desktop-linux-x86_64-verification.json"
+              --linux-x86_64-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-linux-x86_64-verification.json"
             )
             linux_identity_args=(
               --trusted-linux-signing-fingerprint "${TRUSTED_LINUX_SIGNING_FINGERPRINT}"
@@ -557,19 +638,24 @@ jobs:
             --trusted-apple-team-id "${TRUSTED_APPLE_TEAM_ID}" \
             --output apps/website/src/data/release-manifest.json \
             --history-dir apps/website/src/data/release-history \
-            --windows-package-dir "${staged}/release-windows-input" \
-            --windows-arch "${VERIFIED_WINDOWS_ARCHITECTURE}" \
-            --windows-signing-state signed \
-            --windows-verification-receipt "${public_receipts}/chaft-desktop-windows-verification.json" \
-            --windows-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-windows-verification.json" \
-            --macos-package-dir "${staged}/release-macos-input" \
-            --macos-arch "${VERIFIED_MACOS_ARCHITECTURE}" \
-            --macos-signing-state notarized \
-            --macos-verification-receipt "${public_receipts}/chaft-desktop-macos-verification.json" \
-            --macos-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-macos-verification.json" \
-            --linux-package-dir "${staged}/release-linux-input" \
-            --linux-arch "${VERIFIED_LINUX_ARCHITECTURE}" \
-            --linux-signing-state "${linux_signing_state}" \
+            --windows-x86_64-package-dir "${staged}/release-windows-x86_64-input" \
+            --windows-x86_64-arch "${VERIFIED_WINDOWS_X86_64_ARCHITECTURE}" \
+            --windows-x86_64-signing-state signed \
+            --windows-x86_64-verification-receipt "${public_receipts}/chaft-desktop-windows-x86_64-verification.json" \
+            --windows-x86_64-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-windows-x86_64-verification.json" \
+            --macos-x86_64-package-dir "${staged}/release-macos-x86_64-input" \
+            --macos-x86_64-arch "${VERIFIED_MACOS_X86_64_ARCHITECTURE}" \
+            --macos-x86_64-signing-state notarized \
+            --macos-x86_64-verification-receipt "${public_receipts}/chaft-desktop-macos-x86_64-verification.json" \
+            --macos-x86_64-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-macos-x86_64-verification.json" \
+            --macos-arm64-package-dir "${staged}/release-macos-arm64-input" \
+            --macos-arm64-arch "${VERIFIED_MACOS_ARM64_ARCHITECTURE}" \
+            --macos-arm64-signing-state notarized \
+            --macos-arm64-verification-receipt "${public_receipts}/chaft-desktop-macos-arm64-verification.json" \
+            --macos-arm64-trusted-verification-receipt "${trusted_receipts}/chaft-desktop-macos-arm64-verification.json" \
+            --linux-x86_64-package-dir "${staged}/release-linux-x86_64-input" \
+            --linux-x86_64-arch "${VERIFIED_LINUX_X86_64_ARCHITECTURE}" \
+            --linux-x86_64-signing-state "${linux_signing_state}" \
             "${linux_identity_args[@]}" \
             "${linux_receipt_args[@]}"
 

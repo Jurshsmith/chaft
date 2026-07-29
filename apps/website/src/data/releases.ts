@@ -43,6 +43,53 @@ const artifactFormatExtensions: Record<
   },
 };
 
+const desktopTargets = {
+  "windows-x86_64": {
+    id: "windows-x86_64-zip",
+    os: "windows",
+    arch: "x86_64",
+    format: "zip",
+  },
+  "macos-x86_64": {
+    id: "macos-x86_64-dmg",
+    os: "macos",
+    arch: "x86_64",
+    format: "dmg",
+  },
+  "macos-arm64": {
+    id: "macos-arm64-dmg",
+    os: "macos",
+    arch: "arm64",
+    format: "dmg",
+  },
+  "linux-x86_64": {
+    id: "linux-x86_64-appimage",
+    os: "linux",
+    arch: "x86_64",
+    format: "appimage",
+  },
+} as const;
+type DesktopTargetName = keyof typeof desktopTargets;
+type DesktopTargetSet = "legacy" | "current";
+const legacyDesktopTargetNames = [
+  "windows-x86_64",
+  "macos-x86_64",
+  "linux-x86_64",
+] satisfies readonly DesktopTargetName[];
+const currentDesktopTargetNames = Object.keys(
+  desktopTargets,
+) as DesktopTargetName[];
+const immutableLegacyReleases = {
+  "0.1.0-canary.1": {
+    tag: "v0.1.0-canary.1",
+    commit: "d021e7d0ea7b143a32ab49529790abc886f0f06c",
+  },
+  "0.1.0-canary.2": {
+    tag: "v0.1.0-canary.2",
+    commit: "f21f308d3be377da78ca2123a66996aa563ba825",
+  },
+} as const;
+
 export interface ReleaseAsset {
   id: string;
   os: OperatingSystem;
@@ -410,6 +457,7 @@ function parseAssetEvidence(
   value: unknown,
   context: string,
   os: OperatingSystem,
+  targetName: string,
   artifactFilename: string | null,
   available: boolean,
   signingStatus: SigningStatus,
@@ -485,18 +533,24 @@ function parseAssetEvidence(
     throw new Error(`${context}.signature is required for signed Linux artifacts`);
   }
 
-  const expectedMetadataNames = {
-    checksums: `chaft-desktop-${os}-SHA256SUMS`,
-    sbom: `chaft-desktop-${os}-sbom.cdx.json`,
-    provenance: `chaft-desktop-${os}-provenance.json`,
-    verification: `chaft-desktop-${os}-verification.json`,
+  const metadataSuffixes = {
+    checksums: "SHA256SUMS",
+    sbom: "sbom.cdx.json",
+    provenance: "provenance.json",
+    verification: "verification.json",
   } as const;
-  for (const [kind, expectedFilename] of Object.entries(expectedMetadataNames)) {
+  for (const [kind, suffix] of Object.entries(metadataSuffixes)) {
     const file = { checksums, sbom, provenance, verification }[
-      kind as keyof typeof expectedMetadataNames
+      kind as keyof typeof metadataSuffixes
     ];
-    if (file !== null && file.filename !== expectedFilename) {
-      throw new Error(`${context}.${kind}.filename must equal ${expectedFilename}`);
+    const acceptedFilenames = [
+      `chaft-desktop-${os}-${suffix}`,
+      `chaft-desktop-${targetName}-${suffix}`,
+    ];
+    if (file !== null && !acceptedFilenames.includes(file.filename)) {
+      throw new Error(
+        `${context}.${kind}.filename must identify the asset's desktop target`,
+      );
     }
   }
   if (
@@ -577,6 +631,10 @@ function parseAsset(
   if (!available && signingStatus !== "pending") {
     throw new Error(`${context}.signingStatus must be pending while unavailable`);
   }
+  const id = requireString(value, "id", context);
+  const platformLabel = requireString(value, "platformLabel", context);
+  const arch = requireString(value, "arch", context);
+  const targetName = `${os}-${arch}`;
   if (available) {
     if (status !== "published") {
       throw new Error(
@@ -612,6 +670,7 @@ function parseAsset(
     value.evidence,
     `${context}.evidence`,
     os,
+    targetName,
     filename,
     available,
     signingStatus,
@@ -619,10 +678,10 @@ function parseAsset(
   );
 
   return {
-    id: requireString(value, "id", context),
+    id,
     os,
-    platformLabel: requireString(value, "platformLabel", context),
-    arch: requireString(value, "arch", context),
+    platformLabel,
+    arch,
     format,
     filename,
     url,
@@ -632,6 +691,96 @@ function parseAsset(
     signingStatus,
     evidence,
   };
+}
+
+function validateDesktopTargetSet(
+  assets: readonly ReleaseAsset[],
+  identity: {
+    status: ReleaseStatus;
+    version: string;
+    tag: string | null;
+    commit: string | null;
+  },
+): DesktopTargetSet {
+  const targetNames = new Set<DesktopTargetName>();
+  const assetIds = new Set<string>();
+  for (const [index, asset] of assets.entries()) {
+    const context = `release.assets[${index}]`;
+    const targetName = `${asset.os}-${asset.arch}` as DesktopTargetName;
+    const expected = desktopTargets[targetName];
+    if (
+      expected === undefined ||
+      asset.id !== expected.id ||
+      asset.os !== expected.os ||
+      asset.arch !== expected.arch ||
+      asset.format !== expected.format
+    ) {
+      throw new Error(
+        `${context} must match one canonical desktop target id, OS, architecture, and format`,
+      );
+    }
+    if (targetNames.has(targetName)) {
+      throw new Error(`release desktop target ${targetName} is duplicated`);
+    }
+    if (assetIds.has(asset.id)) {
+      throw new Error(`release asset id ${asset.id} is duplicated`);
+    }
+    targetNames.add(targetName);
+    assetIds.add(asset.id);
+  }
+
+  const signature = [...targetNames].sort().join("|");
+  const legacySignature = [...legacyDesktopTargetNames].sort().join("|");
+  const currentSignature = [...currentDesktopTargetNames].sort().join("|");
+  let targetSet: DesktopTargetSet;
+  if (signature === legacySignature) {
+    targetSet = "legacy";
+  } else if (signature === currentSignature) {
+    targetSet = "current";
+  } else {
+    throw new Error(
+      "release.assets must contain exactly the legacy three-target set or the current four-target set",
+    );
+  }
+  if (targetSet === "legacy") {
+    const immutableIdentity =
+      immutableLegacyReleases[
+        identity.version as keyof typeof immutableLegacyReleases
+      ];
+    if (
+      identity.status !== "published" ||
+      immutableIdentity === undefined ||
+      identity.tag !== immutableIdentity.tag ||
+      identity.commit !== immutableIdentity.commit
+    ) {
+      throw new Error(
+        "the legacy three-target set is accepted only for an exact immutable published legacy release",
+      );
+    }
+  }
+
+  const metadataSuffixes = {
+    checksums: "SHA256SUMS",
+    sbom: "sbom.cdx.json",
+    provenance: "provenance.json",
+    verification: "verification.json",
+  } as const;
+  for (const [index, asset] of assets.entries()) {
+    const metadataScope =
+      targetSet === "legacy" ? asset.os : `${asset.os}-${asset.arch}`;
+    for (const [kind, suffix] of Object.entries(metadataSuffixes)) {
+      const file = asset.evidence[kind as keyof typeof metadataSuffixes];
+      if (
+        file !== null &&
+        file.filename !== `chaft-desktop-${metadataScope}-${suffix}`
+      ) {
+        throw new Error(
+          `release.assets[${index}].evidence.${kind}.filename must bind to ${metadataScope}`,
+        );
+      }
+    }
+  }
+  return targetSet;
 }
 
 export function validateReleaseManifest(value: unknown): ReleaseManifest {
@@ -691,6 +840,12 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
   const assets = value.assets.map((asset, index) =>
     parseAsset(asset, index, channel, status),
   );
+  validateDesktopTargetSet(assets, {
+    status,
+    version,
+    tag,
+    commit,
+  });
   for (const os of operatingSystems) {
     if (!assets.some((asset) => asset.os === os)) {
       throw new Error(`release.assets must include a ${os} option`);
@@ -714,9 +869,11 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
   }
   if (
     status === "published" &&
-    operatingSystems.some((os) => !assets.some((asset) => asset.os === os && asset.available))
+    assets.some((asset) => !asset.available)
   ) {
-    throw new Error("a published release must include an available asset for every platform");
+    throw new Error(
+      "a published release must include an available asset for every platform and canonical desktop target",
+    );
   }
 
   const releaseEvidence = parseReleaseEvidence(

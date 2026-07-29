@@ -19,9 +19,10 @@ The normalized identity policy is persisted in the receipt for auditability.
 
 The receipt architecture is evidence-derived rather than copied from the CLI:
 Windows uses every signed PE COFF header (or the signed MSI Template Summary),
-macOS uses ``lipo -archs`` on each verified app's CFBundleExecutable, and Linux
-uses the ELF machine field in the signed AppImage or every ELF in the signed tar.
-The command rejects unsupported, mixed, or caller-mismatched architectures.
+macOS uses ``lipo -archs`` on every regular Mach-O payload in each verified app,
+and Linux uses the ELF machine field in the signed AppImage or every ELF in the
+signed tar. The command rejects unsupported, mixed, universal, or
+caller-mismatched architectures.
 Linux receipts also expose the exact detached-signature set at top level so a
 downstream publisher can reject signature omission or substitution directly.
 """
@@ -47,9 +48,10 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Protocol, Sequence
 
+import release_targets
 
-SCHEMA_VERSION = "chaft.desktop.platform-verification.v1"
-SCRIPT_VERSION = "1.3.0"
+SCHEMA_VERSION = "chaft.desktop.platform-verification.v2"
+SCRIPT_VERSION = "1.4.0"
 PLATFORMS = ("windows", "macos", "linux")
 VERIFICATION_TYPES = {
     "windows": "authenticode",
@@ -57,9 +59,16 @@ VERIFICATION_TYPES = {
     "linux": "detached-signature",
 }
 RECEIPT_FILENAMES = {
-    platform: f"chaft-desktop-{platform}-verification.json"
-    for platform in PLATFORMS
+    target.name: target.verification_receipt_name
+    for target in release_targets.TARGETS
 }
+RECEIPT_FILENAMES.update(
+    {
+        "windows": RECEIPT_FILENAMES["windows-x86_64"],
+        "macos": RECEIPT_FILENAMES["macos-x86_64"],
+        "linux": RECEIPT_FILENAMES["linux-x86_64"],
+    }
+)
 PACKAGE_SUFFIXES = {
     "windows": (".zip", ".msi", ".exe"),
     "macos": (".dmg",),
@@ -105,6 +114,19 @@ APPLE_TEAM_ID_PATTERN = re.compile(r"^[A-Z0-9]{10}$")
 MACOS_APPLICATION_BUNDLE_NAME = "Chaft.app"
 MACOS_APPLICATION_EXECUTABLE_NAME = "Chaft"
 MACOS_APPLICATION_ICON_NAME = "Chaft.icns"
+MACOS_APPLICATION_BUNDLE_IDENTIFIER = "app.chaft.desktop"
+MACH_O_MAGICS = frozenset(
+    {
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf",
+        b"\xbf\xba\xfe\xca",
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+    }
+)
 WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -175,6 +197,15 @@ class StagedPackage:
     staged: Path
     filename: str
     sha256: str
+
+
+@dataclass(frozen=True)
+class MacApplicationBundle:
+    executable: Path
+    icon: Path
+    bundle_identifier: str
+    short_version: str
+    bundle_version: str
 
 
 def fail(message: str) -> None:
@@ -744,7 +775,10 @@ def parse_hdiutil_mount(stdout: str, expected_mountpoint: Path, package_name: st
         fail(f"hdiutil did not mount {package_name} at the requested mount point")
 
 
-def application_executable(app: Path) -> Path:
+def inspect_application_bundle(
+    app: Path,
+    expected_version: str,
+) -> MacApplicationBundle:
     if app.name != MACOS_APPLICATION_BUNDLE_NAME:
         fail(
             "macOS application bundle must be named "
@@ -763,6 +797,9 @@ def application_executable(app: Path) -> Path:
         "CFBundleName": "Chaft",
         "CFBundleExecutable": MACOS_APPLICATION_EXECUTABLE_NAME,
         "CFBundleIconFile": MACOS_APPLICATION_ICON_NAME,
+        "CFBundleIdentifier": MACOS_APPLICATION_BUNDLE_IDENTIFIER,
+        "CFBundleShortVersionString": expected_version,
+        "CFBundleVersion": expected_version,
     }
     for key, expected_value in expected_info.items():
         value = info.get(key)
@@ -774,6 +811,18 @@ def application_executable(app: Path) -> Path:
     icon = app / "Contents" / "Resources" / MACOS_APPLICATION_ICON_NAME
     if icon.is_symlink() or not icon.is_file() or icon.stat().st_size == 0:
         fail(f"application bundle icon is missing or empty: {app.name}")
+    try:
+        with icon.open("rb") as handle:
+            icon_header = handle.read(8)
+    except OSError as error:
+        fail(f"application bundle icon cannot be read ({app.name}): {error}")
+    if len(icon_header) != 8 or icon_header[:4] != b"icns":
+        fail(f"application bundle icon is not an ICNS file: {app.name}")
+    declared_icon_size = struct.unpack(">I", icon_header[4:])[0]
+    if declared_icon_size != icon.stat().st_size:
+        fail(
+            f"application bundle icon length is incoherent: {app.name}"
+        )
     executable_name = info.get("CFBundleExecutable")
     if (
         not isinstance(executable_name, str)
@@ -786,14 +835,84 @@ def application_executable(app: Path) -> Path:
     executable = app / "Contents" / "MacOS" / executable_name
     if executable.is_symlink() or not executable.is_file():
         fail(f"application bundle main executable is missing or a symlink: {app.name}")
-    return executable
+    return MacApplicationBundle(
+        executable=executable,
+        icon=icon,
+        bundle_identifier=MACOS_APPLICATION_BUNDLE_IDENTIFIER,
+        short_version=expected_version,
+        bundle_version=expected_version,
+    )
+
+
+def discover_macho_payloads(app: Path, executable: Path) -> list[Path]:
+    candidates = {executable}
+    for root, directories, filenames in os.walk(
+        app,
+        topdown=True,
+        followlinks=False,
+    ):
+        root_path = Path(root)
+        directories[:] = [
+            name
+            for name in directories
+            if not (root_path / name).is_symlink()
+        ]
+        for name in filenames:
+            path = root_path / name
+            if path.is_symlink():
+                continue
+            try:
+                mode = path.stat().st_mode
+                if not stat.S_ISREG(mode):
+                    continue
+                with path.open("rb") as handle:
+                    magic = handle.read(4)
+            except OSError as error:
+                fail(f"cannot inspect bundled file {path}: {error}")
+            if magic in MACH_O_MAGICS:
+                candidates.add(path)
+    return sorted(candidates, key=lambda path: path.relative_to(app).as_posix())
+
+
+def inspect_macho_payloads(
+    app: Path,
+    executable: Path,
+    lipo: str,
+    runner: Runner,
+    expected_architecture: str,
+) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
+    for path in discover_macho_payloads(app, executable):
+        relative = path.relative_to(app).as_posix()
+        result = run_checked(
+            runner,
+            [lipo, "-archs", str(path)],
+            f"Mach-O architecture inspection for {relative}",
+        )
+        architectures = parse_lipo_architectures(result.stdout, path)
+        architecture = verified_architecture(
+            architectures,
+            expected_architecture,
+            relative,
+        )
+        details.append(
+            {
+                "path": relative,
+                "architecture": architecture,
+            }
+        )
+    if not details:
+        fail(f"application bundle contains no inspectable Mach-O payload: {app.name}")
+    executable_relative = executable.relative_to(app).as_posix()
+    if not any(row["path"] == executable_relative for row in details):
+        fail(f"application bundle main executable was not inspected: {app.name}")
+    return details
 
 
 def parse_lipo_architectures(stdout: str, executable: Path) -> list[str]:
     aliases = {
         "x86_64": "x86_64",
         "arm64": "arm64",
-        "arm64e": "arm64",
     }
     tokens = stdout.strip().split()
     if not tokens:
@@ -838,6 +957,7 @@ def verify_macos(
     runner: Runner,
     which: Callable[[str], str | None],
     working_dir: Path,
+    expected_version: str,
     expected_architecture: str,
     trusted_team_id: str,
 ) -> tuple[dict[str, str], list[dict[str, object]], dict[str, object]]:
@@ -893,7 +1013,7 @@ def verify_macos(
         mountpoint.mkdir(mode=0o700)
         attached = False
         primary_error: VerificationError | None = None
-        app_details: list[dict[str, str]] = []
+        app_details: list[dict[str, object]] = []
         try:
             attach = run_checked(
                 runner,
@@ -934,23 +1054,41 @@ def verify_macos(
                     [xcrun, "stapler", "validate", str(app)],
                     f"stapled notarization validation for {app.name}",
                 )
-                executable = application_executable(app)
-                lipo_result = run_checked(
+                bundle = inspect_application_bundle(app, expected_version)
+                macho_payloads = inspect_macho_payloads(
+                    app,
+                    bundle.executable,
+                    lipo,
                     runner,
-                    [lipo, "-archs", str(executable)],
-                    f"Mach-O architecture inspection for {app.name}",
+                    expected_architecture,
                 )
-                architectures = parse_lipo_architectures(lipo_result.stdout, executable)
                 app_architecture = verified_architecture(
-                    architectures, expected_architecture, app.name
+                    [
+                        str(value["architecture"])
+                        for value in macho_payloads
+                    ],
+                    expected_architecture,
+                    app.name,
                 )
-                all_architectures.extend(architectures)
+                all_architectures.extend(
+                    str(value["architecture"])
+                    for value in macho_payloads
+                )
                 app_details.append(
                     {
                         "application": app.relative_to(mountpoint).as_posix(),
-                        "executable": executable.name,
+                        "executable": bundle.executable.name,
                         "architecture": app_architecture,
                         "teamIdentifier": app_team_id,
+                        "bundleIdentifier": bundle.bundle_identifier,
+                        "bundleShortVersion": bundle.short_version,
+                        "bundleVersion": bundle.bundle_version,
+                        "icon": {
+                            "filename": bundle.icon.name,
+                            "sizeBytes": bundle.icon.stat().st_size,
+                            "sha256": file_sha256(bundle.icon),
+                        },
+                        "machOPayloads": macho_payloads,
                     }
                 )
         except VerificationError as error:
@@ -1257,17 +1395,25 @@ def verify_linux(
 
 def validate_inputs(
     *,
-    platform: str,
+    target: str | None,
+    platform: str | None,
     package_dir: Path,
     output: Path,
     version: str,
     tag: str,
     commit: str,
-    architecture: str,
+    architecture: str | None,
     host_platform: str,
-) -> tuple[Path, Path, str, str]:
-    if platform not in PLATFORMS:
-        fail(f"unsupported platform {platform!r}")
+) -> tuple[release_targets.ReleaseTarget, Path, Path, str]:
+    try:
+        target_contract = release_targets.resolve_target(
+            target_name=target,
+            platform_name=platform,
+            architecture=architecture,
+        )
+    except release_targets.ReleaseTargetError as error:
+        fail(str(error))
+    platform = target_contract.platform
     if normalized_host_platform(host_platform) != platform:
         fail(f"{platform} verification must run on a native {platform} host")
     if SEMANTIC_VERSION.fullmatch(version) is None:
@@ -1276,14 +1422,14 @@ def validate_inputs(
         fail("tag must be exactly v<version>")
     if COMMIT_PATTERN.fullmatch(commit) is None:
         fail("commit must be a 40-64 character hexadecimal object id")
-    normalized_arch = normalize_architecture(architecture)
-    if normalized_arch == "universal" and platform != "macos":
-        fail("universal architecture is supported only for macOS packages")
     package_dir = package_dir.resolve()
     output = output.resolve()
-    expected_name = RECEIPT_FILENAMES[platform]
+    expected_name = RECEIPT_FILENAMES[target_contract.name]
     if output.name != expected_name:
-        fail(f"{platform} verification receipt must be named {expected_name}")
+        fail(
+            f"{target_contract.name} verification receipt must be named "
+            f"{expected_name}"
+        )
     try:
         output.relative_to(package_dir)
     except ValueError:
@@ -1292,7 +1438,7 @@ def validate_inputs(
         fail("verification receipt output must be outside the package directory")
     if output.exists() or output.is_symlink():
         fail("verification receipt output already exists; use a fresh receipt path")
-    return package_dir, output, commit.lower(), normalized_arch
+    return target_contract, package_dir, output, commit.lower()
 
 
 def atomic_write_json(path: Path, value: Mapping[str, object]) -> None:
@@ -1327,13 +1473,14 @@ def atomic_write_json(path: Path, value: Mapping[str, object]) -> None:
 
 def generate_receipt(
     *,
-    platform: str,
+    platform: str | None = None,
+    target: str | None = None,
     package_dir: Path,
     output: Path,
     version: str,
     tag: str,
     commit: str,
-    architecture: str,
+    architecture: str | None = None,
     trusted_windows_signer_thumbprint: str | None = None,
     trusted_apple_team_id: str | None = None,
     trusted_keyring: Path | None = None,
@@ -1343,7 +1490,8 @@ def generate_receipt(
     host_platform: str = sys.platform,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> dict[str, object]:
-    package_dir, output, commit, architecture = validate_inputs(
+    target_contract, package_dir, output, commit = validate_inputs(
+        target=target,
         platform=platform,
         package_dir=package_dir,
         output=output,
@@ -1353,6 +1501,8 @@ def generate_receipt(
         architecture=architecture,
         host_platform=host_platform,
     )
+    platform = target_contract.platform
+    architecture = target_contract.architecture
     windows_thumbprint: str | None = None
     apple_team_id: str | None = None
     if platform == "windows":
@@ -1401,6 +1551,7 @@ def generate_receipt(
                 command_runner,
                 which,
                 working_dir,
+                version,
                 architecture,
                 apple_team_id,
             )
@@ -1432,6 +1583,7 @@ def generate_receipt(
         fail("verification clock must return a timezone-aware timestamp")
     receipt: dict[str, object] = {
         "schemaVersion": SCHEMA_VERSION,
+        "target": target_contract.name,
         "platform": platform,
         "verificationType": VERIFICATION_TYPES[platform],
         "status": "verified",
@@ -1469,13 +1621,12 @@ def argument_parser() -> argparse.ArgumentParser:
             "--trusted-fingerprint. Pins for another platform are rejected."
         ),
     )
-    parser.add_argument("--platform", required=True, choices=PLATFORMS)
+    parser.add_argument("--target", required=True, choices=release_targets.TARGET_NAMES)
     parser.add_argument("--package-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
-    parser.add_argument("--architecture", required=True)
     parser.add_argument(
         "--trusted-windows-signer-thumbprint",
         help=(
@@ -1507,13 +1658,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         generate_receipt(
-            platform=args.platform,
+            target=args.target,
             package_dir=args.package_dir,
             output=args.output,
             version=args.version,
             tag=args.tag,
             commit=args.commit,
-            architecture=args.architecture,
             trusted_windows_signer_thumbprint=(
                 args.trusted_windows_signer_thumbprint
             ),

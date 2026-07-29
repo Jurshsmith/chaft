@@ -35,11 +35,26 @@ def load_verifier() -> types.ModuleType:
 
 
 verifier = load_verifier()
+TARGETS = (
+    "linux-x86_64",
+    "macos-x86_64",
+    "macos-arm64",
+    "windows-x86_64",
+)
 
 
-def toolchain_contract(platform_name: str) -> dict[str, object]:
+def release_target(target_name: str):
+    return verifier.release_targets.TARGET_BY_NAME[target_name]
+
+
+def toolchain_contract(
+    manifest: dict[str, object], target_name: str
+) -> dict[str, object]:
+    specification = manifest["targets"][target_name]
+    platform_name = specification["platform"]
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "target": target_name,
         "platform": platform_name,
         "runner": {
             "os": {
@@ -47,7 +62,7 @@ def toolchain_contract(platform_name: str) -> dict[str, object]:
                 "macos": "macOS",
                 "windows": "Windows",
             }[platform_name],
-            "architecture": "X64",
+            "architecture": specification["architecture"],
             "imageOS": f"synthetic-{platform_name}",
             "imageVersion": "20260726.1",
         },
@@ -61,7 +76,7 @@ def toolchain_contract(platform_name: str) -> dict[str, object]:
 
 
 def qt_binding(
-    platform_name: str,
+    target_name: str,
     bundle_sha256: str,
     source_root: Path = ROOT,
 ) -> dict[str, object]:
@@ -70,13 +85,17 @@ def qt_binding(
     manifest = qt_sdk.load_manifest(
         manifest_path, recipe_root=source_root
     )
-    contract = toolchain_contract(platform_name)
-    fingerprint = qt_sdk.toolchain_fingerprint(contract, platform_name)
+    specification = manifest["targets"][target_name]
+    platform_name = specification["platform"]
+    contract = toolchain_contract(manifest, target_name)
+    fingerprint = qt_sdk.toolchain_fingerprint(
+        contract, manifest, target_name
+    )
     provenance = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "identity": qt_sdk.sdk_identity(
             manifest,
-            platform_name,
+            target_name,
             fingerprint,
             recipe_root=source_root,
         ),
@@ -88,19 +107,21 @@ def qt_binding(
         ),
         "qtVersion": manifest["qtVersion"],
         "sdkRevision": manifest["sdkRevision"],
+        "target": target_name,
         "platform": platform_name,
-        "platformSpecification": manifest["platforms"][platform_name],
+        "architecture": specification["architecture"],
+        "targetSpecification": specification,
         "buildConfiguration": manifest["build"],
         "generatedAt": "2026-07-26T00:00:00Z",
         "host": {
             "system": contract["runner"]["os"],
             "release": "synthetic",
-            "machine": "x86_64",
+            "machine": specification["architecture"],
         },
         "toolchainContract": contract,
         "toolchainFingerprint": fingerprint,
         "sourceMaterials": qt_sdk.expected_source_materials(
-            manifest, platform_name
+            manifest, target_name
         ),
         "recipeMaterials": qt_sdk.recipe_materials(source_root),
         "commands": [],
@@ -144,10 +165,10 @@ class QtReleaseBindingTests(unittest.TestCase):
             )
             digest = verifier.file_sha256(bundle)
 
-            for platform_name in ("linux", "macos", "windows"):
-                with self.subTest(platform=platform_name):
+            for target_name in TARGETS:
+                with self.subTest(target=target_name):
                     provenance = {
-                        "qt": qt_binding(platform_name, digest)
+                        "qt": qt_binding(target_name, digest)
                     }
                     with mock.patch.object(
                         verifier.qt_source, "verify_bundle"
@@ -155,7 +176,7 @@ class QtReleaseBindingTests(unittest.TestCase):
                         verifier.verify_qt_release_binding(
                             provenance,
                             ROOT,
-                            platform_name,
+                            release_target(target_name),
                             bundle,
                             checksum,
                         )
@@ -166,7 +187,7 @@ class QtReleaseBindingTests(unittest.TestCase):
             bundle = Path(temporary) / qt_source.BUNDLE_NAME
             bundle.write_bytes(b"authenticated corresponding source")
             digest = verifier.file_sha256(bundle)
-            provenance = {"qt": qt_binding("linux", digest)}
+            provenance = {"qt": qt_binding("linux-x86_64", digest)}
 
             provenance["qt"]["correspondingSource"]["bundleSha256"] = "0" * 64
             with (
@@ -176,10 +197,13 @@ class QtReleaseBindingTests(unittest.TestCase):
                 ),
             ):
                 verifier.verify_qt_release_binding(
-                    provenance, ROOT, "linux", bundle
+                    provenance,
+                    ROOT,
+                    release_target("linux-x86_64"),
+                    bundle,
                 )
 
-            provenance = {"qt": qt_binding("linux", digest)}
+            provenance = {"qt": qt_binding("linux-x86_64", digest)}
             provenance["qt"]["sdk"]["provenance"][
                 "toolchainFingerprint"
             ] = "0" * 64
@@ -187,24 +211,24 @@ class QtReleaseBindingTests(unittest.TestCase):
                 qt_sdk.QtSdkError, "canonical toolchain contract"
             ):
                 verifier.verify_qt_release_binding(
-                    provenance, ROOT, "linux"
+                    provenance, ROOT, release_target("linux-x86_64")
                 )
 
     def test_qt_binding_rejects_coerced_schema_numbers(self) -> None:
-        provenance = {"qt": qt_binding("linux", "1" * 64)}
+        provenance = {"qt": qt_binding("linux-x86_64", "1" * 64)}
         provenance["qt"]["schemaVersion"] = True
         with self.assertRaisesRegex(SystemExit, "schemaVersion"):
             verifier.verify_qt_release_binding(
-                provenance, ROOT, "linux"
+                provenance, ROOT, release_target("linux-x86_64")
             )
 
-        provenance = {"qt": qt_binding("linux", "1" * 64)}
+        provenance = {"qt": qt_binding("linux-x86_64", "1" * 64)}
         provenance["qt"]["correspondingSource"]["schemaVersion"] = 1.0
         with self.assertRaisesRegex(
             SystemExit, "contract differs"
         ):
             verifier.verify_qt_release_binding(
-                provenance, ROOT, "linux"
+                provenance, ROOT, release_target("linux-x86_64")
             )
 
     def test_release_source_materials_reject_absolute_symlinks(self) -> None:
@@ -249,25 +273,24 @@ class QtReleaseBindingTests(unittest.TestCase):
                 manifest, recipe_root=release_root
             )[:20]
             manifest["sdkIdentities"] = {
-                platform_name: (
+                target_name: (
                     f"qt-{manifest['qtVersion']}-"
-                    f"r{manifest['sdkRevision']}-{platform_name}-"
-                    f"{specification['architecture']}-"
+                    f"r{manifest['sdkRevision']}-{target_name}-"
                     f"{specification['toolchain']}-{digest}"
                 )
-                for platform_name, specification in manifest[
-                    "platforms"
-                ].items()
+                for target_name, specification in manifest["targets"].items()
             }
             manifest_path.write_text(
                 json.dumps(manifest, indent=2) + "\n",
                 encoding="utf-8",
             )
 
-            binding = qt_binding("linux", "1" * 64, release_root)
+            binding = qt_binding("linux-x86_64", "1" * 64, release_root)
             provenance = {"qt": binding}
             verifier.verify_qt_release_binding(
-                provenance, release_root, "linux"
+                provenance,
+                release_root,
+                release_target("linux-x86_64"),
             )
             self.assertNotEqual(
                 binding["sdk"]["provenance"]["contractSha256"],
@@ -277,7 +300,7 @@ class QtReleaseBindingTests(unittest.TestCase):
                 (qt_sdk.QtSdkError, SystemExit)
             ):
                 verifier.verify_qt_release_binding(
-                    provenance, ROOT, "linux"
+                    provenance, ROOT, release_target("linux-x86_64")
                 )
 
 

@@ -13,11 +13,18 @@ that source without commercial Qt credentials.
 
 ## Supported targets
 
-| Platform | Required host | Architecture and compiler |
+| Target | Required native host | Compiler and deployment contract |
 | --- | --- | --- |
-| Linux | `ubuntu-22.04` | x86_64, GCC 11 |
-| macOS | `macos-15-intel` | x86_64, Apple Clang, macOS 12.0 deployment target |
-| Windows | `windows-2022` | x86_64, Visual Studio 2022 developer environment |
+| `linux-x86_64` | `ubuntu-22.04`, x86_64 | GCC 11 |
+| `macos-arm64` | `macos-15`, Apple Silicon | Apple Clang, arm64, macOS 12.0 deployment target |
+| `macos-x86_64` | `macos-15-intel`, Intel | Apple Clang, x86_64, macOS 12.0 deployment target |
+| `windows-x86_64` | `windows-2022`, x86_64 | Visual Studio 2022 x64 developer environment |
+
+Each target is a first-class, architecture-specific SDK. The build driver
+normalizes common host names such as `aarch64` to `arm64`, requires the native
+host architecture to match the selected target, and rejects a
+`macos-arm64` build running as a Rosetta-translated process. Rosetta is not the
+supported Apple Silicon SDK path.
 
 All hosts need Python 3, Git, CMake 3.28 or newer, and Ninja. Linux also needs
 the XCB, desktop OpenGL/EGL, Wayland, font, input, and accessibility development
@@ -34,16 +41,16 @@ targets again when a cached SDK is verified or linked on a fresh runner.
 
 ## Commands
 
-Choose one of `linux`, `macos`, or `windows` for `PLATFORM`.
+Choose one of the four exact names above for `TARGET`.
 
 Capture the native build-tool contract, then print the cache/release identity:
 
 ```sh
 python3 tools/qt/build_qt.py toolchain-contract \
-  --platform PLATFORM \
+  --target TARGET \
   --output /absolute/path/to/qt-toolchain.json
 python3 tools/qt/build_qt.py identity \
-  --platform PLATFORM \
+  --target TARGET \
   --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
 
@@ -51,7 +58,7 @@ Build into an empty install prefix:
 
 ```sh
 python3 tools/qt/build_qt.py build \
-  --platform PLATFORM \
+  --target TARGET \
   --prefix /absolute/path/to/qt \
   --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
@@ -67,14 +74,21 @@ Verify a restored SDK:
 
 ```sh
 python3 tools/qt/build_qt.py verify \
-  --platform PLATFORM \
+  --target TARGET \
   --prefix /absolute/path/to/qt \
   --toolchain-contract /absolute/path/to/qt-toolchain.json
 ```
 
 Verification requires completed matching provenance, checks exact Qt 6.8.4 via
 `qtpaths`, asserts the platform plugins, builds a CMake Quick/QML probe, and
-runs a QML test with `qmltestrunner`.
+runs a QML test with `qmltestrunner`. The target, logical platform, and
+architecture must all match the manifest, captured toolchain contract, cache
+identity, and provenance.
+
+The legacy `--platform` selector remains accepted only when it resolves to one
+target. It therefore resolves `linux` and `windows`, but fails for `macos`
+because both Intel and Apple Silicon are supported. New automation should
+always use `--target`.
 
 Activate it for later GitHub Actions steps:
 
@@ -86,6 +100,11 @@ python3 tools/qt/build_qt.py activate \
 ```
 
 Without the GitHub file arguments, `activate` prints the environment values.
+Activation first validates the completed provenance embedded in the prefix. In
+addition to `QTDIR`, `QT_ROOT_DIR`, and `CMAKE_PREFIX_PATH`, it emits the exact
+`CHAFT_QT_SDK_TARGET`, platform, architecture, Qt version, SDK identity,
+toolchain fingerprint, and provenance path. Strict desktop preflight can use
+those values without inferring architecture from a directory or package name.
 
 ## Corresponding-source release assets
 
@@ -125,23 +144,25 @@ build is expected to take roughly 35–60 minutes per platform on standard publi
 GitHub-hosted runners; a prefix restore plus verification is substantially
 faster.
 
-The base per-platform identity is checked into the manifest and includes a
-canonical hash of the manifest, the build driver, and every CMake/C++/QML
-verification probe. CI extends that identity with a canonical fingerprint of
-the actual hosted-runner image, CMake, Ninja, compiler, and Python versions.
-The provisioning job passes that exact identity and fingerprint to consumers,
-so the producer identity remains the only cache key. After installing their
-platform tools, every consumer independently captures its runner/toolchain
-contract and must reproduce the provision job's fingerprint before it may
-restore or use the cache. A hosted-image rollout between jobs therefore fails
+The base per-target identity is checked into the manifest and includes its
+logical platform and architecture plus a canonical hash of the manifest, build
+driver, and every CMake/C++/QML verification probe. CI extends that identity
+with a canonical fingerprint of the target-bound hosted-runner image, native
+architecture, CMake, Ninja, compiler, and Python versions. The provisioning job
+passes that exact identity and fingerprint to consumers, so the producer
+identity remains the only cache key. After installing their platform tools,
+every consumer independently captures its target/runner/toolchain contract and
+must reproduce the provision job's fingerprint before it may restore or use
+the cache. A hosted-image or architecture change between jobs therefore fails
 clearly instead of mixing SDK and consumer toolchains.
 
 Any source, patch, build, feature, platform, plugin, recipe, probe, runner
-image, or build-tool change therefore invalidates the cache. `build` writes
-the complete toolchain contract and `chaft-qt-sdk-provenance.json` inside the
-prefix and marks it complete only after all probes pass. `verify` rejects
-incomplete provenance or any source-material, recipe-material, toolchain,
-identity, platform, or manifest mismatch.
+image, architecture, target, or build-tool change therefore invalidates the
+cache. `build` writes the complete toolchain contract and
+`chaft-qt-sdk-provenance.json` inside the prefix and marks it complete only
+after all probes pass. `verify` rejects incomplete provenance or any
+source-material, recipe-material, toolchain, identity, target, platform,
+architecture, or manifest mismatch.
 
 Desktop release provenance embeds that complete, verified SDK provenance and
 the corresponding-source recipe contract. Tag release inputs additionally

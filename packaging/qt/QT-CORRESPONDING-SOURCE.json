@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "component": "Qt",
   "version": "6.8.4",
   "instructions": "Obtain the named corresponding-source bundle and checksum from the same immutable Chaft GitHub Release as the desktop package. Verify the bundle checksum, then verify every source archive and patch against the SHA-256 values below and apply each applicable security patch in listed order. The source archives contain the file-level license records and preferred source form for the distributed Qt libraries and plugins.",
@@ -15,6 +15,28 @@
     {
       "spdx": "GPL-3.0-only",
       "packageFile": "LICENSE.GPL3"
+    }
+  ],
+  "targets": [
+    {
+      "name": "linux-x86_64",
+      "platform": "Linux",
+      "architecture": "x86_64"
+    },
+    {
+      "name": "macos-arm64",
+      "platform": "macOS",
+      "architecture": "arm64"
+    },
+    {
+      "name": "macos-x86_64",
+      "platform": "macOS",
+      "architecture": "x86_64"
+    },
+    {
+      "name": "windows-x86_64",
+      "platform": "Windows",
+      "architecture": "x86_64"
     }
   ],
   "sourceModules": [

@@ -37,9 +37,12 @@ def load_script() -> types.ModuleType:
 qt = load_script()
 
 
-def synthetic_toolchain(platform_name: str, image_version: str = "20260726.1"):
+def synthetic_toolchain(target_name: str, image_version: str = "20260726.1"):
+    specification = qt.load_manifest(MANIFEST)["targets"][target_name]
+    platform_name = specification["platform"]
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "target": target_name,
         "platform": platform_name,
         "runner": {
             "os": {
@@ -47,7 +50,7 @@ def synthetic_toolchain(platform_name: str, image_version: str = "20260726.1"):
                 "macos": "macOS",
                 "windows": "Windows",
             }[platform_name],
-            "architecture": "X64",
+            "architecture": specification["architecture"],
             "imageOS": f"synthetic-{platform_name}",
             "imageVersion": image_version,
         },
@@ -66,29 +69,61 @@ class ManifestContractTests(unittest.TestCase):
 
     def test_exact_offline_identities_are_checked_in(self) -> None:
         self.assertEqual(
-            self.manifest["platforms"]["windows"]["runner"],
+            self.manifest["targets"]["windows-x86_64"]["runner"],
             "windows-2022",
+        )
+        self.assertEqual(
+            self.manifest["targets"]["macos-arm64"],
+            {
+                "platform": "macos",
+                "runner": "macos-15",
+                "architecture": "arm64",
+                "toolchain": "apple-clang",
+                "cmakeArguments": [
+                    "-DCMAKE_C_COMPILER=clang",
+                    "-DCMAKE_CXX_COMPILER=clang++",
+                    "-DCMAKE_OSX_ARCHITECTURES=arm64",
+                    "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
+                ],
+                "moduleCmakeArguments": {},
+                "requiredPlatformPlugins": [
+                    "libqcocoa.dylib",
+                    "libqoffscreen.dylib",
+                ],
+            },
         )
         self.assertEqual(
             self.manifest["sdkIdentities"],
             {
-                "linux": (
-                    "qt-6.8.4-r1-linux-x86_64-gcc-11-"
-                    "efd94e54ed074ca27949"
+                "linux-x86_64": (
+                    "qt-6.8.4-r2-linux-x86_64-gcc-11-"
+                    "3654d12c199fa2c2bd6a"
                 ),
-                "macos": (
-                    "qt-6.8.4-r1-macos-x86_64-apple-clang-"
-                    "efd94e54ed074ca27949"
+                "macos-arm64": (
+                    "qt-6.8.4-r2-macos-arm64-apple-clang-"
+                    "3654d12c199fa2c2bd6a"
                 ),
-                "windows": (
-                    "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-                    "efd94e54ed074ca27949"
+                "macos-x86_64": (
+                    "qt-6.8.4-r2-macos-x86_64-apple-clang-"
+                    "3654d12c199fa2c2bd6a"
+                ),
+                "windows-x86_64": (
+                    "qt-6.8.4-r2-windows-x86_64-msvc-2022-"
+                    "3654d12c199fa2c2bd6a"
                 ),
             },
         )
-        for platform_name, expected in self.manifest["sdkIdentities"].items():
-            with self.subTest(platform=platform_name):
-                self.assertEqual(qt.sdk_identity(self.manifest, platform_name), expected)
+        for target_name, expected in self.manifest["sdkIdentities"].items():
+            with self.subTest(target=target_name):
+                self.assertEqual(
+                    qt.sdk_identity(self.manifest, target_name), expected
+                )
+        self.assertEqual(
+            qt.resolve_target(self.manifest, platform_name="linux"),
+            "linux-x86_64",
+        )
+        with self.assertRaisesRegex(qt.QtSdkError, "ambiguous"):
+            qt.resolve_target(self.manifest, platform_name="macos")
 
     def test_manifest_edit_invalidates_checked_in_identity(self) -> None:
         changed = copy.deepcopy(self.manifest)
@@ -164,15 +199,30 @@ class ManifestContractTests(unittest.TestCase):
             "qtdeclarative",
         ]
         self.assertEqual(
-            [row["name"] for row in qt.selected_modules(self.manifest, "macos")],
+            [
+                row["name"]
+                for row in qt.selected_modules(
+                    self.manifest, "macos-arm64"
+                )
+            ],
             expected_common,
         )
         self.assertEqual(
-            [row["name"] for row in qt.selected_modules(self.manifest, "windows")],
+            [
+                row["name"]
+                for row in qt.selected_modules(
+                    self.manifest, "windows-x86_64"
+                )
+            ],
             expected_common,
         )
         self.assertEqual(
-            [row["name"] for row in qt.selected_modules(self.manifest, "linux")],
+            [
+                row["name"]
+                for row in qt.selected_modules(
+                    self.manifest, "linux-x86_64"
+                )
+            ],
             expected_common + ["qtwayland"],
         )
 
@@ -246,7 +296,7 @@ class ManifestContractTests(unittest.TestCase):
     def test_configure_contract_is_shared_release_without_extra_products(self) -> None:
         command = qt.cmake_configure_command(
             self.manifest,
-            "linux",
+            "linux-x86_64",
             Path("/source/qtbase"),
             Path("/build/qtbase"),
             Path("/install/qt"),
@@ -270,7 +320,7 @@ class ManifestContractTests(unittest.TestCase):
         self.assertEqual(self.manifest["build"]["parallel"], 4)
         module_command = qt.qt_configure_module_command(
             self.manifest,
-            "linux",
+            "linux-x86_64",
             Path("/source/qtwayland"),
             Path("/install/qt"),
         )
@@ -282,16 +332,24 @@ class ManifestContractTests(unittest.TestCase):
         self.assertIn("-DFEATURE_wayland_egl=ON", module_command)
         self.assertIn(
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0",
-            self.manifest["platforms"]["macos"]["cmakeArguments"],
+            self.manifest["targets"]["macos-x86_64"]["cmakeArguments"],
         )
         self.assertEqual(
-            self.manifest["platforms"]["linux"]["requiredPlatformPlugins"],
+            self.manifest["targets"]["linux-x86_64"][
+                "requiredPlatformPlugins"
+            ],
             ["libqoffscreen.so", "libqwayland-egl.so", "libqxcb.so"],
         )
 
     def test_cli_identity_stdout_is_stable_and_quiet(self) -> None:
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "identity", "--platform", "windows"],
+            [
+                sys.executable,
+                str(SCRIPT),
+                "identity",
+                "--target",
+                "windows-x86_64",
+            ],
             check=True,
             text=True,
             stdout=subprocess.PIPE,
@@ -299,40 +357,90 @@ class ManifestContractTests(unittest.TestCase):
         )
         self.assertEqual(
             result.stdout,
-            "qt-6.8.4-r1-windows-x86_64-msvc-2022-"
-            "efd94e54ed074ca27949\n",
+            "qt-6.8.4-r2-windows-x86_64-msvc-2022-"
+            "3654d12c199fa2c2bd6a\n",
         )
         self.assertEqual(result.stderr, "")
 
     def test_toolchain_fingerprint_invalidates_dynamic_cache_identity(self) -> None:
-        linux = synthetic_toolchain("linux")
-        updated_image = synthetic_toolchain("linux", "20260727.1")
-        first = qt.toolchain_fingerprint(linux, "linux")
-        second = qt.toolchain_fingerprint(updated_image, "linux")
+        target = "linux-x86_64"
+        linux = synthetic_toolchain(target)
+        updated_image = synthetic_toolchain(target, "20260727.1")
+        first = qt.toolchain_fingerprint(linux, self.manifest, target)
+        second = qt.toolchain_fingerprint(
+            updated_image, self.manifest, target
+        )
         self.assertNotEqual(first, second)
         self.assertNotEqual(
-            qt.sdk_identity(self.manifest, "linux", first),
-            qt.sdk_identity(self.manifest, "linux", second),
+            qt.sdk_identity(self.manifest, target, first),
+            qt.sdk_identity(self.manifest, target, second),
         )
         self.assertTrue(
-            qt.sdk_identity(self.manifest, "linux", first).endswith(
+            qt.sdk_identity(self.manifest, target, first).endswith(
                 f"-tc-{first[:20]}"
             )
         )
 
     def test_toolchain_contract_rejects_platform_and_multiline_versions(self) -> None:
-        contract = synthetic_toolchain("macos")
+        target = "macos-arm64"
+        contract = synthetic_toolchain(target)
         contract["schemaVersion"] = True
         with self.assertRaisesRegex(qt.QtSdkError, "schemaVersion"):
-            qt.toolchain_fingerprint(contract, "macos")
-        contract = synthetic_toolchain("macos")
+            qt.toolchain_fingerprint(contract, self.manifest, target)
+        contract = synthetic_toolchain(target)
         contract["platform"] = "windows"
         with self.assertRaisesRegex(qt.QtSdkError, "platform mismatch"):
-            qt.toolchain_fingerprint(contract, "macos")
-        contract = synthetic_toolchain("macos")
+            qt.toolchain_fingerprint(contract, self.manifest, target)
+        contract = synthetic_toolchain(target)
+        contract["runner"]["architecture"] = "X64"
+        with self.assertRaisesRegex(qt.QtSdkError, "architecture mismatch"):
+            qt.toolchain_fingerprint(contract, self.manifest, target)
+        contract = synthetic_toolchain(target)
         contract["tools"]["compiler"] = "line one\nline two"
         with self.assertRaisesRegex(qt.QtSdkError, "one non-empty line"):
-            qt.toolchain_fingerprint(contract, "macos")
+            qt.toolchain_fingerprint(contract, self.manifest, target)
+
+    def test_architecture_aliases_are_normalized_and_rosetta_is_rejected(
+        self,
+    ) -> None:
+        self.assertEqual(qt.normalize_architecture("aarch64"), "arm64")
+        self.assertEqual(qt.normalize_architecture("ARM64"), "arm64")
+        self.assertEqual(qt.normalize_architecture("AMD64"), "x86_64")
+
+        with (
+            mock.patch.object(
+                qt, "normalized_host_platform", return_value="macos"
+            ),
+            mock.patch.object(qt, "normalized_machine", return_value="arm64"),
+            mock.patch.object(
+                qt, "macos_process_is_translated", return_value=True
+            ),
+        ):
+            with self.assertRaisesRegex(qt.QtSdkError, "Rosetta"):
+                qt.validate_build_host(
+                    self.manifest, "macos-arm64", check_tools=False
+                )
+            with self.assertRaisesRegex(qt.QtSdkError, "native Intel host"):
+                qt.validate_build_host(
+                    self.manifest, "macos-x86_64", check_tools=False
+                )
+
+        with (
+            mock.patch.object(
+                qt, "normalized_host_platform", return_value="macos"
+            ),
+            mock.patch.object(qt, "normalized_machine", return_value="arm64"),
+            mock.patch.object(
+                qt, "macos_process_is_translated", return_value=False
+            ),
+        ):
+            qt.validate_build_host(
+                self.manifest, "macos-arm64", check_tools=False
+            )
+            with self.assertRaisesRegex(qt.QtSdkError, "requires x86_64"):
+                qt.validate_build_host(
+                    self.manifest, "macos-x86_64", check_tools=False
+                )
 
 
 class MaterialSafetyTests(unittest.TestCase):
@@ -347,7 +455,9 @@ class MaterialSafetyTests(unittest.TestCase):
                 mock.patch.object(qt, "extract_archive") as extract,
             ):
                 with self.assertRaisesRegex(qt.QtSdkError, "SHA-256 mismatch"):
-                    qt.prepare_sources(manifest, "macos", work / "work")
+                    qt.prepare_sources(
+                        manifest, "macos-x86_64", work / "work"
+                    )
                 extract.assert_not_called()
 
     def test_archive_traversal_is_rejected(self) -> None:
@@ -385,7 +495,9 @@ class MaterialSafetyTests(unittest.TestCase):
                 mock.patch.object(qt, "extract_archive", side_effect=fake_extract),
                 mock.patch.object(qt, "run") as run,
             ):
-                qt.prepare_sources(manifest, "macos", root / "work")
+                qt.prepare_sources(
+                    manifest, "macos-x86_64", root / "work"
+                )
 
             patch_commands = [
                 call.args[0]
@@ -409,7 +521,7 @@ class MaterialSafetyTests(unittest.TestCase):
 
 
 class VerificationContractTests(unittest.TestCase):
-    def test_desktop_build_and_preflight_require_exact_qt_6_8_4(self) -> None:
+    def test_desktop_release_policy_requires_exact_qt_6_8_4(self) -> None:
         cmake = (ROOT / "apps" / "desktop-qt" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
@@ -423,9 +535,11 @@ class VerificationContractTests(unittest.TestCase):
         preflight = (
             ROOT / "tools" / "desktop" / "preflight.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn('[ "$qt_version" != "6.8.4" ]', preflight)
-        self.assertIn("requires exactly Qt 6.8.4", preflight)
-        self.assertNotIn("Qt 6.8+", preflight)
+        self.assertIn('if policy == "release":', preflight)
+        self.assertIn("if parsed != (6, 8, 4):", preflight)
+        self.assertIn("official builds require exactly Qt 6.8.4", preflight)
+        self.assertIn('elif not ((6, 11, 1) <= parsed < (6, 12, 0)):', preflight)
+        self.assertIn('case "$policy" in', preflight)
 
     def test_probe_requires_exact_quick_qml_and_desktop_components(self) -> None:
         cmake = (PROBE / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -444,17 +558,23 @@ class VerificationContractTests(unittest.TestCase):
 
     def test_provenance_identity_and_manifest_are_enforced(self) -> None:
         manifest = qt.load_manifest(MANIFEST)
-        toolchain = synthetic_toolchain("linux")
-        fingerprint = qt.toolchain_fingerprint(toolchain, "linux")
+        target = "linux-x86_64"
+        specification = manifest["targets"][target]
+        toolchain = synthetic_toolchain(target)
+        fingerprint = qt.toolchain_fingerprint(
+            toolchain, manifest, target
+        )
         expected = {
-            "schemaVersion": 1,
-            "identity": qt.sdk_identity(manifest, "linux", fingerprint),
+            "schemaVersion": 2,
+            "identity": qt.sdk_identity(manifest, target, fingerprint),
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 1,
+            "sdkRevision": 2,
+            "target": target,
             "platform": "linux",
-            "platformSpecification": manifest["platforms"]["linux"],
+            "architecture": "x86_64",
+            "targetSpecification": specification,
             "buildConfiguration": manifest["build"],
             "generatedAt": "2026-07-26T00:00:00Z",
             "host": {
@@ -464,7 +584,9 @@ class VerificationContractTests(unittest.TestCase):
             },
             "toolchainContract": toolchain,
             "toolchainFingerprint": fingerprint,
-            "sourceMaterials": qt.expected_source_materials(manifest, "linux"),
+            "sourceMaterials": qt.expected_source_materials(
+                manifest, target
+            ),
             "recipeMaterials": qt.recipe_materials(),
             "commands": [],
             "verification": {
@@ -476,22 +598,27 @@ class VerificationContractTests(unittest.TestCase):
             path = Path(temporary) / "provenance.json"
             path.write_text(json.dumps(expected), encoding="utf-8")
             self.assertEqual(
-                qt.load_and_validate_provenance(path, manifest, "linux"),
+                qt.load_and_validate_provenance(path, manifest, target),
                 expected,
             )
+            changed = copy.deepcopy(expected)
+            changed["target"] = "macos-arm64"
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(qt.QtSdkError, "target mismatch"):
+                qt.load_and_validate_provenance(path, manifest, target)
             changed = copy.deepcopy(expected)
             changed["schemaVersion"] = True
             path.write_text(json.dumps(changed), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "schemaVersion"):
                 qt.load_and_validate_provenance(
-                    path, manifest, "linux"
+                    path, manifest, target
                 )
             changed = copy.deepcopy(expected)
             changed["sdkRevision"] = True
             path.write_text(json.dumps(changed), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "sdkRevision mismatch"):
                 qt.load_and_validate_provenance(
-                    path, manifest, "linux"
+                    path, manifest, target
                 )
             changed = copy.deepcopy(expected)
             changed["buildConfiguration"]["shared"] = 1
@@ -500,7 +627,7 @@ class VerificationContractTests(unittest.TestCase):
                 qt.QtSdkError, "buildConfiguration mismatch"
             ):
                 qt.load_and_validate_provenance(
-                    path, manifest, "linux"
+                    path, manifest, target
                 )
             changed = copy.deepcopy(expected)
             changed["verification"]["completed"] = 1
@@ -509,36 +636,44 @@ class VerificationContractTests(unittest.TestCase):
                 qt.QtSdkError, "completed verification"
             ):
                 qt.load_and_validate_provenance(
-                    path, manifest, "linux"
+                    path, manifest, target
                 )
             expected["manifestSha256"] = "0" * 64
             path.write_text(json.dumps(expected), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "manifestSha256 mismatch"):
-                qt.load_and_validate_provenance(path, manifest, "linux")
+                qt.load_and_validate_provenance(path, manifest, target)
 
     def test_restore_rejects_incomplete_or_wrong_source_provenance(self) -> None:
         manifest = qt.load_manifest(MANIFEST)
-        toolchain = synthetic_toolchain("macos")
-        fingerprint = qt.toolchain_fingerprint(toolchain, "macos")
+        target = "macos-arm64"
+        specification = manifest["targets"][target]
+        toolchain = synthetic_toolchain(target)
+        fingerprint = qt.toolchain_fingerprint(
+            toolchain, manifest, target
+        )
         provenance = {
-            "schemaVersion": 1,
-            "identity": qt.sdk_identity(manifest, "macos", fingerprint),
+            "schemaVersion": 2,
+            "identity": qt.sdk_identity(manifest, target, fingerprint),
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 1,
+            "sdkRevision": 2,
+            "target": target,
             "platform": "macos",
-            "platformSpecification": manifest["platforms"]["macos"],
+            "architecture": "arm64",
+            "targetSpecification": specification,
             "buildConfiguration": manifest["build"],
             "generatedAt": "2026-07-26T00:00:00Z",
             "host": {
                 "system": "macOS",
                 "release": "synthetic",
-                "machine": "x86_64",
+                "machine": "arm64",
             },
             "toolchainContract": toolchain,
             "toolchainFingerprint": fingerprint,
-            "sourceMaterials": qt.expected_source_materials(manifest, "macos"),
+            "sourceMaterials": qt.expected_source_materials(
+                manifest, target
+            ),
             "recipeMaterials": qt.recipe_materials(),
             "commands": [],
             "verification": {"completed": False, "completedAt": None},
@@ -547,9 +682,9 @@ class VerificationContractTests(unittest.TestCase):
             path = Path(temporary) / "provenance.json"
             path.write_text(json.dumps(provenance), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "completed verification"):
-                qt.load_and_validate_provenance(path, manifest, "macos")
+                qt.load_and_validate_provenance(path, manifest, target)
             qt.load_and_validate_provenance(
-                path, manifest, "macos", allow_incomplete=True
+                path, manifest, target, allow_incomplete=True
             )
             provenance["verification"] = {
                 "completed": True,
@@ -558,21 +693,27 @@ class VerificationContractTests(unittest.TestCase):
             provenance["sourceMaterials"][0]["sha256"] = "0" * 64
             path.write_text(json.dumps(provenance), encoding="utf-8")
             with self.assertRaisesRegex(qt.QtSdkError, "sourceMaterials mismatch"):
-                qt.load_and_validate_provenance(path, manifest, "macos")
+                qt.load_and_validate_provenance(path, manifest, target)
 
     def test_restore_rejects_a_different_runner_toolchain_fingerprint(self) -> None:
         manifest = qt.load_manifest(MANIFEST)
-        toolchain = synthetic_toolchain("windows")
-        fingerprint = qt.toolchain_fingerprint(toolchain, "windows")
+        target = "windows-x86_64"
+        specification = manifest["targets"][target]
+        toolchain = synthetic_toolchain(target)
+        fingerprint = qt.toolchain_fingerprint(
+            toolchain, manifest, target
+        )
         provenance = {
-            "schemaVersion": 1,
-            "identity": qt.sdk_identity(manifest, "windows", fingerprint),
+            "schemaVersion": 2,
+            "identity": qt.sdk_identity(manifest, target, fingerprint),
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 1,
+            "sdkRevision": 2,
+            "target": target,
             "platform": "windows",
-            "platformSpecification": manifest["platforms"]["windows"],
+            "architecture": "x86_64",
+            "targetSpecification": specification,
             "buildConfiguration": manifest["build"],
             "generatedAt": "2026-07-26T00:00:00Z",
             "host": {
@@ -583,7 +724,7 @@ class VerificationContractTests(unittest.TestCase):
             "toolchainContract": toolchain,
             "toolchainFingerprint": fingerprint,
             "sourceMaterials": qt.expected_source_materials(
-                manifest, "windows"
+                manifest, target
             ),
             "recipeMaterials": qt.recipe_materials(),
             "commands": [],
@@ -596,8 +737,9 @@ class VerificationContractTests(unittest.TestCase):
             path = Path(temporary) / "provenance.json"
             path.write_text(json.dumps(provenance), encoding="utf-8")
             stale = qt.toolchain_fingerprint(
-                synthetic_toolchain("windows", "20260727.1"),
-                "windows",
+                synthetic_toolchain(target, "20260727.1"),
+                manifest,
+                target,
             )
             with self.assertRaisesRegex(
                 qt.QtSdkError, "toolchainFingerprint mismatch"
@@ -605,20 +747,67 @@ class VerificationContractTests(unittest.TestCase):
                 qt.load_and_validate_provenance(
                     path,
                     manifest,
-                    "windows",
+                    target,
                     expected_toolchain_fingerprint=stale,
                 )
 
     def test_activation_writes_github_environment_and_path(self) -> None:
+        manifest = qt.load_manifest(MANIFEST)
+        target = "macos-arm64"
+        specification = manifest["targets"][target]
+        toolchain = synthetic_toolchain(target)
+        fingerprint = qt.toolchain_fingerprint(
+            toolchain, manifest, target
+        )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             prefix = root / "qt"
             prefix.mkdir()
+            provenance_path = prefix / qt.PROVENANCE_NAME
+            provenance_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "identity": qt.sdk_identity(
+                            manifest, target, fingerprint
+                        ),
+                        "manifestSha256": qt.manifest_digest(manifest),
+                        "contractSha256": qt.contract_digest(manifest),
+                        "qtVersion": manifest["qtVersion"],
+                        "sdkRevision": manifest["sdkRevision"],
+                        "target": target,
+                        "platform": specification["platform"],
+                        "architecture": specification["architecture"],
+                        "targetSpecification": specification,
+                        "buildConfiguration": manifest["build"],
+                        "generatedAt": "2026-07-26T00:00:00Z",
+                        "host": {
+                            "system": "Darwin",
+                            "release": "synthetic",
+                            "machine": "arm64",
+                        },
+                        "toolchainFingerprint": fingerprint,
+                        "toolchainContract": toolchain,
+                        "sourceMaterials": qt.expected_source_materials(
+                            manifest, target
+                        ),
+                        "recipeMaterials": qt.recipe_materials(),
+                        "commands": [],
+                        "verification": {
+                            "completed": True,
+                            "completedAt": "2026-07-26T00:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             github_env = root / "github-env"
             github_path = root / "github-path"
             resolved_prefix = prefix.resolve()
             with mock.patch.dict("os.environ", {}, clear=True):
-                qt.activate_sdk(prefix, github_env, github_path)
+                qt.activate_sdk(
+                    manifest, prefix, github_env, github_path
+                )
             self.assertEqual(
                 github_env.read_text(encoding="utf-8").splitlines(),
                 [
@@ -626,6 +815,22 @@ class VerificationContractTests(unittest.TestCase):
                     f"QT_ROOT_DIR={resolved_prefix}",
                     f"CMAKE_PREFIX_PATH={resolved_prefix}",
                     "CHAFT_QT_SDK_BUILD_TYPE=Release",
+                    f"CHAFT_QT_SDK_TARGET={target}",
+                    "CHAFT_QT_SDK_PLATFORM=macos",
+                    "CHAFT_QT_SDK_ARCHITECTURE=arm64",
+                    "CHAFT_QT_SDK_VERSION=6.8.4",
+                    (
+                        "CHAFT_QT_SDK_IDENTITY="
+                        f"{qt.sdk_identity(manifest, target, fingerprint)}"
+                    ),
+                    (
+                        "CHAFT_QT_SDK_TOOLCHAIN_FINGERPRINT="
+                        f"{fingerprint}"
+                    ),
+                    (
+                        "CHAFT_QT_SDK_PROVENANCE="
+                        f"{resolved_prefix / qt.PROVENANCE_NAME}"
+                    ),
                 ],
             )
             self.assertEqual(
@@ -674,6 +879,48 @@ class VerificationContractTests(unittest.TestCase):
             arguments("MINGW64_NT-10.0", "release", "Release"), []
         )
         self.assertEqual(arguments("MINGW64_NT-10.0", "debug", None), [])
+
+    def test_explicit_qt_root_stays_ahead_of_ambient_homebrew_qt(self) -> None:
+        common = ROOT / "tools" / "desktop" / "common.sh"
+        with tempfile.TemporaryDirectory(prefix="chaft-qt-path-test-") as name:
+            root = Path(name)
+            explicit = root / "verified-qt"
+            homebrew = root / "homebrew"
+            (explicit / "bin").mkdir(parents=True)
+            for formula in (
+                "qtbase",
+                "qtdeclarative",
+                "qtshadertools",
+                "qtsvg",
+                "qt",
+                "qt@6",
+            ):
+                (homebrew / "opt" / formula / "bin").mkdir(parents=True)
+            command = (
+                f'. "{common}"; '
+                "brew() { "
+                f'if [ "$1" = "--prefix" ] && [ "$#" -eq 1 ]; then '
+                f'printf "%s\\n" "{homebrew}"; '
+                f'else printf "%s\\n" "{homebrew}/opt/$2"; fi; '
+                "}; "
+                f'QT_ROOT_DIR="{explicit}"; '
+                f'PATH="/usr/bin:/bin:{explicit}/bin"; '
+                "export QT_ROOT_DIR PATH; "
+                "chaft_desktop_add_tool_paths; "
+                'printf "%s\\n" "${PATH%%:*}"'
+            )
+            result = subprocess.run(
+                ["sh", "-c", command],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(
+                result.stdout.strip(),
+                str(explicit / "bin"),
+            )
 
 
 if __name__ == "__main__":

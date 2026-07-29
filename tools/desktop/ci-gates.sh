@@ -3,6 +3,7 @@ set -eu
 
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
+. "$script_dir/common.sh"
 
 usage() {
   printf \
@@ -116,11 +117,18 @@ run_package() {
     printf 'package stage cannot be skipped when selected explicitly\n' >&2
     exit 2
   fi
+  target="$(chaft_desktop_qt_sdk_target || true)"
+  if [ -z "$target" ]; then
+    printf 'unsupported native desktop release target for package stage\n' >&2
+    exit 1
+  fi
   run_step "desktop release package smoke" "$script_dir/package-smoke.sh" release
-  run_step "generate release metadata" python3 "$script_dir/release-metadata.py" release
+  run_step \
+    "generate release metadata" \
+    python3 "$script_dir/release-metadata.py" release --target "$target"
   run_step \
     "verify release metadata" \
-    python3 "$script_dir/verify-release-metadata.py" release --platform "$platform"
+    python3 "$script_dir/verify-release-metadata.py" release --target "$target"
 }
 
 case "$stage" in

@@ -47,13 +47,14 @@ class SourceBundleTests(unittest.TestCase):
 
         digest = qt.unchecked_contract_digest(manifest)[:20]
         manifest["sdkIdentities"] = {
-            platform_name: (
+            target_name: (
                 f"qt-{manifest['qtVersion']}-r{manifest['sdkRevision']}-"
-                f"{platform_name}-{platform_specification['architecture']}-"
-                f"{platform_specification['toolchain']}-{digest}"
+                f"{target_specification['platform']}-"
+                f"{target_specification['architecture']}-"
+                f"{target_specification['toolchain']}-{digest}"
             )
-            for platform_name, platform_specification in manifest[
-                "platforms"
+            for target_name, target_specification in manifest[
+                "targets"
             ].items()
         }
         self.manifest = manifest
@@ -492,6 +493,37 @@ class SourceBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(qt.QtSdkError, "security patches"):
             bundle.validate_corresponding_source(changed, self.manifest)
 
+    def test_corresponding_source_binds_all_architecture_targets(self) -> None:
+        self.assertEqual(
+            self.corresponding["targets"],
+            [
+                {
+                    "name": "linux-x86_64",
+                    "platform": "Linux",
+                    "architecture": "x86_64",
+                },
+                {
+                    "name": "macos-arm64",
+                    "platform": "macOS",
+                    "architecture": "arm64",
+                },
+                {
+                    "name": "macos-x86_64",
+                    "platform": "macOS",
+                    "architecture": "x86_64",
+                },
+                {
+                    "name": "windows-x86_64",
+                    "platform": "Windows",
+                    "architecture": "x86_64",
+                },
+            ],
+        )
+        changed = copy.deepcopy(self.corresponding)
+        changed["targets"][1]["architecture"] = "x86_64"
+        with self.assertRaisesRegex(qt.QtSdkError, "targets differ"):
+            bundle.validate_corresponding_source(changed, self.manifest)
+
     def test_release_asset_names_are_authoritative(self) -> None:
         wrong = self.root / "wrong-name.zip"
         with self.assertRaisesRegex(qt.QtSdkError, "bundle filename must be"):
@@ -558,14 +590,15 @@ class SourceBundleTests(unittest.TestCase):
             release_manifest, recipe_root=release_root
         )[:20]
         release_manifest["sdkIdentities"] = {
-            platform_name: (
+            target_name: (
                 f"qt-{release_manifest['qtVersion']}-"
-                f"r{release_manifest['sdkRevision']}-{platform_name}-"
+                f"r{release_manifest['sdkRevision']}-"
+                f"{specification['platform']}-"
                 f"{specification['architecture']}-"
                 f"{specification['toolchain']}-{digest}"
             )
-            for platform_name, specification in release_manifest[
-                "platforms"
+            for target_name, specification in release_manifest[
+                "targets"
             ].items()
         }
         release_manifest_path.write_text(

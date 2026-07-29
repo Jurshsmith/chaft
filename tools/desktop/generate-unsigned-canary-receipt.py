@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import release_targets
 import unsigned_canary_policy as policy
 
 
@@ -42,7 +43,8 @@ def atomic_write_json(path: Path, value: Mapping[str, object]) -> None:
 
 def generate_receipt(
     *,
-    platform: str,
+    target: str | None = None,
+    platform: str | None = None,
     package: Path,
     output: Path,
     version: str,
@@ -58,8 +60,16 @@ def generate_receipt(
     smoke_command: str,
     verified_at: str | None = None,
 ) -> dict[str, object]:
-    if platform not in policy.PLATFORMS:
-        policy.fail(f"unsupported platform: {platform}")
+    try:
+        target_contract = release_targets.resolve_target(
+            target_name=target,
+            platform_name=platform,
+            architecture=runner_arch,
+        )
+    except release_targets.ReleaseTargetError as error:
+        policy.fail(str(error))
+    target = target_contract.name
+    platform = target_contract.platform
     policy.validate_release_identity(
         version=version, tag=tag, commit=commit, repository=repository
     )
@@ -76,17 +86,22 @@ def generate_receipt(
     if runner_os != policy.RUNNER_OS[platform]:
         policy.fail(f"runner OS must be {policy.RUNNER_OS[platform]!r} for {platform}")
     architecture = policy.normalize_architecture(runner_arch, "runner architecture")
+    if architecture != target_contract.architecture:
+        policy.fail(
+            f"runner architecture must be {target_contract.architecture!r} "
+            f"for {target}"
+        )
     if not smoke_command.strip() or any(
         ord(character) < 32 or ord(character) == 127
         for character in smoke_command
     ):
         policy.fail("smoke command must be non-empty and contain no control characters")
     fingerprint = policy.fingerprint_file(package)
-    policy.validate_package_filename(fingerprint.filename, platform, version)
+    policy.validate_package_filename(fingerprint.filename, target, version)
     output = Path(output)
-    expected_output = policy.RECEIPT_FILENAMES[platform]
+    expected_output = policy.RECEIPT_FILENAMES[target]
     if output.name != expected_output:
-        policy.fail(f"{platform} receipt must be named {expected_output}")
+        policy.fail(f"{target} receipt must be named {expected_output}")
     try:
         if output.resolve() == Path(package).resolve():
             policy.fail("receipt output must differ from the package")
@@ -101,6 +116,7 @@ def generate_receipt(
     )
     receipt: dict[str, object] = {
         "schemaVersion": policy.SCHEMA_VERSION,
+        "target": target,
         "platform": platform,
         "verificationType": policy.VERIFICATION_TYPE,
         "status": policy.STATUS,
@@ -141,6 +157,7 @@ def generate_receipt(
     }
     policy.validate_receipt_document(
         receipt,
+        expected_target=target,
         expected_platform=platform,
         expected_package=fingerprint,
         expected_version=version,
@@ -159,7 +176,7 @@ def argument_parser() -> argparse.ArgumentParser:
             "evidence. This command does not perform signing verification."
         )
     )
-    parser.add_argument("--platform", required=True, choices=policy.PLATFORMS)
+    parser.add_argument("--target", required=True, choices=policy.TARGETS)
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--version", required=True)
@@ -185,7 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         generate_receipt(
-            platform=args.platform,
+            target=args.target,
             package=args.package,
             output=args.output,
             version=args.version,

@@ -102,7 +102,20 @@ class MacosDmgSmokeTests(unittest.TestCase):
             self.fake_bin / "uname",
             """
             #!/usr/bin/env sh
-            printf 'Darwin\\n'
+            if [ "${1:-}" = "-m" ]; then
+              printf 'x86_64\\n'
+            else
+              printf 'Darwin\\n'
+            fi
+            """,
+        )
+        self.write_executable(
+            self.fake_bin / "lipo",
+            """
+            #!/usr/bin/env sh
+            set -eu
+            test "$1" = "-archs"
+            printf '%s\\n' "${FAKE_LIPO_ARCHITECTURE:-x86_64}"
             """,
         )
         self.write_executable(
@@ -303,6 +316,41 @@ class MacosDmgSmokeTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(canary_path.name, completed.stdout)
+
+    def test_accepts_native_apple_silicon_package_and_rejects_mixed_payload(
+        self,
+    ) -> None:
+        intel_path = self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg"
+        arm_path = self.package_dir / "Chaft-0.1.0-macOS-arm64.dmg"
+        intel_path.rename(arm_path)
+        completed = self.run_smoke(
+            extra_environment={
+                "CHAFT_EXPECTED_ARCHITECTURE": "arm64",
+                "FAKE_LIPO_ARCHITECTURE": "arm64",
+            }
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(arm_path.name, completed.stdout)
+
+        completed = self.run_smoke(
+            extra_environment={
+                "CHAFT_EXPECTED_ARCHITECTURE": "arm64",
+                "FAKE_LIPO_ARCHITECTURE": "x86_64 arm64",
+            }
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("expected only arm64", completed.stderr)
+
+        for reported in ("arm64e", "arm64 arm64e"):
+            with self.subTest(reported=reported):
+                completed = self.run_smoke(
+                    extra_environment={
+                        "CHAFT_EXPECTED_ARCHITECTURE": "arm64",
+                        "FAKE_LIPO_ARCHITECTURE": reported,
+                    }
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("expected only arm64", completed.stderr)
 
     def test_rejects_filename_that_omits_distribution_version(self) -> None:
         stable_path = self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg"

@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import release_targets
+
 QT_TOOLS = Path(__file__).resolve().parents[1] / "qt"
 sys.path.insert(0, str(QT_TOOLS))
 import build_qt as qt_sdk  # noqa: E402
@@ -27,18 +29,6 @@ PACKAGE_FORMATS = (
     (".exe", "windows", "windows-exe"),
 )
 SIGNATURE_SUFFIXES = (".sig", ".asc")
-PRERELEASE_PACKAGE_NAMES = {
-    "linux": "Chaft-{version}-Linux-x86_64.AppImage",
-    "macos": "Chaft-{version}-macOS-x86_64.dmg",
-    "windows": "Chaft-{version}-Windows-x86_64.zip",
-}
-CANONICAL_PACKAGE_SUFFIXES = {
-    "linux": "-Linux-x86_64.AppImage",
-    "macos": "-macOS-x86_64.dmg",
-    "windows": "-Windows-x86_64.zip",
-}
-
-
 def load_release_version_module():
     path = Path(__file__).with_name("release-version.py")
     spec = importlib.util.spec_from_file_location("chaft_release_version", path)
@@ -69,33 +59,28 @@ def package_platform(name):
 
 
 def normalized_platform_name(value):
-    normalized = (value or "").strip().lower()
-    if normalized in {"darwin", "mac", "macos", "osx"}:
-        return "macos"
-    if normalized in {"win32", "windows", "msys", "mingw", "cygwin"}:
-        return "windows"
-    if normalized == "linux":
-        return "linux"
-    return normalized
+    try:
+        return release_targets.normalize_platform(value)
+    except release_targets.ReleaseTargetError:
+        return (value or "").strip().lower()
 
 
 def current_platform_name():
-    return normalized_platform_name(os.environ.get("RUNNER_OS") or platform.system())
+    return release_targets.current_platform()
 
 
-def metadata_names(platform_name):
-    normalized = normalized_platform_name(platform_name)
-    if normalized not in {"linux", "macos", "windows"}:
+def metadata_names(target):
+    if isinstance(target, release_targets.ReleaseTarget):
+        return target.metadata_names
+    try:
+        return release_targets.TARGET_BY_NAME[str(target)].metadata_names
+    except KeyError:
+        candidates = release_targets.targets_for_platform(target)
+        if len(candidates) == 1:
+            return candidates[0].metadata_names
         raise SystemExit(
-            "unsupported package metadata platform "
-            f"{platform_name!r}; expected Linux, macOS, or Windows"
-        )
-    prefix = f"chaft-desktop-{normalized}"
-    return {
-        "checksums": f"{prefix}-SHA256SUMS",
-        "sbom": f"{prefix}-sbom.cdx.json",
-        "provenance": f"{prefix}-provenance.json",
-    }
+            f"package metadata target must include architecture: {target!r}"
+        ) from None
 
 
 def command_output(args):
@@ -192,55 +177,45 @@ def artifact_rows(packages, signatures):
     return sorted(package_rows + signature_rows, key=lambda row: row["name"])
 
 
-def verify_platform_packages(packages, platform_name):
-    normalized = normalized_platform_name(platform_name)
-    metadata_names(normalized)
+def verify_platform_packages(packages, target):
+    platform_name = target.platform
     unexpected = [
-        path.name for path in packages if package_platform(path.name) != normalized
+        path.name for path in packages if package_platform(path.name) != platform_name
     ]
     if unexpected:
         raise SystemExit(
-            f"{normalized} package directory contains unexpected package type(s): "
+            f"{target.name} package directory contains unexpected package type(s): "
             + ", ".join(sorted(unexpected))
         )
 
 
-def verify_distribution_packages(
-    packages, platform_name, distribution_version, prerelease
-):
-    prefix = f"Chaft-{distribution_version}-"
-    unexpected = [path.name for path in packages if not path.name.startswith(prefix)]
-    if unexpected:
+def verify_distribution_packages(packages, target, distribution_version, prerelease):
+    del prerelease
+    expected = target.package_name(distribution_version)
+    actual = [path.name for path in packages]
+    if actual != [expected]:
         raise SystemExit(
-            "package filename does not contain the exact distribution version: "
-            + ", ".join(sorted(unexpected))
+            f"{target.name} release package must be exactly {expected}; "
+            f"found {', '.join(actual)}"
         )
-    canonical_suffix = CANONICAL_PACKAGE_SUFFIXES[platform_name]
-    for path in packages:
-        if path.name.startswith("Chaft-") and path.name.endswith(canonical_suffix):
-            filename_version = path.name[len("Chaft-") : -len(canonical_suffix)]
-            if filename_version != distribution_version:
-                raise SystemExit(
-                    f"{path.name} embeds distribution version {filename_version}, "
-                    f"expected {distribution_version}"
-                )
-    if prerelease is not None:
-        expected = PRERELEASE_PACKAGE_NAMES[platform_name].format(
-            version=distribution_version
-        )
-        actual = [path.name for path in packages]
-        if actual != [expected]:
-            raise SystemExit(
-                f"{platform_name} prerelease package must be exactly {expected}; "
-                f"found {', '.join(actual)}"
-            )
 
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def qt_release_record(root, platform_name):
+def qt_release_record(root, target):
+    if os.environ.get("CHAFT_QT_POLICY") != "release":
+        raise SystemExit(
+            "release metadata requires CHAFT_QT_POLICY=release; "
+            "developer/Homebrew Qt cannot enter release metadata"
+        )
+    activated_target = os.environ.get("CHAFT_QT_SDK_TARGET")
+    if activated_target != target.name:
+        raise SystemExit(
+            "release metadata requires the verified pinned Qt SDK target "
+            f"{target.name}; activation reports {activated_target or 'none'}"
+        )
     provenance_value = os.environ.get("CHAFT_QT_SDK_PROVENANCE")
     provenance_dir = os.environ.get("CHAFT_QT_SDK_PROVENANCE_DIR")
     if provenance_value and provenance_dir:
@@ -252,7 +227,7 @@ def qt_release_record(root, platform_name):
         provenance_path = Path(provenance_value)
     elif provenance_dir:
         provenance_path = (
-            Path(provenance_dir) / f"chaft-qt-sdk-{platform_name}.json"
+            Path(provenance_dir) / f"chaft-qt-sdk-{target.name}.json"
         )
     else:
         qt_prefix = os.environ.get("QTDIR")
@@ -268,7 +243,7 @@ def qt_release_record(root, platform_name):
     sdk_provenance = qt_sdk.load_and_validate_provenance(
         provenance_path,
         manifest,
-        platform_name,
+        target.name,
         recipe_root=root,
     )
     source_contract = qt_source.release_contract(
@@ -443,7 +418,7 @@ def write_sbom(
     distribution_version,
     artifacts,
     tools,
-    platform_name,
+    target,
     names,
 ):
     metadata = cargo_metadata(root)
@@ -475,7 +450,12 @@ def write_sbom(
                     "value": distribution_version,
                 },
                 {"name": "chaft:platform", "value": platform.platform()},
-                {"name": "chaft:packagePlatform", "value": platform_name},
+                {"name": "chaft:packageTarget", "value": target.name},
+                {"name": "chaft:packagePlatform", "value": target.platform},
+                {
+                    "name": "chaft:packageArchitecture",
+                    "value": target.architecture,
+                },
             ],
         },
         "components": cargo_components(metadata),
@@ -520,19 +500,21 @@ def write_provenance(
     distribution_version,
     artifacts,
     tools,
-    platform_name,
+    target,
     names,
 ):
-    qt = qt_release_record(root, platform_name)
+    qt = qt_release_record(root, target)
     provenance = {
-        "schemaVersion": "chaft.desktop.provenance.v1",
+        "schemaVersion": "chaft.desktop.provenance.v2",
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "name": "Chaft Desktop release package",
         "version": distribution_version,
         "sourceVersion": source_version,
         "distributionVersion": distribution_version,
         "profile": profile,
-        "packagePlatform": platform_name,
+        "packageTarget": target.name,
+        "packagePlatform": target.platform,
+        "packageArchitecture": target.architecture,
         "source": source_context(root),
         "github": github_context(),
         "platform": {
@@ -559,9 +541,17 @@ def main():
     parser.add_argument("profile", nargs="?", default="release", choices=("debug", "release"))
     parser.add_argument("--package-dir", type=Path)
     parser.add_argument(
+        "--target",
+        choices=release_targets.TARGET_NAMES,
+        help="Exact native release target, including architecture.",
+    )
+    parser.add_argument(
         "--platform",
-        default=current_platform_name(),
-        help="Package platform: Linux, macOS, or Windows (defaults to the runner OS).",
+        help="Package platform selector; use with --architecture.",
+    )
+    parser.add_argument(
+        "--architecture",
+        help="Package architecture selector; use with --platform.",
     )
     parser.add_argument(
         "--distribution-version",
@@ -581,14 +571,21 @@ def main():
     packages = package_files(package_dir)
     if not packages:
         raise SystemExit(f"no package artifacts found in {package_dir}")
-    platform_name = normalized_platform_name(args.platform)
-    names = metadata_names(platform_name)
+    try:
+        target = release_targets.resolve_target(
+            target_name=args.target,
+            platform_name=args.platform,
+            architecture=args.architecture,
+        )
+    except release_targets.ReleaseTargetError as error:
+        raise SystemExit(str(error)) from None
+    names = metadata_names(target)
     source_version, distribution_version, prerelease = release_versions(
         root, args.distribution_version
     )
-    verify_platform_packages(packages, platform_name)
+    verify_platform_packages(packages, target)
     verify_distribution_packages(
-        packages, platform_name, distribution_version, prerelease
+        packages, target, distribution_version, prerelease
     )
     signatures = signature_files(package_dir, packages)
 
@@ -603,7 +600,7 @@ def main():
             distribution_version,
             artifacts,
             tools,
-            platform_name,
+            target,
             names,
         ),
         write_provenance(
@@ -614,7 +611,7 @@ def main():
             distribution_version,
             artifacts,
             tools,
-            platform_name,
+            target,
             names,
         ),
     ]

@@ -41,8 +41,37 @@ if(NOT "${CHAFT_DISTRIBUTION_VERSION_CORE}" STREQUAL "${PROJECT_VERSION}")
     )
 endif()
 
-find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
-qt_standard_project_setup(REQUIRES 6.8.4)
+set(
+    CHAFT_QT_POLICY
+    "release"
+    CACHE STRING
+    "Qt compatibility policy: developer for native Homebrew builds, release for verified packages"
+)
+set_property(CACHE CHAFT_QT_POLICY PROPERTY STRINGS developer release)
+if(CHAFT_QT_POLICY STREQUAL "developer")
+    if(NOT APPLE)
+        message(FATAL_ERROR
+            "CHAFT_QT_POLICY=developer is supported only for native macOS "
+            "Homebrew builds"
+        )
+    endif()
+    find_package(Qt6 6.11.1 REQUIRED COMPONENTS Network Qml Quick Widgets)
+    if(Qt6_VERSION VERSION_GREATER_EQUAL "6.12.0")
+        message(FATAL_ERROR
+            "Developer Qt policy accepts Qt >=6.11.1 and <6.12.0; found "
+            "${Qt6_VERSION}"
+        )
+    endif()
+    qt_standard_project_setup(REQUIRES 6.11.1)
+elseif(CHAFT_QT_POLICY STREQUAL "release")
+    find_package(Qt6 6.8.4 EXACT REQUIRED COMPONENTS Network Qml Quick Widgets)
+    qt_standard_project_setup(REQUIRES 6.8.4)
+else()
+    message(FATAL_ERROR
+        "CHAFT_QT_POLICY must be developer or release, got "
+        "${CHAFT_QT_POLICY}"
+    )
+endif()
 
 option(
     CHAFT_DEBUG_USES_RELEASE_QT
@@ -74,6 +103,33 @@ qt_add_executable(ChaftDesktop
 )
 
 if(APPLE)
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(CHAFT_MACOS_ARCHITECTURE "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(CHAFT_MACOS_ARCHITECTURE "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+    if(CHAFT_MACOS_ARCHITECTURE MATCHES ";")
+        message(FATAL_ERROR
+            "Chaft macOS artifacts must contain one deterministic native "
+            "architecture, got ${CHAFT_MACOS_ARCHITECTURE}"
+        )
+    endif()
+    string(TOLOWER
+        "${CHAFT_MACOS_ARCHITECTURE}"
+        CHAFT_MACOS_ARCHITECTURE
+    )
+    if(CHAFT_MACOS_ARCHITECTURE MATCHES "^(amd64|x64)$")
+        set(CHAFT_MACOS_ARCHITECTURE "x86_64")
+    elseif(CHAFT_MACOS_ARCHITECTURE STREQUAL "aarch64")
+        set(CHAFT_MACOS_ARCHITECTURE "arm64")
+    endif()
+    if(NOT CHAFT_MACOS_ARCHITECTURE MATCHES "^(x86_64|arm64)$")
+        message(FATAL_ERROR
+            "Unsupported native macOS architecture: "
+            "${CHAFT_MACOS_ARCHITECTURE}"
+        )
+    endif()
+
     set(CHAFT_MACOS_ICON
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Chaft.icns"
     )
@@ -299,6 +355,40 @@ if(CHAFT_FFI_LIBRARY_PATH)
     endif()
 endif()
 
+if(APPLE AND CHAFT_QT_POLICY STREQUAL "developer")
+    if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
+        message(FATAL_ERROR
+            "Developer macOS builds require Qt's offscreen platform plugin "
+            "for the headless launch smoke"
+        )
+    endif()
+    get_target_property(
+        CHAFT_QOFFSCREEN_PLUGIN
+        Qt6::QOffscreenIntegrationPlugin
+        IMPORTED_LOCATION_RELEASE
+    )
+    if(NOT CHAFT_QOFFSCREEN_PLUGIN)
+        get_target_property(
+            CHAFT_QOFFSCREEN_PLUGIN
+            Qt6::QOffscreenIntegrationPlugin
+            IMPORTED_LOCATION
+        )
+    endif()
+    if(NOT CHAFT_QOFFSCREEN_PLUGIN)
+        message(FATAL_ERROR
+            "Unable to resolve Qt's offscreen platform plugin"
+        )
+    endif()
+    file(REAL_PATH
+        "${CHAFT_QOFFSCREEN_PLUGIN}"
+        CHAFT_QOFFSCREEN_PLUGIN
+    )
+    install(
+        FILES "${CHAFT_QOFFSCREEN_PLUGIN}"
+        DESTINATION "Chaft.app/Contents/PlugIns/platforms"
+    )
+endif()
+
 if(UNIX AND NOT APPLE)
     install(FILES
         "${CMAKE_SOURCE_DIR}/packaging/linux/io.github.jurshsmith.chaft.desktop"
@@ -316,11 +406,24 @@ endif()
 
 set(CHAFT_PACKAGE_DOCUMENTATION
     "${CMAKE_SOURCE_DIR}/LICENSE"
-    "${CMAKE_SOURCE_DIR}/packaging/qt/THIRD_PARTY_NOTICES.txt"
     "${CMAKE_SOURCE_DIR}/packaging/qt/LICENSE.LGPL3"
     "${CMAKE_SOURCE_DIR}/packaging/qt/LICENSE.GPL3"
-    "${CMAKE_SOURCE_DIR}/packaging/qt/QT-CORRESPONDING-SOURCE.json"
 )
+if(CHAFT_QT_POLICY STREQUAL "release")
+    list(APPEND CHAFT_PACKAGE_DOCUMENTATION
+        "${CMAKE_SOURCE_DIR}/packaging/qt/THIRD_PARTY_NOTICES.txt"
+        "${CMAKE_SOURCE_DIR}/packaging/qt/QT-CORRESPONDING-SOURCE.json"
+    )
+else()
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/packaging/qt/QT-LOCAL-BUILD-NOTICE.txt.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/QT-LOCAL-BUILD-NOTICE.txt"
+        @ONLY
+    )
+    list(APPEND CHAFT_PACKAGE_DOCUMENTATION
+        "${CMAKE_CURRENT_BINARY_DIR}/QT-LOCAL-BUILD-NOTICE.txt"
+    )
+endif()
 if(APPLE)
     set(CHAFT_PACKAGE_DOCUMENTATION_DESTINATION
         "Chaft.app/Contents/Resources/doc/Chaft"
@@ -371,7 +474,7 @@ set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package")
 if(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_PACKAGE_FILE_NAME
-        "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-x86_64"
+        "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-${CHAFT_MACOS_ARCHITECTURE}"
     )
 elseif(WIN32)
     set(CPACK_GENERATOR "ZIP")
@@ -380,6 +483,6 @@ elseif(WIN32)
     )
 endif()
 
-if(APPLE OR WIN32)
+if((APPLE OR WIN32) AND CHAFT_QT_POLICY STREQUAL "release")
     include(CPack)
 endif()

@@ -6,15 +6,16 @@ one GitHub Release. No network access is performed. Platform-qualified provenanc
 the authority for installer and detached-signature filenames; checksums and file
 sizes are verified before any completed output becomes visible.
 
-The resulting layout is::
+The resulting layout is architecture-qualified::
 
     OUTPUT/
-      windows-package/
-      macos-package/
-      linux-package/
+      windows-x86_64-package/
+      macos-x86_64-package/
+      macos-arm64-package/
+      linux-x86_64-package/
       verification-receipts/
 
-Pass the three package directories, plus the applicable receipt files, to
+Pass the four package directories, plus the applicable receipt files, to
 ``export-website-release-manifest.py``.
 """
 
@@ -32,26 +33,42 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import release_targets
 import unsigned_canary_policy as unsigned_canary
 
 
-PLATFORMS = ("windows", "macos", "linux")
-NATIVE_RECEIPT_PLATFORMS = frozenset(("windows", "macos"))
+TARGETS = release_targets.TARGET_NAMES
+# Kept as an alias for callers that imported the old iteration constant.
+PLATFORMS = TARGETS
+NATIVE_RECEIPT_TARGETS = frozenset(
+    target.name
+    for target in release_targets.TARGETS
+    if target.platform in {"windows", "macos"}
+)
 PACKAGE_DIRECTORY_NAMES = {
-    platform: f"{platform}-package" for platform in PLATFORMS
+    target: f"{target}-package" for target in TARGETS
 }
 METADATA_FILENAMES = {
-    platform: {
-        "checksums": f"chaft-desktop-{platform}-SHA256SUMS",
-        "sbom": f"chaft-desktop-{platform}-sbom.cdx.json",
-        "provenance": f"chaft-desktop-{platform}-provenance.json",
+    target.name: target.metadata_names for target in release_targets.TARGETS
+}
+METADATA_FILENAMES.update(
+    {
+        "windows": METADATA_FILENAMES["windows-x86_64"],
+        "macos": METADATA_FILENAMES["macos-x86_64"],
+        "linux": METADATA_FILENAMES["linux-x86_64"],
     }
-    for platform in PLATFORMS
-}
+)
 VERIFICATION_RECEIPT_FILENAMES = {
-    platform: f"chaft-desktop-{platform}-verification.json"
-    for platform in PLATFORMS
+    target.name: target.verification_receipt_name
+    for target in release_targets.TARGETS
 }
+VERIFICATION_RECEIPT_FILENAMES.update(
+    {
+        "windows": VERIFICATION_RECEIPT_FILENAMES["windows-x86_64"],
+        "macos": VERIFICATION_RECEIPT_FILENAMES["macos-x86_64"],
+        "linux": VERIFICATION_RECEIPT_FILENAMES["linux-x86_64"],
+    }
+)
 UNSIGNED_CANARY_RECEIPT_FILENAMES = unsigned_canary.RECEIPT_FILENAMES
 QT_SOURCE_FILENAMES = (
     "Chaft-Qt-6.8.4-corresponding-source.zip",
@@ -90,8 +107,10 @@ class Fingerprint:
 
 
 @dataclass(frozen=True)
-class PlatformStagePlan:
+class TargetStagePlan:
+    target: str
     platform: str
+    architecture: str
     package_files: tuple[Fingerprint, ...]
     receipt: Fingerprint | None
 
@@ -99,8 +118,14 @@ class PlatformStagePlan:
 @dataclass(frozen=True)
 class StagePlan:
     source_directory: Path
-    platforms: Mapping[str, PlatformStagePlan]
+    targets: Mapping[str, TargetStagePlan]
     release_evidence: tuple[Fingerprint, ...] = ()
+
+    @property
+    def platforms(self) -> Mapping[str, TargetStagePlan]:
+        """Compatibility alias; keys are architecture-qualified target names."""
+
+        return self.targets
 
 
 def fail(message: str) -> None:
@@ -269,7 +294,9 @@ def require_source_file(
     return path
 
 
-def sbom_platform(sbom: Mapping[str, object], context: str) -> str:
+def sbom_property(
+    sbom: Mapping[str, object], property_name: str, context: str
+) -> str:
     metadata = sbom.get("metadata")
     if not isinstance(metadata, dict):
         fail(f"{context}.metadata must be an object")
@@ -278,23 +305,30 @@ def sbom_platform(sbom: Mapping[str, object], context: str) -> str:
         fail(f"{context}.metadata.properties must be an array")
     values: list[object] = []
     for item in properties:
-        if isinstance(item, dict) and item.get("name") == "chaft:packagePlatform":
+        if isinstance(item, dict) and item.get("name") == property_name:
             values.append(item.get("value"))
     if len(values) != 1 or not isinstance(values[0], str):
-        fail(f"{context} must declare exactly one chaft:packagePlatform property")
+        fail(f"{context} must declare exactly one {property_name} property")
     return values[0]
 
 
 def provenance_artifacts(
-    provenance: Mapping[str, object], platform: str
+    provenance: Mapping[str, object], target: release_targets.ReleaseTarget
 ) -> tuple[dict[str, dict[str, object]], set[str]]:
-    context = f"{platform} provenance"
-    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
+    context = f"{target.name} provenance"
+    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v2":
         fail(f"{context} schemaVersion is unsupported")
     if provenance.get("profile") != "release":
         fail(f"{context} profile must be 'release'")
-    if provenance.get("packagePlatform") != platform:
-        fail(f"{context} packagePlatform does not match {platform}")
+    if provenance.get("packageTarget") != target.name:
+        fail(f"{context} packageTarget does not match {target.name}")
+    if provenance.get("packagePlatform") != target.platform:
+        fail(f"{context} packagePlatform does not match {target.platform}")
+    if provenance.get("packageArchitecture") != target.architecture:
+        fail(
+            f"{context} packageArchitecture does not match "
+            f"{target.architecture}"
+        )
     raw_rows = provenance.get("artifacts")
     if not isinstance(raw_rows, list) or not raw_rows:
         fail(f"{context}.artifacts must be a non-empty array")
@@ -324,7 +358,7 @@ def provenance_artifacts(
         signature = signature_description(name)
         if package is not None:
             artifact_platform, expected_format = package
-            if artifact_platform != platform:
+            if artifact_platform != target.platform:
                 fail(
                     f"{context} references a {artifact_platform} package: {name}"
                 )
@@ -360,15 +394,22 @@ def provenance_artifacts(
 
 def validate_receipt(
     receipt: Mapping[str, object],
-    platform: str,
+    target: release_targets.ReleaseTarget,
     package_fingerprints: Mapping[str, Fingerprint],
     signature_fingerprints: Mapping[str, Fingerprint],
 ) -> None:
-    context = f"{platform} verification receipt"
-    if receipt.get("schemaVersion") != "chaft.desktop.platform-verification.v1":
+    context = f"{target.name} verification receipt"
+    if receipt.get("schemaVersion") != "chaft.desktop.platform-verification.v2":
         fail(f"{context} schemaVersion is unsupported")
-    if receipt.get("platform") != platform:
+    if receipt.get("target") != target.name:
+        fail(f"{context} target does not match its target-qualified filename")
+    if receipt.get("platform") != target.platform:
         fail(f"{context} platform does not match its platform-qualified filename")
+    if receipt.get("architecture") != target.architecture:
+        fail(
+            f"{context} architecture does not match its "
+            "target-qualified filename"
+        )
     if receipt.get("status") != "verified":
         fail(f"{context} status must be 'verified'")
 
@@ -382,19 +423,19 @@ def validate_receipt(
         "windows": "authenticode-signer-certificate-thumbprint",
         "macos": "apple-developer-team-id",
         "linux": "openpgp-primary-key-fingerprint",
-    }[platform]
+    }[target.platform]
     if identity.get("type") != identity_type:
         fail(f"{context} publisher identity type must be {identity_type!r}")
     identity_value = identity.get("value")
     if not isinstance(identity_value, str):
         fail(f"{context} publisher identity value must be a string")
-    if platform == "windows":
+    if target.platform == "windows":
         if AUTHENTICODE_THUMBPRINT_PATTERN.fullmatch(identity_value) is None:
             fail(f"{context} Authenticode thumbprint is invalid")
         expected_algorithm = "sha1" if len(identity_value) == 40 else "sha256"
         if identity.get("algorithm") != expected_algorithm:
             fail(f"{context} Authenticode algorithm must be {expected_algorithm}")
-    elif platform == "macos":
+    elif target.platform == "macos":
         if APPLE_TEAM_ID_PATTERN.fullmatch(identity_value) is None:
             fail(f"{context} Apple Developer Team ID is invalid")
     else:
@@ -437,7 +478,7 @@ def validate_receipt(
     raw_signatures = receipt.get("signatures")
     if not isinstance(raw_signatures, list):
         fail(f"{context}.signatures must be an array")
-    if platform != "linux":
+    if target.platform != "linux":
         if raw_signatures:
             fail(f"{context}.signatures must be empty for embedded-signature platforms")
         return
@@ -488,26 +529,28 @@ def build_stage_plan(
     original_source = Path(assets_directory)
     source_directory = original_source.resolve()
     source_files = scan_flat_directory(original_source)
-    plans: dict[str, PlatformStagePlan] = {}
+    plans: dict[str, TargetStagePlan] = {}
     expected_names: set[str] = set()
     artifact_owners: dict[str, str] = {}
 
-    for platform in PLATFORMS:
-        names = METADATA_FILENAMES[platform]
+    for target_name in TARGETS:
+        target = release_targets.TARGET_BY_NAME[target_name]
+        context = target.name
+        names = METADATA_FILENAMES[target.name]
         provenance_path = require_source_file(
-            source_files, names["provenance"], f"{platform} provenance metadata"
+            source_files, names["provenance"], f"{context} provenance metadata"
         )
         checksums_path = require_source_file(
-            source_files, names["checksums"], f"{platform} checksum metadata"
+            source_files, names["checksums"], f"{context} checksum metadata"
         )
         sbom_path = require_source_file(
-            source_files, names["sbom"], f"{platform} SBOM metadata"
+            source_files, names["sbom"], f"{context} SBOM metadata"
         )
 
         provenance, provenance_fingerprint = load_json_object(
-            provenance_path, f"{platform} provenance"
+            provenance_path, f"{context} provenance"
         )
-        rows, package_names = provenance_artifacts(provenance, platform)
+        rows, package_names = provenance_artifacts(provenance, target)
         checksums, checksums_fingerprint = parse_checksums(checksums_path)
         if set(checksums) != set(rows):
             missing = sorted(set(rows) - set(checksums))
@@ -518,15 +561,33 @@ def build_stage_plan(
             if extra:
                 details.append("extra: " + ", ".join(extra))
             fail(
-                f"{platform} provenance/checksum artifact sets differ "
+                f"{context} provenance/checksum artifact sets differ "
                 f"({'; '.join(details)})"
             )
 
-        sbom, sbom_fingerprint = load_json_object(sbom_path, f"{platform} SBOM")
+        sbom, sbom_fingerprint = load_json_object(sbom_path, f"{context} SBOM")
         if sbom.get("bomFormat") != "CycloneDX":
-            fail(f"{platform} SBOM bomFormat must be CycloneDX")
-        if sbom_platform(sbom, f"{platform} SBOM") != platform:
-            fail(f"{platform} SBOM package platform does not match its filename")
+            fail(f"{context} SBOM bomFormat must be CycloneDX")
+        if (
+            sbom_property(sbom, "chaft:packageTarget", f"{context} SBOM")
+            != target.name
+        ):
+            fail(f"{context} SBOM package target does not match its filename")
+        if (
+            sbom_property(sbom, "chaft:packagePlatform", f"{context} SBOM")
+            != target.platform
+        ):
+            fail(f"{context} SBOM package platform does not match its filename")
+        if (
+            sbom_property(
+                sbom, "chaft:packageArchitecture", f"{context} SBOM"
+            )
+            != target.architecture
+        ):
+            fail(
+                f"{context} SBOM package architecture does not match "
+                "its filename"
+            )
 
         artifact_fingerprints: dict[str, Fingerprint] = {}
         for name, row in rows.items():
@@ -534,41 +595,54 @@ def build_stage_plan(
             if owner is not None:
                 fail(
                     f"release artifact filename {name!r} is referenced by both "
-                    f"{owner} and {platform} provenance"
+                    f"{owner} and {context} provenance"
                 )
-            artifact_owners[name] = platform
+            artifact_owners[name] = context
             path = require_source_file(
-                source_files, name, f"{platform} provenance artifact"
+                source_files, name, f"{context} provenance artifact"
             )
             fingerprint = fingerprint_file(path)
             if fingerprint.sha256 != row["sha256"]:
-                fail(f"{platform} provenance SHA-256 is stale for {name}")
+                fail(f"{context} provenance SHA-256 is stale for {name}")
             if fingerprint.sha256 != checksums[name]:
-                fail(f"{platform} checksum is stale for {name}")
+                fail(f"{context} checksum is stale for {name}")
             if fingerprint.size_bytes != row["sizeBytes"]:
-                fail(f"{platform} provenance sizeBytes is stale for {name}")
+                fail(f"{context} provenance sizeBytes is stale for {name}")
             artifact_fingerprints[name] = fingerprint
 
+        distribution_version = provenance.get("distributionVersion")
+        version_alias = provenance.get("version")
+        if not isinstance(distribution_version, str) or not distribution_version:
+            fail(f"{context} provenance distributionVersion must be a non-empty string")
+        if version_alias != distribution_version:
+            fail(f"{context} provenance version must equal distributionVersion")
+        expected_package = target.package_name(distribution_version)
+        if package_names != {expected_package}:
+            fail(
+                f"{context} provenance package set must contain exactly "
+                f"{expected_package}"
+            )
+
         receipt_name = (
-            UNSIGNED_CANARY_RECEIPT_FILENAMES[platform]
+            UNSIGNED_CANARY_RECEIPT_FILENAMES[target.name]
             if channel == "canary"
-            else VERIFICATION_RECEIPT_FILENAMES[platform]
+            else VERIFICATION_RECEIPT_FILENAMES[target.name]
         )
         receipt_path = source_files.get(receipt_name)
-        requires_platform_receipt = require_receipts and (
-            channel == "canary" or platform in NATIVE_RECEIPT_PLATFORMS
+        requires_target_receipt = require_receipts and (
+            channel == "canary" or target.name in NATIVE_RECEIPT_TARGETS
         )
-        if receipt_path is None and requires_platform_receipt:
-            fail(f"missing {platform} native verification receipt: {receipt_name}")
+        if receipt_path is None and requires_target_receipt:
+            fail(f"missing {context} native verification receipt: {receipt_name}")
         receipt_fingerprint = None
         if receipt_path is not None:
             receipt, receipt_fingerprint = load_json_object(
-                receipt_path, f"{platform} verification receipt"
+                receipt_path, f"{context} verification receipt"
             )
             if channel == "canary":
                 if len(package_names) != 1:
                     fail(
-                        f"{platform} unsigned canary must contain exactly one package"
+                        f"{context} unsigned canary must contain exactly one package"
                     )
                 signatures = {
                     name: fingerprint
@@ -577,14 +651,15 @@ def build_stage_plan(
                 }
                 if signatures:
                     fail(
-                        f"{platform} unsigned canary must not include detached signatures"
+                        f"{context} unsigned canary must not include detached signatures"
                     )
                 package_name = next(iter(package_names))
                 package = artifact_fingerprints[package_name]
                 try:
                     unsigned_canary.validate_receipt_document(
                         receipt,
-                        expected_platform=platform,
+                        expected_target=target.name,
+                        expected_platform=target.platform,
                         expected_package=unsigned_canary.FileFingerprint(
                             filename=package.name,
                             size_bytes=package.size_bytes,
@@ -592,11 +667,11 @@ def build_stage_plan(
                         ),
                     )
                 except unsigned_canary.UnsignedCanaryPolicyError as error:
-                    fail(f"{platform} unsigned-canary receipt is invalid: {error}")
+                    fail(f"{context} unsigned-canary receipt is invalid: {error}")
             else:
                 validate_receipt(
                     receipt,
-                    platform,
+                    target,
                     {
                         name: artifact_fingerprints[name]
                         for name in package_names
@@ -620,8 +695,10 @@ def build_stage_plan(
         expected_names.update(item.name for item in package_files)
         if receipt_fingerprint is not None:
             expected_names.add(receipt_fingerprint.name)
-        plans[platform] = PlatformStagePlan(
-            platform=platform,
+        plans[target.name] = TargetStagePlan(
+            target=target.name,
+            platform=target.platform,
+            architecture=target.architecture,
             package_files=tuple(
                 sorted(package_files, key=lambda item: item.name)
             ),
@@ -659,7 +736,7 @@ def build_stage_plan(
         fail("unexpected release asset(s): " + ", ".join(unexpected))
     return StagePlan(
         source_directory=source_directory,
-        platforms=plans,
+        targets=plans,
         release_evidence=release_evidence,
     )
 
@@ -745,17 +822,17 @@ def stage_assets(
         receipts_directory.mkdir(mode=0o755)
         release_evidence_directory = temporary_directory / "release-evidence"
         release_evidence_directory.mkdir(mode=0o755)
-        for platform in PLATFORMS:
-            platform_plan = plan.platforms[platform]
+        for target_name in TARGETS:
+            target_plan = plan.targets[target_name]
             package_directory = (
-                temporary_directory / PACKAGE_DIRECTORY_NAMES[platform]
+                temporary_directory / PACKAGE_DIRECTORY_NAMES[target_name]
             )
             package_directory.mkdir(mode=0o755)
-            for source in platform_plan.package_files:
+            for source in target_plan.package_files:
                 copy_fingerprinted_file(source, package_directory / source.name)
             _fsync_directory(package_directory)
-            if platform_plan.receipt is not None:
-                receipt = platform_plan.receipt
+            if target_plan.receipt is not None:
+                receipt = target_plan.receipt
                 copy_fingerprinted_file(receipt, receipts_directory / receipt.name)
 
         for source in plan.release_evidence:
@@ -833,12 +910,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     output = args.output_dir.resolve()
     print(f"release assets staged: {output}")
-    for platform in PLATFORMS:
-        print(f"{platform} package directory: {output / PACKAGE_DIRECTORY_NAMES[platform]}")
-        receipt = plan.platforms[platform].receipt
+    for target_name in TARGETS:
+        print(
+            f"{target_name} package directory: "
+            f"{output / PACKAGE_DIRECTORY_NAMES[target_name]}"
+        )
+        receipt = plan.targets[target_name].receipt
         if receipt is not None:
             print(
-                f"{platform} verification receipt: "
+                f"{target_name} verification receipt: "
                 f"{output / 'verification-receipts' / receipt.name}"
             )
     if plan.release_evidence:

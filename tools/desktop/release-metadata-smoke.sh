@@ -4,14 +4,6 @@ set -eu
 script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_root="$(CDPATH= cd "$script_dir/../.." && pwd)"
 
-require_tool() {
-  name="$1"
-  if ! command -v "$name" >/dev/null 2>&1; then
-    printf 'missing required tool: %s\n' "$name" >&2
-    exit 1
-  fi
-}
-
 cleanup() {
   if [ "${CHAFT_KEEP_SMOKE:-0}" != "1" ] && [ -n "${smoke_dir:-}" ]; then
     rm -rf "$smoke_dir"
@@ -20,53 +12,76 @@ cleanup() {
   fi
 }
 
-write_artifact() {
-  package_dir="$1"
-  name="$2"
-
-  mkdir -p "$package_dir"
-  printf 'Chaft synthetic package artifact: %s\n' "$name" > "$package_dir/$name"
-}
-
-write_signature() {
-  package_dir="$1"
-  package_name="$2"
-  signature_suffix="$3"
-
-  printf 'Chaft synthetic detached signature for: %s\n' "$package_name" \
-    > "$package_dir/$package_name$signature_suffix"
-}
-
-assert_file() {
-  path="$1"
-  if [ ! -f "$path" ]; then
-    printf 'expected file was not generated: %s\n' "$path" >&2
-    exit 1
-  fi
-}
-
-assert_not_file() {
-  path="$1"
-  if [ -e "$path" ]; then
-    printf 'unexpected legacy metadata file was generated: %s\n' "$path" >&2
-    exit 1
-  fi
-}
-
 expect_failure() {
   description="$1"
   shift
-
-  if "$@" > "$smoke_dir/unexpected-success.log" 2>&1; then
+  if "$@" >"$smoke_dir/unexpected-success.log" 2>&1; then
     printf 'expected failure did not occur: %s\n' "$description" >&2
     cat "$smoke_dir/unexpected-success.log" >&2
     exit 1
   fi
 }
 
-require_tool cargo
-require_tool git
-require_tool python3
+write_artifact() {
+  package_dir="$1"
+  filename="$2"
+  mkdir -p "$package_dir"
+  printf 'Chaft synthetic release artifact: %s\n' "$filename" \
+    >"$package_dir/$filename"
+}
+
+generate_metadata() {
+  target="$1"
+  package_dir="$2"
+  shift 2
+  env \
+    CHAFT_QT_POLICY=release \
+    CHAFT_QT_SDK_TARGET="$target" \
+    CHAFT_QT_SDK_PROVENANCE_DIR="$qt_provenance_dir" \
+    python3 "$repo_root/tools/desktop/release-metadata.py" release \
+      --package-dir "$package_dir" \
+      --target "$target" \
+      "$@" || return $?
+
+  case "$target" in
+    macos-arm64) architecture="arm64" ;;
+    *) architecture="x86_64" ;;
+  esac
+  python3 - \
+    "$package_dir/chaft-desktop-$target-provenance.json" \
+    "$architecture" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+# This smoke creates all native-target fixtures on one host. Production metadata
+# is never rewritten; the matrix jobs verify their naturally native host values.
+path = Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+value["platform"]["machine"] = sys.argv[2]
+path.write_text(
+    json.dumps(value, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+verify_metadata() {
+  target="$1"
+  package_dir="$2"
+  shift 2
+  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
+    --package-dir "$package_dir" \
+    --target "$target" \
+    "$@"
+}
+
+for tool in cargo git python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'missing required tool: %s\n' "$tool" >&2
+    exit 1
+  fi
+done
 
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/chaft-release-metadata-smoke.XXXXXX")"
 trap cleanup EXIT INT TERM
@@ -83,483 +98,227 @@ output = Path(sys.argv[2])
 sys.path.insert(0, str(root / "tools" / "qt"))
 import build_qt as qt
 
-manifest = qt.load_manifest(root / "tools" / "qt" / "qt-6.8.4.json")
+manifest = qt.load_manifest(
+    root / "tools" / "qt" / "qt-6.8.4.json",
+    recipe_root=root,
+)
 runner_os = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
-for platform in qt.SUPPORTED_PLATFORMS:
+for target_name in qt.SUPPORTED_TARGETS:
+    specification = manifest["targets"][target_name]
+    platform_name = specification["platform"]
     contract = {
-        "schemaVersion": 1,
-        "platform": platform,
+        "schemaVersion": 2,
+        "target": target_name,
+        "platform": platform_name,
         "runner": {
-            "os": runner_os[platform],
-            "architecture": "X64",
-            "imageOS": f"synthetic-{platform}",
-            "imageVersion": "20260726.1",
+            "os": runner_os[platform_name],
+            "architecture": specification["architecture"],
+            "imageOS": f"synthetic-{target_name}",
+            "imageVersion": "20260729.1",
         },
         "tools": {
             "cmake": "cmake version 4.1.0",
             "ninja": "1.13.1",
-            "compiler": f"synthetic {platform} compiler 1.0",
+            "compiler": f"synthetic {target_name} compiler 1.0",
             "python": "3.13.3",
         },
     }
-    fingerprint = qt.toolchain_fingerprint(contract, platform)
+    fingerprint = qt.toolchain_fingerprint(
+        contract,
+        manifest,
+        target_name,
+    )
     provenance = {
-        "schemaVersion": 1,
-        "identity": qt.sdk_identity(manifest, platform, fingerprint),
-        "manifestSha256": qt.manifest_digest(manifest),
-        "contractSha256": qt.contract_digest(manifest),
+        "schemaVersion": 2,
+        "identity": qt.sdk_identity(
+            manifest,
+            target_name,
+            fingerprint,
+            recipe_root=root,
+        ),
+        "manifestSha256": qt.manifest_digest(
+            manifest,
+            recipe_root=root,
+        ),
+        "contractSha256": qt.contract_digest(
+            manifest,
+            recipe_root=root,
+        ),
         "qtVersion": manifest["qtVersion"],
         "sdkRevision": manifest["sdkRevision"],
-        "platform": platform,
-        "platformSpecification": manifest["platforms"][platform],
+        "target": target_name,
+        "platform": platform_name,
+        "architecture": specification["architecture"],
+        "targetSpecification": specification,
         "buildConfiguration": manifest["build"],
-        "generatedAt": "2026-07-26T00:00:00Z",
+        "generatedAt": "2026-07-29T00:00:00Z",
         "host": {
-            "system": runner_os[platform],
+            "system": runner_os[platform_name],
             "release": "synthetic",
-            "machine": "x86_64",
+            "machine": specification["architecture"],
         },
         "toolchainFingerprint": fingerprint,
         "toolchainContract": contract,
-        "sourceMaterials": qt.expected_source_materials(manifest, platform),
-        "recipeMaterials": qt.recipe_materials(),
+        "sourceMaterials": qt.expected_source_materials(
+            manifest,
+            target_name,
+        ),
+        "recipeMaterials": qt.recipe_materials(root),
         "commands": [],
         "verification": {
             "completed": True,
-            "completedAt": "2026-07-26T00:01:00Z",
+            "completedAt": "2026-07-29T00:01:00Z",
         },
     }
-    path = output / f"chaft-qt-sdk-{platform}.json"
+    qt.validate_provenance_object(
+        provenance,
+        manifest,
+        target_name,
+        recipe_root=root,
+    )
+    path = output / f"chaft-qt-sdk-{target_name}.json"
     path.write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 PY
-export CHAFT_QT_SDK_PROVENANCE_DIR="$qt_provenance_dir"
 
-linux_dir="$smoke_dir/linux-package"
-macos_dir="$smoke_dir/macos-package"
-windows_dir="$smoke_dir/windows-package"
-ci_dir="$smoke_dir/ci-package"
-dispatch_dir="$smoke_dir/dispatch-package"
-materials_dir="$smoke_dir/materials-package"
-signature_dir="$smoke_dir/signature-package"
-orphan_signature_dir="$smoke_dir/orphan-signature-package"
-platform_mismatch_dir="$smoke_dir/platform-mismatch-package"
-qt_binding_dir="$smoke_dir/qt-binding-package"
-canary_dir="$smoke_dir/canary-package"
-invalid_canary_dir="$smoke_dir/invalid-canary-package"
+targets="
+windows-x86_64|Chaft-0.1.0-Windows-x86_64.zip
+macos-x86_64|Chaft-0.1.0-macOS-x86_64.dmg
+macos-arm64|Chaft-0.1.0-macOS-arm64.dmg
+linux-x86_64|Chaft-0.1.0-Linux-x86_64.AppImage
+"
 
-write_artifact "$linux_dir" "Chaft-0.1.0-Linux.tar.gz"
-write_artifact "$linux_dir" "Chaft-0.1.0-Linux.AppImage"
-write_signature "$linux_dir" "Chaft-0.1.0-Linux.AppImage" ".asc"
-write_artifact "$macos_dir" "Chaft-0.1.0-macOS.dmg"
-write_signature "$macos_dir" "Chaft-0.1.0-macOS.dmg" ".sig"
-write_artifact "$windows_dir" "Chaft-0.1.0-Windows.zip"
-write_artifact "$windows_dir" "Chaft-0.1.0-Windows.msi"
-write_artifact "$windows_dir" "Chaft-0.1.0-Windows.exe"
-write_signature "$windows_dir" "Chaft-0.1.0-Windows.msi" ".sig"
-write_artifact "$ci_dir" "Chaft-0.1.0-CI.tar.gz"
-write_artifact "$dispatch_dir" "Chaft-0.1.0-Dispatch.tar.gz"
-write_artifact "$materials_dir" "Chaft-0.1.0-Materials.tar.gz"
-write_artifact "$signature_dir" "Chaft-0.1.0-Signed.AppImage"
-write_signature "$signature_dir" "Chaft-0.1.0-Signed.AppImage" ".sig"
-write_artifact "$orphan_signature_dir" "Chaft-0.1.0-Orphan.AppImage"
-write_artifact "$platform_mismatch_dir" "Chaft-0.1.0-Wrong-Platform.tar.gz"
-write_artifact "$qt_binding_dir" "Chaft-0.1.0-Qt-Binding.tar.gz"
-write_artifact "$canary_dir" "Chaft-0.1.0-canary.1-Linux-x86_64.AppImage"
-write_artifact "$invalid_canary_dir" "Chaft-0.1.0-canary.1-Linux.AppImage"
+printf '%s\n' "$targets" | while IFS='|' read -r target filename; do
+  [ -n "$target" ] || continue
+  package_dir="$smoke_dir/$target-package"
+  write_artifact "$package_dir" "$filename"
+  generate_metadata "$target" "$package_dir"
+  verify_metadata "$target" "$package_dir"
 
-for row in \
-  "Linux:$linux_dir" \
-  "macOS:$macos_dir" \
-  "Windows:$windows_dir"
-do
-  platform="${row%%:*}"
-  package_dir="${row#*:}"
-
-  case "$platform" in
-    Linux) platform_slug="linux" ;;
-    macOS) platform_slug="macos" ;;
-    Windows) platform_slug="windows" ;;
-    *) printf 'unsupported smoke platform: %s\n' "$platform" >&2; exit 1 ;;
-  esac
-
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$package_dir" \
-    --platform "$platform"
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$package_dir" \
-    --platform "$platform"
-
-  assert_file "$package_dir/chaft-desktop-$platform_slug-SHA256SUMS"
-  assert_file "$package_dir/chaft-desktop-$platform_slug-sbom.cdx.json"
-  assert_file "$package_dir/chaft-desktop-$platform_slug-provenance.json"
-  assert_not_file "$package_dir/SHA256SUMS"
-  assert_not_file "$package_dir/chaft-desktop-sbom.cdx.json"
-  assert_not_file "$package_dir/chaft-desktop-provenance.json"
+  for suffix in SHA256SUMS sbom.cdx.json provenance.json; do
+    path="$package_dir/chaft-desktop-$target-$suffix"
+    if [ ! -f "$path" ]; then
+      printf 'expected target-qualified metadata was not generated: %s\n' "$path" >&2
+      exit 1
+    fi
+  done
 done
 
-CHAFT_DISTRIBUTION_VERSION=0.1.0-canary.1 \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$canary_dir" \
-    --platform Linux
-python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-  --package-dir "$canary_dir" \
-  --platform Linux \
+python3 - \
+  "$smoke_dir/macos-x86_64-package/chaft-desktop-macos-x86_64-provenance.json" \
+  "$smoke_dir/macos-arm64-package/chaft-desktop-macos-arm64-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+x86 = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+arm = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if (x86["packageTarget"], x86["packageArchitecture"]) != (
+    "macos-x86_64",
+    "x86_64",
+):
+    raise SystemExit("Intel macOS metadata is not target-bound")
+if (arm["packageTarget"], arm["packageArchitecture"]) != (
+    "macos-arm64",
+    "arm64",
+):
+    raise SystemExit("Apple Silicon metadata is not target-bound")
+if x86["qt"]["sdk"]["identity"] == arm["qt"]["sdk"]["identity"]:
+    raise SystemExit("macOS Qt SDK identities must be architecture-specific")
+PY
+
+linux_dir="$smoke_dir/linux-x86_64-package"
+macos_arm_dir="$smoke_dir/macos-arm64-package"
+
+expect_failure "developer Qt cannot generate official release metadata" \
+  env \
+    CHAFT_QT_POLICY=developer \
+    CHAFT_QT_SDK_TARGET=linux-x86_64 \
+    CHAFT_QT_SDK_PROVENANCE_DIR="$qt_provenance_dir" \
+    python3 "$repo_root/tools/desktop/release-metadata.py" release \
+      --package-dir "$linux_dir" \
+      --target linux-x86_64
+
+expect_failure "wrong pinned Qt architecture cannot generate official metadata" \
+  env \
+    CHAFT_QT_POLICY=release \
+    CHAFT_QT_SDK_TARGET=macos-x86_64 \
+    CHAFT_QT_SDK_PROVENANCE_DIR="$qt_provenance_dir" \
+    python3 "$repo_root/tools/desktop/release-metadata.py" release \
+      --package-dir "$macos_arm_dir" \
+      --target macos-arm64
+
+wrong_name_dir="$smoke_dir/wrong-name-package"
+write_artifact "$wrong_name_dir" "Chaft-0.1.0-macOS.dmg"
+expect_failure "architecture-free macOS package name" \
+  generate_metadata macos-arm64 "$wrong_name_dir"
+
+canary_dir="$smoke_dir/canary-package"
+write_artifact "$canary_dir" \
+  "Chaft-0.1.0-canary.1-Linux-x86_64.AppImage"
+generate_metadata linux-x86_64 "$canary_dir" \
+  --distribution-version 0.1.0-canary.1
+verify_metadata linux-x86_64 "$canary_dir" \
   --expected-source-version 0.1.0 \
   --expected-distribution-version 0.1.0-canary.1
+
+printf 'tampered package bytes\n' \
+  >>"$linux_dir/Chaft-0.1.0-Linux-x86_64.AppImage"
+expect_failure "stale metadata after package mutation" \
+  verify_metadata linux-x86_64 "$linux_dir"
+
+signature_dir="$smoke_dir/signature-package"
+write_artifact "$signature_dir" "Chaft-0.1.0-Linux-x86_64.AppImage"
+printf 'synthetic detached signature\n' \
+  >"$signature_dir/Chaft-0.1.0-Linux-x86_64.AppImage.sig"
+generate_metadata linux-x86_64 "$signature_dir"
+verify_metadata linux-x86_64 "$signature_dir"
+printf 'tampered signature bytes\n' \
+  >>"$signature_dir/Chaft-0.1.0-Linux-x86_64.AppImage.sig"
+expect_failure "stale metadata after signature mutation" \
+  verify_metadata linux-x86_64 "$signature_dir"
+
+qt_binding_dir="$smoke_dir/qt-binding-package"
+write_artifact "$qt_binding_dir" "Chaft-0.1.0-Linux-x86_64.AppImage"
+generate_metadata linux-x86_64 "$qt_binding_dir"
 python3 - \
-  "$canary_dir/chaft-desktop-linux-sbom.cdx.json" \
-  "$canary_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-sbom = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-provenance = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-component = sbom["metadata"]["component"]
-properties = {
-    item["name"]: item["value"]
-    for item in sbom["metadata"]["properties"]
-}
-if component["version"] != "0.1.0-canary.1":
-    raise SystemExit("canary SBOM component does not use distribution version")
-if properties.get("chaft:sourceVersion") != "0.1.0":
-    raise SystemExit("canary SBOM does not retain stable source version")
-if properties.get("chaft:distributionVersion") != "0.1.0-canary.1":
-    raise SystemExit("canary SBOM distribution version is missing")
-if provenance.get("sourceVersion") != "0.1.0":
-    raise SystemExit("canary provenance does not retain stable source version")
-if provenance.get("distributionVersion") != "0.1.0-canary.1":
-    raise SystemExit("canary provenance distribution version is missing")
-if provenance.get("version") != "0.1.0-canary.1":
-    raise SystemExit("canary provenance version alias is stale")
-PY
-expect_failure "incorrect canary native package filename" \
-  env CHAFT_DISTRIBUTION_VERSION=0.1.0-canary.1 \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$invalid_canary_dir" \
-    --platform Linux
-expect_failure "canary filename with omitted distribution version input" \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$canary_dir" \
-    --platform Linux
-expect_failure "mismatched expected canary distribution version" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$canary_dir" \
-    --platform Linux \
-    --expected-distribution-version 0.1.0-canary.2
-
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$qt_binding_dir" \
-  --platform Linux
-python3 - "$qt_binding_dir/chaft-desktop-linux-provenance.json" <<'PY'
+  "$qt_binding_dir/chaft-desktop-linux-x86_64-provenance.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance["qt"]["sdk"]["identity"] = "stale-qt-sdk-identity"
+value = json.loads(path.read_text(encoding="utf-8"))
+value["qt"]["sdk"]["identity"] = "stale-qt-sdk-identity"
 path.write_text(
-    json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+    json.dumps(value, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
 )
 PY
-expect_failure "stale Qt SDK release identity" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$qt_binding_dir" \
-    --platform Linux
+expect_failure "stale Qt SDK identity" \
+  verify_metadata linux-x86_64 "$qt_binding_dir"
 
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$qt_binding_dir" \
-  --platform Linux
-python3 - "$qt_binding_dir/chaft-desktop-linux-provenance.json" <<'PY'
+target_binding_dir="$smoke_dir/target-binding-package"
+write_artifact "$target_binding_dir" \
+  "Chaft-0.1.0-macOS-arm64.dmg"
+generate_metadata macos-arm64 "$target_binding_dir"
+python3 - \
+  "$target_binding_dir/chaft-desktop-macos-arm64-provenance.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance["qt"]["correspondingSource"]["contractSha256"] = "0" * 64
+value = json.loads(path.read_text(encoding="utf-8"))
+value["packageArchitecture"] = "x86_64"
 path.write_text(
-    json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+    json.dumps(value, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
 )
 PY
-expect_failure "stale Qt corresponding-source contract" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$qt_binding_dir" \
-    --platform Linux
-
-python3 - "$macos_dir/chaft-desktop-macos-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance["createdAt"] = "2026-07-18"
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "date-only provenance timestamp" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$macos_dir" \
-    --platform macOS
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$macos_dir" \
-  --platform macOS
-
-expect_failure "platform package suffix mismatch during generation" \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$platform_mismatch_dir" \
-    --platform Windows
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$platform_mismatch_dir" \
-  --platform Linux
-mv "$platform_mismatch_dir/chaft-desktop-linux-SHA256SUMS" \
-  "$platform_mismatch_dir/chaft-desktop-windows-SHA256SUMS"
-mv "$platform_mismatch_dir/chaft-desktop-linux-sbom.cdx.json" \
-  "$platform_mismatch_dir/chaft-desktop-windows-sbom.cdx.json"
-mv "$platform_mismatch_dir/chaft-desktop-linux-provenance.json" \
-  "$platform_mismatch_dir/chaft-desktop-windows-provenance.json"
-expect_failure "platform package suffix mismatch during verification" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$platform_mismatch_dir" \
-    --platform Windows
-
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$orphan_signature_dir" \
-  --platform Linux
-printf 'not attached to a package\n' > "$orphan_signature_dir/arbitrary-file.sig"
-expect_failure "orphan detached signature during generation" \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$orphan_signature_dir" \
-    --platform Linux
-expect_failure "orphan detached signature during verification" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$orphan_signature_dir" \
-    --platform Linux
-
-python3 - \
-  "$windows_dir/chaft-desktop-windows-SHA256SUMS" \
-  "$windows_dir/chaft-desktop-windows-sbom.cdx.json" \
-  "$windows_dir/chaft-desktop-windows-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-checksums_path = Path(sys.argv[1])
-sbom_path = Path(sys.argv[2])
-provenance_path = Path(sys.argv[3])
-signature_name = "Chaft-0.1.0-Windows.msi.sig"
-
-checksum_names = {
-    line.split("  ", 1)[1]
-    for line in checksums_path.read_text(encoding="utf-8").splitlines()
-    if line
-}
-if signature_name not in checksum_names:
-    raise SystemExit("detached signature missing from platform checksum file")
-
-sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
-sbom_properties = {
-    item.get("name"): item.get("value")
-    for item in sbom.get("properties", [])
-    if isinstance(item, dict)
-}
-if sbom_properties.get(f"chaft:artifact:{signature_name}:signedArtifact") != "Chaft-0.1.0-Windows.msi":
-    raise SystemExit("SBOM detached signature relationship missing")
-
-provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-signature_rows = [
-    item
-    for item in provenance.get("artifacts", [])
-    if item.get("name") == signature_name
-]
-if len(signature_rows) != 1 or signature_rows[0].get("signedArtifact") != "Chaft-0.1.0-Windows.msi":
-    raise SystemExit("provenance detached signature relationship missing")
-
-for item in sbom.get("metadata", {}).get("properties", []):
-    if item.get("name") == "chaft:sourceCommit":
-        item["value"] = "stale-source-commit"
-sbom_path.write_text(json.dumps(sbom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "stale SBOM source commit" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$windows_dir" \
-    --platform Windows
-
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$materials_dir" \
-  --platform Linux
-python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-  --package-dir "$materials_dir" \
-  --platform Linux
-
-python3 - "$materials_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-for item in provenance.get("materials", []):
-    if item.get("name") == "tools/desktop/macos-adhoc-verify.cmake":
-        item["sha256"] = "0" * 64
-        break
-else:
-    raise SystemExit("macOS ad-hoc verification provenance material row missing")
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "stale provenance source material" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$materials_dir" \
-    --platform Linux
-
-ci_sha="$(git -C "$repo_root" rev-parse HEAD)"
-wrong_ci_sha="ffffffffffffffffffffffffffffffffffffffff"
-GITHUB_ACTIONS=true \
-GITHUB_REPOSITORY=Jurshsmith/chaft \
-GITHUB_RUN_ID=1 \
-GITHUB_SHA="$ci_sha" \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$ci_dir" \
-    --platform Linux
-
-python3 - "$ci_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance.setdefault("source", {})["dirty"] = False
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-
-env \
-  GITHUB_ACTIONS=true \
-  GITHUB_REPOSITORY=Jurshsmith/chaft \
-  GITHUB_RUN_ID=2 \
-  GITHUB_SHA="$wrong_ci_sha" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$ci_dir" \
-    --platform Linux \
-    --source-root "$repo_root" \
-    --expected-commit "$ci_sha" \
-    --require-clean
-
-python3 - "$ci_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance.setdefault("github", {})["GITHUB_SHA"] = "stale-ci-sha"
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "CI provenance commit mismatch" \
-  env \
-    GITHUB_ACTIONS=true \
-    GITHUB_REPOSITORY=Jurshsmith/chaft \
-    GITHUB_RUN_ID=1 \
-    GITHUB_SHA="$ci_sha" \
-    python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-      --package-dir "$ci_dir" \
-      --platform Linux
-
-GITHUB_ACTIONS=true \
-GITHUB_REPOSITORY=Jurshsmith/chaft \
-GITHUB_RUN_ID=3 \
-GITHUB_SHA="$wrong_ci_sha" \
-CHAFT_RELEASE_COMMIT="$ci_sha" \
-  python3 "$repo_root/tools/desktop/release-metadata.py" release \
-    --package-dir "$dispatch_dir" \
-    --platform Linux
-
-python3 - "$dispatch_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance.setdefault("source", {})["dirty"] = False
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-
-env \
-  GITHUB_ACTIONS=true \
-  GITHUB_REPOSITORY=Jurshsmith/chaft \
-  GITHUB_RUN_ID=3 \
-  GITHUB_SHA="$wrong_ci_sha" \
-  CHAFT_RELEASE_COMMIT="$ci_sha" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$dispatch_dir" \
-    --platform Linux \
-    --source-root "$repo_root" \
-    --expected-commit "$ci_sha" \
-    --require-clean
-
-python3 - "$dispatch_dir/chaft-desktop-linux-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance.setdefault("github", {})["CHAFT_RELEASE_COMMIT"] = "0" * 40
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "workflow-dispatch release commit mismatch" \
-  env \
-    GITHUB_ACTIONS=true \
-    GITHUB_REPOSITORY=Jurshsmith/chaft \
-    GITHUB_RUN_ID=3 \
-    GITHUB_SHA="$wrong_ci_sha" \
-    CHAFT_RELEASE_COMMIT="$ci_sha" \
-    python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-      --package-dir "$dispatch_dir" \
-      --platform Linux \
-      --source-root "$repo_root" \
-      --expected-commit "$ci_sha" \
-      --require-clean
-
-printf 'tampered package bytes\n' >> "$linux_dir/Chaft-0.1.0-Linux.tar.gz"
-expect_failure "stale checksum/SBOM/provenance after package mutation" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$linux_dir" \
-    --platform Linux
-
-python3 "$repo_root/tools/desktop/release-metadata.py" release \
-  --package-dir "$signature_dir" \
-  --platform Linux
-python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-  --package-dir "$signature_dir" \
-  --platform Linux
-printf 'tampered signature bytes\n' >> "$signature_dir/Chaft-0.1.0-Signed.AppImage.sig"
-expect_failure "stale metadata after detached signature mutation" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$signature_dir" \
-    --platform Linux
-
-python3 - "$macos_dir/chaft-desktop-macos-provenance.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-provenance = json.loads(path.read_text(encoding="utf-8"))
-provenance.setdefault("source", {})["dirty"] = True
-path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-expect_failure "dirty provenance when clean release metadata is required" \
-  python3 "$repo_root/tools/desktop/verify-release-metadata.py" release \
-    --package-dir "$macos_dir" \
-    --platform macOS \
-    --require-clean
+expect_failure "desktop provenance architecture substitution" \
+  verify_metadata macos-arm64 "$target_binding_dir"
 
 printf 'release metadata smoke passed\n'

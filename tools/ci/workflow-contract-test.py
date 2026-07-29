@@ -26,6 +26,7 @@ CANARY_PROMOTION_PATH = WORKFLOWS / "promote-desktop-canary.yml"
 CACHE_CLEANUP_PATH = WORKFLOWS / "cleanup-pull-request-caches.yml"
 DUPLICATE_CHECK = Path(__file__).with_name("check-yaml-duplicates.rb")
 REQUIRED_CHECK = Path(__file__).with_name("required-check.py")
+RELEASE_TARGETS_PATH = ROOT / "tools" / "desktop" / "release_targets.py"
 RUST_CACHE_ACTION = (
     "Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4"
 )
@@ -94,6 +95,21 @@ def load_required_check() -> types.ModuleType:
 required = load_required_check()
 
 
+def load_release_targets() -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "workflow_release_targets", RELEASE_TARGETS_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load {RELEASE_TARGETS_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+release_targets = load_release_targets()
+
+
 def workflow_job_ids(text: str) -> set[str]:
     jobs = text.split("\njobs:\n", 1)[1]
     return set(re.findall(r"^  ([a-zA-Z0-9_-]+):\s*$", jobs, re.MULTILINE))
@@ -127,6 +143,33 @@ def action_inputs(block: str, action: str) -> dict[str, str]:
         key, value = line.strip().split(":", 1)
         inputs[key] = value.strip()
     return inputs
+
+
+def release_target_matrix(block: str) -> list[dict[str, str]]:
+    match = re.search(
+        r"^      matrix:$\n"
+        r"^        include:$\n"
+        r"(?P<rows>.*?)"
+        r"(?=^    steps:$)",
+        block,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        raise AssertionError("release target matrix not found")
+    rows = []
+    for row in re.finditer(
+        r"^          - target: (?P<target>[^\s]+)$\n"
+        r"(?P<body>(?:^            .*$\n?)+)",
+        match.group("rows"),
+        re.MULTILINE,
+    ):
+        values = {"target": row.group("target")}
+        for line in row.group("body").splitlines():
+            field = re.match(r"\s{12}([a-z-]+):\s*(.*)$", line)
+            if field is not None:
+                values[field.group(1)] = field.group(2).strip('"')
+        rows.append(values)
+    return rows
 
 
 class WorkflowYamlTests(unittest.TestCase):
@@ -295,12 +338,20 @@ class CiWorkflowContractTests(unittest.TestCase):
 
     def test_ci_triggers_and_concurrency_are_preserved(self) -> None:
         trigger_block = self.ci.split("\npermissions:\n", 1)[0]
+        concurrency_block = self.ci.split("\nconcurrency:\n", 1)[1].split(
+            "\nenv:\n", 1
+        )[0]
         self.assertIn("  pull_request:\n", trigger_block)
         self.assertIn("  push:\n", trigger_block)
         self.assertIn("  schedule:\n", trigger_block)
         self.assertIn('    - cron: "17 3 * * *"\n', trigger_block)
         self.assertIn("  workflow_dispatch:\n", trigger_block)
-        self.assertIn("  cancel-in-progress: true\n", self.ci)
+        self.assertEqual(
+            concurrency_block,
+            "  group: ci-${{ github.workflow }}-${{ github.event_name }}-"
+            "${{ github.ref }}\n"
+            "  cancel-in-progress: true\n",
+        )
         self.assertIn("  contents: read\n", self.ci)
         self.assertIn("  pull-requests: read\n", self.ci)
 
@@ -509,33 +560,43 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("digest-mismatch: error", clean)
         self.assertIn("timeout-minutes: 15", clean)
         self.assertIn("os: macos-15-intel", clean)
+        self.assertIn("os: macos-15", clean)
+        self.assertIn("qt-target: macos-x86_64", desktop)
+        self.assertIn("qt-target: macos-arm64", desktop)
+        self.assertIn("qt-target: macos-x86_64", package)
+        self.assertIn("qt-target: macos-arm64", package)
         self.assertIn(
-            "artifact-name: chaft-macOS-desktop-release",
+            "artifact-name: chaft-macOS-x86_64-desktop-release",
             clean,
         )
         self.assertIn(
-            "artifact-path: build/clean-macos-package",
+            "artifact-name: chaft-macOS-arm64-desktop-release",
             clean,
         )
         self.assertIn(
-            "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package",
+            "artifact-path: build/clean-macos-x86_64-package",
+            clean,
+        )
+        self.assertIn(
+            "artifact-path: build/clean-macos-arm64-package",
+            clean,
+        )
+        self.assertIn(
+            'tools/desktop/macos-dmg-smoke.sh '
+            '"${{ matrix.artifact-path }}"',
             clean,
         )
         self.assertIn(
             "tools/desktop/macos-unsigned-canary-smoke.sh\n"
-            "          build/clean-macos-package",
+            '          "${{ matrix.artifact-path }}"',
             clean,
         )
         self.assertLess(
             clean.index("digest-mismatch: error"),
-            clean.index(
-                "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
-            ),
+            clean.index("tools/desktop/macos-dmg-smoke.sh"),
         )
         self.assertLess(
-            clean.index(
-                "tools/desktop/macos-dmg-smoke.sh build/clean-macos-package"
-            ),
+            clean.index("tools/desktop/macos-dmg-smoke.sh"),
             clean.index("tools/desktop/macos-unsigned-canary-smoke.sh"),
         )
         self.assertIn(
@@ -593,6 +654,53 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("sudo apt-get", self.ci)
         self.assertNotIn("sudo apt-get", self.release_inputs)
 
+    def test_native_macos_homebrew_source_workflow_is_complete_and_isolated(
+        self,
+    ) -> None:
+        source = job_block(self.ci, "macos_local_source")
+        for expected in (
+            "os: macos-15-intel",
+            "target: macos-x86_64",
+            "architecture: x86_64",
+            "os: macos-15",
+            "target: macos-arm64",
+            "architecture: arm64",
+            "brew install cmake ninja qtbase qtdeclarative qtsvg qtshadertools",
+            "tools/macos/build-local.sh",
+            "--yes",
+            "--no-install-deps",
+            '--install-dir "${RUNNER_TEMP}/${{ matrix.target }}/Applications"',
+            '--expected-commit "${GITHUB_SHA}"',
+            "--skip-open",
+            "tools/macos/verify-local-app.sh",
+            '--expected-arch "${{ matrix.architecture }}"',
+            "Reject Homebrew Qt from official packaging",
+            "CHAFT_QT_POLICY=developer",
+            "tools/desktop/package.sh release",
+            "official builds require exactly Qt 6.8.4",
+            "build/desktop-release/CMakeCache.txt",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, source)
+        self.assertIn("needs.classify.outputs.desktop", source)
+        self.assertIn("needs.classify.outputs.package", source)
+        self.assertIn("fail-fast: false", source)
+        self.assertNotIn("--skip-launch", source)
+        self.assertLess(
+            source.index("Install current Homebrew developer dependencies"),
+            source.index("tools/macos/build-local.sh"),
+        )
+        self.assertLess(
+            source.index("tools/macos/build-local.sh"),
+            source.index("tools/desktop/package.sh release"),
+        )
+        classify = job_block(self.ci, "classify")
+        self.assertIn("python3 tools/macos/build-local-test.py", classify)
+        self.assertIn(
+            "python3 packaging/homebrew/formula-contract-test.py",
+            classify,
+        )
+
     def test_windows_desktop_jobs_are_pinned_to_server_2022(self) -> None:
         desktop_workflows = "\n".join(
             (self.ci, self.release_inputs, self.promotion)
@@ -600,7 +708,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("windows-latest", desktop_workflows)
         self.assertEqual(desktop_workflows.count("windows-2022"), 7)
 
-    def test_qt_sdk_is_built_once_per_needed_platform_then_restored_only(
+    def test_qt_sdk_is_built_once_per_needed_target_then_restored_only(
         self,
     ) -> None:
         classify = job_block(self.ci, "classify")
@@ -612,12 +720,17 @@ class CiWorkflowContractTests(unittest.TestCase):
             "python3 tools/qt/source_bundle_test.py",
             classify,
         )
+        self.assertIn("  CHAFT_QT_VERSION: 6.8.4\n", self.ci)
         provisioning = {
-            "qt_sdk_linux": ("ubuntu-22.04", "linux"),
-            "qt_sdk_macos": ("macos-15-intel", "macos"),
-            "qt_sdk_windows": ("windows-2022", "windows"),
+            "qt_sdk_linux": ("ubuntu-22.04", "linux-x86_64"),
+            "qt_sdk_macos_x86_64": (
+                "macos-15-intel",
+                "macos-x86_64",
+            ),
+            "qt_sdk_macos_arm64": ("macos-15", "macos-arm64"),
+            "qt_sdk_windows": ("windows-2022", "windows-x86_64"),
         }
-        for job, (runner, platform) in provisioning.items():
+        for job, (runner, target) in provisioning.items():
             with self.subTest(job=job):
                 block = job_block(self.ci, job)
                 self.assertIn(f"runs-on: {runner}", block)
@@ -630,7 +743,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn("tools/qt/build_qt.py identity", block)
                 self.assertIn("--toolchain-contract", block)
                 self.assertIn(
-                    f"--platform {platform}",
+                    f"--target {target}",
                     block,
                 )
                 self.assertIn(
@@ -657,7 +770,11 @@ class CiWorkflowContractTests(unittest.TestCase):
             linux.index(f"{LINUX_DEPENDENCIES} install sdk-build"),
             linux.index("tools/qt/build_qt.py toolchain-contract"),
         )
-        for job in ("qt_sdk_macos", "qt_sdk_windows"):
+        for job in (
+            "qt_sdk_macos_x86_64",
+            "qt_sdk_macos_arm64",
+            "qt_sdk_windows",
+        ):
             block = job_block(self.ci, job)
             self.assertNotIn("desktop_contract", block)
             self.assertIn("outputs.desktop", block)
@@ -667,12 +784,14 @@ class CiWorkflowContractTests(unittest.TestCase):
             "desktop_contracts": ("qt_sdk_linux",),
             "desktop": (
                 "qt_sdk_linux",
-                "qt_sdk_macos",
+                "qt_sdk_macos_x86_64",
+                "qt_sdk_macos_arm64",
                 "qt_sdk_windows",
             ),
             "desktop_package": (
                 "qt_sdk_linux",
-                "qt_sdk_macos",
+                "qt_sdk_macos_x86_64",
+                "qt_sdk_macos_arm64",
                 "qt_sdk_windows",
             ),
         }
@@ -716,6 +835,12 @@ class CiWorkflowContractTests(unittest.TestCase):
                 )
                 self.assertIn("--toolchain-contract", block)
                 self.assertNotIn("--toolchain-fingerprint", block)
+                if job != "desktop_contracts":
+                    self.assertIn(
+                        '--target "${{ matrix.qt-target }}"',
+                        block,
+                    )
+                    self.assertNotIn("matrix.qt-platform", block)
                 self.assertLess(
                     block.index("consumer_fingerprint"),
                     block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
@@ -723,7 +848,7 @@ class CiWorkflowContractTests(unittest.TestCase):
 
         self.assertNotIn("jurplel/install-qt-action", self.ci)
         self.assertNotIn("aqtinstall", self.ci)
-        self.assertEqual(self.ci.count(f"uses: {QT_CACHE_ACTION}"), 3)
+        self.assertEqual(self.ci.count(f"uses: {QT_CACHE_ACTION}"), 4)
         self.assertEqual(
             self.ci.count(f"uses: {QT_CACHE_RESTORE_ACTION}"),
             3,
@@ -738,6 +863,99 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("archive: true", producer)
         self.assertIn("digest-mismatch: error", consumer)
         self.assertIn("sha256sum --check SHA256SUMS", consumer)
+
+    def test_release_inputs_use_canonical_four_target_matrix(self) -> None:
+        expected = [
+            {
+                "target": target.name,
+                "display-name": target.display_name,
+                "runner": target.runner,
+                "architecture": target.architecture,
+                "package-platform": {
+                    "linux": "Linux",
+                    "macos": "macOS",
+                    "windows": "Windows",
+                }[target.platform],
+                "artifact-prefix": (
+                    "checksummed"
+                    if target.platform == "linux"
+                    else "unsigned"
+                )
+                + f"-{target.name}-release-input",
+            }
+            for target in release_targets.TARGETS
+        ]
+        build = job_block(self.release_inputs, "build")
+        build_rows = release_target_matrix(build)
+        self.assertEqual(
+            [
+                {
+                    key: row[key]
+                    for key in (
+                        "target",
+                        "display-name",
+                        "runner",
+                        "architecture",
+                        "package-platform",
+                        "artifact-prefix",
+                    )
+                }
+                for row in build_rows
+            ],
+            expected,
+        )
+        self.assertEqual(
+            len({row["artifact-prefix"] for row in build_rows}),
+            len(release_targets.TARGETS),
+        )
+        self.assertEqual(
+            build.count('--target "${{ matrix.target }}"'),
+            5,
+        )
+        self.assertNotIn("--platform", build)
+        self.assertIn(
+            "runs-on: ${{ matrix.runner }}",
+            build,
+        )
+
+        clean = job_block(self.release_inputs, "clean-package-smoke")
+        clean_rows = release_target_matrix(clean)
+        self.assertEqual(
+            [
+                {
+                    key: row[key]
+                    for key in (
+                        "target",
+                        "display-name",
+                        "runner",
+                        "architecture",
+                        "artifact-prefix",
+                    )
+                }
+                for row in clean_rows
+            ],
+            [
+                {
+                    key: row[key]
+                    for key in (
+                        "target",
+                        "display-name",
+                        "runner",
+                        "architecture",
+                        "artifact-prefix",
+                    )
+                }
+                for row in expected
+            ],
+        )
+        self.assertIn(
+            "CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}",
+            clean,
+        )
+        self.assertEqual(
+            [row["target"] for row in clean_rows if row["target"].startswith("macos-")],
+            ["macos-x86_64", "macos-arm64"],
+        )
 
     def test_release_inputs_run_contracts_once_inside_linux_package_job(
         self,
@@ -810,9 +1028,14 @@ class CiWorkflowContractTests(unittest.TestCase):
 
         clean = job_block(self.release_inputs, "clean-package-smoke")
         self.assertIn("timeout-minutes: 15", clean)
-        self.assertIn("os: macos-15-intel", clean)
+        self.assertIn("runner: macos-15-intel", clean)
+        self.assertIn("runner: macos-15", clean)
         self.assertIn(
             "artifact-prefix: unsigned-macos-x86_64-release-input",
+            clean,
+        )
+        self.assertIn(
+            "artifact-prefix: unsigned-macos-arm64-release-input",
             clean,
         )
         self.assertIn(
@@ -979,7 +1202,40 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn(QT_SOURCE_BUNDLE, audit)
         self.assertIn(QT_SOURCE_CHECKSUM, audit)
         self.assertIn("tools/qt/source_bundle.py verify", audit)
-        self.assertIn("for platform in linux macos windows", audit)
+        target_loop = (
+            "for target in \\\n"
+            + "".join(
+                f"            {target.name} \\\n"
+                for target in release_targets.TARGETS[:-1]
+            )
+            + f"            {release_targets.TARGETS[-1].name}\n"
+        )
+        self.assertIn(target_loop, audit)
+        self.assertIn('--target "$target"', audit)
+        self.assertNotIn("--platform", audit)
+        previous = -1
+        for target in release_targets.TARGETS:
+            artifact_prefix = (
+                "checksummed"
+                if target.platform == "linux"
+                else "unsigned"
+            ) + f"-{target.name}-release-input"
+            artifact = (
+                f"name: {artifact_prefix}-"
+                "${{ needs.validate.outputs.version }}-"
+                "${{ needs.validate.outputs.commit }}"
+            )
+            position = audit.index(artifact)
+            self.assertGreater(position, previous)
+            previous = position
+            self.assertIn(
+                f"path: build/release-input-audit/{target.name}",
+                audit,
+            )
+        self.assertIn(
+            "Missing audited release-input bundle for $target.",
+            audit,
+        )
         self.assertIn("--qt-source-bundle", audit)
         self.assertIn("--qt-source-checksum", audit)
         self.assertIn(
@@ -1036,7 +1292,14 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertLess(authenticate_position, verify_position)
         self.assertLess(verify_position, isolate_position)
         self.assertLess(isolate_position, stage_position)
-        self.assertIn("for platform in linux macos windows", prepare)
+        target_loop = (
+            "for target in \\\n"
+            "            windows-x86_64 \\\n"
+            "            macos-x86_64 \\\n"
+            "            macos-arm64 \\\n"
+            "            linux-x86_64"
+        )
+        self.assertIn(target_loop, prepare)
         self.assertIn(
             "tools/desktop/verify-release-metadata.py release",
             prepare,
@@ -1044,9 +1307,20 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("--qt-source-bundle", prepare)
         self.assertIn("--qt-source-checksum", prepare)
         self.assertIn(
-            '--package-dir "${staged}/${platform}-package"',
+            '--package-dir "${staged}/${target}-package"',
             prepare,
         )
+        self.assertIn('--target "${target}"', prepare)
+        for target in release_targets.TARGETS:
+            self.assertIn(
+                f"name: release-{target.name}-input",
+                prepare,
+            )
+            self.assertIn(
+                f"path: ${{{{ runner.temp }}}}/release-staged/"
+                f"{target.name}-package",
+                prepare,
+            )
         cross_check_position = prepare.index(
             "tools/desktop/verify-release-metadata.py release"
         )
@@ -1102,14 +1376,82 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
 
         windows = job_block(self.promotion, "verify_windows")
-        macos = job_block(self.promotion, "verify_macos")
+        macos_x86_64 = job_block(
+            self.promotion,
+            "verify_macos_x86_64",
+        )
+        macos_arm64 = job_block(
+            self.promotion,
+            "verify_macos_arm64",
+        )
         linux = job_block(self.promotion, "verify_linux")
         self.assertIn("CHAFT_WINDOWS_SIGNER_THUMBPRINT", windows)
+        self.assertIn("--target windows-x86_64", windows)
         self.assertIn("--trusted-windows-signer-thumbprint", windows)
-        self.assertIn("CHAFT_APPLE_TEAM_ID", macos)
-        self.assertIn("--trusted-apple-team-id", macos)
+        self.assertIn("runs-on: macos-15-intel", macos_x86_64)
+        self.assertIn("--target macos-x86_64", macos_x86_64)
+        self.assertIn("CHAFT_APPLE_TEAM_ID", macos_x86_64)
+        self.assertIn("--trusted-apple-team-id", macos_x86_64)
+        self.assertIn(
+            "name: trusted-macos-x86_64-receipt",
+            macos_x86_64,
+        )
+        self.assertIn(
+            "chaft-desktop-macos-x86_64-verification.json",
+            macos_x86_64,
+        )
+        self.assertIn("runs-on: macos-15", macos_arm64)
+        self.assertIn("--target macos-arm64", macos_arm64)
+        self.assertIn("CHAFT_APPLE_TEAM_ID", macos_arm64)
+        self.assertIn("--trusted-apple-team-id", macos_arm64)
+        self.assertIn(
+            "name: trusted-macos-arm64-receipt",
+            macos_arm64,
+        )
+        self.assertIn(
+            "chaft-desktop-macos-arm64-verification.json",
+            macos_arm64,
+        )
+        self.assertIn("--target linux-x86_64", linux)
         self.assertIn("CHAFT_LINUX_SIGNING_FINGERPRINT", linux)
         self.assertIn("--trusted-fingerprint", linux)
+
+        export = job_block(self.promotion, "export")
+        for dependency in (
+            "verify_windows",
+            "verify_macos_x86_64",
+            "verify_macos_arm64",
+            "verify_linux",
+        ):
+            self.assertIn(f"      - {dependency}\n", export)
+        for target in release_targets.TARGETS:
+            option = target.name
+            self.assertIn(
+                f"--{option}-package-dir",
+                export,
+            )
+            self.assertIn(f"--{option}-arch", export)
+            self.assertIn(f"--{option}-signing-state", export)
+            self.assertIn(
+                f"--{option}-verification-receipt",
+                export,
+            )
+            if target.platform != "linux":
+                self.assertIn(
+                    f"--{option}-trusted-verification-receipt",
+                    export,
+                )
+            self.assertIn(
+                f"release-{target.name}-input",
+                export,
+            )
+        for target in (
+            "windows-x86_64",
+            "macos-x86_64",
+            "macos-arm64",
+            "linux-x86_64",
+        ):
+            self.assertIn(f"trusted-{target}-receipt", self.promotion)
 
     def test_stable_promotion_publishes_an_exact_branch_for_maintainer_review(
         self,
@@ -1133,6 +1475,186 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("GITHUB_STEP_SUMMARY", publish)
         self.assertNotIn("--method POST", publish)
         self.assertNotIn('"repos/${GITHUB_REPOSITORY}/pulls"', publish)
+
+    def test_canary_publisher_uses_canonical_four_target_lanes(self) -> None:
+        common = [
+            {
+                "target": target.name,
+                "display-name": target.display_name,
+                "runner": target.runner,
+                "architecture": target.architecture,
+            }
+            for target in release_targets.TARGETS
+        ]
+        platform_labels = {
+            "linux": "Linux",
+            "macos": "macOS",
+            "windows": "Windows",
+        }
+
+        build = job_block(self.canary_publish, "build")
+        build_rows = release_target_matrix(build)
+        self.assertEqual(
+            [
+                {
+                    key: row[key]
+                    for key in (
+                        "target",
+                        "display-name",
+                        "runner",
+                        "architecture",
+                    )
+                }
+                for row in build_rows
+            ],
+            common,
+        )
+        self.assertEqual(
+            [row["package-platform"] for row in build_rows],
+            [
+                platform_labels[target.platform]
+                for target in release_targets.TARGETS
+            ],
+        )
+        self.assertEqual(
+            build.count('--target "${{ matrix.target }}"'),
+            5,
+        )
+        self.assertNotIn("--platform", build)
+        self.assertIn("tools/qt/build_qt.py activate", build)
+        self.assertIn("tools/qt/build_qt.py verify", build)
+        self.assertIn("--toolchain-contract", build)
+        self.assertIn(
+            "name: canary-${{ matrix.target }}-"
+            "${{ needs.preflight.outputs.distribution_version }}-"
+            "${{ needs.preflight.outputs.commit }}",
+            build,
+        )
+
+        actions_smoke = job_block(self.canary_publish, "actions_smoke")
+        action_rows = release_target_matrix(actions_smoke)
+        self.assertEqual(
+            [
+                {
+                    key: row[key]
+                    for key in (
+                        "target",
+                        "display-name",
+                        "runner",
+                        "architecture",
+                    )
+                }
+                for row in action_rows
+            ],
+            common,
+        )
+        self.assertEqual(
+            [
+                row["target"]
+                for row in action_rows
+                if row["target"].startswith("macos-")
+            ],
+            ["macos-x86_64", "macos-arm64"],
+        )
+        self.assertIn(
+            "CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}",
+            actions_smoke,
+        )
+        self.assertIn(
+            "name: canary-${{ matrix.target }}-"
+            "${{ needs.preflight.outputs.distribution_version }}-"
+            "${{ needs.preflight.outputs.commit }}",
+            actions_smoke,
+        )
+
+        release_smoke = job_block(self.canary_publish, "release_smoke")
+        release_rows = release_target_matrix(release_smoke)
+        distribution_version = (
+            "${{ needs.preflight.outputs.distribution_version }}"
+        )
+        smoke_commands = {
+            "windows": "tools/desktop/windows-zip-smoke.ps1",
+            "macos": (
+                "tools/desktop/macos-dmg-smoke.sh + "
+                "tools/desktop/macos-unsigned-canary-smoke.sh"
+            ),
+            "linux": "tools/desktop/appimage-smoke.sh",
+        }
+        self.assertEqual(
+            [
+                {
+                    **{
+                        key: row[key]
+                        for key in (
+                            "target",
+                            "display-name",
+                            "runner",
+                            "architecture",
+                        )
+                    },
+                    "package": row["package"],
+                    "smoke-command": row["smoke-command"],
+                }
+                for row in release_rows
+            ],
+            [
+                {
+                    **row,
+                    "package": target.package_name(distribution_version),
+                    "smoke-command": smoke_commands[target.platform],
+                }
+                for row, target in zip(
+                    common, release_targets.TARGETS, strict=True
+                )
+            ],
+        )
+        self.assertIn('--target "${{ matrix.target }}"', release_smoke)
+        self.assertNotIn("--platform", release_smoke)
+        self.assertIn(
+            "chaft-desktop-${{ matrix.target }}-verification.json",
+            release_smoke,
+        )
+        self.assertIn(
+            "canary-${{ matrix.target }}-receipt-"
+            "${{ needs.preflight.outputs.distribution_version }}",
+            release_smoke,
+        )
+
+        audit = job_block(self.canary_publish, "audit_base")
+        self.assertIn("name: Audit exact 18-file canary base", audit)
+        previous = -1
+        for target in release_targets.TARGETS:
+            artifact = (
+                f"name: canary-{target.name}-"
+                "${{ needs.preflight.outputs.distribution_version }}-"
+                "${{ needs.preflight.outputs.commit }}"
+            )
+            position = audit.index(artifact)
+            self.assertGreater(position, previous)
+            previous = position
+            self.assertIn(
+                f"path: build/canary-inputs/{target.name}",
+                audit,
+            )
+        self.assertIn(')" -eq 18', audit)
+        self.assertIn("canary-release-assets.py verify-base", audit)
+
+        create_draft = job_block(self.canary_publish, "create_draft")
+        finalize = job_block(self.canary_publish, "finalize_draft")
+        verify_draft = job_block(self.canary_publish, "verify_draft")
+        publish = job_block(self.canary_publish, "publish")
+        verify_published = job_block(
+            self.canary_publish, "verify_published"
+        )
+        self.assertIn("-eq 18", create_draft)
+        self.assertIn("name: Finalize exact 24-file draft", finalize)
+        self.assertIn("-eq 18", finalize)
+        self.assertIn("-eq 22", finalize)
+        self.assertIn("-eq 24", finalize)
+        self.assertIn("-eq 24", verify_draft)
+        self.assertIn("-eq 24", publish)
+        self.assertIn("-eq 24", verify_published)
+        self.assertIn("Assets: 24 verified files", verify_published)
 
     def test_canary_publisher_mutates_only_after_native_base_validation(
         self,
@@ -1239,6 +1761,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         for smoke in (
             "appimage-smoke.sh",
             "macos-dmg-smoke.sh",
+            "macos-unsigned-canary-smoke.sh",
             "windows-zip-smoke.ps1",
         ):
             self.assertIn(smoke, release_smoke)
@@ -1248,7 +1771,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("canary-release-assets.py verify-complete", finalize)
         verify_draft = job_block(self.canary_publish, "verify_draft")
         self.assertIn("test \"$(jq '.assets | length'", verify_draft)
-        self.assertIn("-eq 19", verify_draft)
+        self.assertIn("-eq 24", verify_draft)
         self.assertIn("releases/assets/${asset_id}", verify_draft)
 
     def test_canary_promotion_is_read_only_until_bounded_branch_publication(
@@ -1269,16 +1792,48 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("contents: write", prepare)
         self.assertIn('"prerelease": True', prepare)
         self.assertIn('"immutable": True', prepare)
-        self.assertIn("exactly 19 assets", prepare)
+        self.assertIn("exactly 24 assets", prepare)
+        self.assertIn("len(paths) != 24", prepare)
         self.assertIn("releases/assets/${asset_id}", prepare)
         self.assertIn("gh release verify ", prepare)
         self.assertIn("gh release verify-asset", prepare)
         self.assertIn("canary-release-assets.py verify-complete", prepare)
         self.assertIn("--channel canary", prepare)
         self.assertIn("--release-evidence-dir", prepare)
-        self.assertIn("--windows-signing-state unsigned-canary", prepare)
-        self.assertIn("--macos-signing-state unsigned-canary", prepare)
-        self.assertIn("--linux-signing-state unsigned-canary", prepare)
+        for target in release_targets.TARGETS:
+            self.assertIn(
+                f'"{target.name}",',
+                prepare,
+            )
+            self.assertIn(
+                f'${{staged}}/{target.name}-package',
+                prepare,
+            )
+            self.assertIn(
+                f"--{target.name}-package-dir",
+                prepare,
+            )
+            self.assertIn(
+                f"--{target.name}-arch",
+                prepare,
+            )
+            self.assertIn(
+                f"--{target.name}-signing-state unsigned-canary",
+                prepare,
+            )
+            self.assertIn(
+                f"--{target.name}-verification-receipt",
+                prepare,
+            )
+            self.assertIn(
+                f"chaft-desktop-{target.name}-verification.json",
+                prepare,
+            )
+        for platform in release_targets.PLATFORMS:
+            self.assertNotIn(f"--{platform}-package-dir", prepare)
+            self.assertNotIn(f"--{platform}-arch", prepare)
+            self.assertNotIn(f"--{platform}-signing-state", prepare)
+            self.assertNotIn(f"--{platform}-verification-receipt", prepare)
         self.assertIn("promotion payload exceeds four MiB", self.canary_promotion)
 
         publish = job_block(self.canary_promotion, "publish")

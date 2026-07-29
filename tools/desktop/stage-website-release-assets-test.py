@@ -22,13 +22,19 @@ sys.modules[SPEC.name] = stager
 SPEC.loader.exec_module(stager)
 
 
+VERSION = "1.2.3"
+EXPECTED_TARGETS = (
+    "windows-x86_64",
+    "macos-x86_64",
+    "macos-arm64",
+    "linux-x86_64",
+)
 PACKAGE_NAMES = {
-    "windows": "Chaft-1.2.3-Windows.msi",
-    "macos": "Chaft-1.2.3-macOS.dmg",
-    "linux": "Chaft-1.2.3-Linux.AppImage",
+    target.name: target.package_name(VERSION)
+    for target in stager.release_targets.TARGETS
 }
 PACKAGE_FORMATS = {
-    "windows": "windows-msi",
+    "windows": "windows-zip",
     "macos": "macos-dmg",
     "linux": "linux-appimage",
 }
@@ -45,27 +51,34 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def metadata_paths(assets: Path, platform: str) -> dict[str, Path]:
+def target_contract(
+    target_name: str,
+) -> stager.release_targets.ReleaseTarget:
+    return stager.release_targets.TARGET_BY_NAME[target_name]
+
+
+def metadata_paths(assets: Path, target_name: str) -> dict[str, Path]:
     return {
         kind: assets / name
-        for kind, name in stager.METADATA_FILENAMES[platform].items()
+        for kind, name in stager.METADATA_FILENAMES[target_name].items()
     }
 
 
-def write_platform_assets(
+def write_target_assets(
     assets: Path,
-    platform: str,
+    target_name: str,
     *,
     with_signature: bool = False,
-    version: str = "1.2.3",
+    version: str = VERSION,
 ) -> None:
-    package_name = PACKAGE_NAMES[platform].replace("1.2.3", version)
+    target = target_contract(target_name)
+    package_name = target.package_name(version)
     package_path = assets / package_name
-    package_path.write_bytes(f"synthetic {platform} package\n".encode())
+    package_path.write_bytes(f"synthetic {target_name} package\n".encode())
     rows = [
         {
             "name": package_name,
-            "packageFormat": PACKAGE_FORMATS[platform],
+            "packageFormat": PACKAGE_FORMATS[target.platform],
             "sizeBytes": package_path.stat().st_size,
             "sha256": sha256(package_path),
         }
@@ -84,7 +97,7 @@ def write_platform_assets(
             }
         )
 
-    paths = metadata_paths(assets, platform)
+    paths = metadata_paths(assets, target_name)
     paths["checksums"].write_text(
         "".join(f"{row['sha256']}  {row['name']}\n" for row in rows),
         encoding="utf-8",
@@ -95,7 +108,12 @@ def write_platform_assets(
             "bomFormat": "CycloneDX",
             "metadata": {
                 "properties": [
-                    {"name": "chaft:packagePlatform", "value": platform}
+                    {"name": "chaft:packageTarget", "value": target.name},
+                    {"name": "chaft:packagePlatform", "value": target.platform},
+                    {
+                        "name": "chaft:packageArchitecture",
+                        "value": target.architecture,
+                    },
                 ]
             },
         },
@@ -103,16 +121,21 @@ def write_platform_assets(
     write_json(
         paths["provenance"],
         {
-            "schemaVersion": "chaft.desktop.provenance.v1",
+            "schemaVersion": "chaft.desktop.provenance.v2",
             "profile": "release",
-            "packagePlatform": platform,
+            "packageTarget": target.name,
+            "packagePlatform": target.platform,
+            "packageArchitecture": target.architecture,
+            "distributionVersion": version,
+            "version": version,
             "artifacts": rows,
         },
     )
 
 
-def write_receipt(assets: Path, platform: str) -> None:
-    package = assets / PACKAGE_NAMES[platform]
+def write_receipt(assets: Path, target_name: str) -> None:
+    target = target_contract(target_name)
+    package = assets / PACKAGE_NAMES[target_name]
     policies = {
         "windows": {
             "publisherIdentity": {
@@ -139,7 +162,7 @@ def write_receipt(assets: Path, platform: str) -> None:
         },
     }
     signatures = []
-    if platform == "linux":
+    if target.platform == "linux":
         signature = assets / f"{package.name}.sig"
         signatures.append(
             {
@@ -151,12 +174,14 @@ def write_receipt(assets: Path, platform: str) -> None:
             }
         )
     write_json(
-        assets / stager.VERIFICATION_RECEIPT_FILENAMES[platform],
+        assets / stager.VERIFICATION_RECEIPT_FILENAMES[target_name],
         {
-            "schemaVersion": "chaft.desktop.platform-verification.v1",
-            "platform": platform,
+            "schemaVersion": "chaft.desktop.platform-verification.v2",
+            "target": target.name,
+            "platform": target.platform,
+            "architecture": target.architecture,
             "status": "verified",
-            "verificationPolicy": policies[platform],
+            "verificationPolicy": policies[target.platform],
             "artifacts": [
                 {"filename": package.name, "sha256": sha256(package)}
             ],
@@ -167,32 +192,33 @@ def write_receipt(assets: Path, platform: str) -> None:
 
 def write_unsigned_canary_receipt(
     assets: Path,
-    platform: str,
+    target_name: str,
     *,
     version: str,
     asset_id: int,
 ) -> None:
+    target = target_contract(target_name)
     package = next(
         path
         for path in assets.iterdir()
-        if (
-            (description := stager.package_description(path.name)) is not None
-            and description[0] == platform
-        )
+        if path.name == target.package_name(version)
     )
     write_json(
-        assets / stager.UNSIGNED_CANARY_RECEIPT_FILENAMES[platform],
+        assets / stager.UNSIGNED_CANARY_RECEIPT_FILENAMES[target_name],
         {
             "schemaVersion": stager.unsigned_canary.SCHEMA_VERSION,
-            "platform": platform,
+            "target": target.name,
+            "platform": target.platform,
             "verificationType": stager.unsigned_canary.VERIFICATION_TYPE,
             "status": stager.unsigned_canary.STATUS,
             "signingStatus": stager.unsigned_canary.SIGNING_STATUS,
             "signatureVerification": (
-                stager.unsigned_canary.SIGNATURE_VERIFICATION[platform]
+                stager.unsigned_canary.SIGNATURE_VERIFICATION[target.platform]
             ),
             "signatureAndNotarization": dict(
-                stager.unsigned_canary.SIGNATURE_AND_NOTARIZATION[platform]
+                stager.unsigned_canary.SIGNATURE_AND_NOTARIZATION[
+                    target.platform
+                ]
             ),
             "productionEligible": False,
             "warning": stager.unsigned_canary.WARNING,
@@ -200,7 +226,7 @@ def write_unsigned_canary_receipt(
             "tag": f"v{version}",
             "commit": "a" * 40,
             "repository": "Jurshsmith/chaft",
-            "architecture": "x86_64",
+            "architecture": target.architecture,
             "verifiedAt": "2026-07-18T12:34:56Z",
             "release": {"id": 4321},
             "asset": {
@@ -210,14 +236,14 @@ def write_unsigned_canary_receipt(
                 "sha256": sha256(package),
             },
             "runner": {
-                "os": stager.unsigned_canary.RUNNER_OS[platform],
-                "architecture": "x86_64",
+                "os": stager.unsigned_canary.RUNNER_OS[target.platform],
+                "architecture": target.architecture,
                 "workflowRunId": 1234,
                 "workflowRunAttempt": 1,
             },
             "smoke": {
                 "status": stager.unsigned_canary.STATUS,
-                "command": f"synthetic {platform} smoke",
+                "command": f"synthetic {target_name} smoke",
             },
             "receiptGenerator": {
                 "name": "Chaft unsigned-canary receipt generator",
@@ -235,20 +261,20 @@ class ReleaseAssetStagingTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.assets = self.root / "downloaded-assets"
         self.assets.mkdir()
-        for platform in stager.PLATFORMS:
-            write_platform_assets(
+        for target_name in stager.TARGETS:
+            write_target_assets(
                 self.assets,
-                platform,
-                with_signature=platform == "linux",
+                target_name,
+                with_signature=target_name == "linux-x86_64",
             )
-        write_receipt(self.assets, "windows")
-        write_receipt(self.assets, "macos")
+        for target_name in stager.NATIVE_RECEIPT_TARGETS:
+            write_receipt(self.assets, target_name)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def rewrite_provenance(self, platform: str, mutate: object) -> None:
-        path = metadata_paths(self.assets, platform)["provenance"]
+    def rewrite_provenance(self, target_name: str, mutate: object) -> None:
+        path = metadata_paths(self.assets, target_name)["provenance"]
         value = json.loads(path.read_text(encoding="utf-8"))
         mutate(value)  # type: ignore[operator]
         write_json(path, value)
@@ -257,12 +283,14 @@ class ReleaseAssetStagingTests(unittest.TestCase):
         output = self.root / "staged"
         plan = stager.stage_assets(self.assets, output)
 
-        for platform in stager.PLATFORMS:
-            package_dir = output / stager.PACKAGE_DIRECTORY_NAMES[platform]
-            expected = set(stager.METADATA_FILENAMES[platform].values())
-            expected.add(PACKAGE_NAMES[platform])
-            if platform == "linux":
-                expected.add(f"{PACKAGE_NAMES[platform]}.sig")
+        self.assertEqual(stager.TARGETS, EXPECTED_TARGETS)
+        self.assertEqual(tuple(plan.targets), EXPECTED_TARGETS)
+        for target_name in stager.TARGETS:
+            package_dir = output / stager.PACKAGE_DIRECTORY_NAMES[target_name]
+            expected = set(stager.METADATA_FILENAMES[target_name].values())
+            expected.add(PACKAGE_NAMES[target_name])
+            if target_name == "linux-x86_64":
+                expected.add(f"{PACKAGE_NAMES[target_name]}.sig")
             self.assertEqual(
                 {path.name for path in package_dir.iterdir()}, expected
             )
@@ -274,29 +302,31 @@ class ReleaseAssetStagingTests(unittest.TestCase):
         self.assertEqual(
             {path.name for path in receipt_dir.iterdir()},
             {
-                stager.VERIFICATION_RECEIPT_FILENAMES["windows"],
-                stager.VERIFICATION_RECEIPT_FILENAMES["macos"],
+                stager.VERIFICATION_RECEIPT_FILENAMES[target_name]
+                for target_name in stager.NATIVE_RECEIPT_TARGETS
             },
         )
-        self.assertIsNone(plan.platforms["linux"].receipt)
+        self.assertIsNone(plan.targets["linux-x86_64"].receipt)
 
     def test_stages_an_optional_linux_receipt_separately(self) -> None:
-        write_receipt(self.assets, "linux")
+        write_receipt(self.assets, "linux-x86_64")
         output = self.root / "staged"
         stager.stage_assets(self.assets, output)
         self.assertTrue(
             (
                 output
                 / "verification-receipts"
-                / stager.VERIFICATION_RECEIPT_FILENAMES["linux"]
+                / stager.VERIFICATION_RECEIPT_FILENAMES["linux-x86_64"]
             ).is_file()
         )
 
     def test_linux_receipt_binds_exact_detached_signature_bytes(self) -> None:
-        write_receipt(self.assets, "linux")
-        signature = self.assets / f"{PACKAGE_NAMES['linux']}.sig"
+        write_receipt(self.assets, "linux-x86_64")
+        signature = self.assets / f"{PACKAGE_NAMES['linux-x86_64']}.sig"
         signature.write_bytes(b"substituted signature\n")
-        provenance_path = metadata_paths(self.assets, "linux")["provenance"]
+        provenance_path = metadata_paths(
+            self.assets, "linux-x86_64"
+        )["provenance"]
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         row = next(
             item for item in provenance["artifacts"] if item["name"] == signature.name
@@ -304,7 +334,7 @@ class ReleaseAssetStagingTests(unittest.TestCase):
         row["sha256"] = sha256(signature)
         row["sizeBytes"] = signature.stat().st_size
         write_json(provenance_path, provenance)
-        metadata_paths(self.assets, "linux")["checksums"].write_text(
+        metadata_paths(self.assets, "linux-x86_64")["checksums"].write_text(
             "".join(
                 f"{item['sha256']}  {item['name']}\n"
                 for item in provenance["artifacts"]
@@ -339,29 +369,31 @@ class ReleaseAssetStagingTests(unittest.TestCase):
             )
 
     def test_rejects_missing_and_tampered_artifacts(self) -> None:
-        (self.assets / PACKAGE_NAMES["linux"]).unlink()
+        (self.assets / PACKAGE_NAMES["linux-x86_64"]).unlink()
         with self.assertRaisesRegex(stager.AssetStagingError, "missing.*provenance artifact"):
             stager.build_stage_plan(self.assets)
 
-        write_platform_assets(self.assets, "linux", with_signature=True)
-        package = self.assets / PACKAGE_NAMES["linux"]
+        write_target_assets(
+            self.assets, "linux-x86_64", with_signature=True
+        )
+        package = self.assets / PACKAGE_NAMES["linux-x86_64"]
         package.write_bytes(package.read_bytes() + b"tampered\n")
         with self.assertRaisesRegex(stager.AssetStagingError, "SHA-256 is stale"):
             stager.build_stage_plan(self.assets)
 
     def test_rejects_traversal_and_duplicate_provenance_rows(self) -> None:
         self.rewrite_provenance(
-            "windows",
+            "windows-x86_64",
             lambda value: value["artifacts"][0].__setitem__(
-                "name", "../escape.msi"
+                "name", "../escape.zip"
             ),
         )
         with self.assertRaisesRegex(stager.AssetStagingError, "without traversal"):
             stager.build_stage_plan(self.assets)
 
-        write_platform_assets(self.assets, "windows")
+        write_target_assets(self.assets, "windows-x86_64")
         self.rewrite_provenance(
-            "windows",
+            "windows-x86_64",
             lambda value: value["artifacts"].append(
                 dict(value["artifacts"][0])
             ),
@@ -371,33 +403,162 @@ class ReleaseAssetStagingTests(unittest.TestCase):
 
     def test_rejects_platform_mismatches_in_provenance_sbom_and_receipt(self) -> None:
         self.rewrite_provenance(
-            "windows",
+            "windows-x86_64",
             lambda value: value.__setitem__("packagePlatform", "linux"),
         )
         with self.assertRaisesRegex(stager.AssetStagingError, "packagePlatform"):
             stager.build_stage_plan(self.assets)
 
-        write_platform_assets(self.assets, "windows")
-        sbom_path = metadata_paths(self.assets, "windows")["sbom"]
+        write_target_assets(self.assets, "windows-x86_64")
+        sbom_path = metadata_paths(self.assets, "windows-x86_64")["sbom"]
         sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
-        sbom["metadata"]["properties"][0]["value"] = "linux"
+        platform_property = next(
+            item
+            for item in sbom["metadata"]["properties"]
+            if item["name"] == "chaft:packagePlatform"
+        )
+        platform_property["value"] = "linux"
         write_json(sbom_path, sbom)
         with self.assertRaisesRegex(stager.AssetStagingError, "SBOM package platform"):
             stager.build_stage_plan(self.assets)
 
-        write_platform_assets(self.assets, "windows")
-        receipt_path = self.assets / stager.VERIFICATION_RECEIPT_FILENAMES["windows"]
+        write_target_assets(self.assets, "windows-x86_64")
+        receipt_path = (
+            self.assets
+            / stager.VERIFICATION_RECEIPT_FILENAMES["windows-x86_64"]
+        )
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         receipt["platform"] = "linux"
         write_json(receipt_path, receipt)
         with self.assertRaisesRegex(stager.AssetStagingError, "receipt platform"):
             stager.build_stage_plan(self.assets)
 
+    def test_rejects_v2_target_and_architecture_mismatches(self) -> None:
+        self.rewrite_provenance(
+            "macos-arm64",
+            lambda value: value.__setitem__("packageTarget", "macos-x86_64"),
+        )
+        with self.assertRaisesRegex(stager.AssetStagingError, "packageTarget"):
+            stager.build_stage_plan(self.assets)
+
+        write_target_assets(self.assets, "macos-arm64")
+        self.rewrite_provenance(
+            "macos-arm64",
+            lambda value: value.__setitem__("packageArchitecture", "x86_64"),
+        )
+        with self.assertRaisesRegex(
+            stager.AssetStagingError, "packageArchitecture"
+        ):
+            stager.build_stage_plan(self.assets)
+
+        write_target_assets(self.assets, "macos-arm64")
+        sbom_path = metadata_paths(self.assets, "macos-arm64")["sbom"]
+        sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+        architecture_property = next(
+            item
+            for item in sbom["metadata"]["properties"]
+            if item["name"] == "chaft:packageArchitecture"
+        )
+        architecture_property["value"] = "x86_64"
+        write_json(sbom_path, sbom)
+        with self.assertRaisesRegex(
+            stager.AssetStagingError, "SBOM package architecture"
+        ):
+            stager.build_stage_plan(self.assets)
+
+        write_target_assets(self.assets, "macos-arm64")
+        receipt_path = (
+            self.assets
+            / stager.VERIFICATION_RECEIPT_FILENAMES["macos-arm64"]
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["target"] = "macos-x86_64"
+        write_json(receipt_path, receipt)
+        with self.assertRaisesRegex(stager.AssetStagingError, "receipt target"):
+            stager.build_stage_plan(self.assets)
+
+        write_receipt(self.assets, "macos-arm64")
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["architecture"] = "x86_64"
+        write_json(receipt_path, receipt)
+        with self.assertRaisesRegex(
+            stager.AssetStagingError, "receipt architecture"
+        ):
+            stager.build_stage_plan(self.assets)
+
+    def test_rejects_omitted_apple_silicon_assets_and_receipt(self) -> None:
+        (self.assets / PACKAGE_NAMES["macos-arm64"]).unlink()
+        with self.assertRaisesRegex(
+            stager.AssetStagingError,
+            "missing macos-arm64 provenance artifact",
+        ):
+            stager.build_stage_plan(self.assets)
+
+        write_target_assets(self.assets, "macos-arm64")
+        (
+            self.assets
+            / stager.VERIFICATION_RECEIPT_FILENAMES["macos-arm64"]
+        ).unlink()
+        with self.assertRaisesRegex(
+            stager.AssetStagingError,
+            "missing macos-arm64 native verification receipt",
+        ):
+            stager.build_stage_plan(self.assets)
+
+    def test_rejects_one_package_referenced_by_both_macos_targets(self) -> None:
+        intel_package = self.assets / PACKAGE_NAMES["macos-x86_64"]
+        paths = metadata_paths(self.assets, "macos-arm64")
+        provenance = json.loads(paths["provenance"].read_text(encoding="utf-8"))
+        provenance["artifacts"][0] = {
+            "name": intel_package.name,
+            "packageFormat": "macos-dmg",
+            "sizeBytes": intel_package.stat().st_size,
+            "sha256": sha256(intel_package),
+        }
+        write_json(paths["provenance"], provenance)
+        paths["checksums"].write_text(
+            f"{sha256(intel_package)}  {intel_package.name}\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            stager.AssetStagingError,
+            "referenced by both macos-x86_64 and macos-arm64 provenance",
+        ):
+            stager.build_stage_plan(self.assets)
+
+    def test_rejects_coherently_renamed_noncanonical_target_package(self) -> None:
+        target_name = "macos-arm64"
+        canonical = self.assets / PACKAGE_NAMES[target_name]
+        renamed = self.assets / f"Chaft-{VERSION}-macOS-mislabeled.dmg"
+        canonical.rename(renamed)
+        paths = metadata_paths(self.assets, target_name)
+        provenance = json.loads(paths["provenance"].read_text(encoding="utf-8"))
+        provenance["artifacts"][0]["name"] = renamed.name
+        write_json(paths["provenance"], provenance)
+        paths["checksums"].write_text(
+            f"{sha256(renamed)}  {renamed.name}\n",
+            encoding="utf-8",
+        )
+        receipt_path = (
+            self.assets
+            / stager.VERIFICATION_RECEIPT_FILENAMES[target_name]
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["artifacts"][0]["filename"] = renamed.name
+        write_json(receipt_path, receipt)
+
+        with self.assertRaisesRegex(
+            stager.AssetStagingError,
+            f"package set must contain exactly {PACKAGE_NAMES[target_name]}",
+        ):
+            stager.build_stage_plan(self.assets)
+
     def test_rejects_a_package_suffix_for_the_wrong_platform(self) -> None:
-        old_package = self.assets / PACKAGE_NAMES["windows"]
-        wrong_name = "Chaft-1.2.3-Windows.dmg"
+        old_package = self.assets / PACKAGE_NAMES["windows-x86_64"]
+        wrong_name = f"Chaft-{VERSION}-Windows-x86_64.dmg"
         old_package.rename(self.assets / wrong_name)
-        paths = metadata_paths(self.assets, "windows")
+        paths = metadata_paths(self.assets, "windows-x86_64")
         provenance = json.loads(paths["provenance"].read_text(encoding="utf-8"))
         provenance["artifacts"][0]["name"] = wrong_name
         provenance["artifacts"][0]["packageFormat"] = "macos-dmg"
@@ -410,12 +571,17 @@ class ReleaseAssetStagingTests(unittest.TestCase):
             stager.build_stage_plan(self.assets)
 
     def test_rejects_missing_native_and_mismatched_receipts(self) -> None:
-        receipt = self.assets / stager.VERIFICATION_RECEIPT_FILENAMES["windows"]
+        receipt = (
+            self.assets
+            / stager.VERIFICATION_RECEIPT_FILENAMES["windows-x86_64"]
+        )
         receipt.unlink()
-        with self.assertRaisesRegex(stager.AssetStagingError, "missing windows.*receipt"):
+        with self.assertRaisesRegex(
+            stager.AssetStagingError, "missing windows-x86_64.*receipt"
+        ):
             stager.build_stage_plan(self.assets)
 
-        write_receipt(self.assets, "windows")
+        write_receipt(self.assets, "windows-x86_64")
         value = json.loads(receipt.read_text(encoding="utf-8"))
         value["artifacts"][0]["sha256"] = "0" * 64
         write_json(receipt, value)
@@ -429,7 +595,9 @@ class ReleaseAssetStagingTests(unittest.TestCase):
             probe.unlink()
             self.skipTest("filesystem does not permit case-variant filenames")
         probe.unlink()
-        collision = self.assets / "CHAFT-DESKTOP-LINUX-SBOM.CDX.JSON"
+        collision = (
+            self.assets / "CHAFT-DESKTOP-LINUX-X86_64-SBOM.CDX.JSON"
+        )
         collision.write_text("{}\n", encoding="utf-8")
         with self.assertRaisesRegex(stager.AssetStagingError, "case-insensitive duplicate"):
             stager.build_stage_plan(self.assets)

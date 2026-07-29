@@ -10,6 +10,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import release_targets
+
 QT_TOOLS = Path(__file__).resolve().parents[1] / "qt"
 sys.path.insert(0, str(QT_TOOLS))
 import build_qt as qt_sdk  # noqa: E402
@@ -25,16 +27,6 @@ PACKAGE_FORMATS = (
     (".exe", "windows", "windows-exe"),
 )
 SIGNATURE_SUFFIXES = (".sig", ".asc")
-PRERELEASE_PACKAGE_NAMES = {
-    "linux": "Chaft-{version}-Linux-x86_64.AppImage",
-    "macos": "Chaft-{version}-macOS-x86_64.dmg",
-    "windows": "Chaft-{version}-Windows-x86_64.zip",
-}
-CANONICAL_PACKAGE_SUFFIXES = {
-    "linux": "-Linux-x86_64.AppImage",
-    "macos": "-macOS-x86_64.dmg",
-    "windows": "-Windows-x86_64.zip",
-}
 SOURCE_MATERIALS = (
     "Cargo.lock",
     "Cargo.toml",
@@ -91,33 +83,26 @@ def package_platform(name):
 
 
 def normalized_platform_name(value):
-    normalized = (value or "").strip().lower()
-    if normalized in {"darwin", "mac", "macos", "osx"}:
-        return "macos"
-    if normalized in {"win32", "windows", "msys", "mingw", "cygwin"}:
-        return "windows"
-    if normalized == "linux":
-        return "linux"
-    return normalized
+    try:
+        return release_targets.normalize_platform(value)
+    except release_targets.ReleaseTargetError:
+        return (value or "").strip().lower()
 
 
 def current_platform_name():
-    return normalized_platform_name(os.environ.get("RUNNER_OS") or platform.system())
+    return release_targets.current_platform()
 
 
-def metadata_names(platform_name):
-    normalized = normalized_platform_name(platform_name)
-    if normalized not in {"linux", "macos", "windows"}:
-        fail(
-            "unsupported package verification platform "
-            f"{platform_name!r}; expected Linux, macOS, or Windows"
-        )
-    prefix = f"chaft-desktop-{normalized}"
-    return {
-        "checksums": f"{prefix}-SHA256SUMS",
-        "sbom": f"{prefix}-sbom.cdx.json",
-        "provenance": f"{prefix}-provenance.json",
-    }
+def metadata_names(target):
+    if isinstance(target, release_targets.ReleaseTarget):
+        return target.metadata_names
+    try:
+        return release_targets.TARGET_BY_NAME[str(target)].metadata_names
+    except KeyError:
+        candidates = release_targets.targets_for_platform(target)
+        if len(candidates) == 1:
+            return candidates[0].metadata_names
+        fail(f"package verification target must include architecture: {target!r}")
 
 
 def load_json(path):
@@ -296,52 +281,29 @@ def verify_checksums(package_dir, artifacts, names):
             )
 
 
-def verify_platform_package_shape(artifacts, platform_name):
-    normalized = normalized_platform_name(platform_name)
-    metadata_names(normalized)
-
+def verify_platform_package_shape(artifacts, target):
     unexpected = [
         artifact["name"]
         for artifact in artifacts
         if artifact.get("packageFormat") != "detached-signature"
-        and package_platform(artifact["name"]) != normalized
+        and package_platform(artifact["name"]) != target.platform
     ]
     if unexpected:
         fail(
-            f"{normalized} package directory contains unexpected package type(s): "
+            f"{target.name} package directory contains unexpected package type(s): "
             + ", ".join(sorted(unexpected))
         )
 
 
-def verify_distribution_package_shape(
-    packages, platform_name, distribution_version, prerelease
-):
-    prefix = f"Chaft-{distribution_version}-"
-    unexpected = [path.name for path in packages if not path.name.startswith(prefix)]
-    if unexpected:
+def verify_distribution_package_shape(packages, target, distribution_version, prerelease):
+    del prerelease
+    expected = target.package_name(distribution_version)
+    actual = [path.name for path in packages]
+    if actual != [expected]:
         fail(
-            "package filename does not contain the exact distribution version: "
-            + ", ".join(sorted(unexpected))
+            f"{target.name} release package must be exactly {expected}; "
+            f"found {', '.join(actual)}"
         )
-    canonical_suffix = CANONICAL_PACKAGE_SUFFIXES[platform_name]
-    for path in packages:
-        if path.name.startswith("Chaft-") and path.name.endswith(canonical_suffix):
-            filename_version = path.name[len("Chaft-") : -len(canonical_suffix)]
-            if filename_version != distribution_version:
-                fail(
-                    f"{path.name} embeds distribution version {filename_version}, "
-                    f"expected {distribution_version}"
-                )
-    if prerelease is not None:
-        expected = PRERELEASE_PACKAGE_NAMES[platform_name].format(
-            version=distribution_version
-        )
-        actual = [path.name for path in packages]
-        if actual != [expected]:
-            fail(
-                f"{platform_name} prerelease package must be exactly {expected}; "
-                f"found {', '.join(actual)}"
-            )
 
 
 def metadata_property_map(metadata):
@@ -361,7 +323,7 @@ def verify_sbom(
     source_commit,
     source_version,
     distribution_version,
-    platform_name,
+    target,
     names,
 ):
     sbom = load_json(package_dir / names["sbom"])
@@ -389,8 +351,15 @@ def verify_sbom(
     metadata_properties = metadata_property_map(metadata)
     if metadata_properties.get("chaft:sourceCommit") != source_commit:
         fail("SBOM metadata source commit does not match provenance source.commit")
-    if metadata_properties.get("chaft:packagePlatform") != platform_name:
+    if metadata_properties.get("chaft:packageTarget") != target.name:
+        fail("SBOM package target does not match its target-qualified filename")
+    if metadata_properties.get("chaft:packagePlatform") != target.platform:
         fail("SBOM package platform does not match its platform-qualified filename")
+    if (
+        metadata_properties.get("chaft:packageArchitecture")
+        != target.architecture
+    ):
+        fail("SBOM package architecture does not match its target-qualified filename")
     if metadata_properties.get("chaft:sourceVersion") != source_version:
         fail("SBOM source version does not match the release source version")
     if (
@@ -459,7 +428,7 @@ def verify_provenance_materials(provenance, source_root):
 def verify_qt_release_binding(
     provenance,
     source_root,
-    platform_name,
+    target,
     qt_source_bundle=None,
     qt_source_checksum=None,
 ):
@@ -491,7 +460,7 @@ def verify_qt_release_binding(
     qt_sdk.validate_provenance_object(
         embedded,
         manifest,
-        platform_name,
+        target.name,
         recipe_root=source_root,
     )
     if sdk["identity"] != embedded["identity"]:
@@ -577,7 +546,7 @@ def verify_provenance(
     profile,
     artifacts,
     require_clean,
-    platform_name,
+    target,
     names,
     source_root,
     expected_commit,
@@ -587,7 +556,7 @@ def verify_provenance(
     qt_source_checksum=None,
 ):
     provenance = load_json(package_dir / names["provenance"])
-    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
+    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v2":
         fail("provenance schemaVersion is unsupported")
     if provenance.get("sourceVersion") != source_version:
         fail("provenance sourceVersion does not match the release checkout")
@@ -611,8 +580,29 @@ def verify_provenance(
         )
     if provenance.get("profile") != profile:
         fail(f"provenance profile must be {profile!r}")
-    if provenance.get("packagePlatform") != platform_name:
+    if provenance.get("packageTarget") != target.name:
+        fail("provenance package target does not match its target-qualified filename")
+    if provenance.get("packagePlatform") != target.platform:
         fail("provenance package platform does not match its platform-qualified filename")
+    if provenance.get("packageArchitecture") != target.architecture:
+        fail(
+            "provenance package architecture does not match its "
+            "target-qualified filename"
+        )
+    host = provenance.get("platform")
+    if not isinstance(host, dict):
+        fail("provenance platform object is missing")
+    try:
+        host_architecture = release_targets.normalize_architecture(
+            host.get("machine")
+        )
+    except release_targets.ReleaseTargetError as error:
+        fail(f"provenance host architecture is invalid: {error}")
+    if host_architecture != target.architecture:
+        fail(
+            f"provenance host architecture {host_architecture} does not match "
+            f"native target {target.architecture}"
+        )
     require_timestamp(provenance.get("createdAt"), "provenance.createdAt")
 
     source = provenance.get("source")
@@ -693,7 +683,7 @@ def verify_provenance(
     verify_qt_release_binding(
         provenance,
         source_root,
-        platform_name,
+        target,
         qt_source_bundle,
         qt_source_checksum,
     )
@@ -738,9 +728,17 @@ def main():
         help="Require provenance to report a clean Git worktree.",
     )
     parser.add_argument(
+        "--target",
+        choices=release_targets.TARGET_NAMES,
+        help="Exact native release target, including architecture.",
+    )
+    parser.add_argument(
         "--platform",
-        default=current_platform_name(),
-        help="Package platform to verify: Linux, macOS, or Windows.",
+        help="Package platform selector; use with --architecture.",
+    )
+    parser.add_argument(
+        "--architecture",
+        help="Package architecture selector; use with --platform.",
     )
     parser.add_argument(
         "--qt-source-bundle",
@@ -782,22 +780,29 @@ def main():
             )
         )
     package_dir = args.package_dir or source_root / "build" / f"desktop-{args.profile}" / "package"
-    platform_name = normalized_platform_name(args.platform)
-    names = metadata_names(platform_name)
+    try:
+        target = release_targets.resolve_target(
+            target_name=args.target,
+            platform_name=args.platform,
+            architecture=args.architecture,
+        )
+    except release_targets.ReleaseTargetError as error:
+        fail(str(error))
+    names = metadata_names(target)
     packages, signatures = verify_directory_shape(package_dir, names)
 
     if not packages:
         fail(f"no package artifacts found in {package_dir}")
     artifacts = artifact_rows(packages, signatures)
 
-    verify_platform_package_shape(artifacts, platform_name)
+    verify_platform_package_shape(artifacts, target)
     verify_checksums(package_dir, artifacts, names)
     provenance, distribution_version, prerelease = verify_provenance(
         package_dir,
         args.profile,
         artifacts,
         args.require_clean or os.environ.get("GITHUB_ACTIONS") == "true",
-        platform_name,
+        target,
         names,
         source_root,
         expected_commit,
@@ -807,7 +812,7 @@ def main():
         args.qt_source_checksum,
     )
     verify_distribution_package_shape(
-        packages, platform_name, distribution_version, prerelease
+        packages, target, distribution_version, prerelease
     )
     verify_sbom(
         package_dir,
@@ -815,7 +820,7 @@ def main():
         provenance["source"]["commit"],
         source_version,
         distribution_version,
-        platform_name,
+        target,
         names,
     )
 

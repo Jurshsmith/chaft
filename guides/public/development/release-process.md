@@ -29,15 +29,15 @@ not be linked from the website as finished software.
 
 The repository implements these release boundaries:
 
-1. Pull-request and `main` CI build desktop packages on native platform
-   runners.
+1. Pull-request and `main` CI build four desktop targets on native runners:
+   Windows x86-64, macOS Intel, macOS Apple Silicon, and Linux x86-64.
 2. The `Publish desktop canary` workflow rebuilds the exact reviewed `main`
    commit on clean native runners before it creates any tag or GitHub Release.
 3. Package metadata records checksums, a CycloneDX SBOM, provenance, source
    identity, and platform-specific evidence. Canary receipts state that signing
    and notarization were not performed.
 4. The publisher creates one draft, verifies its downloaded package bytes on
-   Windows, macOS, and Linux, finalizes an exact 19-file namespace, and only
+   all four native targets, finalizes an exact 24-file namespace, and only
    then publishes it as an immutable prerelease that is never `latest`.
 5. A dedicated canary promotion workflow reverifies the published release and
    publishes an exact website-manifest branch. An authenticated maintainer or
@@ -46,16 +46,36 @@ The repository implements these release boundaries:
 6. Stable publication remains a separate workflow with Authenticode, Apple
    signing/notarization, and the configured Linux signing policy.
 
-The current x86-64 package formats are:
+The current package formats are:
 
-| Platform | Canary package | Canary evidence |
+| Target | Canary package | Canary evidence |
 | --- | --- | --- |
-| Windows | `.zip` | Native draft-download smoke receipt; Authenticode marked not performed |
-| macOS | `.dmg` | Native draft-download smoke receipt; signing and notarization marked not performed |
-| Linux | `.AppImage` | Native draft-download smoke receipt; detached signing marked not performed |
+| Windows x86-64 | `.zip` | Native draft-download smoke receipt; Authenticode marked not performed |
+| macOS Intel | `.dmg` | Native x86-64 receipt; signing and notarization marked not performed |
+| macOS Apple Silicon | `.dmg` | Native arm64 receipt; signing and notarization marked not performed |
+| Linux x86-64 | `.AppImage` | Native draft-download smoke receipt; detached signing marked not performed |
 
 The website and GitHub Releases page remain the source for whether a particular
 canary has completed this automation.
+
+## Source builds from immutable revisions
+
+Technical macOS testers may build from a reviewed tag and its full commit using
+`tools/macos/build-local.sh`. Announcements and documentation must name an
+immutable tag and full 40-character commit; they must not tell users to build a
+moving `main` branch. The guided script's `--expected-commit` option requires
+the checkout to resolve to that exact clean commit.
+
+When a release publishes a signed tag, users should verify it with an
+independently trusted maintainer key. When a source archive is published, the
+release must also publish its SHA-256 and users should compare the digest
+before extracting. A Git commit comparison, a tag-signature check, and an
+archive checksum answer different questions; do not describe one as a
+substitute for all three.
+
+The resulting `~/Applications/Chaft.app` is native to the build Mac and has
+only a local ad-hoc signature. It is not Developer ID signed, notarized, or
+Apple verified, and it must not be redistributed as a trusted binary.
 
 ## Validate a release change locally
 
@@ -71,8 +91,8 @@ and its local verification data:
 
 ```sh
 tools/desktop/package-smoke.sh release
-python3 tools/desktop/release-metadata.py release
-python3 tools/desktop/verify-release-metadata.py release --platform Linux
+python3 tools/desktop/release-metadata.py release --target linux-x86_64
+python3 tools/desktop/verify-release-metadata.py release --target linux-x86_64
 ```
 
 Run the platform-independent release contract tests too:
@@ -109,12 +129,13 @@ existing tag formatted as `v<semantic-version>`. It:
   commit, rejecting tags on unreviewed or detached history;
 - treats the validated tag checkout as data until those checks finish, then
   checks that the tag and source versions agree;
-- checks out that immutable commit on Windows, macOS, and Linux runners;
+- checks out that immutable commit on all four native target runners;
 - runs the platform desktop gates;
 - creates package metadata and verifies it against the exact source commit;
 - creates and verifies one deterministic Qt 6.8.4 corresponding-source bundle
   on Linux rather than duplicating it in the platform matrix;
-- smoke-tests the Windows ZIP and Linux AppImage on clean runners; and
+- smoke-tests the Windows ZIP, both macOS DMGs, and Linux AppImage on clean
+  runners;
 - verifies the corresponding-source bundle again on a clean runner;
 - includes it in the release-input audit; and
 - uploads non-publishing workflow artifacts with seven-day retention.
@@ -146,21 +167,22 @@ The workflow then:
 1. requires a successful `Required` check from the trusted `CI` workflow's
    exact `main` push run;
 2. confirms that neither the tag nor a release with that tag already exists;
-3. builds the Qt corresponding-source bundle and all three native packages
+3. builds the Qt corresponding-source bundle and all four native packages
    before it receives write permission;
 4. smoke-tests the packages once after the GitHub Actions artifact boundary;
-5. audits the exact 14 base assets: three packages, three platform checksum
-   files, three SBOMs, three provenance files, and two Qt source files;
+5. audits the exact 18 base assets: four packages, four target checksum files,
+   four SBOMs, four provenance files, and two Qt source files;
 6. creates one draft prerelease through the GitHub API and records its release
    ID;
 7. downloads each package from that draft by asset ID, checks its API byte size
    and SHA-256 digest, and reruns the packaged-app smoke on its native runner;
-8. emits three receipts that bind the package bytes, asset ID, release ID,
-   runner, smoke command, version, tag, and commit; the macOS receipt records a
-   natively inspected ad-hoc app-bundle signature while the workflow proves
-   there is no Apple team identity, DMG signature, or notarization ticket;
-9. adds the receipts, a 17-file inventory, and an aggregate checksum file to
-   form the exact 19-file public namespace;
+8. emits four target-qualified receipts that bind the package bytes, asset ID,
+   release ID, runner, smoke command, version, tag, architecture, and commit;
+   both macOS receipts record a natively inspected ad-hoc app-bundle signature
+   while the workflow proves there is no Apple team identity, DMG signature,
+   or notarization ticket;
+9. adds the receipts, a 22-file inventory, and an aggregate checksum file to
+   form the exact 24-file public namespace;
 10. redownloads and verifies the entire draft before publication;
 11. publishes it as a prerelease with `make_latest=false`; and
 12. proves the release is immutable, the tag resolves to the reviewed commit,
@@ -195,12 +217,13 @@ Every release also requires these two exact GitHub Release assets:
 - `Chaft-Qt-6.8.4-corresponding-source.zip.sha256`.
 
 They are mandatory compliance assets, not temporary build inputs. Retain the
-bundle and checksum alongside the Windows, macOS, and Linux binaries for the
-full lifetime of the release.
+bundle and checksum alongside the Windows, both native macOS, and Linux
+binaries for the full lifetime of the release.
 
-Stable Windows packages require trusted Authenticode verification. Stable macOS packages
-require Developer ID signing, notarization, stapling, Gatekeeper assessment,
-and a verification receipt. Linux publication follows the configured policy:
+Stable Windows packages require trusted Authenticode verification. Each stable
+macOS architecture requires Developer ID signing, notarization, stapling,
+native policy assessment, and its own target-qualified verification receipt.
+Linux publication follows the configured policy:
 it is either checksummed-only with no detached signatures, or signed with a
 trusted fingerprint, keyring, detached signatures, and verification receipt.
 
@@ -213,7 +236,7 @@ tag so users can identify the exact bytes they received.
 `Promote desktop canary to website` is dispatch-only and accepts one exact
 canary tag. Before it can write a manifest branch, its read-only preparation job:
 
-- requires a published, immutable prerelease containing exactly 19 safe,
+- requires a published, immutable prerelease containing exactly 24 safe,
   uniquely named assets;
 - downloads every asset by immutable asset ID and compares local byte sizes and
   SHA-256 digests with GitHub's API;
@@ -267,7 +290,8 @@ path above. The stable workflow fails closed unless:
 - filenames, sizes, and SHA-256 values match;
 - the mandatory Qt corresponding-source bundle and checksum are present and
   verify with the policy code from the current default branch;
-- Windows and macOS native verification succeeds on their native runners;
+- Windows and both macOS architecture-specific native verifications succeed on
+  their matching runners;
 - the Linux evidence matches its declared signing state; and
 - unrelated, duplicate, or stale assets are absent.
 
@@ -303,6 +327,8 @@ Before describing a version as public:
 
 - all native-platform CI and clean-package smokes are green;
 - the canary or stable tag resolves to the reviewed source commit;
+- any source-build instructions name that fixed tag and full commit, and any
+  published source archive has a reviewed SHA-256;
 - final package bytes are immutable;
 - checksums, SBOMs, provenance, and native evidence verify;
 - the Qt corresponding-source bundle and checksum are retained alongside the

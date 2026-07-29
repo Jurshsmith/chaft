@@ -139,19 +139,64 @@ class RequiredTruthTableTests(unittest.TestCase):
     def test_qt_sdk_provisioning_matches_platform_consumers(self) -> None:
         contracts = needs_fixture({"desktop_contract"})
         self.assertEqual(contracts["qt_sdk_linux"]["result"], "success")
-        self.assertEqual(contracts["qt_sdk_macos"]["result"], "skipped")
+        self.assertEqual(
+            contracts["qt_sdk_macos_x86_64"]["result"], "skipped"
+        )
+        self.assertEqual(
+            contracts["qt_sdk_macos_arm64"]["result"], "skipped"
+        )
         self.assertEqual(contracts["qt_sdk_windows"]["result"], "skipped")
 
         for scope in ("desktop", "package"):
             with self.subTest(scope=scope):
                 needs = needs_fixture({scope})
-                for job in ("qt_sdk_linux", "qt_sdk_macos", "qt_sdk_windows"):
+                for job in (
+                    "qt_sdk_linux",
+                    "qt_sdk_macos_x86_64",
+                    "qt_sdk_macos_arm64",
+                    "qt_sdk_windows",
+                ):
                     self.assertEqual(needs[job]["result"], "success")
                     needs[job]["result"] = "skipped"
                     evaluation = required.evaluate_needs(needs)
                     self.assertFalse(evaluation.passed)
                     self.assertTrue(any(job in error for error in evaluation.errors))
                     needs[job]["result"] = "success"
+
+    def test_macos_local_source_cancellation_fails_desktop_and_package(
+        self,
+    ) -> None:
+        for scope in ("desktop", "package"):
+            for result in ("skipped", "failure", "cancelled"):
+                with self.subTest(scope=scope, result=result):
+                    needs = needs_fixture({scope})
+                    needs["macos_local_source"]["result"] = result
+                    evaluation = required.evaluate_needs(needs)
+                    self.assertFalse(evaluation.passed)
+                    self.assertTrue(
+                        any(
+                            "macos_local_source" in error
+                            for error in evaluation.errors
+                        )
+                    )
+
+    def test_each_native_macos_lane_fails_closed_when_cancelled(self) -> None:
+        macos_jobs = (
+            "macos_local_source",
+            "qt_sdk_macos_x86_64",
+            "qt_sdk_macos_arm64",
+            "desktop_package",
+            "clean_package_smoke",
+        )
+        for job in macos_jobs:
+            with self.subTest(job=job):
+                needs = needs_fixture({"package"})
+                needs[job]["result"] = "cancelled"
+                evaluation = required.evaluate_needs(needs)
+                self.assertFalse(evaluation.passed)
+                self.assertTrue(
+                    any(job in error for error in evaluation.errors)
+                )
 
     def test_release_contract_job_is_enabled_by_package_scope(self) -> None:
         needs = needs_fixture({"package"})

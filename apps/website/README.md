@@ -70,20 +70,25 @@ the route-less Worker configuration. A standalone `pnpm build` fails unless
 
 `src/data/release-manifest.json` is the website's build-time input. It must be
 generated with `tools/desktop/export-website-release-manifest.py` only after the
-desktop release workflow has produced final packages, platform-qualified
+desktop release workflow has produced final packages, target-qualified
 checksums, SBOMs, provenance, and native verification receipts. Run the exporter
-with `--help` for the complete three-platform contract. Its required
+with `--help` for the complete four-target contract: Windows x86-64, macOS
+x86-64, macOS arm64, and Linux x86-64. Its required
 `--source-root` must be a Git checkout containing the release tag; the exporter
-resolves that tag locally and requires every platform's provenance commit and
+resolves that tag locally and requires every target's provenance commit and
 source-material hashes to match it.
 
-The validator requires Windows, macOS, and Linux entries. An asset marked
-`available` must include its final filename, positive byte size, and 64-character
-SHA-256 digest. It also requires direct GitHub Release links for the platform's
-checksum file, CycloneDX SBOM, provenance, and—when signed or notarized—the
-native verification receipt. Signed Linux artifacts additionally require a
-detached signature. Package extensions, release tag, version, commit, evidence
-filenames, and evidence URLs are cross-checked during the static build.
+The validator requires exactly those four target entries. The only exception is
+the exact immutable three-target manifests for `v0.1.0-canary.1` and
+`v0.1.0-canary.2`; their tags, source commits, and legacy OS-qualified evidence
+names are pinned, so a partial current release cannot be reclassified as
+legacy. An asset marked `available` must include its final filename, positive
+byte size, and 64-character SHA-256 digest. It also requires direct GitHub
+Release links for the target's checksum file, CycloneDX SBOM, provenance,
+and—when signed or notarized—the native verification receipt. Signed Linux
+artifacts additionally require a detached signature. Package extensions,
+release tag, version, commit, evidence filenames, and evidence URLs are
+cross-checked during the static build.
 
 The exporter invokes the portable metadata verifier, independently rehashes
 every package, and binds architecture either to native verification evidence or
@@ -99,7 +104,8 @@ treats a self-declared signing label as proof.
 The `Promote desktop release to website` workflow implements the production
 handoff. On a published GitHub Release (or a manual run for an existing
 published tag), it downloads every uploaded asset, authenticates the immutable
-release and each asset, and reconstructs the three platform package directories
+release and each asset, and reconstructs the four target-specific package
+directories (Windows x86-64, macOS Intel, macOS Apple Silicon, and Linux x86-64)
 with `tools/desktop/stage-website-release-assets.py`. Read-only native jobs then
 rerun Authenticode verification on Windows, Apple signing/notarization checks on
 macOS, and OpenPGP/ELF verification for a signed Linux release. The exporter

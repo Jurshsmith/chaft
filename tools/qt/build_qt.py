@@ -27,8 +27,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MANIFEST_PATH = SCRIPT_DIR / "qt-6.8.4.json"
 PROBE_DIR = SCRIPT_DIR / "probe"
 PROVENANCE_NAME = "chaft-qt-sdk-provenance.json"
-TOOLCHAIN_CONTRACT_SCHEMA = 1
+TOOLCHAIN_CONTRACT_SCHEMA = 2
 SUPPORTED_PLATFORMS = ("linux", "macos", "windows")
+SUPPORTED_TARGETS = (
+    "linux-x86_64",
+    "macos-arm64",
+    "macos-x86_64",
+    "windows-x86_64",
+)
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 RECIPE_FILES = (
     ("tools/qt/build_qt.py", SCRIPT_DIR / "build_qt.py"),
@@ -184,6 +190,70 @@ def require_exact_keys(
         )
 
 
+def normalize_architecture(value: str) -> str:
+    normalized = value.strip().lower()
+    return {
+        "aarch64": "arm64",
+        "amd64": "x86_64",
+        "arm64": "arm64",
+        "x64": "x86_64",
+        "x86-64": "x86_64",
+        "x86_64": "x86_64",
+    }.get(normalized, normalized)
+
+
+def target_specification(
+    manifest: dict[str, Any], target_name: str
+) -> dict[str, Any]:
+    specification = manifest["targets"].get(target_name)
+    if specification is None:
+        fail(f"unsupported Qt SDK target: {target_name}")
+    return specification
+
+
+def target_platform(manifest: dict[str, Any], target_name: str) -> str:
+    return target_specification(manifest, target_name)["platform"]
+
+
+def logical_platform(manifest: dict[str, Any], selector: str) -> str:
+    if selector in SUPPORTED_PLATFORMS:
+        return selector
+    return target_platform(manifest, selector)
+
+
+def resolve_target(
+    manifest: dict[str, Any],
+    *,
+    target_name: str | None = None,
+    platform_name: str | None = None,
+) -> str:
+    if target_name is not None:
+        if target_name not in manifest["targets"]:
+            fail(f"unsupported Qt SDK target: {target_name}")
+        if (
+            platform_name is not None
+            and target_platform(manifest, target_name) != platform_name
+        ):
+            fail(
+                f"Qt SDK target {target_name} does not belong to platform "
+                f"{platform_name}"
+            )
+        return target_name
+    if platform_name is None:
+        fail("an exact Qt SDK --target is required")
+    matches = [
+        name
+        for name, specification in manifest["targets"].items()
+        if specification["platform"] == platform_name
+    ]
+    if len(matches) != 1:
+        fail(
+            f"Qt SDK platform {platform_name} is ambiguous; choose one of: "
+            + ", ".join(matches)
+        )
+    return matches[0]
+
+
 def validate_manifest(
     manifest: dict[str, Any], *, recipe_root: Path | None = None
 ) -> None:
@@ -198,14 +268,14 @@ def validate_manifest(
             "identityHash",
             "sdkIdentities",
             "build",
-            "platforms",
+            "targets",
             "modules",
             "patches",
         },
         "manifest",
     )
-    if type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1:
-        fail("Qt SDK manifest schemaVersion must be 1")
+    if type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 2:
+        fail("Qt SDK manifest schemaVersion must be 2")
     if type(manifest["sdkRevision"]) is not int or manifest["sdkRevision"] < 1:
         fail("Qt SDK manifest sdkRevision must be a positive integer")
     if manifest["qtVersion"] != "6.8.4":
@@ -243,17 +313,19 @@ def validate_manifest(
     if not json_exact_equal(build, expected_build):
         fail(f"Qt SDK build configuration must remain {expected_build}")
 
-    platforms = manifest["platforms"]
-    if not isinstance(platforms, dict) or set(platforms) != set(
-        SUPPORTED_PLATFORMS
-    ):
-        fail("Qt SDK platforms must be exactly linux, macos, and windows")
-    for name, specification in platforms.items():
+    targets = manifest["targets"]
+    if not isinstance(targets, dict) or tuple(sorted(targets)) != SUPPORTED_TARGETS:
+        fail(
+            "Qt SDK targets must be exactly "
+            + ", ".join(SUPPORTED_TARGETS)
+        )
+    for name, specification in targets.items():
         if not isinstance(specification, dict):
-            fail(f"platform {name} must be an object")
+            fail(f"target {name} must be an object")
         require_exact_keys(
             specification,
             {
+                "platform",
                 "runner",
                 "architecture",
                 "toolchain",
@@ -261,17 +333,41 @@ def validate_manifest(
                 "moduleCmakeArguments",
                 "requiredPlatformPlugins",
             },
-            f"platform {name}",
+            f"target {name}",
         )
-        for field in ("runner", "architecture", "toolchain"):
+        for field in ("platform", "runner", "architecture", "toolchain"):
             if not isinstance(specification[field], str) or not specification[field]:
-                fail(f"platform {name} {field} must be a non-empty string")
+                fail(f"target {name} {field} must be a non-empty string")
+        if specification["platform"] not in SUPPORTED_PLATFORMS:
+            fail(f"target {name} has unsupported platform")
+        normalized_architecture = normalize_architecture(
+            specification["architecture"]
+        )
+        if normalized_architecture not in {
+            "x86_64",
+            "arm64",
+        }:
+            fail(f"target {name} has unsupported architecture")
+        if specification["architecture"] != normalized_architecture:
+            fail(
+                f"target {name} architecture must use canonical name "
+                f"{normalized_architecture}"
+            )
+        expected_target_name = (
+            f"{specification['platform']}-"
+            f"{normalized_architecture}"
+        )
+        if name != expected_target_name:
+            fail(
+                f"target {name} must be named {expected_target_name} from its "
+                "platform and architecture"
+            )
         arguments = specification["cmakeArguments"]
         if not isinstance(arguments, list) or not all(
             isinstance(argument, str) and argument.startswith("-D")
             for argument in arguments
         ):
-            fail(f"platform {name} cmakeArguments must be -D strings")
+            fail(f"target {name} cmakeArguments must be -D strings")
         module_arguments = specification["moduleCmakeArguments"]
         if not isinstance(module_arguments, dict) or not all(
             isinstance(module_name, str)
@@ -282,7 +378,7 @@ def validate_manifest(
             )
             for module_name, values in module_arguments.items()
         ):
-            fail(f"platform {name} moduleCmakeArguments must contain -D strings")
+            fail(f"target {name} moduleCmakeArguments must contain -D strings")
         plugins = specification["requiredPlatformPlugins"]
         if not isinstance(plugins, list) or not plugins or not all(
             isinstance(plugin, str)
@@ -291,9 +387,9 @@ def validate_manifest(
             and "\\" not in plugin
             for plugin in plugins
         ):
-            fail(f"platform {name} requiredPlatformPlugins must be filenames")
+            fail(f"target {name} requiredPlatformPlugins must be filenames")
 
-    linux = platforms["linux"]
+    linux = targets["linux-x86_64"]
     if linux["moduleCmakeArguments"] != {
         "qtbase": [
             "-DFEATURE_xcb=ON",
@@ -312,10 +408,22 @@ def validate_manifest(
         "libqxcb.so",
     ]:
         fail("linux Qt SDK must verify offscreen, Wayland, and XCB plugins")
-    if "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0" not in platforms["macos"][
-        "cmakeArguments"
-    ]:
-        fail("macOS Qt SDK must target the Qt 6.8 supported 12.0 floor")
+    for macos_target in ("macos-arm64", "macos-x86_64"):
+        specification = targets[macos_target]
+        if "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0" not in specification[
+            "cmakeArguments"
+        ]:
+            fail(
+                f"{macos_target} Qt SDK must target the Qt 6.8 supported "
+                "12.0 floor"
+            )
+        expected_architecture_argument = (
+            f"-DCMAKE_OSX_ARCHITECTURES={specification['architecture']}"
+        )
+        if expected_architecture_argument not in specification["cmakeArguments"]:
+            fail(
+                f"{macos_target} must configure its exact native architecture"
+            )
 
     modules = manifest["modules"]
     if not isinstance(modules, list) or not modules:
@@ -382,18 +490,17 @@ def validate_manifest(
         validate_url_filename_and_digest(row, row["name"])
 
     identities = manifest["sdkIdentities"]
-    if not isinstance(identities, dict) or set(identities) != set(
-        SUPPORTED_PLATFORMS
-    ):
-        fail("Qt SDK identities must be checked in for every supported platform")
+    if not isinstance(identities, dict) or set(identities) != set(targets):
+        fail("Qt SDK identities must be checked in for every supported target")
     digest = unchecked_contract_digest(manifest, recipe_root=recipe_root)[:20]
     expected_identities = {
-        platform_name: (
+        target_name: (
             f"qt-{manifest['qtVersion']}-r{manifest['sdkRevision']}-"
-            f"{platform_name}-{platform_specification['architecture']}-"
-            f"{platform_specification['toolchain']}-{digest}"
+            f"{target_specification['platform']}-"
+            f"{target_specification['architecture']}-"
+            f"{target_specification['toolchain']}-{digest}"
         )
-        for platform_name, platform_specification in platforms.items()
+        for target_name, target_specification in targets.items()
     }
     if identities != expected_identities:
         fail(
@@ -505,13 +612,17 @@ def validate_toolchain_fingerprint(value: str) -> str:
 
 
 def validate_toolchain_contract(
-    contract: dict[str, Any], platform_name: str
+    contract: dict[str, Any],
+    manifest: dict[str, Any],
+    target_name: str,
 ) -> None:
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
     if not isinstance(contract, dict):
         fail("Qt SDK toolchain contract root must be an object")
     require_exact_keys(
         contract,
-        {"schemaVersion", "platform", "runner", "tools"},
+        {"schemaVersion", "target", "platform", "runner", "tools"},
         "Qt SDK toolchain contract",
     )
     if (
@@ -526,6 +637,11 @@ def validate_toolchain_contract(
         fail(
             "Qt SDK toolchain contract platform mismatch: "
             f"expected {platform_name!r}, got {contract['platform']!r}"
+        )
+    if contract["target"] != target_name:
+        fail(
+            "Qt SDK toolchain contract target mismatch: "
+            f"expected {target_name!r}, got {contract['target']!r}"
         )
     runner = contract["runner"]
     if not isinstance(runner, dict):
@@ -548,8 +664,13 @@ def validate_toolchain_contract(
     for field in ("architecture", "imageOS", "imageVersion"):
         if not isinstance(runner[field], str) or not runner[field].strip():
             fail(f"Qt SDK toolchain runner {field} must be non-empty")
-    if runner["architecture"].lower() not in {"x64", "x86_64", "amd64"}:
-        fail("Qt SDK toolchain contract requires an x86_64 runner")
+    runner_architecture = normalize_architecture(runner["architecture"])
+    if runner_architecture != specification["architecture"]:
+        fail(
+            "Qt SDK toolchain contract runner architecture mismatch: "
+            f"expected {specification['architecture']!r}, "
+            f"got {runner_architecture!r}"
+        )
 
     tools = contract["tools"]
     if not isinstance(tools, dict):
@@ -570,14 +691,18 @@ def validate_toolchain_contract(
 
 
 def toolchain_fingerprint(
-    contract: dict[str, Any], platform_name: str
+    contract: dict[str, Any],
+    manifest: dict[str, Any],
+    target_name: str,
 ) -> str:
-    validate_toolchain_contract(contract, platform_name)
+    validate_toolchain_contract(contract, manifest, target_name)
     return sha256_bytes(canonical_json(contract))
 
 
 def load_toolchain_contract(
-    path: Path, platform_name: str
+    path: Path,
+    manifest: dict[str, Any],
+    target_name: str,
 ) -> dict[str, Any]:
     try:
         contract = json.loads(path.read_text(encoding="utf-8"))
@@ -585,12 +710,16 @@ def load_toolchain_contract(
         fail(f"Qt SDK toolchain contract not found: {path}")
     except json.JSONDecodeError as error:
         fail(f"Qt SDK toolchain contract is invalid JSON: {error}")
-    validate_toolchain_contract(contract, platform_name)
+    validate_toolchain_contract(contract, manifest, target_name)
     return contract
 
 
-def capture_toolchain_contract(platform_name: str) -> dict[str, Any]:
-    validate_build_host(load_manifest(), platform_name)
+def capture_toolchain_contract(
+    manifest: dict[str, Any], target_name: str
+) -> dict[str, Any]:
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
+    validate_build_host(manifest, target_name)
     compiler_command = {
         "linux": ["gcc", "--version"],
         "macos": ["clang", "--version"],
@@ -611,11 +740,13 @@ def capture_toolchain_contract(platform_name: str) -> dict[str, Any]:
     }[platform_name]
     contract = {
         "schemaVersion": TOOLCHAIN_CONTRACT_SCHEMA,
+        "target": target_name,
         "platform": platform_name,
         "runner": {
             "os": os.environ.get("RUNNER_OS") or runner_os,
-            "architecture": os.environ.get("RUNNER_ARCH")
-            or normalized_machine(),
+            "architecture": normalize_architecture(
+                os.environ.get("RUNNER_ARCH") or normalized_machine()
+            ),
             "imageOS": image_os or host_platform.system(),
             "imageVersion": image_version or host_platform.release(),
         },
@@ -626,7 +757,7 @@ def capture_toolchain_contract(platform_name: str) -> dict[str, Any]:
             "python": host_platform.python_version(),
         },
     }
-    validate_toolchain_contract(contract, platform_name)
+    validate_toolchain_contract(contract, manifest, target_name)
     return contract
 
 
@@ -643,15 +774,22 @@ def write_toolchain_contract(
 
 def sdk_identity(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     toolchain_fingerprint_value: str | None = None,
     *,
     recipe_root: Path | None = None,
 ) -> str:
-    if platform_name not in SUPPORTED_PLATFORMS:
-        fail(f"unsupported platform: {platform_name}")
     validate_manifest(manifest, recipe_root=recipe_root)
-    identity = manifest["sdkIdentities"][platform_name]
+    resolved_target = resolve_target(
+        manifest,
+        target_name=(
+            target_name if target_name in manifest["targets"] else None
+        ),
+        platform_name=(
+            target_name if target_name in SUPPORTED_PLATFORMS else None
+        ),
+    )
+    identity = manifest["sdkIdentities"][resolved_target]
     if toolchain_fingerprint_value is None:
         return identity
     fingerprint = validate_toolchain_fingerprint(toolchain_fingerprint_value)
@@ -659,17 +797,18 @@ def sdk_identity(
 
 
 def selected_modules(
-    manifest: dict[str, Any], platform_name: str
+    manifest: dict[str, Any], target_or_platform: str
 ) -> list[dict[str, Any]]:
+    platform_name = logical_platform(manifest, target_or_platform)
     return [
         row for row in manifest["modules"] if platform_name in row["platforms"]
     ]
 
 
 def expected_source_materials(
-    manifest: dict[str, Any], platform_name: str
+    manifest: dict[str, Any], target_or_platform: str
 ) -> list[dict[str, Any]]:
-    modules = selected_modules(manifest, platform_name)
+    modules = selected_modules(manifest, target_or_platform)
     module_names = {row["name"] for row in modules}
     materials: list[dict[str, Any]] = [
         {
@@ -704,8 +843,23 @@ def normalized_host_platform() -> str:
 
 
 def normalized_machine() -> str:
-    machine = host_platform.machine().lower()
-    return {"amd64": "x86_64", "x64": "x86_64"}.get(machine, machine)
+    return normalize_architecture(host_platform.machine())
+
+
+def macos_process_is_translated() -> bool:
+    if normalized_host_platform() != "macos":
+        return False
+    try:
+        result = subprocess.run(
+            ["sysctl", "-in", "sysctl.proc_translated"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "1"
 
 
 def command_path(name: str) -> str:
@@ -716,18 +870,31 @@ def command_path(name: str) -> str:
 
 
 def validate_build_host(
-    manifest: dict[str, Any], platform_name: str, *, check_tools: bool = True
+    manifest: dict[str, Any], target_name: str, *, check_tools: bool = True
 ) -> None:
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
     actual_platform = normalized_host_platform()
     if actual_platform != platform_name:
         fail(
             f"requested {platform_name} SDK on {actual_platform}; native builds only"
         )
-    expected_machine = manifest["platforms"][platform_name]["architecture"]
-    if normalized_machine() != expected_machine:
+    expected_machine = specification["architecture"]
+    if platform_name == "macos" and macos_process_is_translated():
+        if expected_machine == "arm64":
+            fail(
+                "macos-arm64 Qt SDK builds require a native Apple Silicon "
+                "process; Rosetta translation is unsupported"
+            )
+        fail(
+            "macos-x86_64 Qt SDK builds require a native Intel host; "
+            "Rosetta translation is unsupported"
+        )
+    actual_machine = normalized_machine()
+    if actual_machine != expected_machine:
         fail(
             f"{platform_name} SDK requires {expected_machine}, "
-            f"found {normalized_machine()}"
+            f"found {actual_machine}"
         )
     if platform_name == "linux":
         os_release = Path("/etc/os-release")
@@ -859,7 +1026,7 @@ def clean_directory(path: Path, parent: Path) -> None:
 
 
 def prepare_sources(
-    manifest: dict[str, Any], platform_name: str, work_dir: Path
+    manifest: dict[str, Any], target_name: str, work_dir: Path
 ) -> tuple[dict[str, Path], list[dict[str, str]]]:
     downloads = work_dir / "downloads"
     source_parent = work_dir / "sources"
@@ -868,7 +1035,7 @@ def prepare_sources(
 
     source_paths: dict[str, Path] = {}
     materials: list[dict[str, str]] = []
-    for module in selected_modules(manifest, platform_name):
+    for module in selected_modules(manifest, target_name):
         archive = download_verified(module, downloads)
         verify_digest(archive, module["sha256"], module["name"])
         staging = source_parent / f".extract-{module['name']}"
@@ -913,7 +1080,7 @@ def prepare_sources(
 
 def cmake_configure_command(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     source_dir: Path,
     build_dir: Path,
     prefix: Path,
@@ -936,9 +1103,10 @@ def cmake_configure_command(
         "-DQT_BUILD_BENCHMARKS=OFF",
         "-DQT_BUILD_DOCS=OFF",
     ]
-    arguments.extend(manifest["platforms"][platform_name]["cmakeArguments"])
+    specification = target_specification(manifest, target_name)
+    arguments.extend(specification["cmakeArguments"])
     arguments.extend(
-        manifest["platforms"][platform_name]["moduleCmakeArguments"].get(
+        specification["moduleCmakeArguments"].get(
             source_dir.name, []
         )
     )
@@ -947,12 +1115,13 @@ def cmake_configure_command(
 
 def qt_configure_module_command(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     source_dir: Path,
     prefix: Path,
 ) -> list[str]:
     """Use Qt's supported installed-module configuration frontend."""
-    suffix = ".bat" if platform_name == "windows" else ""
+    specification = target_specification(manifest, target_name)
+    suffix = ".bat" if specification["platform"] == "windows" else ""
     configure_module = prefix / "bin" / f"qt-configure-module{suffix}"
     arguments = [
         str(configure_module),
@@ -969,9 +1138,9 @@ def qt_configure_module_command(
         "-DQT_BUILD_BENCHMARKS=OFF",
         "-DQT_BUILD_DOCS=OFF",
     ]
-    arguments.extend(manifest["platforms"][platform_name]["cmakeArguments"])
+    arguments.extend(specification["cmakeArguments"])
     arguments.extend(
-        manifest["platforms"][platform_name]["moduleCmakeArguments"].get(
+        specification["moduleCmakeArguments"].get(
             source_dir.name, []
         )
     )
@@ -980,11 +1149,12 @@ def qt_configure_module_command(
 
 def build_modules(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     prefix: Path,
     work_dir: Path,
     source_paths: dict[str, Path],
 ) -> list[list[str]]:
+    platform_name = target_platform(manifest, target_name)
     build_parent = work_dir / "build"
     clean_directory(build_parent, work_dir)
     build_parent.mkdir(parents=True)
@@ -992,13 +1162,13 @@ def build_modules(
     environment["CMAKE_PREFIX_PATH"] = str(prefix)
     environment["QTDIR"] = str(prefix)
     commands: list[list[str]] = []
-    for module in selected_modules(manifest, platform_name):
+    for module in selected_modules(manifest, target_name):
         name = module["name"]
         build_dir = build_parent / name
         build_dir.mkdir()
         if name == "qtbase":
             configure = cmake_configure_command(
-                manifest, platform_name, source_paths[name], build_dir, prefix
+                manifest, target_name, source_paths[name], build_dir, prefix
             )
             configure_cwd = None
         else:
@@ -1013,7 +1183,7 @@ def build_modules(
                     f"frontend: {configure_module}"
                 )
             configure = qt_configure_module_command(
-                manifest, platform_name, source_paths[name], prefix
+                manifest, target_name, source_paths[name], prefix
             )
             configure_cwd = build_dir
         compile_command = [
@@ -1049,22 +1219,28 @@ def utc_now() -> str:
 
 def write_provenance(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     prefix: Path,
     materials: list[dict[str, str]],
     commands: list[list[str]],
     toolchain_contract: dict[str, Any],
 ) -> Path:
-    fingerprint = toolchain_fingerprint(toolchain_contract, platform_name)
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
+    fingerprint = toolchain_fingerprint(
+        toolchain_contract, manifest, target_name
+    )
     provenance = {
-        "schemaVersion": 1,
-        "identity": sdk_identity(manifest, platform_name, fingerprint),
+        "schemaVersion": 2,
+        "identity": sdk_identity(manifest, target_name, fingerprint),
         "manifestSha256": manifest_digest(manifest),
         "contractSha256": contract_digest(manifest),
         "qtVersion": manifest["qtVersion"],
         "sdkRevision": manifest["sdkRevision"],
+        "target": target_name,
         "platform": platform_name,
-        "platformSpecification": manifest["platforms"][platform_name],
+        "architecture": specification["architecture"],
+        "targetSpecification": specification,
         "buildConfiguration": manifest["build"],
         "generatedAt": utc_now(),
         "host": {
@@ -1090,12 +1266,14 @@ def write_provenance(
 def validate_provenance_object(
     provenance: dict[str, Any],
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     *,
     recipe_root: Path | None = None,
     expected_toolchain_fingerprint: str | None = None,
     allow_incomplete: bool = False,
 ) -> dict[str, Any]:
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
     if not isinstance(provenance, dict):
         fail("Qt SDK provenance root must be an object")
     require_exact_keys(
@@ -1107,8 +1285,10 @@ def validate_provenance_object(
             "contractSha256",
             "qtVersion",
             "sdkRevision",
+            "target",
             "platform",
-            "platformSpecification",
+            "architecture",
+            "targetSpecification",
             "buildConfiguration",
             "generatedAt",
             "host",
@@ -1121,13 +1301,13 @@ def validate_provenance_object(
         },
         "Qt SDK provenance",
     )
-    if type(provenance["schemaVersion"]) is not int or provenance["schemaVersion"] != 1:
-        fail("Qt SDK provenance schemaVersion must be 1")
+    if type(provenance["schemaVersion"]) is not int or provenance["schemaVersion"] != 2:
+        fail("Qt SDK provenance schemaVersion must be 2")
     if not json_exact_equal(
-        provenance["platformSpecification"],
-        manifest["platforms"][platform_name],
+        provenance["targetSpecification"],
+        specification,
     ):
-        fail("Qt SDK provenance platformSpecification mismatch")
+        fail("Qt SDK provenance targetSpecification mismatch")
     if not json_exact_equal(
         provenance["buildConfiguration"], manifest["build"]
     ):
@@ -1155,7 +1335,9 @@ def validate_provenance_object(
     toolchain_contract = provenance.get("toolchainContract")
     if not isinstance(toolchain_contract, dict):
         fail("Qt SDK provenance toolchainContract is missing or malformed")
-    fingerprint = toolchain_fingerprint(toolchain_contract, platform_name)
+    fingerprint = toolchain_fingerprint(
+        toolchain_contract, manifest, target_name
+    )
     if provenance.get("toolchainFingerprint") != fingerprint:
         fail(
             "Qt SDK provenance toolchainFingerprint does not match the "
@@ -1173,7 +1355,7 @@ def validate_provenance_object(
     expected = {
         "identity": sdk_identity(
             manifest,
-            platform_name,
+            target_name,
             fingerprint,
             recipe_root=recipe_root,
         ),
@@ -1185,7 +1367,9 @@ def validate_provenance_object(
         ),
         "qtVersion": manifest["qtVersion"],
         "sdkRevision": manifest["sdkRevision"],
+        "target": target_name,
         "platform": platform_name,
+        "architecture": specification["architecture"],
     }
     for field, value in expected.items():
         if not json_exact_equal(provenance.get(field), value):
@@ -1193,7 +1377,7 @@ def validate_provenance_object(
                 f"Qt SDK provenance {field} mismatch: "
                 f"expected {value!r}, got {provenance.get(field)!r}"
             )
-    expected_materials = expected_source_materials(manifest, platform_name)
+    expected_materials = expected_source_materials(manifest, target_name)
     if not json_exact_equal(
         provenance.get("sourceMaterials"), expected_materials
     ):
@@ -1236,7 +1420,7 @@ def validate_provenance_object(
 def load_and_validate_provenance(
     path: Path,
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     *,
     recipe_root: Path | None = None,
     expected_toolchain_fingerprint: str | None = None,
@@ -1251,7 +1435,7 @@ def load_and_validate_provenance(
     return validate_provenance_object(
         provenance,
         manifest,
-        platform_name,
+        target_name,
         recipe_root=recipe_root,
         expected_toolchain_fingerprint=expected_toolchain_fingerprint,
         allow_incomplete=allow_incomplete,
@@ -1269,21 +1453,23 @@ def prefix_tool(prefix: Path, *names: str) -> Path:
 
 def verify_sdk(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     prefix: Path,
     provenance_path: Path | None = None,
     *,
     expected_toolchain_fingerprint: str | None = None,
     allow_incomplete_provenance: bool = False,
 ) -> None:
-    validate_build_host(manifest, platform_name)
+    specification = target_specification(manifest, target_name)
+    platform_name = specification["platform"]
+    validate_build_host(manifest, target_name)
     if not prefix.is_dir():
         fail(f"Qt SDK prefix not found: {prefix}")
     provenance_path = provenance_path or prefix / PROVENANCE_NAME
     load_and_validate_provenance(
         provenance_path,
         manifest,
-        platform_name,
+        target_name,
         expected_toolchain_fingerprint=expected_toolchain_fingerprint,
         allow_incomplete=allow_incomplete_provenance,
     )
@@ -1305,9 +1491,7 @@ def verify_sdk(
     platform_plugin_dir = prefix / "plugins" / "platforms"
     missing_plugins = [
         name
-        for name in manifest["platforms"][platform_name][
-            "requiredPlatformPlugins"
-        ]
+        for name in specification["requiredPlatformPlugins"]
         if not (platform_plugin_dir / name).is_file()
     ]
     if missing_plugins:
@@ -1335,7 +1519,7 @@ def verify_sdk(
             f"-DCMAKE_BUILD_TYPE={manifest['build']['buildType']}",
             f"-DCMAKE_PREFIX_PATH={prefix}",
         ]
-        configure.extend(manifest["platforms"][platform_name]["cmakeArguments"])
+        configure.extend(specification["cmakeArguments"])
         run(configure, env=environment)
         run(
             [
@@ -1378,15 +1562,17 @@ def complete_provenance(path: Path) -> None:
 
 def build_sdk(
     manifest: dict[str, Any],
-    platform_name: str,
+    target_name: str,
     prefix: Path,
     work_dir: Path | None,
     toolchain_contract: dict[str, Any],
 ) -> None:
-    validate_build_host(manifest, platform_name)
+    validate_build_host(manifest, target_name)
     prefix = prefix.resolve()
-    fingerprint = toolchain_fingerprint(toolchain_contract, platform_name)
-    identity = sdk_identity(manifest, platform_name, fingerprint)
+    fingerprint = toolchain_fingerprint(
+        toolchain_contract, manifest, target_name
+    )
+    identity = sdk_identity(manifest, target_name, fingerprint)
     work_dir = (
         work_dir.resolve()
         if work_dir is not None
@@ -1400,14 +1586,14 @@ def build_sdk(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     source_paths, materials = prepare_sources(
-        manifest, platform_name, work_dir
+        manifest, target_name, work_dir
     )
     commands = build_modules(
-        manifest, platform_name, prefix, work_dir, source_paths
+        manifest, target_name, prefix, work_dir, source_paths
     )
     provenance_path = write_provenance(
         manifest,
-        platform_name,
+        target_name,
         prefix,
         materials,
         commands,
@@ -1415,7 +1601,7 @@ def build_sdk(
     )
     verify_sdk(
         manifest,
-        platform_name,
+        target_name,
         prefix,
         provenance_path,
         expected_toolchain_fingerprint=fingerprint,
@@ -1425,17 +1611,35 @@ def build_sdk(
     load_and_validate_provenance(
         provenance_path,
         manifest,
-        platform_name,
+        target_name,
         expected_toolchain_fingerprint=fingerprint,
         allow_incomplete=False,
     )
     print(f"built and verified {identity} at {prefix}")
 
 
-def activation_values(prefix: Path) -> dict[str, str]:
+def activation_values(
+    manifest: dict[str, Any], prefix: Path
+) -> dict[str, str]:
     prefix = prefix.resolve()
     if not prefix.is_dir():
         fail(f"Qt SDK prefix not found: {prefix}")
+    provenance_path = prefix / PROVENANCE_NAME
+    try:
+        untrusted = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"Qt SDK provenance not found: {provenance_path}")
+    except json.JSONDecodeError as error:
+        fail(f"Qt SDK provenance is invalid JSON: {error}")
+    if not isinstance(untrusted, dict):
+        fail("Qt SDK provenance root must be an object")
+    target_name = untrusted.get("target")
+    if not isinstance(target_name, str) or target_name not in manifest["targets"]:
+        fail("Qt SDK provenance target is missing or unsupported")
+    provenance = validate_provenance_object(
+        untrusted, manifest, target_name
+    )
+    specification = target_specification(manifest, target_name)
     existing = os.environ.get("CMAKE_PREFIX_PATH")
     cmake_prefix = (
         os.pathsep.join((str(prefix), existing)) if existing else str(prefix)
@@ -1445,6 +1649,15 @@ def activation_values(prefix: Path) -> dict[str, str]:
         "QT_ROOT_DIR": str(prefix),
         "CMAKE_PREFIX_PATH": cmake_prefix,
         "CHAFT_QT_SDK_BUILD_TYPE": "Release",
+        "CHAFT_QT_SDK_TARGET": target_name,
+        "CHAFT_QT_SDK_PLATFORM": specification["platform"],
+        "CHAFT_QT_SDK_ARCHITECTURE": specification["architecture"],
+        "CHAFT_QT_SDK_VERSION": manifest["qtVersion"],
+        "CHAFT_QT_SDK_IDENTITY": provenance["identity"],
+        "CHAFT_QT_SDK_TOOLCHAIN_FINGERPRINT": provenance[
+            "toolchainFingerprint"
+        ],
+        "CHAFT_QT_SDK_PROVENANCE": str(provenance_path),
     }
 
 
@@ -1459,9 +1672,12 @@ def append_github_file(path: Path, lines: list[str]) -> None:
 
 
 def activate_sdk(
-    prefix: Path, github_env: Path | None, github_path: Path | None
+    manifest: dict[str, Any],
+    prefix: Path,
+    github_env: Path | None,
+    github_path: Path | None,
 ) -> None:
-    values = activation_values(prefix)
+    values = activation_values(manifest, prefix)
     environment_lines = [f"{key}={value}" for key, value in values.items()]
     path_line = str(prefix.resolve() / "bin")
     if github_env is not None:
@@ -1470,6 +1686,33 @@ def activate_sdk(
         append_github_file(github_path, [path_line])
     if github_env is None and github_path is None:
         print("\n".join(environment_lines + [f"PATH+={path_line}"]))
+
+
+def add_target_selector(command: argparse.ArgumentParser) -> None:
+    selector = command.add_mutually_exclusive_group(required=True)
+    selector.add_argument(
+        "--target",
+        choices=SUPPORTED_TARGETS,
+        help="exact operating-system and architecture target",
+    )
+    selector.add_argument(
+        "--platform",
+        choices=SUPPORTED_PLATFORMS,
+        help=(
+            "legacy logical-platform selector; accepted only when exactly one "
+            "target exists for that platform"
+        ),
+    )
+
+
+def command_target(
+    manifest: dict[str, Any], arguments: argparse.Namespace
+) -> str:
+    return resolve_target(
+        manifest,
+        target_name=getattr(arguments, "target", None),
+        platform_name=getattr(arguments, "platform", None),
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1481,7 +1724,7 @@ def parser() -> argparse.ArgumentParser:
     identity = commands.add_parser(
         "identity", help="print the offline SDK cache/release identity"
     )
-    identity.add_argument("--platform", choices=SUPPORTED_PLATFORMS, required=True)
+    add_target_selector(identity)
     identity_source = identity.add_mutually_exclusive_group()
     identity_source.add_argument("--toolchain-contract", type=Path)
     identity_source.add_argument("--toolchain-fingerprint")
@@ -1490,28 +1733,24 @@ def parser() -> argparse.ArgumentParser:
         "toolchain-contract",
         help="capture the native runner image and build-tool contract",
     )
-    toolchain.add_argument(
-        "--platform", choices=SUPPORTED_PLATFORMS, required=True
-    )
+    add_target_selector(toolchain)
     toolchain.add_argument("--output", type=Path)
 
     fingerprint = commands.add_parser(
         "toolchain-fingerprint",
         help="print the canonical SHA-256 of a captured toolchain contract",
     )
-    fingerprint.add_argument(
-        "--platform", choices=SUPPORTED_PLATFORMS, required=True
-    )
+    add_target_selector(fingerprint)
     fingerprint.add_argument("--toolchain-contract", type=Path, required=True)
 
     build = commands.add_parser("build", help="build and verify the source SDK")
-    build.add_argument("--platform", choices=SUPPORTED_PLATFORMS, required=True)
+    add_target_selector(build)
     build.add_argument("--prefix", type=Path, required=True)
     build.add_argument("--work-dir", type=Path)
     build.add_argument("--toolchain-contract", type=Path, required=True)
 
     verify = commands.add_parser("verify", help="verify an installed SDK")
-    verify.add_argument("--platform", choices=SUPPORTED_PLATFORMS, required=True)
+    add_target_selector(verify)
     verify.add_argument("--prefix", type=Path, required=True)
     verify.add_argument("--provenance", type=Path)
     verify_source = verify.add_mutually_exclusive_group(required=True)
@@ -1532,53 +1771,61 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = load_manifest()
         if arguments.command == "identity":
+            target_name = command_target(manifest, arguments)
             fingerprint = arguments.toolchain_fingerprint
             if arguments.toolchain_contract is not None:
                 contract = load_toolchain_contract(
-                    arguments.toolchain_contract, arguments.platform
+                    arguments.toolchain_contract, manifest, target_name
                 )
                 fingerprint = toolchain_fingerprint(
-                    contract, arguments.platform
+                    contract, manifest, target_name
                 )
-            print(sdk_identity(manifest, arguments.platform, fingerprint))
+            print(sdk_identity(manifest, target_name, fingerprint))
         elif arguments.command == "toolchain-contract":
-            contract = capture_toolchain_contract(arguments.platform)
+            target_name = command_target(manifest, arguments)
+            contract = capture_toolchain_contract(manifest, target_name)
             write_toolchain_contract(contract, arguments.output)
         elif arguments.command == "toolchain-fingerprint":
+            target_name = command_target(manifest, arguments)
             contract = load_toolchain_contract(
-                arguments.toolchain_contract, arguments.platform
+                arguments.toolchain_contract, manifest, target_name
             )
-            print(toolchain_fingerprint(contract, arguments.platform))
+            print(toolchain_fingerprint(contract, manifest, target_name))
         elif arguments.command == "build":
+            target_name = command_target(manifest, arguments)
             contract = load_toolchain_contract(
-                arguments.toolchain_contract, arguments.platform
+                arguments.toolchain_contract, manifest, target_name
             )
             build_sdk(
                 manifest,
-                arguments.platform,
+                target_name,
                 arguments.prefix,
                 arguments.work_dir,
                 contract,
             )
         elif arguments.command == "verify":
+            target_name = command_target(manifest, arguments)
             fingerprint = arguments.toolchain_fingerprint
             if arguments.toolchain_contract is not None:
                 contract = load_toolchain_contract(
-                    arguments.toolchain_contract, arguments.platform
+                    arguments.toolchain_contract, manifest, target_name
                 )
                 fingerprint = toolchain_fingerprint(
-                    contract, arguments.platform
+                    contract, manifest, target_name
                 )
             verify_sdk(
                 manifest,
-                arguments.platform,
+                target_name,
                 arguments.prefix.resolve(),
                 arguments.provenance,
                 expected_toolchain_fingerprint=fingerprint,
             )
         elif arguments.command == "activate":
             activate_sdk(
-                arguments.prefix, arguments.github_env, arguments.github_path
+                manifest,
+                arguments.prefix,
+                arguments.github_env,
+                arguments.github_path,
             )
         else:
             raise AssertionError(f"unhandled command: {arguments.command}")
