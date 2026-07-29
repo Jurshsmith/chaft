@@ -18,9 +18,9 @@ recurring infrastructure costs while making the model's tradeoffs explicit.
 Chaft is in canary development:
 
 - The Rust runtime, CLI, replica node, Qt/QML desktop application, and static website are implemented in this repository.
-- CI builds and exercises desktop packages on Windows, macOS, and Linux.
+- CI builds and exercises desktop packages on Windows x86-64, macOS Intel, macOS Apple Silicon, and Linux x86-64.
 - Those CI packages are development artifacts, not public releases.
-- A dedicated publisher can create one immutable, versioned GitHub prerelease with native Windows, macOS, and Linux packages. The website advertises it only after a separate reviewed manifest change.
+- A dedicated publisher can create one immutable, versioned GitHub prerelease with packages for all four targets. The website advertises it only after a separate reviewed manifest change.
 - Canary receipts explicitly record that signing and notarization were not performed. Stable releases retain their stronger signing and notarization gates.
 - The public website is deployed with Cloudflare Workers Static Assets. `https://chaft.ai` is the canonical hostname; deployment automation and provenance remain subject to the reviewed infrastructure gates.
 - Peer connectivity uses explicit endpoints today. Production public relay, global discovery, guaranteed delivery, and an availability SLA are not provided.
@@ -105,8 +105,7 @@ guides/public/           Canonical public documentation
 tools/                   CI, desktop, smoke, release, and validation tooling
 ```
 
-The Rust workspace uses edition 2024 and declares Rust 1.97.1 as its minimum
-supported toolchain.
+The Rust workspace uses edition 2024 and requires Rust 1.97.1 or newer.
 
 ## Build the Rust workspace
 
@@ -148,18 +147,20 @@ passphrases directly in command arguments or environment variables. See the
 
 ## Build and run the desktop app
 
-Desktop development requires:
-
-- Qt 6.8.4
-- CMake 3.28 or newer
-- Ninja
-- Rust 1.97.1 or newer
+Official package and release-input development requires Chaft's verified, patched
+Qt 6.8.4 SDK for the exact native target, CMake 3.28+, Ninja, and Rust 1.97.1+.
 
 Confirm the local toolchain:
 
 ```sh
 tools/desktop/preflight.sh
 ```
+
+Technical macOS testers can instead run `tools/macos/build-local.sh` from a fixed
+checkout on Intel or Apple Silicon. It uses supported Homebrew Qt, verifies the
+native app, applies only a local ad-hoc signature, and installs `~/Applications/Chaft.app`.
+It is not Developer ID signed or notarized. Read
+[Build Chaft Desktop](guides/public/getting-started/build-desktop.md) first.
 
 Build and launch a fresh development profile:
 
@@ -211,8 +212,7 @@ The full expectations and focused test commands are in the
 
 ## Run the website
 
-The static website requires Node.js 22.13 or newer and the pnpm version pinned
-in `apps/website/package.json`.
+The website requires Node.js 22.13+ and the pnpm version pinned in `apps/website/package.json`.
 
 ```sh
 corepack enable
@@ -244,11 +244,11 @@ validation and candidate creation cannot mutate Cloudflare unexpectedly.
 The desktop CI matrix builds:
 
 - Windows x86-64 packages
-- macOS x86-64 packages
+- macOS Intel (x86-64) packages
+- macOS Apple Silicon (arm64) packages
 - Linux x86-64 AppImage packages
 
-CI artifacts are intended for development verification and expire according to
-GitHub Actions retention. They are not a supported distribution channel.
+CI artifacts expire under GitHub Actions retention and are not a supported distribution channel.
 
 Public downloads are versioned, immutable assets attached to
 [GitHub Releases](https://github.com/Jurshsmith/chaft/releases). A canary is a

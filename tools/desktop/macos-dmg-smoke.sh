@@ -28,6 +28,8 @@ require_tool() {
 
 require_tool ditto
 require_tool hdiutil
+require_tool lipo
+require_tool python3
 
 if [ -d "$input" ]; then
   dmg_count="$(
@@ -63,7 +65,17 @@ distribution_version="$(
     --distribution-version "$distribution_version" \
     --print-distribution-version
 )"
-expected_name="Chaft-$distribution_version-macOS-x86_64.dmg"
+expected_architecture="${CHAFT_EXPECTED_ARCHITECTURE:-$(uname -m)}"
+case "$(printf '%s' "$expected_architecture" | tr '[:upper:]' '[:lower:]')" in
+  x86_64|amd64|x64) expected_architecture=x86_64 ;;
+  arm64|aarch64) expected_architecture=arm64 ;;
+  *)
+    printf 'unsupported expected macOS architecture: %s\n' \
+      "$expected_architecture" >&2
+    exit 1
+    ;;
+esac
+expected_name="Chaft-$distribution_version-macOS-$expected_architecture.dmg"
 if [ "$(basename "$dmg_path")" != "$expected_name" ]; then
   printf 'expected DMG filename %s, got %s\n' \
     "$expected_name" "$(basename "$dmg_path")" >&2
@@ -133,6 +145,67 @@ if [ ! -x "$mounted_binary" ]; then
   printf 'packaged macOS executable is missing: %s\n' "$mounted_binary" >&2
   exit 1
 fi
+
+python3 - "$mounted_app" "$expected_architecture" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+app = Path(sys.argv[1])
+expected = sys.argv[2]
+mach_o_magics = {
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+    b"\xfe\xed\xfa\xce",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+}
+main = app / "Contents" / "MacOS" / "Chaft"
+candidate_paths = {main}
+for path in sorted(app.rglob("*")):
+    if path.is_symlink() or not path.is_file():
+        continue
+    try:
+        with path.open("rb") as handle:
+            magic = handle.read(4)
+    except OSError as error:
+        raise SystemExit(f"cannot inspect bundled file {path}: {error}")
+    if magic not in mach_o_magics:
+        continue
+    candidate_paths.add(path)
+inspected = []
+for path in sorted(candidate_paths):
+    result = subprocess.run(
+        ["lipo", "-archs", str(path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"lipo failed for bundled Mach-O {path}: {result.stderr.strip()}"
+        )
+    aliases = {"aarch64": "arm64", "x86-64": "x86_64"}
+    architectures = {
+        aliases.get(value.lower(), value.lower())
+        for value in result.stdout.split()
+    }
+    if architectures != {expected}:
+        raise SystemExit(
+            f"bundled Mach-O {path.relative_to(app)} has architectures "
+            f"{sorted(architectures)}, expected only {expected}"
+        )
+    inspected.append(path)
+if not inspected:
+    raise SystemExit("macOS package contains no inspectable Mach-O payload")
+if main not in inspected:
+    raise SystemExit("macOS main executable was not inspected as Mach-O")
+print(f"verified {len(inspected)} native {expected} Mach-O payloads")
+PY
 
 compliance_dir="$mounted_app/Contents/Resources/doc/Chaft"
 for required_file in \

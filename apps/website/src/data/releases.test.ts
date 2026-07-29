@@ -21,7 +21,7 @@ interface PublishedReleaseOptions {
 function comingSoonCanaryRelease(version = rawManifest.version): any {
   const sourceUrl = rawManifest.sourceUrl.replace(/\/$/, "");
   const releaseUrl = `${sourceUrl}/releases`;
-  return {
+  const release = {
     ...structuredClone(rawManifest),
     channel: "canary",
     status: "coming-soon",
@@ -49,6 +49,7 @@ function comingSoonCanaryRelease(version = rawManifest.version): any {
       },
     })),
   };
+  return currentTargetRelease(release);
 }
 
 function publishedRelease({
@@ -59,7 +60,7 @@ function publishedRelease({
   publishedAt = "2026-07-18T10:00:00Z",
   channel = "stable",
 }: PublishedReleaseOptions = {}): any {
-  return {
+  const release = {
     ...structuredClone(rawManifest),
     channel,
     status: "published",
@@ -107,6 +108,7 @@ function publishedRelease({
       };
     }),
   };
+  return currentTargetRelease(release);
 }
 
 function publishedCanaryRelease(version = "0.1.0-canary.1"): any {
@@ -131,7 +133,7 @@ function publishedCanaryRelease(version = "0.1.0-canary.1"): any {
       ...asset.evidence,
       signature: null,
       verification: evidenceFile(
-        `chaft-desktop-${asset.os}-verification.json`,
+        `chaft-desktop-${asset.os}-${asset.arch}-verification.json`,
       ),
     },
   }));
@@ -145,6 +147,64 @@ function publishedCanaryRelease(version = "0.1.0-canary.1"): any {
       "chaft-desktop-release-SHA256SUMS",
     ),
   };
+  return release;
+}
+
+function currentTargetRelease(input: any): any {
+  const release = structuredClone(input);
+  const intelIndex = release.assets.findIndex(
+    (asset: any) => asset.os === "macos" && asset.arch === "x86_64",
+  );
+  const appleSiliconIndex = release.assets.findIndex(
+    (asset: any) => asset.os === "macos" && asset.arch === "arm64",
+  );
+  release.assets[intelIndex].platformLabel = "macOS Intel";
+  if (appleSiliconIndex === -1) {
+    const appleSilicon = {
+      ...structuredClone(release.assets[intelIndex]),
+      id: "macos-arm64-dmg",
+      arch: "arm64",
+      platformLabel: "macOS Apple Silicon",
+    };
+    release.assets.splice(intelIndex + 1, 0, appleSilicon);
+  }
+
+  const packageNames: Record<string, string> = {
+    "windows-x86_64": `Chaft-${release.version}-Windows-x86_64.zip`,
+    "macos-x86_64": `Chaft-${release.version}-macOS-x86_64.dmg`,
+    "macos-arm64": `Chaft-${release.version}-macOS-arm64.dmg`,
+    "linux-x86_64": `Chaft-${release.version}-Linux-x86_64.AppImage`,
+  };
+  const metadataSuffixes: Record<string, string> = {
+    checksums: "SHA256SUMS",
+    sbom: "sbom.cdx.json",
+    provenance: "provenance.json",
+    verification: "verification.json",
+  };
+  for (const asset of release.assets) {
+    const target = `${asset.os}-${asset.arch}`;
+    const filename = packageNames[target];
+    asset.id = `${target}-${asset.format}`;
+    if (asset.available) {
+      asset.filename = filename;
+      asset.url =
+        `https://github.com/Jurshsmith/chaft/releases/download/${release.tag}/${filename}`;
+    }
+    for (const [kind, suffix] of Object.entries(metadataSuffixes)) {
+      const evidence = asset.evidence[kind];
+      if (evidence === null) continue;
+      const evidenceFilename = `chaft-desktop-${target}-${suffix}`;
+      evidence.filename = evidenceFilename;
+      evidence.url =
+        `https://github.com/Jurshsmith/chaft/releases/download/${release.tag}/${evidenceFilename}`;
+    }
+    if (asset.evidence.signature !== null) {
+      const signature = asset.evidence.signature;
+      signature.filename = `${filename}.${signature.format}`;
+      signature.url =
+        `https://github.com/Jurshsmith/chaft/releases/download/${release.tag}/${signature.filename}`;
+    }
+  }
   return release;
 }
 
@@ -175,6 +235,58 @@ describe("release manifest", () => {
   it("contains a statically rendered option for every supported platform", () => {
     expect(new Set(currentRelease.assets.map((asset) => asset.os))).toEqual(
       new Set(operatingSystems),
+    );
+  });
+
+  it("accepts the exact current four-target set with both native macOS builds", () => {
+    const release = validateReleaseManifest(
+      currentTargetRelease(publishedCanaryRelease()),
+    );
+    expect(release.assets.map((asset) => `${asset.os}-${asset.arch}`)).toEqual([
+      "windows-x86_64",
+      "macos-x86_64",
+      "macos-arm64",
+      "linux-x86_64",
+    ]);
+  });
+
+  it("rejects a partial current target set that is not the immutable legacy set", () => {
+    const invalid = currentTargetRelease(publishedCanaryRelease());
+    invalid.assets.pop();
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /legacy three-target set or the current four-target set/,
+    );
+  });
+
+  it("rejects a partial current release masquerading as immutable legacy", () => {
+    const invalid = currentTargetRelease(publishedCanaryRelease());
+    invalid.assets.splice(2, 1);
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /exact immutable published legacy release/,
+    );
+  });
+
+  it("rejects a forged revision for an immutable legacy release", () => {
+    const invalid = structuredClone(rawManifest);
+    invalid.commit = "b".repeat(40);
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /exact immutable published legacy release/,
+    );
+  });
+
+  it("rejects a duplicated desktop target in place of Apple Silicon", () => {
+    const invalid = currentTargetRelease(publishedCanaryRelease());
+    invalid.assets[2] = structuredClone(invalid.assets[1]);
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /desktop target macos-x86_64 is duplicated/,
+    );
+  });
+
+  it("rejects an asset id that contradicts its OS, architecture, and format", () => {
+    const invalid = currentTargetRelease(publishedCanaryRelease());
+    invalid.assets[2].id = "macos-x86_64-dmg";
+    expect(() => validateReleaseManifest(invalid)).toThrow(
+      /canonical desktop target id, OS, architecture, and format/,
     );
   });
 
@@ -238,11 +350,9 @@ describe("release manifest", () => {
   });
 
   it("rejects an artifact reused for multiple published platform entries", () => {
-    const invalid = publishedRelease();
-    invalid.assets.push({
-      ...invalid.assets[0]!,
-      id: "windows-x86_64-copy",
-    });
+    const invalid = currentTargetRelease(publishedRelease());
+    invalid.assets[2].filename = invalid.assets[1].filename;
+    invalid.assets[2].url = invalid.assets[1].url;
     expect(() => validateReleaseManifest(invalid)).toThrow(/filenames must be unique/);
   });
 
@@ -302,7 +412,11 @@ describe("release manifest", () => {
   });
 
   it("requires every available asset URL to use the exact release tag", () => {
-    const invalid = publishedRelease({ artifactTag: "v0.1.1" });
+    const invalid = publishedRelease();
+    invalid.assets[0].url = invalid.assets[0].url.replace(
+      "/v0.1.0/",
+      "/v0.1.1/",
+    );
     expect(() => validateReleaseManifest(invalid)).toThrow(/assets\[0\]\.url.*exact GitHub URL/);
   });
 

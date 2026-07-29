@@ -115,6 +115,14 @@ DESKTOP_SHARED_TOOLS = frozenset(
         "tools/desktop/ci-gates.sh",
         "tools/desktop/common.sh",
         "tools/desktop/preflight.sh",
+        "tools/desktop/validate-safe-path.py",
+    }
+)
+MACOS_LOCAL_TOOLS = frozenset(
+    {
+        "tools/macos/build-local-test.py",
+        "tools/macos/build-local.sh",
+        "tools/macos/verify-local-app.sh",
     }
 )
 RELEASE_TOOLS = frozenset(
@@ -142,6 +150,7 @@ RELEASE_TOOLS = frozenset(
         "tools/desktop/package.sh",
         "tools/desktop/platform-verification-receipt-smoke.sh",
         "tools/desktop/qt-release-binding-test.py",
+        "tools/desktop/release_targets.py",
         "tools/desktop/release-metadata-smoke.sh",
         "tools/desktop/release-metadata.py",
         "tools/desktop/release-version-test.py",
@@ -339,6 +348,8 @@ def classify_path(path: str) -> PathImpact:
                 }
             )
         )
+    if path in MACOS_LOCAL_TOOLS:
+        return PathImpact(frozenset({"desktop_contract", "desktop"}))
     if path in RELEASE_TOOLS:
         return PathImpact(frozenset({"release_contract", "package"}))
 

@@ -23,6 +23,51 @@ const REQUIRED_RELEASE_EVIDENCE = [
   "inventory",
   "aggregateChecksums",
 ];
+const DESKTOP_TARGETS = new Map([
+  [
+    "windows-x86_64",
+    { id: "windows-x86_64-zip", os: "windows", arch: "x86_64", format: "zip" },
+  ],
+  [
+    "macos-x86_64",
+    { id: "macos-x86_64-dmg", os: "macos", arch: "x86_64", format: "dmg" },
+  ],
+  [
+    "macos-arm64",
+    { id: "macos-arm64-dmg", os: "macos", arch: "arm64", format: "dmg" },
+  ],
+  [
+    "linux-x86_64",
+    {
+      id: "linux-x86_64-appimage",
+      os: "linux",
+      arch: "x86_64",
+      format: "appimage",
+    },
+  ],
+]);
+const LEGACY_DESKTOP_TARGET_SET = [
+  "windows-x86_64",
+  "macos-x86_64",
+  "linux-x86_64",
+].sort();
+const CURRENT_DESKTOP_TARGET_SET = [...DESKTOP_TARGETS.keys()].sort();
+const IMMUTABLE_LEGACY_RELEASES = new Map([
+  [
+    "0.1.0-canary.1",
+    {
+      tag: "v0.1.0-canary.1",
+      commit: "d021e7d0ea7b143a32ab49529790abc886f0f06c",
+    },
+  ],
+  [
+    "0.1.0-canary.2",
+    {
+      tag: "v0.1.0-canary.2",
+      commit: "f21f308d3be377da78ca2123a66996aa563ba825",
+    },
+  ],
+]);
 const SENSITIVE_USE_WARNING =
   "Do not use Chaft canary builds for sensitive or production communication.";
 
@@ -156,6 +201,85 @@ function releaseFile(file, { expectedTag, label, repository }) {
   };
 }
 
+function canonicalDesktopTargetSet(manifest) {
+  const { assets } = manifest;
+  assert(
+    Array.isArray(assets),
+    "release assets must be an array",
+  );
+
+  const targetNames = new Set();
+  const assetIds = new Set();
+  for (const [index, asset] of assets.entries()) {
+    const label = `release.assets[${index}]`;
+    assert(
+      asset && typeof asset === "object" && !Array.isArray(asset),
+      `${label} must be an object`,
+    );
+    const targetName = `${asset.os}-${asset.arch}`;
+    const expected = DESKTOP_TARGETS.get(targetName);
+    assert(
+      expected !== undefined,
+      `${label} must identify a canonical desktop target`,
+    );
+    assert(
+      asset.id === expected.id,
+      `${label}.id must equal ${expected.id}`,
+    );
+    assert(
+      asset.os === expected.os &&
+        asset.arch === expected.arch &&
+        asset.format === expected.format,
+      `${label} must match the ${targetName} target contract`,
+    );
+    assert(!targetNames.has(targetName), `${label} target ${targetName} is duplicated`);
+    assert(!assetIds.has(asset.id), `${label}.id is duplicated`);
+    targetNames.add(targetName);
+    assetIds.add(asset.id);
+  }
+
+  const actual = [...targetNames].sort();
+  const isLegacy =
+    JSON.stringify(actual) === JSON.stringify(LEGACY_DESKTOP_TARGET_SET);
+  const isCurrent =
+    JSON.stringify(actual) === JSON.stringify(CURRENT_DESKTOP_TARGET_SET);
+  assert(
+    isLegacy || isCurrent,
+    "release assets must contain exactly the legacy three-target set or the current four-target set",
+  );
+  const targetSet = isCurrent ? "current" : "legacy";
+  if (targetSet === "legacy") {
+    const immutableIdentity = IMMUTABLE_LEGACY_RELEASES.get(manifest.version);
+    assert(
+      manifest.status === "published" &&
+        immutableIdentity !== undefined &&
+        manifest.tag === immutableIdentity.tag &&
+        manifest.commit === immutableIdentity.commit,
+      "the legacy three-target set is accepted only for an exact immutable published legacy release",
+    );
+  }
+
+  const metadataSuffixes = {
+    checksums: "SHA256SUMS",
+    sbom: "sbom.cdx.json",
+    provenance: "provenance.json",
+    verification: "verification.json",
+  };
+  for (const [index, asset] of assets.entries()) {
+    const metadataScope =
+      targetSet === "legacy" ? asset.os : `${asset.os}-${asset.arch}`;
+    for (const [kind, suffix] of Object.entries(metadataSuffixes)) {
+      const evidence = asset.evidence?.[kind];
+      if (evidence === null || evidence === undefined) continue;
+      assert(
+        evidence.filename === `chaft-desktop-${metadataScope}-${suffix}`,
+        `release.assets[${index}].evidence.${kind}.filename must bind to ${metadataScope}`,
+      );
+    }
+  }
+  return targetSet;
+}
+
 function collectCanaryReleaseFiles(
   manifest,
   {
@@ -179,10 +303,7 @@ function collectCanaryReleaseFiles(
 
   const repositorySegments = repository.split("/");
   assertExactGitHubUrl(manifest.sourceUrl, repositorySegments, "release source URL");
-  assert(
-    Array.isArray(manifest.assets) && manifest.assets.length === 3,
-    "release assets must contain exactly one Windows, macOS, and Linux entry",
-  );
+  const desktopTargetSet = canonicalDesktopTargetSet(manifest);
 
   if (expectedReleaseStatus === "coming-soon") {
     assert(expectedReleaseTag === null, "coming-soon release tag must be null");
@@ -199,7 +320,6 @@ function collectCanaryReleaseFiles(
       "release URL",
     );
 
-    const operatingSystems = new Set();
     const evidenceKeys = [
       "checksums",
       "sbom",
@@ -209,16 +329,6 @@ function collectCanaryReleaseFiles(
     ];
     for (const [index, asset] of manifest.assets.entries()) {
       const label = `release.assets[${index}]`;
-      assert(
-        asset && typeof asset === "object" && !Array.isArray(asset),
-        `${label} must be an object`,
-      );
-      assert(
-        ["windows", "macos", "linux"].includes(asset.os),
-        `${label}.os must be windows, macos, or linux`,
-      );
-      assert(!operatingSystems.has(asset.os), `${label}.os is duplicated`);
-      operatingSystems.add(asset.os);
       assert(asset.available === false, `${label}.available must be false`);
       assert(asset.filename === null, `${label}.filename must be null`);
       assert(asset.sizeBytes === null, `${label}.sizeBytes must be null`);
@@ -263,20 +373,9 @@ function collectCanaryReleaseFiles(
     "release URL",
   );
 
-  const operatingSystems = new Set();
   const declarations = [];
   for (const [index, asset] of manifest.assets.entries()) {
     const label = `release.assets[${index}]`;
-    assert(
-      asset && typeof asset === "object" && !Array.isArray(asset),
-      `${label} must be an object`,
-    );
-    assert(
-      ["windows", "macos", "linux"].includes(asset.os),
-      `${label}.os must be windows, macos, or linux`,
-    );
-    assert(!operatingSystems.has(asset.os), `${label}.os is duplicated`);
-    operatingSystems.add(asset.os);
     assert(asset.available === true, `${label} must be available`);
     assert(
       asset.signingStatus === "unsigned-canary",
@@ -332,10 +431,6 @@ function collectCanaryReleaseFiles(
       );
     }
   }
-  for (const os of ["windows", "macos", "linux"]) {
-    assert(operatingSystems.has(os), `canary release must include an available ${os} package`);
-  }
-
   assert(
     manifest.releaseEvidence &&
       typeof manifest.releaseEvidence === "object" &&
@@ -380,7 +475,11 @@ function collectCanaryReleaseFiles(
     );
     existing.references.push(...declaration.references);
   }
-  assert(uniqueFiles.size === 19, "published canary must expose exactly 19 release files");
+  const expectedReleaseFileCount = desktopTargetSet === "current" ? 24 : 19;
+  assert(
+    uniqueFiles.size === expectedReleaseFileCount,
+    `published canary must expose exactly ${expectedReleaseFileCount} release files`,
+  );
   return [...uniqueFiles.values()];
 }
 

@@ -104,6 +104,19 @@ def _expected_package_modules(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _expected_package_targets(
+    manifest: dict[str, Any],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "name": target_name,
+            "platform": PLATFORM_LABELS[specification["platform"]],
+            "architecture": specification["architecture"],
+        }
+        for target_name, specification in manifest["targets"].items()
+    ]
+
+
 def _expected_package_patches(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     module_platforms = {
         row["name"]: [PLATFORM_LABELS[name] for name in row["platforms"]]
@@ -145,6 +158,7 @@ def validate_corresponding_source(
             "instructions",
             "releaseAssets",
             "licenses",
+            "targets",
             "sourceModules",
             "securityPatches",
         },
@@ -152,9 +166,9 @@ def validate_corresponding_source(
     )
     if (
         type(source_manifest["schemaVersion"]) is not int
-        or source_manifest["schemaVersion"] != 1
+        or source_manifest["schemaVersion"] != 2
     ):
-        qt.fail("Qt corresponding-source schemaVersion must be 1")
+        qt.fail("Qt corresponding-source schemaVersion must be 2")
     if source_manifest["component"] != "Qt":
         qt.fail("Qt corresponding-source component must be Qt")
     if source_manifest["version"] != sdk_manifest["qtVersion"]:
@@ -183,6 +197,13 @@ def validate_corresponding_source(
         qt.fail(
             "Qt corresponding-source license records must remain exactly "
             f"{expected_licenses}"
+        )
+    expected_targets = _expected_package_targets(sdk_manifest)
+    if not qt.json_exact_equal(
+        source_manifest["targets"], expected_targets
+    ):
+        qt.fail(
+            "Qt corresponding-source targets differ from the SDK manifest"
         )
     expected_modules = _expected_package_modules(sdk_manifest)
     if not qt.json_exact_equal(

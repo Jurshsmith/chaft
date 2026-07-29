@@ -30,6 +30,7 @@ require_tool() {
 
 chaft_desktop_add_tool_paths
 require_tool cmake
+require_tool python3
 
 case "$(uname -s)" in
   Linux) ;;
@@ -40,8 +41,42 @@ build_dir="$repo_root/build/$preset"
 install_dir="$build_dir/install"
 package_dir="$build_dir/package"
 
-"$script_dir/build.sh" "$profile"
+build_dir="$(
+  python3 "$script_dir/validate-safe-path.py" \
+    --path "$build_dir" \
+    --description "desktop package build directory" \
+    --within "$repo_root"
+)"
+install_dir="$(
+  python3 "$script_dir/validate-safe-path.py" \
+    --path "$install_dir" \
+    --description "desktop package install directory" \
+    --within "$repo_root"
+)"
+package_dir="$(
+  python3 "$script_dir/validate-safe-path.py" \
+    --path "$package_dir" \
+    --description "desktop package output directory" \
+    --within "$repo_root"
+)"
 
+CHAFT_QT_POLICY=release \
+CHAFT_DESKTOP_BUILD_DIR="$build_dir" \
+CARGO_TARGET_DIR="$repo_root/target" \
+  "$script_dir/build.sh" "$profile"
+
+install_dir="$(
+  python3 "$script_dir/validate-safe-path.py" \
+    --path "$install_dir" \
+    --description "desktop package install directory" \
+    --within "$repo_root"
+)"
+package_dir="$(
+  python3 "$script_dir/validate-safe-path.py" \
+    --path "$package_dir" \
+    --description "desktop package output directory" \
+    --within "$repo_root"
+)"
 rm -rf "$install_dir" "$package_dir"
 cmake --install "$build_dir" --prefix "$install_dir"
 

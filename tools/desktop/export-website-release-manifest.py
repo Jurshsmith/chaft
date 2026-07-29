@@ -31,10 +31,12 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 from urllib.parse import quote, urlparse
 
+import release_targets
 import unsigned_canary_policy as unsigned_canary
 
 
-PLATFORMS = ("windows", "macos", "linux")
+PLATFORMS = release_targets.PLATFORMS
+TARGETS = release_targets.TARGET_NAMES
 PLATFORM_LABELS = {
     "windows": "Windows",
     "macos": "macOS",
@@ -51,17 +53,26 @@ PACKAGE_SUFFIXES = (
 )
 SIGNATURE_SUFFIXES = (".sig", ".asc")
 METADATA_FILENAMES = {
-    platform: {
-        "checksums": f"chaft-desktop-{platform}-SHA256SUMS",
-        "sbom": f"chaft-desktop-{platform}-sbom.cdx.json",
-        "provenance": f"chaft-desktop-{platform}-provenance.json",
+    target.name: target.metadata_names for target in release_targets.TARGETS
+}
+METADATA_FILENAMES.update(
+    {
+        "windows": METADATA_FILENAMES["windows-x86_64"],
+        "macos": METADATA_FILENAMES["macos-x86_64"],
+        "linux": METADATA_FILENAMES["linux-x86_64"],
     }
-    for platform in PLATFORMS
-}
+)
 VERIFICATION_RECEIPT_FILENAMES = {
-    platform: f"chaft-desktop-{platform}-verification.json"
-    for platform in PLATFORMS
+    target.name: target.verification_receipt_name
+    for target in release_targets.TARGETS
 }
+VERIFICATION_RECEIPT_FILENAMES.update(
+    {
+        "windows": VERIFICATION_RECEIPT_FILENAMES["windows-x86_64"],
+        "macos": VERIFICATION_RECEIPT_FILENAMES["macos-x86_64"],
+        "linux": VERIFICATION_RECEIPT_FILENAMES["linux-x86_64"],
+    }
+)
 VERIFICATION_TYPES = {
     "windows": "authenticode",
     "macos": "apple-notarization",
@@ -69,6 +80,7 @@ VERIFICATION_TYPES = {
 }
 SECURITY_RELEVANT_RECEIPT_FIELDS = (
     "schemaVersion",
+    "target",
     "platform",
     "verificationType",
     "status",
@@ -102,7 +114,7 @@ RELEASE_EVIDENCE_FILENAMES = {
     "inventory": "chaft-desktop-release-inventory.json",
     "aggregateChecksums": "chaft-desktop-release-SHA256SUMS",
 }
-CANARY_INVENTORY_SCHEMA = "chaft.desktop.canary-release-assets.v1"
+CANARY_INVENTORY_SCHEMA = "chaft.desktop.canary-release-assets.v2"
 ARCHITECTURE_ALIASES = {
     "amd64": "x86_64",
     "x64": "x86_64",
@@ -164,7 +176,9 @@ class EvidenceFile:
 
 @dataclass(frozen=True)
 class PlatformRelease:
+    target: str
     platform: str
+    architecture: str
     version: str
     commit: str
     source_repository: str
@@ -540,7 +554,7 @@ def resolve_git_tag_commit(source_root: Path, tag: str) -> str:
 
 def official_verifier(
     package_dir: Path,
-    platform: str,
+    target: str,
     source_root: Path,
     expected_commit: str,
 ) -> None:
@@ -551,8 +565,8 @@ def official_verifier(
         "release",
         "--package-dir",
         str(package_dir),
-        "--platform",
-        platform,
+        "--target",
+        target,
         "--require-clean",
         "--source-root",
         str(source_root),
@@ -569,7 +583,7 @@ def official_verifier(
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         suffix = f": {detail}" if detail else ""
-        fail(f"{platform} package metadata verification failed{suffix}")
+        fail(f"{target} package metadata verification failed{suffix}")
 
 
 def _artifact_row_map(
@@ -593,34 +607,47 @@ def _artifact_row_map(
 
 def read_platform_release(
     package_dir: Path,
-    platform: str,
+    target_name: str,
     source_root: Path,
     expected_commit: str,
     verifier: Verifier = official_verifier,
 ) -> PlatformRelease:
+    try:
+        target = release_targets.TARGET_BY_NAME[target_name]
+    except KeyError:
+        fail(f"unsupported release target: {target_name}")
+    platform = target.platform
+    context = target.name
     package_dir = package_dir.resolve()
-    verifier(package_dir, platform, source_root, expected_commit)
+    verifier(package_dir, target.name, source_root, expected_commit)
     if not package_dir.is_dir():
-        fail(f"{platform} package directory not found: {package_dir}")
+        fail(f"{context} package directory not found: {package_dir}")
     unexpected_directories = sorted(path.name for path in package_dir.iterdir() if path.is_dir())
     if unexpected_directories:
         fail(
-            f"{platform} package directory contains unexpected directories: "
+            f"{context} package directory contains unexpected directories: "
             + ", ".join(unexpected_directories)
         )
 
-    names = METADATA_FILENAMES[platform]
+    names = METADATA_FILENAMES[target.name]
     paths = {kind: package_dir / filename for kind, filename in names.items()}
     metadata = {kind: evidence_file(path) for kind, path in paths.items()}
     checksums = parse_checksums(paths["checksums"])
-    provenance = load_json_object(paths["provenance"], f"{platform} provenance")
+    provenance = load_json_object(paths["provenance"], f"{context} provenance")
 
-    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v1":
-        fail(f"{platform} provenance schemaVersion is unsupported")
+    if provenance.get("schemaVersion") != "chaft.desktop.provenance.v2":
+        fail(f"{context} provenance schemaVersion is unsupported")
     if provenance.get("profile") != "release":
         fail(f"{platform} provenance profile must be 'release'")
+    if provenance.get("packageTarget") != target.name:
+        fail(f"{context} provenance packageTarget does not match its directory")
     if provenance.get("packagePlatform") != platform:
-        fail(f"{platform} provenance packagePlatform does not match its directory")
+        fail(f"{context} provenance packagePlatform does not match its directory")
+    if provenance.get("packageArchitecture") != target.architecture:
+        fail(
+            f"{context} provenance packageArchitecture does not match "
+            "its directory"
+        )
 
     version = require_string(provenance, "version", f"{platform} provenance")
     if SEMANTIC_VERSION.fullmatch(version) is None:
@@ -641,7 +668,13 @@ def read_platform_release(
         if isinstance(machine, str) and machine.strip():
             provenance_architecture = ARCHITECTURE_ALIASES.get(machine.strip().lower())
 
-    rows = _artifact_row_map(provenance, platform)
+    if provenance_architecture != target.architecture:
+        fail(
+            f"{context} provenance host architecture does not match "
+            f"native target {target.architecture}"
+        )
+
+    rows = _artifact_row_map(provenance, context)
     if set(rows) != set(checksums):
         missing = sorted(set(rows) - set(checksums))
         extra = sorted(set(checksums) - set(rows))
@@ -650,7 +683,7 @@ def read_platform_release(
             details.append("missing checksums: " + ", ".join(missing))
         if extra:
             details.append("extra checksums: " + ", ".join(extra))
-        fail(f"{platform} provenance/checksum artifact sets differ ({'; '.join(details)})")
+        fail(f"{context} provenance/checksum artifact sets differ ({'; '.join(details)})")
 
     artifacts: list[Artifact] = []
     signatures: dict[str, EvidenceFile] = {}
@@ -664,33 +697,38 @@ def read_platform_release(
             details.append("unexpected files: " + ", ".join(unexpected))
         if missing:
             details.append("missing files: " + ", ".join(missing))
-        fail(f"{platform} package directory shape changed ({'; '.join(details)})")
+        fail(f"{context} package directory shape changed ({'; '.join(details)})")
 
     for name, row in rows.items():
         path = package_dir / name
         if path.is_symlink():
-            fail(f"{platform} release artifact must not be a symbolic link: {name}")
+            fail(f"{context} release artifact must not be a symbolic link: {name}")
         size_bytes = path.stat().st_size
         if size_bytes <= 0:
-            fail(f"{platform} release artifact is empty: {name}")
+            fail(f"{context} release artifact is empty: {name}")
         actual_sha256 = file_sha256(path)
         row_sha256 = row.get("sha256")
         row_size = row.get("sizeBytes")
         if row_sha256 != actual_sha256 or checksums[name] != actual_sha256:
-            fail(f"{platform} verified metadata is stale for {name}")
+            fail(f"{context} verified metadata is stale for {name}")
         if not isinstance(row_size, int) or isinstance(row_size, bool) or row_size != size_bytes:
-            fail(f"{platform} provenance sizeBytes is stale for {name}")
+            fail(f"{context} provenance sizeBytes is stale for {name}")
 
         package = package_description(name)
         signature = signature_description(name)
         if package is not None:
             artifact_platform, package_format, website_format = package
             if artifact_platform != platform:
-                fail(f"{platform} directory contains package for {artifact_platform}: {name}")
+                fail(f"{context} directory contains package for {artifact_platform}: {name}")
             if row.get("packageFormat") != package_format:
-                fail(f"{platform} provenance packageFormat is incoherent for {name}")
+                fail(f"{context} provenance packageFormat is incoherent for {name}")
             if not filename_contains_version(name, version):
-                fail(f"{platform} package filename does not contain version {version}: {name}")
+                fail(f"{context} package filename does not contain version {version}: {name}")
+            if name != target.package_name(version):
+                fail(
+                    f"{context} package must be exactly "
+                    f"{target.package_name(version)}, got {name}"
+                )
             artifacts.append(
                 Artifact(
                     name=name,
@@ -703,11 +741,11 @@ def read_platform_release(
         elif signature is not None:
             signed_artifact, signature_format = signature
             if row.get("packageFormat") != "detached-signature":
-                fail(f"{platform} provenance signature packageFormat is incoherent for {name}")
+                fail(f"{context} provenance signature packageFormat is incoherent for {name}")
             if row.get("signedArtifact") != signed_artifact:
-                fail(f"{platform} provenance signedArtifact is incoherent for {name}")
+                fail(f"{context} provenance signedArtifact is incoherent for {name}")
             if row.get("signatureFormat") != signature_format:
-                fail(f"{platform} provenance signatureFormat is incoherent for {name}")
+                fail(f"{context} provenance signatureFormat is incoherent for {name}")
             if signed_artifact in signatures:
                 fail(f"multiple detached signatures found for {signed_artifact}")
             signatures[signed_artifact] = EvidenceFile(
@@ -718,17 +756,19 @@ def read_platform_release(
                 signature_format=signature_format,
             )
         else:
-            fail(f"{platform} provenance contains an unsupported artifact: {name}")
+            fail(f"{context} provenance contains an unsupported artifact: {name}")
 
     if not artifacts:
-        fail(f"{platform} package directory contains no installable package")
+        fail(f"{context} package directory contains no installable package")
     package_names = {artifact.name for artifact in artifacts}
     orphaned = sorted(set(signatures) - package_names)
     if orphaned:
         fail(f"{platform} detached signatures reference missing packages: {', '.join(orphaned)}")
 
     return PlatformRelease(
+        target=target.name,
         platform=platform,
+        architecture=target.architecture,
         version=version,
         commit=commit.lower(),
         source_repository=source_repository,
@@ -923,17 +963,19 @@ def read_verification_receipt(
     expected_publisher_identity: str,
     receipt_role: str = "public",
 ) -> ValidatedVerificationReceipt:
-    expected_name = VERIFICATION_RECEIPT_FILENAMES[platform_release.platform]
+    expected_name = VERIFICATION_RECEIPT_FILENAMES[platform_release.target]
     if path.name != expected_name:
         fail(
-            f"{platform_release.platform} {receipt_role} verification receipt must be "
+            f"{platform_release.target} {receipt_role} verification receipt must be "
             f"named {expected_name}"
         )
     receipt_file = evidence_file(path)
-    context = f"{platform_release.platform} {receipt_role} verification receipt"
+    context = f"{platform_release.target} {receipt_role} verification receipt"
     receipt = load_json_object(path, context)
-    if receipt.get("schemaVersion") != "chaft.desktop.platform-verification.v1":
+    if receipt.get("schemaVersion") != "chaft.desktop.platform-verification.v2":
         fail(f"{context} schemaVersion is unsupported")
+    if receipt.get("target") != platform_release.target:
+        fail(f"{context} target is incoherent")
     if receipt.get("platform") != platform_release.platform:
         fail(f"{context} platform is incoherent")
     if receipt.get("verificationType") != expected_type:
@@ -1099,10 +1141,10 @@ def read_unsigned_canary_receipt(
     tag: str,
     expected_architecture: str,
 ) -> ValidatedVerificationReceipt:
-    expected_name = unsigned_canary.RECEIPT_FILENAMES[platform_release.platform]
+    expected_name = unsigned_canary.RECEIPT_FILENAMES[platform_release.target]
     if path.name != expected_name:
         fail(
-            f"{platform_release.platform} unsigned-canary receipt must be named "
+            f"{platform_release.target} unsigned-canary receipt must be named "
             f"{expected_name}"
         )
     if len(platform_release.artifacts) != 1:
@@ -1121,6 +1163,7 @@ def read_unsigned_canary_receipt(
     try:
         unsigned_canary.validate_receipt_document(
             receipt,
+            expected_target=platform_release.target,
             expected_platform=platform_release.platform,
             expected_package=unsigned_canary.FileFingerprint(
                 filename=package.name,
@@ -1207,6 +1250,13 @@ def read_release_evidence(
     for key, expected in required_inventory.items():
         if inventory.get(key) != expected:
             fail(f"canary release inventory {key} is incoherent")
+    expected_inventory_keys = set(required_inventory) | {
+        "releaseId",
+        "assetCount",
+        "assets",
+    }
+    if set(inventory) != expected_inventory_keys:
+        fail("canary release inventory root keys are malformed")
     release_id = inventory.get("releaseId")
     if (
         not isinstance(release_id, int)
@@ -1217,6 +1267,37 @@ def read_release_evidence(
     rows = inventory.get("assets")
     if not isinstance(rows, list) or inventory.get("assetCount") != len(rows):
         fail("canary release inventory assetCount is incoherent")
+    expected_claims: dict[str, dict[str, str]] = {
+        RELEASE_EVIDENCE_FILENAMES["qtSource"]: {
+            "kind": "qt-corresponding-source",
+        },
+        RELEASE_EVIDENCE_FILENAMES["qtSourceChecksums"]: {
+            "kind": "qt-corresponding-source-checksum",
+        },
+    }
+    metadata_kinds = {
+        "checksums": "platform-checksums",
+        "sbom": "sbom",
+        "provenance": "provenance",
+    }
+    for target in release_targets.TARGETS:
+        target_claim = {
+            "target": target.name,
+            "platform": target.platform,
+        }
+        expected_claims[target.package_name(version)] = {
+            "kind": "package",
+            **target_claim,
+        }
+        for key, filename in target.metadata_names.items():
+            expected_claims[filename] = {
+                "kind": metadata_kinds[key],
+                **target_claim,
+            }
+        expected_claims[target.verification_receipt_name] = {
+            "kind": "unsigned-canary-verification",
+            **target_claim,
+        }
     inventory_assets: dict[str, tuple[int, str]] = {}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -1224,6 +1305,22 @@ def read_release_evidence(
         name = require_plain_filename(
             row.get("filename"), f"canary release inventory assets[{index}].filename"
         )
+        expected_claim = expected_claims.get(name)
+        if expected_claim is None:
+            fail(f"canary release inventory contains unsupported asset {name}")
+        expected_row_keys = {
+            "filename",
+            "sizeBytes",
+            "sha256",
+            *expected_claim,
+        }
+        if set(row) != expected_row_keys:
+            fail(f"canary release inventory row keys are malformed for {name}")
+        for key, expected in expected_claim.items():
+            if row.get(key) != expected:
+                fail(
+                    f"canary release inventory {key} is incoherent for {name}"
+                )
         size = row.get("sizeBytes")
         digest = row.get("sha256")
         if (
@@ -1250,7 +1347,7 @@ def read_release_evidence(
         evidence["qtSourceChecksums"].sha256,
     )
     if inventory_assets != expected_inventory_assets:
-        fail("canary release inventory does not bind the exact 17 release assets")
+        fail("canary release inventory does not bind the exact 22 release assets")
 
     aggregate_rows = parse_checksums(evidence["aggregateChecksums"].path)
     expected_aggregate = {
@@ -1303,20 +1400,24 @@ def build_manifest(
         ("signing states", signing_states),
         ("public verification receipts", verification_receipts),
         ("trusted verification receipts", trusted_verification_receipts),
-        ("publisher identities", publisher_identities),
     ):
-        if set(mapping) != set(PLATFORMS):
-            fail(f"{mapping_name} must specify exactly: {', '.join(PLATFORMS)}")
+        if set(mapping) != set(TARGETS):
+            fail(f"{mapping_name} must specify exactly: {', '.join(TARGETS)}")
+    if set(publisher_identities) != set(PLATFORMS):
+        fail(
+            "publisher identities must specify exactly: "
+            + ", ".join(PLATFORMS)
+        )
 
     releases = {
-        platform: read_platform_release(
-            Path(package_directories[platform]),
-            platform,
+        target_name: read_platform_release(
+            Path(package_directories[target_name]),
+            target_name,
             source_root,
             tag_commit,
             verifier=verifier,
         )
-        for platform in PLATFORMS
+        for target_name in TARGETS
     }
     versions = {release.version for release in releases.values()}
     commits = {release.commit for release in releases.values()}
@@ -1334,24 +1435,37 @@ def build_manifest(
         fail("platform provenance commit does not match the Git tag target commit")
 
     expected_repository = repository.lower()
-    for platform, release in releases.items():
+    for target_name, release in releases.items():
         provenance_repository = normalize_github_repository(release.source_repository)
         if provenance_repository is None or provenance_repository.lower() != expected_repository:
             fail(
-                f"{platform} provenance repository does not match requested repository "
+                f"{target_name} provenance repository does not match requested repository "
                 f"{repository}"
             )
 
     normalized_architectures = {
-        platform: normalize_architecture(architectures[platform], platform)
-        for platform in PLATFORMS
+        target_name: normalize_architecture(
+            architectures[target_name],
+            release_targets.TARGET_BY_NAME[target_name].platform,
+        )
+        for target_name in TARGETS
     }
+    for target_name, architecture in normalized_architectures.items():
+        expected_architecture = release_targets.TARGET_BY_NAME[
+            target_name
+        ].architecture
+        if architecture != expected_architecture:
+            fail(
+                f"{target_name} architecture must be "
+                f"{expected_architecture}, got {architecture}"
+            )
     receipts: dict[str, EvidenceFile | None] = {}
-    for platform, release in releases.items():
-        state = signing_states[platform]
+    for target_name, release in releases.items():
+        platform = release.platform
+        state = signing_states[target_name]
         validate_signing_state(platform, state, channel)
-        public_receipt_path = verification_receipts[platform]
-        trusted_receipt_path = trusted_verification_receipts[platform]
+        public_receipt_path = verification_receipts[target_name]
+        trusted_receipt_path = trusted_verification_receipts[target_name]
         if channel == "canary":
             if public_receipt_path is None:
                 fail(
@@ -1375,20 +1489,20 @@ def build_manifest(
                 )
             if release.provenance_architecture is None:
                 fail(
-                    f"{platform} unsigned-canary publication requires provenance "
+                    f"{target_name} unsigned-canary publication requires provenance "
                     "platform.machine"
                 )
-            if release.provenance_architecture != normalized_architectures[platform]:
+            if release.provenance_architecture != normalized_architectures[target_name]:
                 fail(
-                    f"{platform} requested architecture does not match provenance "
+                    f"{target_name} requested architecture does not match provenance "
                     "platform.machine"
                 )
-            receipts[platform] = read_unsigned_canary_receipt(
+            receipts[target_name] = read_unsigned_canary_receipt(
                 Path(public_receipt_path),
                 release,
                 repository=repository,
                 tag=tag,
-                expected_architecture=normalized_architectures[platform],
+                expected_architecture=normalized_architectures[target_name],
             ).evidence
             continue
 
@@ -1429,18 +1543,18 @@ def build_manifest(
                 )
             if platform == "linux":
                 verify_linux_package_architectures(
-                    Path(package_directories[platform]).resolve(),
+                    Path(package_directories[target_name]).resolve(),
                     release.artifacts,
-                    normalized_architectures[platform],
+                    normalized_architectures[target_name],
                 )
             if release.provenance_architecture is None:
                 fail(
                     f"{platform} checksummed state requires provenance platform.machine "
                     "to identify a supported architecture"
                 )
-            if release.provenance_architecture != normalized_architectures[platform]:
+            if release.provenance_architecture != normalized_architectures[target_name]:
                 fail(
-                    f"{platform} requested architecture does not match provenance "
+                    f"{target_name} requested architecture does not match provenance "
                     "platform.machine"
                 )
         if state == "signed" and platform == "linux":
@@ -1461,7 +1575,7 @@ def build_manifest(
                 release,
                 tag,
                 VERIFICATION_TYPES[platform],
-                normalized_architectures[platform],
+                normalized_architectures[target_name],
                 publisher_identity,
                 "public",
             )
@@ -1470,7 +1584,7 @@ def build_manifest(
                 release,
                 tag,
                 VERIFICATION_TYPES[platform],
-                normalized_architectures[platform],
+                normalized_architectures[target_name],
                 publisher_identity,
                 "trusted native",
             )
@@ -1484,9 +1598,9 @@ def build_manifest(
             require_matching_security_claims(
                 public_receipt, trusted_receipt, platform
             )
-            receipts[platform] = public_receipt.evidence
+            receipts[target_name] = public_receipt.evidence
         else:
-            receipts[platform] = None
+            receipts[target_name] = None
 
     if channel == "canary" and release_evidence_directory is None:
         fail("canary publication requires the release-level evidence directory")
@@ -1496,28 +1610,33 @@ def build_manifest(
     # GitHub release assets occupy a single filename namespace. Check everything that
     # the generated URLs expect the publisher to upload, not only installer packages.
     upload_owners: dict[str, str] = {}
-    for platform, release in releases.items():
+    for target_name, release in releases.items():
         files = [artifact.name for artifact in release.artifacts]
         files.extend(signature.name for signature in release.signatures.values())
         files.extend(item.name for item in release.metadata.values())
-        if receipts[platform] is not None:
-            files.append(receipts[platform].name)
+        if receipts[target_name] is not None:
+            files.append(receipts[target_name].name)
         for filename in files:
             previous = upload_owners.get(filename)
             if previous is not None:
                 fail(
-                    f"release upload filename {filename!r} is shared by {previous} and {platform}"
+                    f"release upload filename {filename!r} is shared by "
+                    f"{previous} and {target_name}"
                 )
-            upload_owners[filename] = platform
+            upload_owners[filename] = target_name
 
     assets: list[dict[str, object]] = []
     asset_ids: set[str] = set()
     asset_urls: set[str] = set()
-    for platform in PLATFORMS:
-        release = releases[platform]
-        architecture = normalized_architectures[platform]
+    for target_name in TARGETS:
+        release = releases[target_name]
+        platform = release.platform
+        architecture = normalized_architectures[target_name]
         for artifact in release.artifacts:
-            asset_id = f"{platform}-{architecture}-{artifact.website_format.replace('.', '-')}"
+            asset_id = (
+                f"{target_name}-"
+                f"{artifact.website_format.replace('.', '-')}"
+            )
             if asset_id in asset_ids:
                 fail(
                     f"multiple {platform} packages map to website asset id {asset_id!r}"
@@ -1528,7 +1647,7 @@ def build_manifest(
                 fail(f"multiple packages map to website asset URL {url}")
             asset_urls.add(url)
             signature = release.signatures.get(artifact.name)
-            receipt = receipts[platform]
+            receipt = receipts[target_name]
             assets.append(
                 {
                     "id": asset_id,
@@ -1541,7 +1660,7 @@ def build_manifest(
                     "available": True,
                     "sizeBytes": artifact.size_bytes,
                     "sha256": artifact.sha256,
-                    "signingStatus": signing_states[platform],
+                    "signingStatus": signing_states[target_name],
                     "evidence": {
                         "checksums": evidence_json(
                             release.metadata["checksums"], repository, tag
@@ -1568,18 +1687,18 @@ def build_manifest(
     if channel == "canary":
         assert release_evidence_directory is not None
         expected_inventory_assets: dict[str, EvidenceFile] = {}
-        for platform, release in releases.items():
+        for target_name, release in releases.items():
             for artifact in release.artifacts:
                 expected_inventory_assets[artifact.name] = EvidenceFile(
                     name=artifact.name,
-                    path=Path(package_directories[platform]) / artifact.name,
+                    path=Path(package_directories[target_name]) / artifact.name,
                     size_bytes=artifact.size_bytes,
                     sha256=artifact.sha256,
                 )
             expected_inventory_assets.update(
                 {item.name: item for item in release.metadata.values()}
             )
-            receipt = receipts[platform]
+            receipt = receipts[target_name]
             assert receipt is not None
             expected_inventory_assets[receipt.name] = receipt
         release_evidence_files = read_release_evidence(
@@ -1773,37 +1892,41 @@ def argument_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Published release archive (defaults to release-history beside --output)",
     )
-    for platform in PLATFORMS:
+    for target_name in TARGETS:
+        target = release_targets.TARGET_BY_NAME[target_name]
         parser.add_argument(
-            f"--{platform}-package-dir",
+            f"--{target_name}-package-dir",
             required=True,
             type=Path,
-            help=f"Verified {PLATFORM_LABELS[platform]} package directory",
+            help=f"Verified {target.display_name} package directory",
         )
         parser.add_argument(
-            f"--{platform}-arch",
-            required=True,
-            help=f"Architecture shared by packages in the {platform} directory",
-        )
-        parser.add_argument(
-            f"--{platform}-signing-state",
-            required=True,
-            choices=tuple(sorted(ALLOWED_SIGNING_STATES[platform])),
-        )
-        parser.add_argument(
-            f"--{platform}-verification-receipt",
-            type=Path,
+            f"--{target_name}-arch",
+            default=target.architecture,
             help=(
-                f"Immutable public release verification receipt named "
-                f"{VERIFICATION_RECEIPT_FILENAMES[platform]}"
+                f"Architecture for {target_name}; must remain "
+                f"{target.architecture}"
             ),
         )
         parser.add_argument(
-            f"--{platform}-trusted-verification-receipt",
+            f"--{target_name}-signing-state",
+            required=True,
+            choices=tuple(sorted(ALLOWED_SIGNING_STATES[target.platform])),
+        )
+        parser.add_argument(
+            f"--{target_name}-verification-receipt",
+            type=Path,
+            help=(
+                f"Immutable public release verification receipt named "
+                f"{VERIFICATION_RECEIPT_FILENAMES[target_name]}"
+            ),
+        )
+        parser.add_argument(
+            f"--{target_name}-trusted-verification-receipt",
             type=Path,
             help=(
                 f"Trusted native-rerun receipt named "
-                f"{VERIFICATION_RECEIPT_FILENAMES[platform]}; required whenever the "
+                f"{VERIFICATION_RECEIPT_FILENAMES[target_name]}; required whenever the "
                 "public receipt is required"
             ),
         )
@@ -1814,24 +1937,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argument_parser()
     args = parser.parse_args(argv)
     try:
+        def target_argument(target_name: str, suffix: str):
+            return getattr(
+                args,
+                f"{target_name.replace('-', '_')}_{suffix}",
+            )
+
         package_directories = {
-            platform: getattr(args, f"{platform}_package_dir")
-            for platform in PLATFORMS
+            target_name: target_argument(target_name, "package_dir")
+            for target_name in TARGETS
         }
         architectures = {
-            platform: getattr(args, f"{platform}_arch") for platform in PLATFORMS
+            target_name: target_argument(target_name, "arch")
+            for target_name in TARGETS
         }
         signing_states = {
-            platform: getattr(args, f"{platform}_signing_state")
-            for platform in PLATFORMS
+            target_name: target_argument(target_name, "signing_state")
+            for target_name in TARGETS
         }
         verification_receipts = {
-            platform: getattr(args, f"{platform}_verification_receipt")
-            for platform in PLATFORMS
+            target_name: target_argument(target_name, "verification_receipt")
+            for target_name in TARGETS
         }
         trusted_verification_receipts = {
-            platform: getattr(args, f"{platform}_trusted_verification_receipt")
-            for platform in PLATFORMS
+            target_name: target_argument(
+                target_name, "trusted_verification_receipt"
+            )
+            for target_name in TARGETS
         }
         publisher_identities = {
             "windows": args.trusted_windows_signer_thumbprint,

@@ -115,9 +115,9 @@ jobs:
               raise SystemExit("published canary release must have published_at")
 
           assets = release.get("assets")
-          if not isinstance(assets, list) or len(assets) != 19:
+          if not isinstance(assets, list) or len(assets) != 24:
               count = len(assets) if isinstance(assets, list) else "non-array"
-              raise SystemExit(f"published canary must contain exactly 19 assets, found {count}")
+              raise SystemExit(f"published canary must contain exactly 24 assets, found {count}")
           names: set[str] = set()
           folded_names: set[str] = set()
           asset_ids: set[int] = set()
@@ -225,11 +225,11 @@ jobs:
           remote_by_id = {asset["id"]: asset for asset in release["assets"]}
           paths = list(assets_dir.iterdir())
           if (
-              len(paths) != 19
+              len(paths) != 24
               or any(path.is_symlink() or not path.is_file() for path in paths)
               or {path.name for path in paths} != set(expected)
           ):
-              raise SystemExit("downloaded directory is not the exact 19-asset namespace")
+              raise SystemExit("downloaded directory is not the exact 24-asset namespace")
           for path in paths:
               digest = hashlib.sha256()
               size = 0
@@ -243,25 +243,32 @@ jobs:
                       f"downloaded asset differs from GitHub API metadata: {path.name}"
                   )
 
-          for platform in ("windows", "macos", "linux"):
+          targets = (
+              "windows-x86_64",
+              "macos-x86_64",
+              "macos-arm64",
+              "linux-x86_64",
+          )
+          for target in targets:
               receipt_path = (
-                  assets_dir / f"chaft-desktop-{platform}-verification.json"
+                  assets_dir / f"chaft-desktop-{target}-verification.json"
               )
               receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
               release_identity = receipt.get("release")
               asset_identity = receipt.get("asset")
               if (
-                  not isinstance(release_identity, dict)
+                  receipt.get("target") != target
+                  or not isinstance(release_identity, dict)
                   or release_identity.get("id") != release.get("id")
                   or not isinstance(asset_identity, dict)
               ):
                   raise SystemExit(
-                      f"{platform} receipt does not bind the published release ID"
+                      f"{target} receipt does not bind its target and published release ID"
                   )
               remote = remote_by_id.get(asset_identity.get("id"))
               if remote is None:
                   raise SystemExit(
-                      f"{platform} receipt names an unknown release asset ID"
+                      f"{target} receipt names an unknown release asset ID"
                   )
               expected_identity = {
                   "filename": remote["name"],
@@ -274,7 +281,7 @@ jobs:
               }
               if actual_identity != expected_identity:
                   raise SystemExit(
-                      f"{platform} receipt asset identity differs from GitHub API metadata"
+                      f"{target} receipt asset identity differs from GitHub API metadata"
                   )
           PY
 
@@ -315,17 +322,21 @@ jobs:
           release_source="${RUNNER_TEMP}/release-source"
           git worktree add --detach "${release_source}" "${RELEASE_COMMIT}"
 
-          windows_arch="$(
+          windows_x86_64_arch="$(
             jq -er '.architecture | strings | select(length > 0)' \
-              "${receipts}/chaft-desktop-windows-verification.json"
+              "${receipts}/chaft-desktop-windows-x86_64-verification.json"
           )"
-          macos_arch="$(
+          macos_x86_64_arch="$(
             jq -er '.architecture | strings | select(length > 0)' \
-              "${receipts}/chaft-desktop-macos-verification.json"
+              "${receipts}/chaft-desktop-macos-x86_64-verification.json"
           )"
-          linux_arch="$(
+          macos_arm64_arch="$(
             jq -er '.architecture | strings | select(length > 0)' \
-              "${receipts}/chaft-desktop-linux-verification.json"
+              "${receipts}/chaft-desktop-macos-arm64-verification.json"
+          )"
+          linux_x86_64_arch="$(
+            jq -er '.architecture | strings | select(length > 0)' \
+              "${receipts}/chaft-desktop-linux-x86_64-verification.json"
           )"
           published_at="$(jq -er '.published_at | strings | select(length > 0)' \
             "${RUNNER_TEMP}/release.json")"
@@ -339,21 +350,26 @@ jobs:
             --release-evidence-dir "${staged}/release-evidence" \
             --output apps/website/src/data/release-manifest.json \
             --history-dir apps/website/src/data/release-history \
-            --windows-package-dir "${staged}/windows-package" \
-            --windows-arch "${windows_arch}" \
-            --windows-signing-state unsigned-canary \
-            --windows-verification-receipt \
-              "${receipts}/chaft-desktop-windows-verification.json" \
-            --macos-package-dir "${staged}/macos-package" \
-            --macos-arch "${macos_arch}" \
-            --macos-signing-state unsigned-canary \
-            --macos-verification-receipt \
-              "${receipts}/chaft-desktop-macos-verification.json" \
-            --linux-package-dir "${staged}/linux-package" \
-            --linux-arch "${linux_arch}" \
-            --linux-signing-state unsigned-canary \
-            --linux-verification-receipt \
-              "${receipts}/chaft-desktop-linux-verification.json"
+            --windows-x86_64-package-dir "${staged}/windows-x86_64-package" \
+            --windows-x86_64-arch "${windows_x86_64_arch}" \
+            --windows-x86_64-signing-state unsigned-canary \
+            --windows-x86_64-verification-receipt \
+              "${receipts}/chaft-desktop-windows-x86_64-verification.json" \
+            --macos-x86_64-package-dir "${staged}/macos-x86_64-package" \
+            --macos-x86_64-arch "${macos_x86_64_arch}" \
+            --macos-x86_64-signing-state unsigned-canary \
+            --macos-x86_64-verification-receipt \
+              "${receipts}/chaft-desktop-macos-x86_64-verification.json" \
+            --macos-arm64-package-dir "${staged}/macos-arm64-package" \
+            --macos-arm64-arch "${macos_arm64_arch}" \
+            --macos-arm64-signing-state unsigned-canary \
+            --macos-arm64-verification-receipt \
+              "${receipts}/chaft-desktop-macos-arm64-verification.json" \
+            --linux-x86_64-package-dir "${staged}/linux-x86_64-package" \
+            --linux-x86_64-arch "${linux_x86_64_arch}" \
+            --linux-x86_64-signing-state unsigned-canary \
+            --linux-x86_64-verification-receipt \
+              "${receipts}/chaft-desktop-linux-x86_64-verification.json"
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9

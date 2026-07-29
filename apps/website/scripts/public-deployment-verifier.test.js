@@ -53,9 +53,10 @@ function trackedFile(payloads, filename, contents) {
 }
 
 function asset(payloads, { arch, filename, format, os, platformLabel }) {
-  const packageFile = trackedFile(payloads, filename, `package:${os}:${version}`);
+  const target = `${os}-${arch}`;
+  const packageFile = trackedFile(payloads, filename, `package:${target}:${version}`);
   return {
-    id: `${os}-${arch}`,
+    id: `${target}-${format}`,
     os,
     platformLabel,
     arch,
@@ -66,24 +67,24 @@ function asset(payloads, { arch, filename, format, os, platformLabel }) {
     evidence: {
       checksums: trackedFile(
         payloads,
-        `chaft-desktop-${os}-SHA256SUMS`,
-        `checksums:${os}:${packageFile.sha256}`,
+        `chaft-desktop-${target}-SHA256SUMS`,
+        `checksums:${target}:${packageFile.sha256}`,
       ),
       sbom: trackedFile(
         payloads,
-        `chaft-desktop-${os}-sbom.cdx.json`,
-        `{"bomFormat":"CycloneDX","platform":"${os}"}`,
+        `chaft-desktop-${target}-sbom.cdx.json`,
+        `{"bomFormat":"CycloneDX","target":"${target}"}`,
       ),
       provenance: trackedFile(
         payloads,
-        `chaft-desktop-${os}-provenance.json`,
-        `{"platform":"${os}","tag":"${tag}"}`,
+        `chaft-desktop-${target}-provenance.json`,
+        `{"target":"${target}","tag":"${tag}"}`,
       ),
       signature: null,
       verification: trackedFile(
         payloads,
-        `chaft-desktop-${os}-verification.json`,
-        `{"platform":"${os}","state":"unsigned-canary"}`,
+        `chaft-desktop-${target}-verification.json`,
+        `{"target":"${target}","state":"unsigned-canary"}`,
       ),
     },
   };
@@ -115,7 +116,7 @@ function releaseFixture(mutator) {
       inventory: trackedFile(
         payloads,
         "chaft-desktop-release-inventory.json",
-        '{"release":"canary","platforms":3}',
+        '{"release":"canary","targets":4}',
       ),
       aggregateChecksums: trackedFile(
         payloads,
@@ -133,21 +134,28 @@ function releaseFixture(mutator) {
       }),
       asset(payloads, {
         arch: "x86_64",
-        filename: `Chaft-${version}-Darwin.dmg`,
+        filename: `Chaft-${version}-macOS-x86_64.dmg`,
         format: "dmg",
         os: "macos",
-        platformLabel: "macOS",
+        platformLabel: "macOS Intel",
+      }),
+      asset(payloads, {
+        arch: "arm64",
+        filename: `Chaft-${version}-macOS-arm64.dmg`,
+        format: "dmg",
+        os: "macos",
+        platformLabel: "macOS Apple Silicon",
       }),
       asset(payloads, {
         arch: "x86_64",
-        filename: `Chaft-${version}-x86_64.AppImage`,
+        filename: `Chaft-${version}-Linux-x86_64.AppImage`,
         format: "appimage",
         os: "linux",
         platformLabel: "Linux",
       }),
     ],
   };
-  mutator?.(manifest);
+  mutator?.(manifest, payloads);
 
   const fileRequests = new Map();
   const fetchImpl = async (input, options = {}) => {
@@ -240,6 +248,29 @@ function releaseFixture(mutator) {
   };
 }
 
+function immutableLegacyReleaseFixture() {
+  return releaseFixture((manifest, payloads) => {
+    manifest.assets.splice(2, 1);
+    manifest.commit = "d021e7d0ea7b143a32ab49529790abc886f0f06c";
+    for (const releaseAsset of manifest.assets) {
+      const target = `${releaseAsset.os}-${releaseAsset.arch}`;
+      for (const evidence of Object.values(releaseAsset.evidence)) {
+        if (evidence === null) continue;
+        const payload = payloads.get(evidence.url);
+        expect(payload).toBeDefined();
+        payloads.delete(evidence.url);
+        evidence.filename = evidence.filename.replace(
+          `chaft-desktop-${target}-`,
+          `chaft-desktop-${releaseAsset.os}-`,
+        );
+        evidence.url =
+          `https://github.com/${repository}/releases/download/${tag}/${evidence.filename}`;
+        payloads.set(evidence.url, payload);
+      }
+    }
+  });
+}
+
 function verificationOptions(fixture, fetchImpl = fixture.fetchImpl) {
   return {
     alternateSiteUrl: "https://www.chaft.ai",
@@ -264,6 +295,7 @@ describe("public deployment verifier", () => {
     expect(report.result).toBe("passed");
     expect(report.expectedReleaseTag).toBe(tag);
     expect(report.expectedReleaseVersion).toBe(version);
+    expect(report.releaseFilesVerified).toBe(24);
     expect(report.releaseFilesVerified).toBe(fixture.payloads.size);
     expect(report.checks.map((check) => check.name)).toEqual(
       expect.arrayContaining([
@@ -290,6 +322,59 @@ describe("public deployment verifier", () => {
     expect([...fixture.fileRequests.values()]).toEqual(
       [...fixture.payloads].map(() => ({ count: 1, redirect: "follow" })),
     );
+  });
+
+  it("accepts the exact immutable legacy three-target canary set", async () => {
+    const fixture = immutableLegacyReleaseFixture();
+
+    const report = await verifyPublicDeployment(verificationOptions(fixture));
+
+    expect(report.result).toBe("passed");
+    expect(report.releaseFilesVerified).toBe(19);
+  });
+
+  it("rejects current target-qualified evidence masquerading as legacy", async () => {
+    const fixture = releaseFixture((manifest) => {
+      manifest.assets.splice(2, 1);
+    });
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture)),
+    ).rejects.toThrow(/exact immutable published legacy release/);
+    expect(fixture.fileRequests.size).toBe(0);
+  });
+
+  it("rejects a three-target release with a forged legacy revision", async () => {
+    const fixture = immutableLegacyReleaseFixture();
+    fixture.manifest.commit = "b".repeat(40);
+    fixture.manifestSha256 = digest(JSON.stringify(fixture.manifest));
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture)),
+    ).rejects.toThrow(/exact immutable published legacy release/);
+    expect(fixture.fileRequests.size).toBe(0);
+  });
+
+  it("rejects a duplicated target in place of one canonical target", async () => {
+    const fixture = releaseFixture((manifest) => {
+      manifest.assets[2] = structuredClone(manifest.assets[1]);
+    });
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture)),
+    ).rejects.toThrow(/target macos-x86_64 is duplicated/);
+    expect(fixture.fileRequests.size).toBe(0);
+  });
+
+  it("rejects a partial current target set that is not the legacy set", async () => {
+    const fixture = releaseFixture((manifest) => {
+      manifest.assets.pop();
+    });
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture)),
+    ).rejects.toThrow(/legacy three-target set or the current four-target set/);
+    expect(fixture.fileRequests.size).toBe(0);
   });
 
   it("verifies the exact coming-soon manifest without pretending downloads exist", async () => {

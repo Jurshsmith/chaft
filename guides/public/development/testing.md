@@ -62,8 +62,10 @@ public relay or production service.
 
 ## Test desktop changes
 
-Desktop development requires Rust 1.97.1 or newer, Qt 6.8.4, CMake 3.28 or
-newer, and Ninja. Confirm the toolchain first:
+Desktop development requires Rust 1.97.1 or newer, CMake 3.28 or newer, Ninja,
+and a policy-compatible Qt. Official package testing uses the exact verified
+Qt 6.8.4 SDK. Native macOS developer testing may use the reviewed Homebrew Qt
+6.11 compatibility range. Confirm the selected policy first:
 
 ```sh
 tools/desktop/preflight.sh
@@ -95,8 +97,9 @@ smokes the installed package, and verifies its metadata:
 tools/desktop/ci-gates.sh Linux
 ```
 
-Use `macOS` or `Windows` on those platforms. For a quicker local pass that
-skips release packaging:
+Use `macOS` or `Windows` on those platforms. The package stage requires the
+exact target-specific Qt 6.8.4 activation. For a quicker local pass that skips
+release packaging:
 
 ```sh
 CHAFT_DESKTOP_SKIP_PACKAGE=1 tools/desktop/ci-gates.sh Linux
@@ -154,13 +157,14 @@ Create and smoke a local release package on the current platform:
 
 ```sh
 tools/desktop/package-smoke.sh release
-python3 tools/desktop/release-metadata.py release
-python3 tools/desktop/verify-release-metadata.py release --platform Linux
+python3 tools/desktop/release-metadata.py release --target linux-x86_64
+python3 tools/desktop/verify-release-metadata.py release --target linux-x86_64
 ```
 
-Use `macOS` or `Windows` for the matching package. The verifier rejects package
-formats, source commits, checksums, SBOMs, or provenance that do not match the
-selected platform and checkout.
+Use `macos-x86_64`, `macos-arm64`, or `windows-x86_64` for the matching native
+package. The verifier rejects package formats, architectures, source commits,
+checksums, SBOMs, Qt SDK identities, or provenance that do not match the exact
+target and checkout.
 
 The release tools also have platform-independent regression checks:
 

@@ -14,7 +14,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -49,6 +49,8 @@ jobs:
           python3 tools/ci/classify-changes-test.py
           python3 tools/ci/required-check-test.py
           python3 tools/ci/workflow-contract-test.py
+          python3 tools/macos/build-local-test.py
+          python3 packaging/homebrew/formula-contract-test.py
           python3 tools/qt/build_qt_test.py
           python3 tools/qt/source_bundle_test.py
 
@@ -358,6 +360,92 @@ jobs:
       - name: Compile benchmark target
         run: cargo bench -p chaft-benchmarks --bench hot_paths --no-run --locked
 
+  macos_local_source:
+    name: macOS local source ${{ matrix.name }}
+    needs: classify
+    if: >-
+      needs.classify.outputs.desktop == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Intel
+            os: macos-15-intel
+            target: macos-x86_64
+            architecture: x86_64
+          - name: Apple Silicon
+            os: macos-15
+            target: macos-arm64
+            architecture: arm64
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install exact Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install current Homebrew developer dependencies
+        run: brew install cmake ninja qtbase qtdeclarative qtsvg qtshadertools
+
+      - name: Exercise complete guided local source workflow
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: >-
+          tools/macos/build-local.sh
+          --yes
+          --no-install-deps
+          --install-dir "${RUNNER_TEMP}/${{ matrix.target }}/Applications"
+          --expected-commit "${GITHUB_SHA}"
+          --skip-open
+
+      - name: Verify native installed app independently
+        run: >-
+          tools/macos/verify-local-app.sh
+          --expected-arch "${{ matrix.architecture }}"
+          "${RUNNER_TEMP}/${{ matrix.target }}/Applications/Chaft.app"
+
+      - name: Reject Homebrew Qt from official packaging
+        shell: bash
+        run: |
+          qt_prefixes=
+          for formula in qtbase qtdeclarative qtsvg qtshadertools; do
+            prefix="$(brew --prefix "${formula}")"
+            qt_prefixes="${prefix}${qt_prefixes:+:${qt_prefixes}}"
+          done
+          export QT_ROOT_DIR="$(brew --prefix qtbase)"
+          export QTDIR="${QT_ROOT_DIR}"
+          export CMAKE_PREFIX_PATH="${qt_prefixes}"
+          export CHAFT_QT_POLICY=developer
+          set +e
+          output="$(tools/desktop/package.sh release 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "${output}"
+          if [[ "${status}" -eq 0 ]]; then
+            echo "::error::Official packaging accepted Homebrew developer Qt."
+            exit 1
+          fi
+          grep -F \
+            "official builds require exactly Qt 6.8.4" \
+            <<<"${output}"
+          if [[ -e build/desktop-release/CMakeCache.txt ]]; then
+            echo "::error::Rejected developer Qt reached CMake packaging."
+            exit 1
+          fi
+
   qt_sdk_linux:
     name: Provision Qt SDK Linux
     needs: classify
@@ -391,16 +479,16 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform linux \
+            --target linux-x86_64 \
             --output "${contract}"
           fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform linux \
+              --target linux-x86_64 \
               --toolchain-contract "${contract}"
           )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform linux \
+              --target linux-x86_64 \
               --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -417,7 +505,7 @@ jobs:
         if: steps.qt-cache.outputs.cache-hit != 'true'
         run: >-
           python3 tools/qt/build_qt.py build
-          --platform linux
+          --target linux-x86_64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
@@ -425,12 +513,12 @@ jobs:
       - name: Verify Linux Qt SDK
         run: >-
           python3 tools/qt/build_qt.py verify
-          --platform linux
+          --target linux-x86_64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
-  qt_sdk_macos:
-    name: Provision Qt SDK macOS
+  qt_sdk_macos_x86_64:
+    name: Provision Qt SDK macOS Intel
     needs: classify
     outputs:
       identity: ${{ steps.qt-sdk.outputs.identity }}
@@ -461,16 +549,16 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform macos \
+            --target macos-x86_64 \
             --output "${contract}"
           fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform macos \
+              --target macos-x86_64 \
               --toolchain-contract "${contract}"
           )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform macos \
+              --target macos-x86_64 \
               --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -487,7 +575,7 @@ jobs:
         if: steps.qt-cache.outputs.cache-hit != 'true'
         run: >-
           python3 tools/qt/build_qt.py build
-          --platform macos
+          --target macos-x86_64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
@@ -495,7 +583,77 @@ jobs:
       - name: Verify macOS Qt SDK
         run: >-
           python3 tools/qt/build_qt.py verify
-          --platform macos
+          --target macos-x86_64
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+  qt_sdk_macos_arm64:
+    name: Provision Qt SDK macOS Apple Silicon
+    needs: classify
+    outputs:
+      identity: ${{ steps.qt-sdk.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+    if: >-
+      needs.classify.outputs.desktop == 'true' ||
+      needs.classify.outputs.package == 'true'
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Qt build tools
+        run: brew install cmake ninja
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --target macos-arm64 \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --target macos-arm64 \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target macos-arm64 \
+              --toolchain-contract "${contract}"
+          )"
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or reserve macOS Apple Silicon Qt SDK cache
+        id: qt-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build macOS Apple Silicon Qt SDK from verified sources
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --target macos-arm64
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Verify macOS Apple Silicon Qt SDK
+        run: >-
+          python3 tools/qt/build_qt.py verify
+          --target macos-arm64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
@@ -536,16 +694,16 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform windows \
+            --target windows-x86_64 \
             --output "${contract}"
           fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform windows \
+              --target windows-x86_64 \
               --toolchain-contract "${contract}"
           )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform windows \
+              --target windows-x86_64 \
               --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -563,7 +721,7 @@ jobs:
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py build
-          --platform windows
+          --target windows-x86_64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
@@ -572,7 +730,7 @@ jobs:
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py verify
-          --platform windows
+          --target windows-x86_64
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
@@ -613,11 +771,11 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform linux \
+            --target linux-x86_64 \
             --output "${contract}"
           consumer_fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform linux \
+              --target linux-x86_64 \
               --toolchain-contract "${contract}"
           )"
           if [[ -z "${PROVISIONED_IDENTITY}" || \
@@ -647,7 +805,7 @@ jobs:
             --github-env "$GITHUB_ENV" \
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
-            --platform linux \
+            --target linux-x86_64 \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
             --toolchain-contract \
               "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
@@ -660,13 +818,15 @@ jobs:
     needs:
       - classify
       - qt_sdk_linux
-      - qt_sdk_macos
+      - qt_sdk_macos_x86_64
+      - qt_sdk_macos_arm64
       - qt_sdk_windows
     if: >-
       always() &&
       needs.classify.outputs.desktop == 'true' &&
       needs.qt_sdk_linux.result == 'success' &&
-      needs.qt_sdk_macos.result == 'success' &&
+      needs.qt_sdk_macos_x86_64.result == 'success' &&
+      needs.qt_sdk_macos_arm64.result == 'success' &&
       needs.qt_sdk_windows.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -676,17 +836,22 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-platform: linux
+            qt-target: linux-x86_64
             package-platform: Linux
             smoke-timeout-ms: ""
-          - name: macOS
+          - name: macOS Intel
             os: macos-15-intel
-            qt-platform: macos
+            qt-target: macos-x86_64
+            package-platform: macOS
+            smoke-timeout-ms: ""
+          - name: macOS Apple Silicon
+            os: macos-15
+            qt-target: macos-arm64
             package-platform: macOS
             smoke-timeout-ms: ""
           - name: Windows
             os: windows-2022
-            qt-platform: windows
+            qt-target: windows-x86_64
             package-platform: Windows
             # A cold offscreen QML activation can block the hosted runner's
             # event loop for longer than the portable 15-second default.
@@ -738,21 +903,27 @@ jobs:
         env:
           LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
           LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
-          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
-          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          MACOS_X86_64_IDENTITY: ${{ needs.qt_sdk_macos_x86_64.outputs.identity }}
+          MACOS_X86_64_TOOLCHAIN: ${{ needs.qt_sdk_macos_x86_64.outputs.toolchain_fingerprint }}
+          MACOS_ARM64_IDENTITY: ${{ needs.qt_sdk_macos_arm64.outputs.identity }}
+          MACOS_ARM64_TOOLCHAIN: ${{ needs.qt_sdk_macos_arm64.outputs.toolchain_fingerprint }}
           WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
           WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
         run: |
-          case "${{ matrix.qt-platform }}" in
-            linux)
+          case "${{ matrix.qt-target }}" in
+            linux-x86_64)
               identity="${LINUX_IDENTITY}"
               fingerprint="${LINUX_TOOLCHAIN}"
               ;;
-            macos)
-              identity="${MACOS_IDENTITY}"
-              fingerprint="${MACOS_TOOLCHAIN}"
+            macos-x86_64)
+              identity="${MACOS_X86_64_IDENTITY}"
+              fingerprint="${MACOS_X86_64_TOOLCHAIN}"
               ;;
-            windows)
+            macos-arm64)
+              identity="${MACOS_ARM64_IDENTITY}"
+              fingerprint="${MACOS_ARM64_TOOLCHAIN}"
+              ;;
+            windows-x86_64)
               identity="${WINDOWS_IDENTITY}"
               fingerprint="${WINDOWS_TOOLCHAIN}"
               ;;
@@ -763,15 +934,15 @@ jobs:
           esac
           contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.qt-target }}" \
             --output "${contract}"
           consumer_fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform "${{ matrix.qt-platform }}" \
+              --target "${{ matrix.qt-target }}" \
               --toolchain-contract "${contract}"
           )"
           if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
-            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}."
             exit 1
           fi
           if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
@@ -796,7 +967,7 @@ jobs:
             --github-env "$GITHUB_ENV" \
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.qt-target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
             --toolchain-contract \
               "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
@@ -860,13 +1031,15 @@ jobs:
     needs:
       - classify
       - qt_sdk_linux
-      - qt_sdk_macos
+      - qt_sdk_macos_x86_64
+      - qt_sdk_macos_arm64
       - qt_sdk_windows
     if: >-
       always() &&
       needs.classify.outputs.package == 'true' &&
       needs.qt_sdk_linux.result == 'success' &&
-      needs.qt_sdk_macos.result == 'success' &&
+      needs.qt_sdk_macos_x86_64.result == 'success' &&
+      needs.qt_sdk_macos_arm64.result == 'success' &&
       needs.qt_sdk_windows.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -876,18 +1049,27 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            qt-platform: linux
+            qt-target: linux-x86_64
             package-platform: Linux
+            artifact-name: chaft-Linux-x86_64-desktop-release
             smoke-timeout-ms: ""
-          - name: macOS
+          - name: macOS Intel
             os: macos-15-intel
-            qt-platform: macos
+            qt-target: macos-x86_64
             package-platform: macOS
+            artifact-name: chaft-macOS-x86_64-desktop-release
+            smoke-timeout-ms: ""
+          - name: macOS Apple Silicon
+            os: macos-15
+            qt-target: macos-arm64
+            package-platform: macOS
+            artifact-name: chaft-macOS-arm64-desktop-release
             smoke-timeout-ms: ""
           - name: Windows
             os: windows-2022
-            qt-platform: windows
+            qt-target: windows-x86_64
             package-platform: Windows
+            artifact-name: chaft-Windows-x86_64-desktop-release
             smoke-timeout-ms: "60000"
     steps:
       - name: Checkout exact source
@@ -936,21 +1118,27 @@ jobs:
         env:
           LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
           LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
-          MACOS_IDENTITY: ${{ needs.qt_sdk_macos.outputs.identity }}
-          MACOS_TOOLCHAIN: ${{ needs.qt_sdk_macos.outputs.toolchain_fingerprint }}
+          MACOS_X86_64_IDENTITY: ${{ needs.qt_sdk_macos_x86_64.outputs.identity }}
+          MACOS_X86_64_TOOLCHAIN: ${{ needs.qt_sdk_macos_x86_64.outputs.toolchain_fingerprint }}
+          MACOS_ARM64_IDENTITY: ${{ needs.qt_sdk_macos_arm64.outputs.identity }}
+          MACOS_ARM64_TOOLCHAIN: ${{ needs.qt_sdk_macos_arm64.outputs.toolchain_fingerprint }}
           WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
           WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
         run: |
-          case "${{ matrix.qt-platform }}" in
-            linux)
+          case "${{ matrix.qt-target }}" in
+            linux-x86_64)
               identity="${LINUX_IDENTITY}"
               fingerprint="${LINUX_TOOLCHAIN}"
               ;;
-            macos)
-              identity="${MACOS_IDENTITY}"
-              fingerprint="${MACOS_TOOLCHAIN}"
+            macos-x86_64)
+              identity="${MACOS_X86_64_IDENTITY}"
+              fingerprint="${MACOS_X86_64_TOOLCHAIN}"
               ;;
-            windows)
+            macos-arm64)
+              identity="${MACOS_ARM64_IDENTITY}"
+              fingerprint="${MACOS_ARM64_TOOLCHAIN}"
+              ;;
+            windows-x86_64)
               identity="${WINDOWS_IDENTITY}"
               fingerprint="${WINDOWS_TOOLCHAIN}"
               ;;
@@ -961,15 +1149,15 @@ jobs:
           esac
           contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.qt-target }}" \
             --output "${contract}"
           consumer_fingerprint="$(
             python3 tools/qt/build_qt.py toolchain-fingerprint \
-              --platform "${{ matrix.qt-platform }}" \
+              --target "${{ matrix.qt-target }}" \
               --toolchain-contract "${contract}"
           )"
           if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
-            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-platform }}."
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}."
             exit 1
           fi
           if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
@@ -994,7 +1182,7 @@ jobs:
             --github-env "$GITHUB_ENV" \
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.qt-target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
             --toolchain-contract \
               "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
@@ -1037,7 +1225,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: chaft-${{ matrix.name }}-desktop-release
+          name: ${{ matrix.artifact-name }}
           path: build/desktop-release/package/*
           if-no-files-found: error
           compression-level: 0
@@ -1060,16 +1248,20 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            artifact-name: chaft-Linux-desktop-release
-            artifact-path: build/clean-linux-package
-          - name: macOS
+            artifact-name: chaft-Linux-x86_64-desktop-release
+            artifact-path: build/clean-linux-x86_64-package
+          - name: macOS Intel
             os: macos-15-intel
-            artifact-name: chaft-macOS-desktop-release
-            artifact-path: build/clean-macos-package
+            artifact-name: chaft-macOS-x86_64-desktop-release
+            artifact-path: build/clean-macos-x86_64-package
+          - name: macOS Apple Silicon
+            os: macos-15
+            artifact-name: chaft-macOS-arm64-desktop-release
+            artifact-path: build/clean-macos-arm64-package
           - name: Windows
             os: windows-2022
-            artifact-name: chaft-Windows-desktop-release
-            artifact-path: build/clean-windows-package
+            artifact-name: chaft-Windows-x86_64-desktop-release
+            artifact-path: build/clean-windows-x86_64-package
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1093,17 +1285,17 @@ jobs:
 
       - name: Run portable AppImage smoke
         if: runner.os == 'Linux'
-        run: tools/desktop/appimage-smoke.sh build/clean-linux-package
+        run: tools/desktop/appimage-smoke.sh "${{ matrix.artifact-path }}"
 
       - name: Run portable DMG smoke
         if: runner.os == 'macOS'
-        run: tools/desktop/macos-dmg-smoke.sh build/clean-macos-package
+        run: tools/desktop/macos-dmg-smoke.sh "${{ matrix.artifact-path }}"
 
       - name: Verify clean macOS unsigned-canary state
         if: runner.os == 'macOS'
         run: >-
           tools/desktop/macos-unsigned-canary-smoke.sh
-          build/clean-macos-package
+          "${{ matrix.artifact-path }}"
 
       - name: Run clean ZIP smoke
         if: runner.os == 'Windows'
@@ -1111,7 +1303,7 @@ jobs:
         run: |
           $version = python tools/desktop/release-version.py --print-version
           tools/desktop/windows-zip-smoke.ps1 `
-            -PackageDirectory build/clean-windows-package `
+            -PackageDirectory "${{ matrix.artifact-path }}" `
             -ExpectedVersion $version
 
   required:
@@ -1128,8 +1320,10 @@ jobs:
       - rust_tests_workspace
       - rust_smokes
       - benchmark_compile
+      - macos_local_source
       - qt_sdk_linux
-      - qt_sdk_macos
+      - qt_sdk_macos_x86_64
+      - qt_sdk_macos_arm64
       - qt_sdk_windows
       - desktop_contracts
       - desktop

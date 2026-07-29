@@ -215,34 +215,40 @@ jobs:
           archive: true
 
   build:
-    name: Build ${{ matrix.name }} canary
+    name: Build ${{ matrix.display-name }} canary
     needs:
       - preflight
       - qt_source
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            key: linux
-            os: ubuntu-22.04
-            qt_platform: linux
-            package_platform: Linux
-            smoke_timeout_ms: ""
-          - name: macOS
-            key: macos
-            os: macos-15-intel
-            qt_platform: macos
-            package_platform: macOS
-            smoke_timeout_ms: ""
-          - name: Windows
-            key: windows
-            os: windows-2022
-            qt_platform: windows
-            package_platform: Windows
-            smoke_timeout_ms: "60000"
+          - target: windows-x86_64
+            display-name: Windows x86-64
+            runner: windows-2022
+            architecture: x86_64
+            package-platform: Windows
+            smoke-timeout-ms: "60000"
+          - target: macos-x86_64
+            display-name: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            package-platform: macOS
+            smoke-timeout-ms: ""
+          - target: macos-arm64
+            display-name: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            package-platform: macOS
+            smoke-timeout-ms: ""
+          - target: linux-x86_64
+            display-name: Linux x86-64
+            runner: ubuntu-22.04
+            architecture: x86_64
+            package-platform: Linux
+            smoke-timeout-ms: ""
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -300,11 +306,11 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform "${{ matrix.qt_platform }}" \
+            --target "${{ matrix.target }}" \
             --output "${contract}"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform "${{ matrix.qt_platform }}" \
+              --target "${{ matrix.target }}" \
               --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "${GITHUB_OUTPUT}"
@@ -321,7 +327,7 @@ jobs:
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py build
-          --platform "${{ matrix.qt_platform }}"
+          --target "${{ matrix.target }}"
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
@@ -334,7 +340,7 @@ jobs:
             --github-env "${GITHUB_ENV}" \
             --github-path "${GITHUB_PATH}"
           python3 tools/qt/build_qt.py verify \
-            --platform "${{ matrix.qt_platform }}" \
+            --target "${{ matrix.target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
             --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
           rm -rf -- "${RUNNER_TEMP:?RUNNER_TEMP must be non-empty}/chaft-qt-build"
@@ -364,17 +370,18 @@ jobs:
           # signature. The draft-download gate below proves there is no Apple
           # team identity, DMG signature, or notarization ticket.
           CHAFT_DESKTOP_SKIP_CODESIGN: "0"
+          CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
           CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
           CHAFT_RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
-          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke_timeout_ms }}
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
           CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source.outputs.bundle_sha256 }}
         shell: bash
         run: |
           tools/desktop/ci-gates.sh \
             --stage package \
-            "${{ matrix.package_platform }}"
+            "${{ matrix.package-platform }}"
           python3 tools/desktop/verify-release-metadata.py release \
-            --platform "${{ matrix.package_platform }}" \
+            --target "${{ matrix.target }}" \
             --expected-commit "${CHAFT_RELEASE_COMMIT}" \
             --expected-source-version "${{ needs.preflight.outputs.source_version }}" \
             --expected-distribution-version "${CHAFT_DISTRIBUTION_VERSION}" \
@@ -383,7 +390,7 @@ jobs:
       - name: Upload non-publishing canary input
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: canary-${{ matrix.key }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          name: canary-${{ matrix.target }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
           path: build/desktop-release/package/*
           if-no-files-found: error
           compression-level: 0
@@ -391,27 +398,35 @@ jobs:
           archive: true
 
   actions_smoke:
-    name: Smoke downloaded ${{ matrix.name }} input
+    name: Smoke downloaded ${{ matrix.display-name }} input
     needs:
       - preflight
       - build
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
+      CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
       CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            key: linux
-            os: ubuntu-22.04
-          - name: macOS
-            key: macos
-            os: macos-15-intel
-          - name: Windows
-            key: windows
-            os: windows-2022
+          - target: windows-x86_64
+            display-name: Windows x86-64
+            runner: windows-2022
+            architecture: x86_64
+          - target: macos-x86_64
+            display-name: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+          - target: macos-arm64
+            display-name: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+          - target: linux-x86_64
+            display-name: Linux x86-64
+            runner: ubuntu-22.04
+            architecture: x86_64
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -422,7 +437,7 @@ jobs:
       - name: Download exact canary input
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: canary-${{ matrix.key }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          name: canary-${{ matrix.target }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
           path: build/canary-input
           digest-mismatch: error
 
@@ -452,7 +467,7 @@ jobs:
             -ExpectedDistributionVersion "${{ needs.preflight.outputs.distribution_version }}"
 
   audit_base:
-    name: Audit exact 14-file canary base
+    name: Audit exact 18-file canary base
     needs:
       - preflight
       - qt_source
@@ -465,25 +480,32 @@ jobs:
           ref: ${{ needs.preflight.outputs.commit }}
           persist-credentials: false
 
-      - name: Download Linux canary input
+      - name: Download Windows x86-64 canary input
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: canary-linux-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
-          path: build/canary-inputs/linux
+          name: canary-windows-x86_64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/windows-x86_64
           digest-mismatch: error
 
-      - name: Download macOS canary input
+      - name: Download macOS Intel canary input
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: canary-macos-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
-          path: build/canary-inputs/macos
+          name: canary-macos-x86_64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/macos-x86_64
           digest-mismatch: error
 
-      - name: Download Windows canary input
+      - name: Download macOS Apple Silicon canary input
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: canary-windows-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
-          path: build/canary-inputs/windows
+          name: canary-macos-arm64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/macos-arm64
+          digest-mismatch: error
+
+      - name: Download Linux x86-64 canary input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-linux-x86_64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/canary-inputs/linux-x86_64
           digest-mismatch: error
 
       - name: Download Qt corresponding source
@@ -508,6 +530,9 @@ jobs:
             find build/canary-inputs -mindepth 2 -maxdepth 2 -type f \
               -print0 | sort -z
           )
+          test "$(
+            find build/canary-base -mindepth 1 -maxdepth 1 -type f | wc -l
+          )" -eq 18
           python3 tools/desktop/canary-release-assets.py verify-base \
             --assets-dir build/canary-base \
             --version "${{ needs.preflight.outputs.distribution_version }}" \
@@ -646,17 +671,18 @@ jobs:
           test "$(jq -r '.prerelease' <<<"${release}")" = true
           test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
           test "$(jq -r '.target_commitish' <<<"${release}")" = "${TARGET_COMMIT}"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 14
+          test "$(jq '.assets | length' <<<"${release}")" -eq 18
           echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
 
   release_smoke:
-    name: Smoke ${{ matrix.name }} draft download
+    name: Smoke ${{ matrix.display-name }} draft download
     needs:
       - preflight
       - create_draft
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
+      CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
       CHAFT_DISTRIBUTION_VERSION: ${{ needs.preflight.outputs.distribution_version }}
     permissions:
       # Draft releases require push-level visibility even for read-only API calls.
@@ -665,21 +691,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            key: linux
-            os: ubuntu-22.04
-            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-Linux-x86_64.AppImage
-            smoke_command: tools/desktop/appimage-smoke.sh
-          - name: macOS
-            key: macos
-            os: macos-15-intel
-            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-macOS-x86_64.dmg
-            smoke_command: tools/desktop/macos-dmg-smoke.sh + tools/desktop/macos-unsigned-canary-smoke.sh
-          - name: Windows
-            key: windows
-            os: windows-2022
+          - target: windows-x86_64
+            display-name: Windows x86-64
+            runner: windows-2022
+            architecture: x86_64
             package: Chaft-${{ needs.preflight.outputs.distribution_version }}-Windows-x86_64.zip
-            smoke_command: tools/desktop/windows-zip-smoke.ps1
+            smoke-command: tools/desktop/windows-zip-smoke.ps1
+          - target: macos-x86_64
+            display-name: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-macOS-x86_64.dmg
+            smoke-command: tools/desktop/macos-dmg-smoke.sh + tools/desktop/macos-unsigned-canary-smoke.sh
+          - target: macos-arm64
+            display-name: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-macOS-arm64.dmg
+            smoke-command: tools/desktop/macos-dmg-smoke.sh + tools/desktop/macos-unsigned-canary-smoke.sh
+          - target: linux-x86_64
+            display-name: Linux x86-64
+            runner: ubuntu-22.04
+            architecture: x86_64
+            package: Chaft-${{ needs.preflight.outputs.distribution_version }}-Linux-x86_64.AppImage
+            smoke-command: tools/desktop/appimage-smoke.sh
     steps:
       - name: Checkout trusted canary verification code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -765,9 +800,9 @@ jobs:
         run: |
           mkdir -p build/canary-receipt
           python3 tools/desktop/generate-unsigned-canary-receipt.py \
-            --platform "${{ matrix.key }}" \
+            --target "${{ matrix.target }}" \
             --package "build/release-download/${{ matrix.package }}" \
-            --output "build/canary-receipt/chaft-desktop-${{ matrix.key }}-verification.json" \
+            --output "build/canary-receipt/chaft-desktop-${{ matrix.target }}-verification.json" \
             --version "${{ needs.preflight.outputs.distribution_version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
             --commit "${{ needs.preflight.outputs.commit }}" \
@@ -778,19 +813,19 @@ jobs:
             --workflow-run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --runner-os "${{ runner.os }}" \
             --runner-arch "${{ runner.arch }}" \
-            --smoke-command "${{ matrix.smoke_command }}"
+            --smoke-command "${{ matrix.smoke-command }}"
 
       - name: Upload native draft-download receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: canary-${{ matrix.key }}-receipt-${{ needs.preflight.outputs.distribution_version }}
-          path: build/canary-receipt/chaft-desktop-${{ matrix.key }}-verification.json
+          name: canary-${{ matrix.target }}-receipt-${{ needs.preflight.outputs.distribution_version }}
+          path: build/canary-receipt/chaft-desktop-${{ matrix.target }}-verification.json
           if-no-files-found: error
           archive: true
           retention-days: 14
 
   finalize_draft:
-    name: Finalize exact 19-file draft
+    name: Finalize exact 24-file draft
     needs:
       - preflight
       - create_draft
@@ -827,7 +862,7 @@ jobs:
               -H "X-GitHub-Api-Version: 2026-03-10" \
               "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
           )"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 14
+          test "$(jq '.assets | length' <<<"${release}")" -eq 18
           while IFS=$'\t' read -r asset_id name size digest; do
             if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
               "${name}" == */* || "${name}" == *\\* ]]; then
@@ -848,6 +883,9 @@ jobs:
             jq -r '.assets[] | [.id, .name, .size, .digest] | @tsv' <<<"${release}"
           )
           cp -- build/canary-receipts/*.json "${assets}/"
+          test "$(
+            find "${assets}" -mindepth 1 -maxdepth 1 -type f | wc -l
+          )" -eq 22
           python3 tools/desktop/canary-release-assets.py finalize \
             --assets-dir "${assets}" \
             --version "${{ needs.preflight.outputs.distribution_version }}" \
@@ -862,6 +900,9 @@ jobs:
             --commit "${{ needs.preflight.outputs.commit }}" \
             --repository "${GITHUB_REPOSITORY}" \
             --release-id "${RELEASE_ID}"
+          test "$(
+            find "${assets}" -mindepth 1 -maxdepth 1 -type f | wc -l
+          )" -eq 24
 
           for receipt in "${assets}"/chaft-desktop-*-verification.json; do
             gh release upload "${RELEASE_TAG}" "${receipt}" \
@@ -904,7 +945,7 @@ jobs:
           )"
           test "$(jq -r '.draft' <<<"${release}")" = true
           test "$(jq -r '.prerelease' <<<"${release}")" = true
-          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+          test "$(jq '.assets | length' <<<"${release}")" -eq 24
           while IFS=$'\t' read -r asset_id name size digest; do
             if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
               "${name}" == */* || "${name}" == *\\* ]]; then
@@ -956,7 +997,7 @@ jobs:
           )"
           test "$(jq -r '.draft' <<<"${release}")" = true
           test "$(jq -r '.prerelease' <<<"${release}")" = true
-          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+          test "$(jq '.assets | length' <<<"${release}")" -eq 24
           published="$(
             gh api \
               -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -1013,7 +1054,7 @@ jobs:
           test "$(jq -r '.draft' <<<"${release}")" = false
           test "$(jq -r '.prerelease' <<<"${release}")" = true
           test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 19
+          test "$(jq '.assets | length' <<<"${release}")" -eq 24
 
           if latest="$(gh api \
             -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -1077,7 +1118,7 @@ jobs:
             echo "- Commit: \`${{ needs.preflight.outputs.commit }}\`"
             echo "- Release ID: \`${{ needs.create_draft.outputs.release_id }}\`"
             echo "- State: immutable prerelease, never latest"
-            echo "- Assets: 19 verified files"
+            echo "- Assets: 24 verified files"
             echo "- Signing: unsigned-canary; stable gates unchanged"
           } >> "${GITHUB_STEP_SUMMARY}"
 

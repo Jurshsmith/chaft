@@ -69,6 +69,60 @@ def fake_elf(architecture: str = "x86_64") -> bytes:
     return bytes(value)
 
 
+def fake_macho() -> bytes:
+    return b"\xcf\xfa\xed\xfe" + (b"\0" * 60)
+
+
+def fake_icns(payload: bytes = b"icon fixture") -> bytes:
+    size = 8 + len(payload)
+    return b"icns" + struct.pack(">I", size) + payload
+
+
+def write_macos_app(
+    mountpoint: Path,
+    *,
+    bundle_identifier: str = native.MACOS_APPLICATION_BUNDLE_IDENTIFIER,
+    short_version: str = VERSION,
+    bundle_version: str = VERSION,
+    icon: bytes | None = None,
+    nested_payloads: bool = False,
+) -> Path:
+    app = mountpoint / "Chaft.app"
+    contents = app / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    (contents / "Resources").mkdir()
+    (contents / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {
+                "CFBundleName": "Chaft",
+                "CFBundleExecutable": "Chaft",
+                "CFBundleIconFile": "Chaft.icns",
+                "CFBundleIdentifier": bundle_identifier,
+                "CFBundleShortVersionString": short_version,
+                "CFBundleVersion": bundle_version,
+            }
+        )
+    )
+    (contents / "MacOS" / "Chaft").write_bytes(fake_macho())
+    (contents / "Resources" / "Chaft.icns").write_bytes(
+        fake_icns() if icon is None else icon
+    )
+    if nested_payloads:
+        frameworks = contents / "Frameworks"
+        plugins = contents / "PlugIns" / "platforms"
+        frameworks.mkdir()
+        plugins.mkdir(parents=True)
+        (frameworks / "libQt6Core.dylib").write_bytes(fake_macho())
+        (plugins / "libqcocoa.dylib").write_bytes(fake_macho())
+    return app
+
+
+def mounted_plist(mountpoint: Path) -> str:
+    return plistlib.dumps(
+        {"system-entities": [{"mount-point": str(mountpoint)}]}
+    ).decode()
+
+
 class FakeRunner:
     def __init__(self, responder: Callable[[tuple[str, ...]], native.CommandResult]):
         self.responder = responder
@@ -334,24 +388,8 @@ class NativeReceiptTests(unittest.TestCase):
                 return native.CommandResult(0, stderr=f"TeamIdentifier={APPLE_TEAM_ID}\n")
             if call[0].endswith("hdiutil") and "attach" in call:
                 mountpoint = Path(call[call.index("-mountpoint") + 1])
-                contents = mountpoint / "Chaft.app" / "Contents"
-                (contents / "MacOS").mkdir(parents=True)
-                (contents / "Resources").mkdir()
-                (contents / "Info.plist").write_bytes(
-                    plistlib.dumps(
-                        {
-                            "CFBundleName": "Chaft",
-                            "CFBundleExecutable": "Chaft",
-                            "CFBundleIconFile": "Chaft.icns",
-                        }
-                    )
-                )
-                (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
-                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
-                plist = plistlib.dumps(
-                    {"system-entities": [{"mount-point": str(mountpoint)}]}
-                ).decode()
-                return native.CommandResult(0, plist)
+                write_macos_app(mountpoint, nested_payloads=True)
+                return native.CommandResult(0, mounted_plist(mountpoint))
             if call[0].endswith("lipo"):
                 return native.CommandResult(0, "x86_64\n")
             return native.CommandResult(0)
@@ -367,10 +405,120 @@ class NativeReceiptTests(unittest.TestCase):
         self.assertEqual(sum("xcrun stapler validate" in command for command in commands), 2)
         self.assertEqual(sum("hdiutil detach" in command for command in commands), 1)
         self.assertEqual(sum("codesign --display" in command for command in commands), 2)
+        self.assertEqual(sum("lipo -archs" in command for command in commands), 3)
         self.assertEqual(
             receipt["verificationPolicy"]["publisherIdentity"],
             {"type": "apple-developer-team-id", "value": APPLE_TEAM_ID},
         )
+        app = receipt["verificationDetails"][0]["verifiedApplications"][0]
+        self.assertEqual(app["bundleIdentifier"], "app.chaft.desktop")
+        self.assertEqual(app["bundleShortVersion"], VERSION)
+        self.assertEqual(app["bundleVersion"], VERSION)
+        self.assertEqual(app["icon"]["filename"], "Chaft.icns")
+        self.assertEqual(
+            [row["path"] for row in app["machOPayloads"]],
+            [
+                "Contents/Frameworks/libQt6Core.dylib",
+                "Contents/MacOS/Chaft",
+                "Contents/PlugIns/platforms/libqcocoa.dylib",
+            ],
+        )
+        self.assertEqual(
+            {row["architecture"] for row in app["machOPayloads"]},
+            {"x86_64"},
+        )
+
+    def test_macos_rejects_wrong_or_universal_nested_macho_payload(self) -> None:
+        cases = (
+            ("wrong", "arm64", "not the requested x86_64"),
+            ("universal", "x86_64 arm64", "is universal"),
+            ("unsupported", "arm64e", "unsupported architecture 'arm64e'"),
+        )
+        for name, nested_architectures, error in cases:
+            with self.subTest(name=name):
+                package_dir = self.root / f"macos-{name}-packages"
+                package_dir.mkdir()
+                (package_dir / f"Chaft-{VERSION}-macOS.dmg").write_bytes(
+                    b"synthetic disk image"
+                )
+
+                def respond(call: tuple[str, ...]) -> native.CommandResult:
+                    if call[0].endswith("xcrun") and call[1:] == ("--version",):
+                        return native.CommandResult(0, "xcrun version 72.\n")
+                    if call[0].endswith("sw_vers"):
+                        return native.CommandResult(0, "15.5\n")
+                    if call[0].endswith("codesign") and "--display" in call:
+                        return native.CommandResult(
+                            0,
+                            stderr=f"TeamIdentifier={APPLE_TEAM_ID}\n",
+                        )
+                    if call[0].endswith("hdiutil") and "attach" in call:
+                        mountpoint = Path(call[call.index("-mountpoint") + 1])
+                        write_macos_app(mountpoint, nested_payloads=True)
+                        return native.CommandResult(
+                            0,
+                            mounted_plist(mountpoint),
+                        )
+                    if call[0].endswith("lipo"):
+                        if Path(call[-1]).name == "libQt6Core.dylib":
+                            return native.CommandResult(
+                                0,
+                                f"{nested_architectures}\n",
+                            )
+                        return native.CommandResult(0, "x86_64\n")
+                    return native.CommandResult(0)
+
+                runner = FakeRunner(respond)
+                with self.assertRaisesRegex(native.VerificationError, error):
+                    self.generate("macos", package_dir, runner)
+                self.assertTrue(
+                    any(
+                        call[0].endswith("hdiutil") and "detach" in call
+                        for call in runner.calls
+                    )
+                )
+                self.assertFalse(self.output("macos").exists())
+
+    def test_macos_rejects_incoherent_bundle_identity_version_or_icon(self) -> None:
+        cases = (
+            (
+                "identifier",
+                {"bundle_identifier": "invalid.example"},
+                "CFBundleIdentifier",
+            ),
+            (
+                "short-version",
+                {"short_version": "9.9.9"},
+                "CFBundleShortVersionString",
+            ),
+            (
+                "bundle-version",
+                {"bundle_version": "9.9.9"},
+                "CFBundleVersion",
+            ),
+            (
+                "icon",
+                {"icon": b"not an icon"},
+                "not an ICNS",
+            ),
+        )
+        for name, values, error in cases:
+            with self.subTest(name=name):
+                app_root = self.root / f"bundle-{name}"
+                app_root.mkdir()
+                app = write_macos_app(app_root, **values)
+                with self.assertRaisesRegex(native.VerificationError, error):
+                    native.inspect_application_bundle(app, VERSION)
+
+    def test_macos_rejects_arm64e_as_a_distinct_architecture(self) -> None:
+        executable = Path("Chaft")
+        for reported in ("arm64e", "arm64 arm64e"):
+            with self.subTest(reported=reported):
+                with self.assertRaisesRegex(
+                    native.VerificationError,
+                    "unsupported architecture 'arm64e'",
+                ):
+                    native.parse_lipo_architectures(reported, executable)
 
     def test_macos_detaches_after_app_verification_failure(self) -> None:
         package_dir = self.package_dir("macos")
@@ -385,26 +533,10 @@ class NativeReceiptTests(unittest.TestCase):
                 return native.CommandResult(0, stderr=f"TeamIdentifier={APPLE_TEAM_ID}\n")
             if call[0].endswith("hdiutil") and "attach" in call:
                 mountpoint = Path(call[call.index("-mountpoint") + 1])
-                app = mountpoint / "Chaft.app"
-                contents = app / "Contents"
-                (contents / "MacOS").mkdir(parents=True)
-                (contents / "Resources").mkdir()
-                (contents / "Info.plist").write_bytes(
-                    plistlib.dumps(
-                        {
-                            "CFBundleName": "Chaft",
-                            "CFBundleExecutable": "Chaft",
-                            "CFBundleIconFile": "Chaft.icns",
-                        }
-                    )
-                )
-                (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
-                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
+                write_macos_app(mountpoint)
                 return native.CommandResult(
                     0,
-                    plistlib.dumps(
-                        {"system-entities": [{"mount-point": str(mountpoint)}]}
-                    ).decode(),
+                    mounted_plist(mountpoint),
                 )
             if call[0].endswith("codesign") and call[-1].endswith("Chaft.app"):
                 return native.CommandResult(1, stderr="invalid nested signature")
@@ -454,25 +586,10 @@ class NativeReceiptTests(unittest.TestCase):
                 return native.CommandResult(0, stderr=f"TeamIdentifier={team_id}\n")
             if call[0].endswith("hdiutil") and "attach" in call:
                 mountpoint = Path(call[call.index("-mountpoint") + 1])
-                contents = mountpoint / "Chaft.app" / "Contents"
-                (contents / "MacOS").mkdir(parents=True)
-                (contents / "Resources").mkdir()
-                (contents / "Info.plist").write_bytes(
-                    plistlib.dumps(
-                        {
-                            "CFBundleName": "Chaft",
-                            "CFBundleExecutable": "Chaft",
-                            "CFBundleIconFile": "Chaft.icns",
-                        }
-                    )
-                )
-                (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
-                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
+                write_macos_app(mountpoint)
                 return native.CommandResult(
                     0,
-                    plistlib.dumps(
-                        {"system-entities": [{"mount-point": str(mountpoint)}]}
-                    ).decode(),
+                    mounted_plist(mountpoint),
                 )
             return native.CommandResult(0)
 
@@ -645,7 +762,9 @@ class NativeReceiptTests(unittest.TestCase):
                 runner,
                 output=self.root / "receipts" / "wrong.json",
             )
-        with self.assertRaisesRegex(native.VerificationError, "only for macOS"):
+        with self.assertRaisesRegex(
+            native.VerificationError, "unsupported desktop architecture"
+        ):
             self.generate(
                 "windows",
                 package_dir,

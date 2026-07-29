@@ -5,10 +5,12 @@ Chaft's root `LICENSE`. They document the dynamically linked Qt distribution
 without changing Chaft's AGPL-3.0-or-later license.
 
 `QT-CORRESPONDING-SOURCE.json` is the machine-readable source record. It lists
-only the Qt modules used by the package build: four modules on every platform,
-plus `qtwayland` on Linux. Its patch order must match the source-build recipe.
-The platform lists are intentional; macOS and Windows packages do not contain
-Qt Wayland.
+the exact architecture-specific SDK targets and only the Qt modules used by the
+package build: four modules on every logical platform, plus `qtwayland` on
+Linux. Its patch order must match the source-build recipe. Module and patch
+platform lists intentionally remain logical because Intel and Apple Silicon
+macOS builds use the same corresponding source; macOS and Windows packages do
+not contain Qt Wayland.
 
 When the Qt version, module set, or patch set changes:
 

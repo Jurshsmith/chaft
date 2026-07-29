@@ -1,5 +1,12 @@
 #!/usr/bin/env sh
 
+chaft_desktop_path_is_absolute() {
+  case "$1" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 chaft_desktop_path_prepend() {
   dir="$1"
   if [ -d "$dir" ]; then
@@ -14,10 +21,6 @@ chaft_desktop_path_prepend() {
 }
 
 chaft_desktop_add_tool_paths() {
-  if [ -n "${QT_ROOT_DIR:-}" ]; then
-    chaft_desktop_path_prepend "$QT_ROOT_DIR/bin"
-  fi
-
   if [ -n "${Qt6_DIR:-}" ]; then
     qt6_prefix="$(CDPATH= cd "$(dirname "$Qt6_DIR")/../.." 2>/dev/null && pwd || true)"
     if [ -n "$qt6_prefix" ]; then
@@ -34,33 +37,47 @@ chaft_desktop_add_tool_paths() {
       ;;
   esac
 
-  chaft_desktop_path_prepend /opt/homebrew/bin
-  chaft_desktop_path_prepend /usr/local/bin
+  if [ "${CHAFT_DESKTOP_TOOL_DISCOVERY:-auto}" != "explicit" ]; then
+    chaft_desktop_path_prepend /opt/homebrew/bin
+    chaft_desktop_path_prepend /usr/local/bin
 
-  if command -v brew >/dev/null 2>&1; then
-    brew_prefix="$(brew --prefix 2>/dev/null || true)"
-    if [ -n "$brew_prefix" ]; then
-      chaft_desktop_path_prepend "$brew_prefix/bin"
+    if command -v brew >/dev/null 2>&1; then
+      brew_prefix="$(brew --prefix 2>/dev/null || true)"
+      if [ -n "$brew_prefix" ]; then
+        chaft_desktop_path_prepend "$brew_prefix/bin"
+      fi
+
+      for formula in qtbase qtdeclarative qtshadertools qtsvg qt qt@6; do
+        formula_prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+        if [ -n "$formula_prefix" ]; then
+          chaft_desktop_path_prepend "$formula_prefix/bin"
+        fi
+      done
     fi
 
-    for formula in qtbase qt qt@6; do
-      formula_prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
-      if [ -n "$formula_prefix" ]; then
-        chaft_desktop_path_prepend "$formula_prefix/bin"
-      fi
+    for prefix in \
+      /opt/homebrew/opt/qtbase \
+      /opt/homebrew/opt/qtdeclarative \
+      /opt/homebrew/opt/qtshadertools \
+      /opt/homebrew/opt/qtsvg \
+      /opt/homebrew/opt/qt \
+      /opt/homebrew/opt/qt@6 \
+      /usr/local/opt/qtbase \
+      /usr/local/opt/qtdeclarative \
+      /usr/local/opt/qtshadertools \
+      /usr/local/opt/qtsvg \
+      /usr/local/opt/qt \
+      /usr/local/opt/qt@6
+    do
+      chaft_desktop_path_prepend "$prefix/bin"
     done
   fi
 
-  for prefix in \
-    /opt/homebrew/opt/qtbase \
-    /opt/homebrew/opt/qt \
-    /opt/homebrew/opt/qt@6 \
-    /usr/local/opt/qtbase \
-    /usr/local/opt/qt \
-    /usr/local/opt/qt@6
-  do
-    chaft_desktop_path_prepend "$prefix/bin"
-  done
+  # Explicit Qt selection wins over ambient Homebrew installations.
+  if [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR/bin" ]; then
+    PATH="$QT_ROOT_DIR/bin:$PATH"
+    export PATH
+  fi
 }
 
 chaft_desktop_qt_prefix() {
@@ -89,6 +106,64 @@ chaft_desktop_qt_prefix() {
   done
 
   return 1
+}
+
+chaft_desktop_qt_version() {
+  if command -v qtpaths6 >/dev/null 2>&1; then
+    qtpaths6 --qt-version 2>/dev/null | sed -n '1p'
+    return
+  fi
+  if command -v qtpaths >/dev/null 2>&1; then
+    qtpaths --qt-version 2>/dev/null | sed -n '1p'
+    return
+  fi
+  if command -v qmake6 >/dev/null 2>&1; then
+    qmake6 --version |
+      sed -n 's/^Using Qt version \([0-9][0-9.]*\).*$/\1/p' |
+      sed -n '1p'
+  fi
+}
+
+chaft_desktop_platform() {
+  case "$(uname -s)" in
+    Darwin) printf 'macos\n' ;;
+    Linux) printf 'linux\n' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'windows\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+chaft_desktop_architecture() {
+  machine="$(uname -m | tr '[:upper:]' '[:lower:]')"
+  case "$machine" in
+    x86_64|amd64|x64) printf 'x86_64\n' ;;
+    arm64|aarch64) printf 'arm64\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+chaft_desktop_qt_sdk_target() {
+  platform="$(chaft_desktop_platform)" || return 1
+  architecture="$(chaft_desktop_architecture)" || return 1
+  case "$platform-$architecture" in
+    linux-x86_64|macos-x86_64|macos-arm64|windows-x86_64)
+      printf '%s-%s\n' "$platform" "$architecture"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+chaft_desktop_qt_policy() {
+  policy="${CHAFT_QT_POLICY:-release}"
+  case "$policy" in
+    developer|release) printf '%s\n' "$policy" ;;
+    *)
+      printf \
+        'unsupported CHAFT_QT_POLICY %s: expected developer or release\n' \
+        "$policy" >&2
+      return 1
+      ;;
+  esac
 }
 
 chaft_desktop_qt_compatibility_cmake_arguments() {
@@ -128,6 +203,16 @@ chaft_desktop_cli_binary_name() {
   esac
 }
 
+chaft_desktop_binary_candidates_in_build_dir() {
+  build_dir="$1"
+  for base in "$build_dir/apps/desktop-qt" "$build_dir"; do
+    printf '%s\n' \
+      "$base/Chaft.app/Contents/MacOS/Chaft" \
+      "$base/ChaftDesktop.exe" \
+      "$base/ChaftDesktop"
+  done
+}
+
 chaft_desktop_binary_candidates() {
   repo_root="$1"
   preset="$2"
@@ -154,6 +239,23 @@ chaft_desktop_installed_binary_candidates() {
     "$install_root/bin/ChaftDesktop" \
     "$install_root/ChaftDesktop.exe" \
     "$install_root/ChaftDesktop"
+}
+
+chaft_desktop_find_binary_in_build_dir() {
+  build_dir="$1"
+  for base in "$build_dir/apps/desktop-qt" "$build_dir"; do
+    for candidate in \
+      "$base/Chaft.app/Contents/MacOS/Chaft" \
+      "$base/ChaftDesktop.exe" \
+      "$base/ChaftDesktop"
+    do
+      if [ -x "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  done
+  return 1
 }
 
 chaft_desktop_find_binary() {

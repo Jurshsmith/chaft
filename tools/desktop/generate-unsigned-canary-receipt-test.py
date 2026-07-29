@@ -107,7 +107,7 @@ class UnsignedCanaryReceiptTests(unittest.TestCase):
         wrong_package = self.root / "Chaft-0.1.0-canary.1-Windows-x86_64.dmg"
         wrong_package.write_bytes(b"not Windows")
         with self.assertRaisesRegex(
-            policy.UnsignedCanaryPolicyError, "supported windows package"
+            policy.UnsignedCanaryPolicyError, "must be exactly"
         ):
             generator.generate_receipt(
                 **self.arguments(package=wrong_package)

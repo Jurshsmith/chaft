@@ -1,0 +1,24 @@
+Chaft local developer build: Qt notice
+=======================================
+
+This Chaft app was compiled locally against Homebrew's open-source Qt @Qt6_VERSION@
+packages. It is a developer build, not an official Chaft release
+package, and it does not contain or claim the verified Chaft Qt 6.8.4 release
+SDK provenance.
+
+Qt is copyright The Qt Company Ltd. and other contributors identified in the
+Qt source. The bundled Qt libraries and plugins are dynamically linked and are
+distributed under their applicable open-source terms. Copies of the GNU LGPL
+version 3 and GNU GPL version 3 accompany this notice.
+
+Homebrew's formula metadata and source recipe for the installed Qt packages are
+available through Homebrew. Qt's upstream source repositories are available at
+https://code.qt.io/cgit/qt/ and its open-source licensing information is at
+https://www.qt.io/licensing/open-source-lgpl-obligations.
+
+You may replace dynamically linked Qt libraries with interface-compatible
+modified versions. The package terms do not prohibit reverse engineering for
+the purpose of debugging such modifications.
+
+Qt and the Qt logo are trademarks of The Qt Company Ltd. Chaft is not
+affiliated with or endorsed by The Qt Company Ltd.

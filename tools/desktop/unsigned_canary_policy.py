@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
+import release_targets
 
-SCHEMA_VERSION = "chaft.desktop.unsigned-canary-verification.v1"
+
+SCHEMA_VERSION = "chaft.desktop.unsigned-canary-verification.v2"
 VERIFICATION_TYPE = "packaged-app-smoke"
 SIGNING_STATUS = "unsigned-canary"
 STATUS = "passed"
@@ -21,11 +23,19 @@ WARNING = (
     "Unsigned canary. Do not use Chaft canary builds for sensitive or "
     "production communication."
 )
-PLATFORMS = ("windows", "macos", "linux")
+PLATFORMS = release_targets.PLATFORMS
+TARGETS = release_targets.TARGET_NAMES
 RECEIPT_FILENAMES = {
-    platform: f"chaft-desktop-{platform}-verification.json"
-    for platform in PLATFORMS
+    target.name: target.verification_receipt_name
+    for target in release_targets.TARGETS
 }
+RECEIPT_FILENAMES.update(
+    {
+        "windows": RECEIPT_FILENAMES["windows-x86_64"],
+        "macos": RECEIPT_FILENAMES["macos-x86_64"],
+        "linux": RECEIPT_FILENAMES["linux-x86_64"],
+    }
+)
 DEFAULT_SIGNATURE_AND_NOTARIZATION = {
     "authenticode": "not-performed",
     "appleCodeSigning": "not-performed",
@@ -128,10 +138,10 @@ def require_positive_integer(
 
 
 def normalize_architecture(value: str, context: str = "architecture") -> str:
-    normalized = ARCHITECTURE_ALIASES.get(value.strip().lower())
-    if normalized is None:
+    try:
+        return release_targets.normalize_architecture(value)
+    except release_targets.ReleaseTargetError:
         fail(f"{context} is unsupported")
-    return normalized
 
 
 def normalize_timestamp(value: str, context: str = "verifiedAt") -> str:
@@ -161,16 +171,27 @@ def validate_release_identity(
         fail("repository must be a GitHub OWNER/REPOSITORY slug")
 
 
-def validate_package_filename(
-    filename: str, platform: str, version: str
-) -> None:
+def validate_package_filename(filename: str, target_name: str, version: str) -> None:
     plain_filename(filename, "package filename")
-    if platform not in PLATFORMS:
-        fail(f"unsupported platform: {platform}")
-    if version not in filename:
-        fail("package filename must contain the exact canary version")
-    if not filename.lower().endswith(PACKAGE_SUFFIXES[platform]):
-        fail(f"package filename is not a supported {platform} package")
+    if target_name in PLATFORMS:
+        matching = [
+            target
+            for target in release_targets.targets_for_platform(target_name)
+            if target.package_name(version) == filename
+        ]
+        if len(matching) != 1:
+            fail(
+                f"package filename does not identify one supported "
+                f"{target_name} target"
+            )
+        target_name = matching[0].name
+    try:
+        target = release_targets.TARGET_BY_NAME[target_name]
+    except KeyError:
+        fail(f"unsupported target: {target_name}")
+    expected = target.package_name(version)
+    if filename != expected:
+        fail(f"package filename must be exactly {expected}")
 
 
 def fingerprint_file(path: Path) -> FileFingerprint:
@@ -213,6 +234,7 @@ def fingerprint_file(path: Path) -> FileFingerprint:
 def validate_receipt_document(
     receipt: Mapping[str, object],
     *,
+    expected_target: str | None = None,
     expected_platform: str | None = None,
     expected_package: FileFingerprint | None = None,
     expected_version: str | None = None,
@@ -223,6 +245,7 @@ def validate_receipt_document(
     context = "unsigned-canary receipt"
     expected_keys = {
         "schemaVersion",
+        "target",
         "platform",
         "verificationType",
         "status",
@@ -247,10 +270,19 @@ def validate_receipt_document(
         fail(f"{context} keys differ from the reviewed schema")
     if receipt.get("schemaVersion") != SCHEMA_VERSION:
         fail(f"{context} schemaVersion is unsupported")
+    target_name = receipt.get("target")
+    if target_name not in TARGETS:
+        fail(f"{context}.target is unsupported")
+    assert isinstance(target_name, str)
+    target = release_targets.TARGET_BY_NAME[target_name]
+    if expected_target is not None and target_name != expected_target:
+        fail(f"{context}.target does not match the expected target")
     platform = receipt.get("platform")
     if platform not in PLATFORMS:
         fail(f"{context}.platform is unsupported")
     assert isinstance(platform, str)
+    if platform != target.platform:
+        fail(f"{context}.platform does not match target")
     if expected_platform is not None and platform != expected_platform:
         fail(f"{context}.platform does not match the expected platform")
     if receipt.get("verificationType") != VERIFICATION_TYPE:
@@ -298,6 +330,8 @@ def validate_receipt_document(
     )
     if architecture != normalized_architecture:
         fail(f"{context}.architecture must already be normalized")
+    if architecture != target.architecture:
+        fail(f"{context}.architecture does not match target")
     normalize_timestamp(require_string(receipt, "verifiedAt", context))
 
     release = receipt.get("release")
@@ -311,7 +345,7 @@ def validate_receipt_document(
         fail(f"{context}.asset keys differ from the reviewed schema")
     require_positive_integer(asset, "id", f"{context}.asset")
     filename = plain_filename(asset.get("filename"), f"{context}.asset.filename")
-    validate_package_filename(filename, platform, version)
+    validate_package_filename(filename, target_name, version)
     size_bytes = require_positive_integer(asset, "sizeBytes", f"{context}.asset")
     sha256 = require_string(asset, "sha256", f"{context}.asset")
     if SHA256_PATTERN.fullmatch(sha256) is None:

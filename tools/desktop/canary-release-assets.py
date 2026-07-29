@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+import release_targets
 import unsigned_canary_policy as unsigned_canary
 
 
@@ -44,12 +45,29 @@ def _load_stager():
 
 stager = _load_stager()
 
-SCHEMA_VERSION = "chaft.desktop.canary-release-assets.v1"
+
+def _load_release_metadata_verifier():
+    script = TOOLS_DIRECTORY / "verify-release-metadata.py"
+    spec = importlib.util.spec_from_file_location(
+        "chaft_canary_release_metadata_verifier",
+        script,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+release_metadata = _load_release_metadata_verifier()
+
+SCHEMA_VERSION = "chaft.desktop.canary-release-assets.v2"
 INVENTORY_FILENAME = "chaft-desktop-release-inventory.json"
 AGGREGATE_CHECKSUM_FILENAME = "chaft-desktop-release-SHA256SUMS"
-BASE_ASSET_COUNT = 14
-PREFINAL_ASSET_COUNT = 17
-COMPLETE_ASSET_COUNT = 19
+BASE_ASSET_COUNT = 18
+PREFINAL_ASSET_COUNT = 22
+COMPLETE_ASSET_COUNT = 24
 QT_SOURCE_BUNDLE = qt_source.BUNDLE_NAME
 QT_SOURCE_CHECKSUM = qt_source.CHECKSUM_NAME
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -66,6 +84,7 @@ class AssetFingerprint:
     size_bytes: int
     sha256: str
     kind: str
+    target: str | None = None
     platform: str | None = None
 
 
@@ -76,7 +95,13 @@ def fail(message: str) -> None:
     raise CanaryReleaseAssetError(message)
 
 
-def fingerprint(path: Path, *, kind: str, platform: str | None = None) -> AssetFingerprint:
+def fingerprint(
+    path: Path,
+    *,
+    kind: str,
+    target: str | None = None,
+    platform: str | None = None,
+) -> AssetFingerprint:
     try:
         value = stager.fingerprint_file(path)
     except stager.AssetStagingError as error:
@@ -86,6 +111,7 @@ def fingerprint(path: Path, *, kind: str, platform: str | None = None) -> AssetF
         size_bytes=value.size_bytes,
         sha256=value.sha256,
         kind=kind,
+        target=target,
         platform=platform,
     )
 
@@ -157,34 +183,34 @@ def expected_qt_source_contract() -> dict[str, object]:
 def provenance_identity(
     path: Path,
     *,
-    platform: str,
+    target: str,
     version: str,
     commit: str,
     qt_bundle_sha256: str,
 ) -> str:
-    value = read_json(path, f"{platform} provenance")
+    value = read_json(path, f"{target} provenance")
     if value.get("version") != version:
-        fail(f"{platform} provenance version does not match {version}")
+        fail(f"{target} provenance version does not match {version}")
     source = value.get("source")
     if not isinstance(source, dict):
-        fail(f"{platform} provenance.source must be an object")
+        fail(f"{target} provenance.source must be an object")
     if source.get("commit") != commit:
-        fail(f"{platform} provenance commit does not match {commit}")
+        fail(f"{target} provenance commit does not match {commit}")
     if source.get("dirty") is not False:
-        fail(f"{platform} provenance must record a clean source checkout")
+        fail(f"{target} provenance must record a clean source checkout")
     repository = normalize_repository(
-        source.get("repository"), f"{platform} provenance source repository"
+        source.get("repository"), f"{target} provenance source repository"
     )
     qt = value.get("qt")
     if not isinstance(qt, dict):
-        fail(f"{platform} provenance.qt must be an object")
+        fail(f"{target} provenance.qt must be an object")
     corresponding_source = qt.get("correspondingSource")
     if not isinstance(corresponding_source, dict):
-        fail(f"{platform} provenance Qt corresponding-source binding is missing")
+        fail(f"{target} provenance Qt corresponding-source binding is missing")
     expected_source = expected_qt_source_contract()
     if set(corresponding_source) != set(expected_source) | {"bundleSha256"}:
         fail(
-            f"{platform} provenance Qt corresponding-source keys differ "
+            f"{target} provenance Qt corresponding-source keys differ "
             "from the release contract"
         )
     contract_without_bundle = {
@@ -194,11 +220,11 @@ def provenance_identity(
     }
     if not qt_sdk.json_exact_equal(contract_without_bundle, expected_source):
         fail(
-            f"{platform} provenance Qt corresponding-source contract differs "
+            f"{target} provenance Qt corresponding-source contract differs "
             "from the release checkout"
         )
     if corresponding_source.get("bundleSha256") != qt_bundle_sha256:
-        fail(f"{platform} provenance Qt source bundle digest is stale")
+        fail(f"{target} provenance Qt source bundle digest is stale")
     return repository
 
 
@@ -219,32 +245,120 @@ def _plan(
         fail(str(error))
 
 
-def platform_package_fingerprints(plan) -> dict[str, AssetFingerprint]:
+def target_package_fingerprints(
+    plan,
+    *,
+    version: str,
+) -> dict[str, AssetFingerprint]:
     packages: dict[str, AssetFingerprint] = {}
-    for platform in unsigned_canary.PLATFORMS:
+    for target_name in unsigned_canary.TARGETS:
+        target = release_targets.TARGET_BY_NAME[target_name]
         rows = [
             item
-            for item in plan.platforms[platform].package_files
+            for item in plan.targets[target_name].package_files
             if stager.package_description(item.name) is not None
         ]
         signatures = [
             item
-            for item in plan.platforms[platform].package_files
+            for item in plan.targets[target_name].package_files
             if stager.signature_description(item.name) is not None
         ]
         if signatures:
-            fail(f"{platform} unsigned canary must not include detached signatures")
+            fail(f"{target_name} unsigned canary must not include detached signatures")
         if len(rows) != 1:
-            fail(f"{platform} unsigned canary must contain exactly one package")
+            fail(f"{target_name} unsigned canary must contain exactly one package")
         row = rows[0]
-        packages[platform] = AssetFingerprint(
+        try:
+            unsigned_canary.validate_package_filename(
+                row.name,
+                target_name,
+                version,
+            )
+        except unsigned_canary.UnsignedCanaryPolicyError as error:
+            fail(f"{target_name} unsigned canary package: {error}")
+        packages[target_name] = AssetFingerprint(
             filename=row.name,
             size_bytes=row.size_bytes,
             sha256=row.sha256,
             kind="package",
-            platform=platform,
+            target=target_name,
+            platform=target.platform,
         )
     return packages
+
+
+def verify_target_release_metadata(
+    directory: Path,
+    plan,
+    *,
+    target_name: str,
+    version: str,
+    commit: str,
+) -> None:
+    target = release_targets.TARGET_BY_NAME[target_name]
+    names = stager.METADATA_FILENAMES[target_name]
+    metadata_names = set(names.values())
+    artifact_paths = [
+        item.path
+        for item in plan.targets[target_name].package_files
+        if item.name not in metadata_names
+    ]
+    packages = sorted(
+        (
+            path
+            for path in artifact_paths
+            if release_metadata.package_format(path.name) != "unknown"
+        ),
+        key=lambda path: path.name,
+    )
+    signatures = sorted(
+        (
+            path
+            for path in artifact_paths
+            if release_metadata.signature_suffix(path.name) is not None
+        ),
+        key=lambda path: path.name,
+    )
+    artifacts = release_metadata.artifact_rows(packages, signatures)
+    try:
+        source_version, _ = (
+            release_metadata.release_version.validated_source_version(
+                REPOSITORY_ROOT
+            )
+        )
+        release_metadata.verify_platform_package_shape(artifacts, target)
+        release_metadata.verify_checksums(directory, artifacts, names)
+        provenance, distribution_version, prerelease = (
+            release_metadata.verify_provenance(
+                directory,
+                "release",
+                artifacts,
+                True,
+                target,
+                names,
+                REPOSITORY_ROOT,
+                commit,
+                source_version,
+                version,
+            )
+        )
+        release_metadata.verify_distribution_package_shape(
+            packages,
+            target,
+            distribution_version,
+            prerelease,
+        )
+        release_metadata.verify_sbom(
+            directory,
+            artifacts,
+            provenance["source"]["commit"],
+            source_version,
+            distribution_version,
+            target,
+            names,
+        )
+    except (SystemExit, qt_sdk.QtSdkError) as error:
+        fail(f"{target_name} release metadata is invalid: {error}")
 
 
 def verify_core_assets(
@@ -283,21 +397,29 @@ def verify_core_assets(
         require_receipts=require_receipts,
         require_finalization=require_finalization,
     )
-    packages = platform_package_fingerprints(plan)
+    packages = target_package_fingerprints(plan, version=version)
     bundle = files[QT_SOURCE_BUNDLE]
     checksum = files[QT_SOURCE_CHECKSUM]
     qt_verifier(bundle, checksum)
     qt_digest = stager.fingerprint_file(bundle).sha256
+    for target_name in unsigned_canary.TARGETS:
+        verify_target_release_metadata(
+            directory,
+            plan,
+            target_name=target_name,
+            version=version,
+            commit=commit,
+        )
 
     repositories = {
         provenance_identity(
-            files[stager.METADATA_FILENAMES[platform]["provenance"]],
-            platform=platform,
+            files[stager.METADATA_FILENAMES[target_name]["provenance"]],
+            target=target_name,
             version=version,
             commit=commit,
             qt_bundle_sha256=qt_digest,
         )
-        for platform in unsigned_canary.PLATFORMS
+        for target_name in unsigned_canary.TARGETS
     }
     if len(repositories) != 1:
         fail("platform provenance repositories do not agree")
@@ -311,13 +433,17 @@ def verify_core_assets(
         if not isinstance(release_id, int) or isinstance(release_id, bool) or release_id <= 0:
             fail("release ID must be a positive integer")
         asset_ids: set[int] = set()
-        for platform, package in packages.items():
-            receipt_name = unsigned_canary.RECEIPT_FILENAMES[platform]
-            receipt = read_json(files[receipt_name], f"{platform} unsigned receipt")
+        for target_name, package in packages.items():
+            target = release_targets.TARGET_BY_NAME[target_name]
+            receipt_name = unsigned_canary.RECEIPT_FILENAMES[target_name]
+            receipt = read_json(
+                files[receipt_name], f"{target_name} unsigned receipt"
+            )
             try:
                 unsigned_canary.validate_receipt_document(
                     receipt,
-                    expected_platform=platform,
+                    expected_target=target_name,
+                    expected_platform=target.platform,
                     expected_package=unsigned_canary.FileFingerprint(
                         filename=package.filename,
                         size_bytes=package.size_bytes,
@@ -329,12 +455,15 @@ def verify_core_assets(
                     expected_repository=repository,
                 )
             except unsigned_canary.UnsignedCanaryPolicyError as error:
-                fail(f"{platform} unsigned receipt is invalid: {error}")
+                fail(f"{target_name} unsigned receipt is invalid: {error}")
             release = receipt["release"]
             asset = receipt["asset"]
             assert isinstance(release, dict) and isinstance(asset, dict)
             if release.get("id") != release_id:
-                fail(f"{platform} receipt release ID does not match requested release")
+                fail(
+                    f"{target_name} receipt release ID does not match "
+                    "requested release"
+                )
             asset_id = asset.get("id")
             assert isinstance(asset_id, int)
             if asset_id in asset_ids:
@@ -367,9 +496,10 @@ def classify_assets(
     files: Mapping[str, Path],
 ) -> list[AssetFingerprint]:
     result: list[AssetFingerprint] = []
-    for platform in unsigned_canary.PLATFORMS:
-        metadata = stager.METADATA_FILENAMES[platform]
-        for item in plan.platforms[platform].package_files:
+    for target_name in unsigned_canary.TARGETS:
+        target = release_targets.TARGET_BY_NAME[target_name]
+        metadata = stager.METADATA_FILENAMES[target_name]
+        for item in plan.targets[target_name].package_files:
             if stager.package_description(item.name) is not None:
                 kind = "package"
             elif item.name == metadata["checksums"]:
@@ -379,26 +509,28 @@ def classify_assets(
             elif item.name == metadata["provenance"]:
                 kind = "provenance"
             else:
-                fail(f"unsupported unsigned-canary platform asset: {item.name}")
+                fail(f"unsupported unsigned-canary target asset: {item.name}")
             result.append(
                 AssetFingerprint(
                     filename=item.name,
                     size_bytes=item.size_bytes,
                     sha256=item.sha256,
                     kind=kind,
-                    platform=platform,
+                    target=target_name,
+                    platform=target.platform,
                 )
             )
-        receipt = plan.platforms[platform].receipt
+        receipt = plan.targets[target_name].receipt
         if receipt is None:
-            fail(f"missing {platform} unsigned-canary receipt")
+            fail(f"missing {target_name} unsigned-canary receipt")
         result.append(
             AssetFingerprint(
                 filename=receipt.name,
                 size_bytes=receipt.size_bytes,
                 sha256=receipt.sha256,
                 kind="unsigned-canary-verification",
-                platform=platform,
+                target=target_name,
+                platform=target.platform,
             )
         )
     result.extend(
@@ -441,6 +573,7 @@ def inventory_document(
                 "sizeBytes": item.size_bytes,
                 "sha256": item.sha256,
                 "kind": item.kind,
+                **({"target": item.target} if item.target is not None else {}),
                 **({"platform": item.platform} if item.platform is not None else {}),
             }
             for item in assets
@@ -559,7 +692,10 @@ def verify_complete_assets(
         files[INVENTORY_FILENAME], "canary release inventory"
     )
     if actual_inventory != expected_inventory:
-        fail("canary release inventory does not describe the exact 17-asset set")
+        fail(
+            "canary release inventory does not describe the exact "
+            f"{PREFINAL_ASSET_COUNT}-asset set"
+        )
     inventory_fingerprint = fingerprint(
         files[INVENTORY_FILENAME], kind="release-inventory"
     )
@@ -585,7 +721,10 @@ def verify_complete_assets(
             fail(f"duplicate aggregate checksum row for {filename}")
         actual_rows[filename] = digest
     if actual_rows != expected_rows:
-        fail("aggregate checksums do not bind the exact 18 preceding assets")
+        fail(
+            "aggregate checksums do not bind the exact "
+            f"{PREFINAL_ASSET_COUNT + 1} preceding assets"
+        )
     if len(files) != COMPLETE_ASSET_COUNT:
         fail(f"complete canary namespace must contain exactly {COMPLETE_ASSET_COUNT} assets")
 
@@ -603,12 +742,20 @@ def argument_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     base = subparsers.add_parser(
-        "verify-base", help="Verify exactly 14 build and Qt-source assets"
+        "verify-base",
+        help=f"Verify exactly {BASE_ASSET_COUNT} build and Qt-source assets",
     )
     add_identity_arguments(base)
     for name, help_text in (
-        ("finalize", "Verify 17 pre-final assets and create inventory/checksums"),
-        ("verify-complete", "Verify the exact final 19-asset namespace"),
+        (
+            "finalize",
+            f"Verify {PREFINAL_ASSET_COUNT} pre-final assets and "
+            "create inventory/checksums",
+        ),
+        (
+            "verify-complete",
+            f"Verify the exact final {COMPLETE_ASSET_COUNT}-asset namespace",
+        ),
     ):
         command = subparsers.add_parser(name, help=help_text)
         add_identity_arguments(command)

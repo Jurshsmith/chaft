@@ -12,9 +12,9 @@ draft: false
 
 Chaft Desktop is a Qt 6/QML application backed by the Rust `chaft-ffi` library.
 The build is suitable for development and evaluation, not as a substitute for
-an official signed release. The current release-input workflow targets x86_64
-Linux, macOS, and Windows; other local host architectures may build, but they
-are not part of that release contract yet.
+an official signed release. The release-input workflow has four exact native
+targets: Windows x86-64, macOS Intel, macOS Apple Silicon, and Linux x86-64.
+Rosetta is not the supported Apple Silicon build path.
 
 Return to the [public guide index](../index.md), or continue with the
 [workspace lifecycle](workspace-lifecycle.md) after the app launches.
@@ -28,20 +28,29 @@ Install these on every platform:
 - CMake 3.28 or newer;
 - Ninja;
 - Python 3;
-- Qt 6.8.4 with the Network, QML, Quick, and Widgets components.
+- a Qt version allowed by the build mode described below.
 
-The automated builds use the open-source Qt 6.8.4 source release with pinned
-security patches. Keep `qt-cmake` or `qmake6` on `PATH`, or set `QT_ROOT_DIR`
-to the Qt installation prefix before running the repository scripts. The
-exact source inputs and SHA-256 digests are recorded in
-`packaging/qt/QT-CORRESPONDING-SOURCE.json`.
+Chaft deliberately has two Qt policies:
+
+- `developer` is a native macOS-only path tested with Homebrew Qt 6.11.1. The
+  accepted compatibility range is Qt 6.11.1 or newer within the 6.11 series,
+  and the Qt prefix must belong to Homebrew.
+- `release` requires exactly Chaft's verified, patched Qt 6.8.4 SDK for the
+  current target. The SDK identity, toolchain fingerprint, architecture, and
+  completed provenance must all verify. Homebrew Qt cannot enter this path.
+
+The automated package builds use the open-source Qt 6.8.4 source release with
+pinned security patches. The exact source inputs and SHA-256 digests are
+recorded in `packaging/qt/QT-CORRESPONDING-SOURCE.json`.
 
 Platform toolchains:
 
 - **Linux:** a C/C++ compiler and the Qt desktop development/QML packages.
   `patchelf` and the pinned `linuxdeploy` tools are needed for AppImage
   packaging, but not for a normal debug build.
-- **macOS:** Xcode command-line tools. Homebrew can provide CMake and Ninja.
+- **macOS:** a native terminal, Xcode command-line tools, and Homebrew. The
+  guided source build can install missing Homebrew formulae only after asking
+  for confirmation.
 - **Windows:** Visual Studio 2022 Build Tools with the Desktop development with
   C++ workload, an x64 MSVC developer environment, and Git Bash. Use the Qt
   `win64_msvc2022_64` build so Qt and the compiler ABI match.
@@ -53,15 +62,72 @@ back to an older patch release.
 
 ## Get the source
 
+Build a named tag or full commit supplied by a reviewed release or testing
+announcement. Do not use a moving `main` checkout as an immutable build input.
+
 ```sh
 git clone https://github.com/Jurshsmith/chaft.git
 cd chaft
+git fetch --tags --force
+
+tag=vX.Y.Z-canary.N
+commit=<published-full-40-character-commit>
+test "$(git rev-parse "refs/tags/${tag}^{commit}")" = "$commit"
+git checkout --detach "$commit"
 ```
 
 Commands below run from the repository root. On Windows, run the shell scripts
 from Git Bash launched inside an x64 MSVC developer environment.
 
+If the release announcement identifies the tag as cryptographically signed,
+also run `git verify-tag "$tag"` with the maintainer key you independently
+trust. A successful commit comparison does not by itself prove who created the
+tag. When a source archive and SHA-256 are published, compare them before
+extracting:
+
+```sh
+shasum -a 256 Chaft-source-vX.Y.Z-canary.N.tar.gz
+```
+
+Use only the digest published with that immutable release. If no reviewed
+commit and source checksum are available, wait rather than guessing a revision.
+
+## Guided macOS source build
+
+On a native Intel or Apple Silicon Mac, run:
+
+```sh
+tools/macos/build-local.sh --expected-commit "$commit"
+```
+
+The script checks Xcode command-line tools, Homebrew, Git, CMake, Ninja,
+Python, Rust, and the supported Homebrew Qt. It prints the exact proposed
+`brew install` command and asks before installing missing formulae. Use
+`--no-install-deps` to require a pre-provisioned machine. It never needs
+administrator privileges.
+
+The script builds and exercises the native app, verifies its name, icon,
+metadata, Mach-O architecture, and local ad-hoc signature, then installs:
+
+```text
+~/Applications/Chaft.app
+```
+
+At completion it prints the source commit, source state, Qt version,
+architecture, app path, and exact launch command. A cold build can take roughly
+30–60 minutes depending on the Mac and Homebrew cache; allow at least 10 GB of
+free disk for dependencies, Rust outputs, and the native app build. Later
+builds are normally faster.
+
+The resulting signature is only an ad-hoc signature created on that Mac. It is
+not Apple Developer ID signing, notarization, or Apple verification. Treat the
+app as a local technical-test build and do not redistribute it as a trusted
+binary.
+
 ## Check the toolchain
+
+The remaining commands use the strict release policy unless
+`CHAFT_QT_POLICY=developer` is explicitly selected on macOS.
 
 ```sh
 tools/desktop/preflight.sh
@@ -120,7 +186,8 @@ the packaging dependencies for the selected platform.
 
 ## Build a local package
 
-Create a release-mode package on the current native OS:
+Official release contributors can create a release-mode package after
+activating the exact verified Qt 6.8.4 SDK for the current target:
 
 ```sh
 tools/desktop/package.sh release
@@ -142,8 +209,10 @@ export CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE="$appimage_tools_dir/linuxdeploy-plugin
 tools/desktop/package.sh release
 ```
 
-These locally produced packages are unsigned development artifacts unless you
-separately perform and verify the platform’s release-signing process.
+This command intentionally rejects the Homebrew developer lane. Locally
+produced release-policy packages are still not public releases unless the
+platform signing, verification, immutable-release, and promotion workflows
+complete.
 
 Every package also includes Chaft's AGPL license, the Qt third-party notice,
 the LGPL and GPL license texts, and the exact Qt corresponding-source
@@ -158,9 +227,11 @@ by that manifest.
 
 ### Qt cannot be found
 
-Confirm that `qmake6 --version` reports exactly Qt 6.8.4. Put the matching Qt
-`bin` directory on `PATH` or set `QT_ROOT_DIR` to its installation prefix, then
-rerun `tools/desktop/preflight.sh`.
+For the guided macOS path, confirm that Homebrew's `qtpaths6 --qt-version`
+reports a supported Qt 6.11 release and rerun `tools/macos/build-local.sh`.
+For official packaging, activate the repository's exact target-specific Qt
+6.8.4 SDK; merely pointing `QT_ROOT_DIR` at another Qt installation is
+insufficient.
 
 ### The compiler and Qt do not match on Windows
 

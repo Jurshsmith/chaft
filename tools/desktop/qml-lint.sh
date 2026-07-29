@@ -9,7 +9,7 @@ chaft_desktop_add_tool_paths
 
 if ! command -v qmllint >/dev/null 2>&1; then
   printf 'missing required tool: qmllint\n' >&2
-  printf 'install Qt 6.8.4 QML tooling before linting apps/desktop-qt\n' >&2
+  printf 'install policy-compatible Qt QML tooling before linting apps/desktop-qt\n' >&2
   exit 1
 fi
 

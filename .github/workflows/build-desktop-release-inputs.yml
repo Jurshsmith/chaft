@@ -150,11 +150,11 @@ jobs:
           archive: true
 
   build:
-    name: Build ${{ matrix.name }} release input
+    name: Build ${{ matrix.display-name }} release input
     needs:
       - validate
       - qt_source_bundle
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     # A cache miss compiles Qt and the release package on one runner. Cache-hit
     # runs retain their normal target; 180 minutes is the exceptional cold path.
     timeout-minutes: 180
@@ -162,26 +162,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            os: ubuntu-22.04
-            qt-platform: linux
-            package-platform: Linux
-            artifact-prefix: checksummed-linux-x86_64-release-input
-            smoke-timeout-ms: ""
-          - name: macOS
-            os: macos-15-intel
-            qt-platform: macos
-            package-platform: macOS
-            artifact-prefix: unsigned-macos-x86_64-release-input
-            smoke-timeout-ms: ""
-          - name: Windows
-            os: windows-2022
-            qt-platform: windows
+          - target: windows-x86_64
+            display-name: Windows x86-64
+            runner: windows-2022
+            architecture: x86_64
             package-platform: Windows
             artifact-prefix: unsigned-windows-x86_64-release-input
             # A cold offscreen QML activation can block the hosted runner's
             # event loop for longer than the portable 15-second default.
             smoke-timeout-ms: "60000"
+          - target: macos-x86_64
+            display-name: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            package-platform: macOS
+            artifact-prefix: unsigned-macos-x86_64-release-input
+            smoke-timeout-ms: ""
+          - target: macos-arm64
+            display-name: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            package-platform: macOS
+            artifact-prefix: unsigned-macos-arm64-release-input
+            smoke-timeout-ms: ""
+          - target: linux-x86_64
+            display-name: Linux x86-64
+            runner: ubuntu-22.04
+            architecture: x86_64
+            package-platform: Linux
+            artifact-prefix: checksummed-linux-x86_64-release-input
+            smoke-timeout-ms: ""
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -240,11 +250,11 @@ jobs:
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.target }}" \
             --output "${contract}"
           identity="$(
             python3 tools/qt/build_qt.py identity \
-              --platform "${{ matrix.qt-platform }}" \
+              --target "${{ matrix.target }}" \
               --toolchain-contract "${contract}"
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -261,7 +271,7 @@ jobs:
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py build
-          --platform "${{ matrix.qt-platform }}"
+          --target "${{ matrix.target }}"
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
@@ -274,7 +284,7 @@ jobs:
             --github-env "$GITHUB_ENV" \
             --github-path "$GITHUB_PATH"
           python3 tools/qt/build_qt.py verify \
-            --platform "${{ matrix.qt-platform }}" \
+            --target "${{ matrix.target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
             --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
@@ -309,6 +319,7 @@ jobs:
 
       - name: Build and verify release package
         env:
+          CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
           CHAFT_RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
           CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ matrix.smoke-timeout-ms }}
           CHAFT_QT_SOURCE_BUNDLE_SHA256: ${{ needs.qt_source_bundle.outputs.bundle_sha256 }}
@@ -319,7 +330,7 @@ jobs:
             --stage package \
             "${{ matrix.package-platform }}"
           python3 tools/desktop/verify-release-metadata.py release \
-            --platform "${{ matrix.package-platform }}" \
+            --target "${{ matrix.target }}" \
             --expected-commit "$EXPECTED_COMMIT" \
             --require-clean
 
@@ -334,25 +345,36 @@ jobs:
           archive: true
 
   clean-package-smoke:
-    name: Clean ${{ matrix.name }} package smoke
+    name: Clean ${{ matrix.display-name }} package smoke
     needs:
       - validate
       - build
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            os: ubuntu-22.04
-            artifact-prefix: checksummed-linux-x86_64-release-input
-          - name: macOS
-            os: macos-15-intel
-            artifact-prefix: unsigned-macos-x86_64-release-input
-          - name: Windows
-            os: windows-2022
+          - target: windows-x86_64
+            display-name: Windows x86-64
+            runner: windows-2022
+            architecture: x86_64
             artifact-prefix: unsigned-windows-x86_64-release-input
+          - target: macos-x86_64
+            display-name: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            artifact-prefix: unsigned-macos-x86_64-release-input
+          - target: macos-arm64
+            display-name: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            artifact-prefix: unsigned-macos-arm64-release-input
+          - target: linux-x86_64
+            display-name: Linux x86-64
+            runner: ubuntu-22.04
+            architecture: x86_64
+            artifact-prefix: checksummed-linux-x86_64-release-input
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -380,6 +402,8 @@ jobs:
 
       - name: Smoke macOS DMG without build dependencies
         if: runner.os == 'macOS'
+        env:
+          CHAFT_EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
         run: tools/desktop/macos-dmg-smoke.sh build/clean-package
 
       - name: Smoke Windows ZIP without build dependencies
@@ -454,25 +478,32 @@ jobs:
           path: build/release-input-audit/context
           digest-mismatch: error
 
-      - name: Download Linux release input
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: checksummed-linux-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
-          path: build/release-input-audit/linux
-          digest-mismatch: error
-
-      - name: Download macOS release input
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: unsigned-macos-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
-          path: build/release-input-audit/macos
-          digest-mismatch: error
-
-      - name: Download Windows release input
+      - name: Download Windows x86-64 release input
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: unsigned-windows-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
-          path: build/release-input-audit/windows
+          path: build/release-input-audit/windows-x86_64
+          digest-mismatch: error
+
+      - name: Download macOS Intel release input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-macos-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/macos-x86_64
+          digest-mismatch: error
+
+      - name: Download macOS Apple Silicon release input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-macos-arm64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/macos-arm64
+          digest-mismatch: error
+
+      - name: Download Linux x86-64 release input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: checksummed-linux-x86_64-release-input-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.commit }}
+          path: build/release-input-audit/linux-x86_64
           digest-mismatch: error
 
       - name: Download Qt corresponding source
@@ -509,10 +540,19 @@ jobs:
           if context != revalidated:
               raise SystemExit("release context differs from the audited checkout")
           '
-          for platform in linux macos windows; do
+          for target in \
+            windows-x86_64 \
+            macos-x86_64 \
+            macos-arm64 \
+            linux-x86_64
+          do
+            if [[ ! -d "build/release-input-audit/$target" ]]; then
+              echo "::error::Missing audited release-input bundle for $target."
+              exit 1
+            fi
             python3 tools/desktop/verify-release-metadata.py release \
-              --package-dir "build/release-input-audit/$platform" \
-              --platform "$platform" \
+              --package-dir "build/release-input-audit/$target" \
+              --target "$target" \
               --expected-commit "$EXPECTED_COMMIT" \
               --require-clean \
               --qt-source-bundle \

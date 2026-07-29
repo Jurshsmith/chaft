@@ -444,7 +444,7 @@ for required_destination in (
     if required_destination not in cmake:
         fail(f"CMake install rules omit package notice destination: {required_destination}")
 for required_package_name in (
-    "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-x86_64",
+    "Chaft-${CHAFT_DISTRIBUTION_VERSION}-macOS-${CHAFT_MACOS_ARCHITECTURE}",
     "Chaft-${CHAFT_DISTRIBUTION_VERSION}-Windows-x86_64",
 ):
     if required_package_name not in cmake:
