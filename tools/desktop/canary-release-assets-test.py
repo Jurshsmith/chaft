@@ -6,10 +6,12 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 TOOLS = Path(__file__).resolve().parent
@@ -246,6 +248,12 @@ def write_target(assets: Path, target_name: str, qt_sha256: str) -> None:
                 "repository": f"git@github.com:{REPOSITORY}.git",
                 "dirty": False,
             },
+            "github": {
+                "GITHUB_REPOSITORY": REPOSITORY,
+                "GITHUB_RUN_ID": "200",
+                "GITHUB_SHA": COMMIT,
+                "CHAFT_RELEASE_COMMIT": COMMIT,
+            },
             "qt": qt_release_binding(target_name, qt_sha256),
             "materials": materials,
             "artifacts": [row],
@@ -308,14 +316,55 @@ class CanaryReleaseAssetsTests(unittest.TestCase):
 
     def test_verifies_exact_18_asset_base(self) -> None:
         self.assertEqual(policy.TARGETS, EXPECTED_TARGETS)
-        assets_tool.verify_base_assets(
-            self.assets,
-            version=VERSION,
-            tag=TAG,
-            commit=COMMIT,
-            qt_verifier=self.qt_verifier,
-        )
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            assets_tool.verify_base_assets(
+                self.assets,
+                version=VERSION,
+                tag=TAG,
+                commit=COMMIT,
+                qt_verifier=self.qt_verifier,
+            )
         self.assertEqual(len(list(self.assets.iterdir())), 18)
+
+    def test_ci_rejects_missing_github_provenance_context(self) -> None:
+        names = assets_tool.stager.METADATA_FILENAMES["windows-x86_64"]
+        provenance_path = self.assets / names["provenance"]
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        del provenance["github"]
+        write_json(provenance_path, provenance)
+
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with self.assertRaisesRegex(
+                assets_tool.CanaryReleaseAssetError,
+                "CI provenance is missing github context",
+            ):
+                assets_tool.verify_base_assets(
+                    self.assets,
+                    version=VERSION,
+                    tag=TAG,
+                    commit=COMMIT,
+                    qt_verifier=self.qt_verifier,
+                )
+
+    def test_ci_rejects_mismatched_release_commit_context(self) -> None:
+        names = assets_tool.stager.METADATA_FILENAMES["windows-x86_64"]
+        provenance_path = self.assets / names["provenance"]
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["github"]["CHAFT_RELEASE_COMMIT"] = "b" * 40
+        write_json(provenance_path, provenance)
+
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            with self.assertRaisesRegex(
+                assets_tool.CanaryReleaseAssetError,
+                "CHAFT_RELEASE_COMMIT does not match the expected release commit",
+            ):
+                assets_tool.verify_base_assets(
+                    self.assets,
+                    version=VERSION,
+                    tag=TAG,
+                    commit=COMMIT,
+                    qt_verifier=self.qt_verifier,
+                )
 
     def test_base_rejects_noncanonical_target_package_filename(self) -> None:
         target_name = "macos-arm64"
