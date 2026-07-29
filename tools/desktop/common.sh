@@ -137,7 +137,7 @@ chaft_desktop_binary_candidates() {
     "$repo_root/build/$preset"
   do
     printf '%s\n' \
-      "$base/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+      "$base/Chaft.app/Contents/MacOS/Chaft" \
       "$base/ChaftDesktop.exe" \
       "$base/ChaftDesktop"
   done
@@ -149,7 +149,7 @@ chaft_desktop_installed_binary_candidates() {
   install_root="$repo_root/build/$preset/install"
 
   printf '%s\n' \
-    "$install_root/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+    "$install_root/Chaft.app/Contents/MacOS/Chaft" \
     "$install_root/bin/ChaftDesktop.exe" \
     "$install_root/bin/ChaftDesktop" \
     "$install_root/ChaftDesktop.exe" \
@@ -165,7 +165,7 @@ chaft_desktop_find_binary() {
     "$repo_root/build/$preset"
   do
     for candidate in \
-      "$base/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+      "$base/Chaft.app/Contents/MacOS/Chaft" \
       "$base/ChaftDesktop.exe" \
       "$base/ChaftDesktop"
     do
@@ -220,7 +220,7 @@ chaft_desktop_find_installed_binary() {
   preset="$2"
 
   for candidate in \
-    "$repo_root/build/$preset/install/ChaftDesktop.app/Contents/MacOS/ChaftDesktop" \
+    "$repo_root/build/$preset/install/Chaft.app/Contents/MacOS/Chaft" \
     "$repo_root/build/$preset/install/bin/ChaftDesktop.exe" \
     "$repo_root/build/$preset/install/bin/ChaftDesktop" \
     "$repo_root/build/$preset/install/ChaftDesktop.exe" \

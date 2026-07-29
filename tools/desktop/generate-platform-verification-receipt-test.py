@@ -336,10 +336,18 @@ class NativeReceiptTests(unittest.TestCase):
                 mountpoint = Path(call[call.index("-mountpoint") + 1])
                 contents = mountpoint / "Chaft.app" / "Contents"
                 (contents / "MacOS").mkdir(parents=True)
+                (contents / "Resources").mkdir()
                 (contents / "Info.plist").write_bytes(
-                    plistlib.dumps({"CFBundleExecutable": "Chaft"})
+                    plistlib.dumps(
+                        {
+                            "CFBundleName": "Chaft",
+                            "CFBundleExecutable": "Chaft",
+                            "CFBundleIconFile": "Chaft.icns",
+                        }
+                    )
                 )
                 (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
+                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
                 plist = plistlib.dumps(
                     {"system-entities": [{"mount-point": str(mountpoint)}]}
                 ).decode()
@@ -380,10 +388,18 @@ class NativeReceiptTests(unittest.TestCase):
                 app = mountpoint / "Chaft.app"
                 contents = app / "Contents"
                 (contents / "MacOS").mkdir(parents=True)
+                (contents / "Resources").mkdir()
                 (contents / "Info.plist").write_bytes(
-                    plistlib.dumps({"CFBundleExecutable": "Chaft"})
+                    plistlib.dumps(
+                        {
+                            "CFBundleName": "Chaft",
+                            "CFBundleExecutable": "Chaft",
+                            "CFBundleIconFile": "Chaft.icns",
+                        }
+                    )
                 )
                 (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
+                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
                 return native.CommandResult(
                     0,
                     plistlib.dumps(
@@ -440,10 +456,18 @@ class NativeReceiptTests(unittest.TestCase):
                 mountpoint = Path(call[call.index("-mountpoint") + 1])
                 contents = mountpoint / "Chaft.app" / "Contents"
                 (contents / "MacOS").mkdir(parents=True)
+                (contents / "Resources").mkdir()
                 (contents / "Info.plist").write_bytes(
-                    plistlib.dumps({"CFBundleExecutable": "Chaft"})
+                    plistlib.dumps(
+                        {
+                            "CFBundleName": "Chaft",
+                            "CFBundleExecutable": "Chaft",
+                            "CFBundleIconFile": "Chaft.icns",
+                        }
+                    )
                 )
                 (contents / "MacOS" / "Chaft").write_bytes(b"Mach-O fixture")
+                (contents / "Resources" / "Chaft.icns").write_bytes(b"icon fixture")
                 return native.CommandResult(
                     0,
                     plistlib.dumps(

@@ -73,6 +73,17 @@ qt_add_executable(ChaftDesktop
     src/main.cpp
 )
 
+if(APPLE)
+    set(CHAFT_MACOS_ICON
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Chaft.icns"
+    )
+    set_source_files_properties(
+        "${CHAFT_MACOS_ICON}"
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources"
+    )
+    target_sources(ChaftDesktop PRIVATE "${CHAFT_MACOS_ICON}")
+endif()
+
 target_compile_definitions(ChaftDesktop PRIVATE
     CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"
 )
@@ -113,9 +124,15 @@ set_target_properties(ChaftDesktop PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "Chaft"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_GUI_IDENTIFIER "app.chaft.desktop"
+    MACOSX_BUNDLE_ICON_FILE "Chaft.icns"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     WIN32_EXECUTABLE TRUE
 )
+if(APPLE)
+    set_target_properties(ChaftDesktop PROPERTIES
+        OUTPUT_NAME "Chaft"
+    )
+endif()
 
 qt_add_qml_module(ChaftDesktop
     URI Chaft
@@ -269,7 +286,7 @@ set(CHAFT_FFI_LIBRARY_PATH "" CACHE FILEPATH "Path to the built chaft-ffi dynami
 if(CHAFT_FFI_LIBRARY_PATH)
     if(APPLE)
         install(FILES "${CHAFT_FFI_LIBRARY_PATH}"
-            DESTINATION "ChaftDesktop.app/Contents/MacOS"
+            DESTINATION "Chaft.app/Contents/MacOS"
         )
     elseif(UNIX)
         install(FILES "${CHAFT_FFI_LIBRARY_PATH}"
@@ -306,7 +323,7 @@ set(CHAFT_PACKAGE_DOCUMENTATION
 )
 if(APPLE)
     set(CHAFT_PACKAGE_DOCUMENTATION_DESTINATION
-        "ChaftDesktop.app/Contents/Resources/doc/Chaft"
+        "Chaft.app/Contents/Resources/doc/Chaft"
     )
 else()
     set(CHAFT_PACKAGE_DOCUMENTATION_DESTINATION

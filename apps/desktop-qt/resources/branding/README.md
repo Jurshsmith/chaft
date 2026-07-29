@@ -7,6 +7,8 @@ approved mark and wordmark directly.
 Runtime use:
 
 - `chaft-mark.png`: transparent primary mark and application icon.
+- `../macos/Chaft.icns`: macOS application icon generated from the primary
+  mark, with native icon representations from 16 through 1024 pixels.
 - `chaft-wordmark.png`: transparent horizontal wordmark for light surfaces.
 - `chaft-avatar-light.png` and `chaft-avatar-dark.png`: square presentation
   variants for light and dark contexts.

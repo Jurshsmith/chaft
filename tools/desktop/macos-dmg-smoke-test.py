@@ -50,8 +50,9 @@ class MacosDmgSmokeTests(unittest.TestCase):
         (self.package_dir / "Chaft-0.1.0-macOS-x86_64.dmg").write_bytes(
             b"fake dmg"
         )
-        self.app = self.volume / "ChaftDesktop.app"
-        self.binary = self.app / "Contents" / "MacOS" / "ChaftDesktop"
+        self.app = self.volume / "Chaft.app"
+        self.binary = self.app / "Contents" / "MacOS" / "Chaft"
+        self.icon = self.app / "Contents" / "Resources" / "Chaft.icns"
         self.compliance = (
             self.app / "Contents" / "Resources" / "doc" / "Chaft"
         )
@@ -61,11 +62,15 @@ class MacosDmgSmokeTests(unittest.TestCase):
         (self.app / "Contents" / "Info.plist").write_bytes(
             plistlib.dumps(
                 {
+                    "CFBundleName": "Chaft",
+                    "CFBundleExecutable": "Chaft",
+                    "CFBundleIconFile": "Chaft.icns",
                     "CFBundleShortVersionString": "0.1.0",
                     "CFBundleVersion": "0.1.0",
                 }
             )
         )
+        self.icon.write_bytes(b"synthetic Chaft icon")
         (
             self.app
             / "Contents"
@@ -219,7 +224,7 @@ class MacosDmgSmokeTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("portable macOS DMG smoke passed", completed.stdout)
         launched_path = self.receipt.read_text(encoding="utf-8").strip()
-        self.assertIn("/portable package/ChaftDesktop-dmg-smoke/", launched_path)
+        self.assertIn("/portable package/Chaft-dmg-smoke/", launched_path)
         self.assertNotIn(str(self.volume), launched_path)
         self.assertEqual(
             self.hdiutil_log.read_text(encoding="utf-8").splitlines()[0].split(
@@ -234,11 +239,32 @@ class MacosDmgSmokeTests(unittest.TestCase):
         copied_from, copied_to = self.ditto_log.read_text(
             encoding="utf-8"
         ).strip().split("|", 1)
-        self.assertIn("/mounted dmg/ChaftDesktop.app", copied_from)
+        self.assertIn("/mounted dmg/Chaft.app", copied_from)
         self.assertIn(
-            "/portable package/ChaftDesktop-dmg-smoke",
+            "/portable package/Chaft-dmg-smoke",
             copied_to,
         )
+
+    def test_rejects_missing_application_icon(self) -> None:
+        self.icon.unlink()
+        completed = self.run_smoke()
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("application icon is missing", completed.stderr)
+
+    def test_rejects_unpolished_application_bundle_name(self) -> None:
+        self.app.rename(self.volume / "ChaftDesktop.app")
+        completed = self.run_smoke()
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("expected macOS application bundle is missing", completed.stderr)
+
+    def test_rejects_icon_metadata_mismatch(self) -> None:
+        info_path = self.app / "Contents" / "Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info["CFBundleIconFile"] = ""
+        info_path.write_bytes(plistlib.dumps(info))
+        completed = self.run_smoke()
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("CFBundleIconFile must be", completed.stderr)
 
     def test_outer_watchdog_terminates_pre_event_loop_stall(self) -> None:
         self.write_executable(
@@ -328,7 +354,7 @@ class MacosDmgSmokeTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("portable macOS DMG smoke passed", completed.stdout)
         launched_path = self.receipt.read_text(encoding="utf-8").strip()
-        self.assertIn("/portable package/ChaftDesktop-dmg-smoke/", launched_path)
+        self.assertIn("/portable package/Chaft-dmg-smoke/", launched_path)
 
 
 if __name__ == "__main__":
