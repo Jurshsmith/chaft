@@ -21,6 +21,7 @@ VERIFY_APP = ROOT / "tools" / "macos" / "verify-local-app.sh"
 PREFLIGHT = ROOT / "tools" / "desktop" / "preflight.sh"
 CMAKE = ROOT / "apps" / "desktop-qt" / "CMakeLists.txt"
 PATH_SAFETY = ROOT / "tools" / "desktop" / "validate-safe-path.py"
+DESKTOP_COMMON = ROOT / "tools" / "desktop" / "common.sh"
 
 
 def executable(path: Path, body: str) -> None:
@@ -541,6 +542,48 @@ class MacosBuildLocalContracts(unittest.TestCase):
             )
             self.assertNotEqual(linked.returncode, 0)
             self.assertIn("symbolic-link component", linked.stderr)
+
+    def test_shell_path_classifier_accepts_native_absolute_paths(self) -> None:
+        classifier = textwrap.dedent(
+            """
+            . "$1"
+            shift
+            for candidate do
+              if chaft_desktop_path_is_absolute "$candidate"; then
+                printf 'absolute\\n'
+              else
+                printf 'relative\\n'
+              fi
+            done
+            """
+        )
+        completed = subprocess.run(
+            [
+                "sh",
+                "-c",
+                classifier,
+                "chaft-path-classifier-test",
+                str(DESKTOP_COMMON),
+                "/tmp/chaft/build",
+                "D:/a/chaft/build",
+                r"D:\a\chaft\build",
+                "D:drive-relative",
+                "build/desktop-release",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=completed.stdout + completed.stderr,
+        )
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            ["absolute", "absolute", "absolute", "relative", "relative"],
+        )
 
     def test_policy_and_safety_contracts_are_explicit(self) -> None:
         build_local = BUILD_LOCAL.read_text(encoding="utf-8")

@@ -44,10 +44,9 @@ distribution_version="$(
 qt_prefix="$(chaft_desktop_qt_prefix || true)"
 ffi_library_name="$(chaft_desktop_ffi_library_name)"
 build_dir="${CHAFT_DESKTOP_BUILD_DIR:-$repo_root/build/$preset}"
-case "$build_dir" in
-  /*) ;;
-  *) build_dir="$repo_root/$build_dir" ;;
-esac
+if ! chaft_desktop_path_is_absolute "$build_dir"; then
+  build_dir="$repo_root/$build_dir"
+fi
 if [ "$build_dir" = "/" ]; then
   printf 'desktop build directory must not be the filesystem root\n' >&2
   exit 2
@@ -58,10 +57,9 @@ build_dir="$(
     --description "desktop build directory"
 )"
 cargo_target_dir="${CARGO_TARGET_DIR:-$repo_root/target}"
-case "$cargo_target_dir" in
-  /*) ;;
-  *) cargo_target_dir="$repo_root/$cargo_target_dir" ;;
-esac
+if ! chaft_desktop_path_is_absolute "$cargo_target_dir"; then
+  cargo_target_dir="$repo_root/$cargo_target_dir"
+fi
 if [ "$cargo_target_dir" = "/" ]; then
   printf 'Cargo target directory must not be the filesystem root\n' >&2
   exit 2

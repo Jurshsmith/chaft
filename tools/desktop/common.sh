@@ -1,5 +1,12 @@
 #!/usr/bin/env sh
 
+chaft_desktop_path_is_absolute() {
+  case "$1" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 chaft_desktop_path_prepend() {
   dir="$1"
   if [ -d "$dir" ]; then
