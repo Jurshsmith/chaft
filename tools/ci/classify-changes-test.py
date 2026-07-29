@@ -230,6 +230,30 @@ class PathClassificationTests(unittest.TestCase):
             {"desktop", "release_contract", "package"},
         )
 
+    def test_shared_path_safety_reaches_desktop_and_package_consumers(self) -> None:
+        result = self.classify("tools/desktop/validate-safe-path.py")
+        self.assertEqual(
+            enabled(result),
+            {"desktop_contract", "desktop", "release_contract", "package"},
+        )
+
+    def test_macos_local_tools_run_desktop_contracts_and_source_builds(self) -> None:
+        for path in (
+            "tools/macos/build-local-test.py",
+            "tools/macos/build-local.sh",
+            "tools/macos/verify-local-app.sh",
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(
+                    enabled(result),
+                    {"desktop_contract", "desktop"},
+                )
+
+    def test_release_target_contract_reaches_release_consumers(self) -> None:
+        result = self.classify("tools/desktop/release_targets.py")
+        self.assertEqual(enabled(result), {"release_contract", "package"})
+
     def test_qt_sdk_inputs_reach_every_qt_consumer_without_rust(self) -> None:
         for path in (
             "tools/qt/qt-6.8.4.json",
