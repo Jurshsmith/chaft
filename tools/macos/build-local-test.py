@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import platform as host_platform
 import plistlib
 import stat
 import subprocess
@@ -230,42 +229,19 @@ class MacosBuildLocalContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="chaft-qt-policy-test-") as name:
             root = Path(name)
             bin_dir, _ = self.qt_environment(root, "6.8.4")
-            system = host_platform.system()
-            machine = host_platform.machine().lower()
-            architecture = {
-                "amd64": "x86_64",
-                "x64": "x86_64",
-                "x86_64": "x86_64",
-                "aarch64": "arm64",
-                "arm64": "arm64",
-            }.get(machine)
-            platform_name = {
-                "Darwin": "macos",
-                "Linux": "linux",
-                "Windows": "windows",
-            }.get(system)
-            if platform_name is None or architecture is None:
-                self.skipTest(
-                    f"no deterministic Qt release target for {system} {machine}"
-                )
-            if platform_name in {"linux", "windows"} and architecture != "x86_64":
-                self.skipTest(
-                    f"no deterministic Qt release target for {platform_name}-{architecture}"
-                )
-            uname_system = "MINGW64_NT" if system == "Windows" else system
             executable(
                 bin_dir / "uname",
                 textwrap.dedent(
-                    f"""
-                    case "${{1:-}}" in
-                      -s) printf '%s\\n' '{uname_system}' ;;
-                      -m) printf '%s\\n' '{architecture}' ;;
-                      *) printf '%s\\n' '{uname_system}' ;;
+                    """
+                    case "${1:-}" in
+                      -s) printf '%s\\n' 'Darwin' ;;
+                      -m) printf '%s\\n' 'arm64' ;;
+                      *) printf '%s\\n' 'Darwin' ;;
                     esac
                     """
                 ),
             )
-            target = f"{platform_name}-{architecture}"
+            target = "macos-arm64"
             qt_prefix = root / "brew" / "Cellar" / "qtbase" / "6.8.4"
             fingerprint = "a" * 64
             identity = "qt-6.8.4-test"
@@ -276,14 +252,10 @@ class MacosBuildLocalContracts(unittest.TestCase):
                         "schemaVersion": 2,
                         "qtVersion": "6.8.4",
                         "target": target,
-                        "platform": platform_name,
-                        "architecture": architecture,
+                        "platform": "macos",
+                        "architecture": "arm64",
                         "identity": identity,
                         "toolchainFingerprint": fingerprint,
-                        "targetSpecification": {
-                            "platform": platform_name,
-                            "architecture": architecture,
-                        },
                         "verification": {"completed": True},
                     }
                 ),
@@ -295,8 +267,8 @@ class MacosBuildLocalContracts(unittest.TestCase):
                 "QT_ROOT_DIR": str(qt_prefix),
                 "CHAFT_QT_SDK_BUILD_TYPE": "Release",
                 "CHAFT_QT_SDK_TARGET": target,
-                "CHAFT_QT_SDK_PLATFORM": platform_name,
-                "CHAFT_QT_SDK_ARCHITECTURE": architecture,
+                "CHAFT_QT_SDK_PLATFORM": "macos",
+                "CHAFT_QT_SDK_ARCHITECTURE": "arm64",
                 "CHAFT_QT_SDK_VERSION": "6.8.4",
                 "CHAFT_QT_SDK_IDENTITY": identity,
                 "CHAFT_QT_SDK_TOOLCHAIN_FINGERPRINT": fingerprint,
