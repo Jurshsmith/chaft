@@ -22,6 +22,7 @@ PREFLIGHT = ROOT / "tools" / "desktop" / "preflight.sh"
 CMAKE = ROOT / "apps" / "desktop-qt" / "CMakeLists.txt"
 PATH_SAFETY = ROOT / "tools" / "desktop" / "validate-safe-path.py"
 DESKTOP_COMMON = ROOT / "tools" / "desktop" / "common.sh"
+CI_GATES = ROOT / "tools" / "desktop" / "ci-gates.sh"
 
 
 def executable(path: Path, body: str) -> None:
@@ -589,6 +590,7 @@ class MacosBuildLocalContracts(unittest.TestCase):
         build_local = BUILD_LOCAL.read_text(encoding="utf-8")
         verifier = VERIFY_APP.read_text(encoding="utf-8")
         preflight = PREFLIGHT.read_text(encoding="utf-8")
+        ci_gates = CI_GATES.read_text(encoding="utf-8")
         cmake = CMAKE.read_text(encoding="utf-8")
         for option in (
             "--yes",
@@ -613,6 +615,12 @@ class MacosBuildLocalContracts(unittest.TestCase):
         self.assertIn("Signature=adhoc", verifier)
         self.assertIn("TeamIdentifier=not set", verifier)
         self.assertIn("CHAFT_QT_SDK_PROVENANCE", preflight)
+        self.assertRegex(
+            ci_gates,
+            r"run_package\(\) \{\n"
+            r"  CHAFT_QT_POLICY=release\n"
+            r"  export CHAFT_QT_POLICY",
+        )
         self.assertGreaterEqual(
             build_local.count("git rev-parse --verify HEAD^{commit}"),
             2,

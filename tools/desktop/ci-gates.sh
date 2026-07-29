@@ -110,6 +110,9 @@ run_debug() {
 }
 
 run_package() {
+  CHAFT_QT_POLICY=release
+  export CHAFT_QT_POLICY
+
   if [ "${CHAFT_DESKTOP_SKIP_PACKAGE:-0}" = "1" ]; then
     if [ "$stage" = "all" ]; then
       return
