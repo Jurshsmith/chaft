@@ -123,8 +123,12 @@ if [ "$app_count" -ne 1 ]; then
     "$dmg_path" "$app_count" >&2
   exit 1
 fi
-mounted_app="$(find "$dmg_mount_dir" -maxdepth 1 -type d -name '*.app' -print)"
-mounted_binary="$mounted_app/Contents/MacOS/ChaftDesktop"
+mounted_app="$dmg_mount_dir/Chaft.app"
+if [ ! -d "$mounted_app" ]; then
+  printf 'expected macOS application bundle is missing: %s\n' "$mounted_app" >&2
+  exit 1
+fi
+mounted_binary="$mounted_app/Contents/MacOS/Chaft"
 if [ ! -x "$mounted_binary" ]; then
   printf 'packaged macOS executable is missing: %s\n' "$mounted_binary" >&2
   exit 1
@@ -166,6 +170,18 @@ import sys
 
 with open(sys.argv[1], "rb") as handle:
     plist = plistlib.load(handle)
+expected = {
+    "CFBundleName": "Chaft",
+    "CFBundleExecutable": "Chaft",
+    "CFBundleIconFile": "Chaft.icns",
+}
+for key, expected_value in expected.items():
+    value = plist.get(key)
+    if value != expected_value:
+        raise SystemExit(
+            f"macOS package Info.plist {key} must be "
+            f"{expected_value!r}, got {value!r}"
+        )
 for key in ("CFBundleShortVersionString", "CFBundleVersion"):
     value = plist.get(key)
     if not isinstance(value, str) or not value:
@@ -173,6 +189,11 @@ for key in ("CFBundleShortVersionString", "CFBundleVersion"):
     print(value)
 PY
 )"
+bundle_icon="$mounted_app/Contents/Resources/Chaft.icns"
+if [ ! -s "$bundle_icon" ]; then
+  printf 'packaged macOS application icon is missing: %s\n' "$bundle_icon" >&2
+  exit 1
+fi
 short_version="$(printf '%s\n' "$plist_versions" | sed -n '1p')"
 bundle_version="$(printf '%s\n' "$plist_versions" | sed -n '2p')"
 if [ "$short_version" != "$source_version" ]; then
@@ -189,9 +210,9 @@ fi
 # Keep the full DMG-derived bundle, but avoid a .app suffix because direct
 # executable launches from .app bundles can be left launched-suspended by
 # some hosted macOS shells.
-portable_app="$portable_root/ChaftDesktop-dmg-smoke"
+portable_app="$portable_root/Chaft-dmg-smoke"
 ditto "$mounted_app" "$portable_app"
-desktop_binary="$portable_app/Contents/MacOS/ChaftDesktop"
+desktop_binary="$portable_app/Contents/MacOS/Chaft"
 if [ ! -x "$desktop_binary" ]; then
   printf 'copied macOS package executable is missing: %s\n' \
     "$desktop_binary" >&2

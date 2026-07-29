@@ -438,7 +438,7 @@ for required_file in PACKAGE_NOTICE_FILES:
     if required_file not in cmake:
         fail(f"CMake install rules omit package notice: {required_file}")
 for required_destination in (
-    "ChaftDesktop.app/Contents/Resources/doc/Chaft",
+    "Chaft.app/Contents/Resources/doc/Chaft",
     "${CMAKE_INSTALL_DATADIR}/doc/Chaft",
 ):
     if required_destination not in cmake:
@@ -451,6 +451,49 @@ for required_package_name in (
         fail(f"CMake omits distribution package name: {required_package_name}")
 if 'CHAFT_DESKTOP_VERSION="${PROJECT_VERSION}"' not in cmake:
     fail("native embedded desktop version must remain the stable source version")
+for required_macos_brand_contract in (
+    "resources/macos/Chaft.icns",
+    'MACOSX_PACKAGE_LOCATION "Resources"',
+    'MACOSX_BUNDLE_ICON_FILE "Chaft.icns"',
+    'OUTPUT_NAME "Chaft"',
+):
+    if required_macos_brand_contract not in cmake:
+        fail(
+            "CMake omits the macOS application brand contract: "
+            f"{required_macos_brand_contract}"
+        )
+
+macos_icon_path = ROOT / "apps" / "desktop-qt" / "resources" / "macos" / "Chaft.icns"
+macos_icon = macos_icon_path.read_bytes()
+if len(macos_icon) < 8 or macos_icon[:4] != b"icns":
+    fail("macOS application icon is not an ICNS file")
+if struct.unpack(">I", macos_icon[4:8])[0] != len(macos_icon):
+    fail("macOS application icon has an invalid container length")
+macos_icon_types = set()
+macos_icon_offset = 8
+while macos_icon_offset < len(macos_icon):
+    if macos_icon_offset + 8 > len(macos_icon):
+        fail("macOS application icon has a truncated element header")
+    element_type = macos_icon[macos_icon_offset : macos_icon_offset + 4]
+    element_length = struct.unpack(
+        ">I", macos_icon[macos_icon_offset + 4 : macos_icon_offset + 8]
+    )[0]
+    if element_length < 8 or macos_icon_offset + element_length > len(macos_icon):
+        fail("macOS application icon has an invalid element length")
+    macos_icon_types.add(element_type)
+    macos_icon_offset += element_length
+required_macos_icon_types = {
+    b"ic07",
+    b"ic08",
+    b"ic09",
+    b"ic10",
+    b"ic11",
+    b"ic12",
+    b"ic13",
+    b"ic14",
+}
+if not required_macos_icon_types.issubset(macos_icon_types):
+    fail("macOS application icon omits required native image representations")
 
 macos_codesign_option = "DEPLOY_TOOL_OPTIONS -codesign=-"
 macos_deploy_rule = "install(SCRIPT ${chaft_desktop_deploy_script})"
@@ -468,7 +511,7 @@ macos_sign_script = (
     ROOT / "tools" / "desktop" / "macos-adhoc-verify.cmake"
 ).read_text(encoding="utf-8")
 for required_contract in (
-    '"$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/ChaftDesktop.app"',
+    '"$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/Chaft.app"',
     '"/usr/bin/codesign"',
     'COMMAND "/bin/test" -x "${CHAFT_CODESIGN_EXECUTABLE}"',
     "--deep",
@@ -525,7 +568,9 @@ if "hdiutil" in package_smoke:
     fail("package smoke must not inspect a DMG and then launch staging bytes")
 for required_contract in (
     'ditto "$mounted_app" "$portable_app"',
-    'desktop_binary="$portable_app/Contents/MacOS/ChaftDesktop"',
+    'desktop_binary="$portable_app/Contents/MacOS/Chaft"',
+    'bundle_icon="$mounted_app/Contents/Resources/Chaft.icns"',
+    '"CFBundleIconFile": "Chaft.icns"',
     'hdiutil detach -quiet "$dmg_mount_dir"',
     "QT_QPA_PLATFORM=cocoa",
     'exec "$desktop_binary"',

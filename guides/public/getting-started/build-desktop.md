@@ -149,7 +149,7 @@ Every package also includes Chaft's AGPL license, the Qt third-party notice,
 the LGPL and GPL license texts, and the exact Qt corresponding-source
 manifest. They are installed under `usr/share/doc/Chaft` in the AppImage,
 `share/doc/Chaft` in the Windows ZIP, and
-`ChaftDesktop.app/Contents/Resources/doc/Chaft` in the macOS DMG.
+`Chaft.app/Contents/Resources/doc/Chaft` in the macOS DMG.
 For a public build, the immutable GitHub Release also carries the verified
 `Chaft-Qt-6.8.4-corresponding-source.zip` bundle and its `.sha256` file named
 by that manifest.

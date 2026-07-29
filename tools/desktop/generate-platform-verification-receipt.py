@@ -49,7 +49,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 
 SCHEMA_VERSION = "chaft.desktop.platform-verification.v1"
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.3.0"
 PLATFORMS = ("windows", "macos", "linux")
 VERIFICATION_TYPES = {
     "windows": "authenticode",
@@ -102,6 +102,9 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40,64}$")
 OPENPGP_FINGERPRINT_PATTERN = re.compile(r"^(?:[0-9A-F]{40}|[0-9A-F]{64})$")
 AUTHENTICODE_THUMBPRINT_PATTERN = re.compile(r"^(?:[0-9A-F]{40}|[0-9A-F]{64})$")
 APPLE_TEAM_ID_PATTERN = re.compile(r"^[A-Z0-9]{10}$")
+MACOS_APPLICATION_BUNDLE_NAME = "Chaft.app"
+MACOS_APPLICATION_EXECUTABLE_NAME = "Chaft"
+MACOS_APPLICATION_ICON_NAME = "Chaft.icns"
 WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -742,6 +745,11 @@ def parse_hdiutil_mount(stdout: str, expected_mountpoint: Path, package_name: st
 
 
 def application_executable(app: Path) -> Path:
+    if app.name != MACOS_APPLICATION_BUNDLE_NAME:
+        fail(
+            "macOS application bundle must be named "
+            f"{MACOS_APPLICATION_BUNDLE_NAME}: {app.name}"
+        )
     info_path = app / "Contents" / "Info.plist"
     if info_path.is_symlink() or not info_path.is_file():
         fail(f"application bundle has no regular Contents/Info.plist: {app.name}")
@@ -751,6 +759,21 @@ def application_executable(app: Path) -> Path:
         fail(f"application bundle has an invalid Info.plist ({app.name}): {error}")
     if not isinstance(info, dict):
         fail(f"application bundle Info.plist is not an object: {app.name}")
+    expected_info = {
+        "CFBundleName": "Chaft",
+        "CFBundleExecutable": MACOS_APPLICATION_EXECUTABLE_NAME,
+        "CFBundleIconFile": MACOS_APPLICATION_ICON_NAME,
+    }
+    for key, expected_value in expected_info.items():
+        value = info.get(key)
+        if value != expected_value:
+            fail(
+                f"application bundle {key} must be {expected_value!r}: "
+                f"{app.name}"
+            )
+    icon = app / "Contents" / "Resources" / MACOS_APPLICATION_ICON_NAME
+    if icon.is_symlink() or not icon.is_file() or icon.stat().st_size == 0:
+        fail(f"application bundle icon is missing or empty: {app.name}")
     executable_name = info.get("CFBundleExecutable")
     if (
         not isinstance(executable_name, str)

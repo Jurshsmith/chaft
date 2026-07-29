@@ -26,6 +26,7 @@ require_tool() {
 
 require_tool codesign
 require_tool hdiutil
+require_tool python3
 require_tool xcrun
 
 if [ -d "$input" ]; then
@@ -72,7 +73,36 @@ if [ "$app_count" -ne 1 ]; then
     "$dmg_path" "$app_count" >&2
   exit 1
 fi
-app_path="$(find "$mount_dir" -maxdepth 1 -type d -name '*.app' -print)"
+app_path="$mount_dir/Chaft.app"
+if [ ! -d "$app_path" ]; then
+  printf 'expected macOS application bundle is missing: %s\n' "$app_path" >&2
+  exit 1
+fi
+python3 - "$app_path/Contents/Info.plist" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    plist = plistlib.load(handle)
+
+expected = {
+    "CFBundleName": "Chaft",
+    "CFBundleExecutable": "Chaft",
+    "CFBundleIconFile": "Chaft.icns",
+}
+for key, expected_value in expected.items():
+    value = plist.get(key)
+    if value != expected_value:
+        raise SystemExit(
+            f"macOS package Info.plist {key} must be "
+            f"{expected_value!r}, got {value!r}"
+        )
+PY
+bundle_icon="$app_path/Contents/Resources/Chaft.icns"
+if [ ! -s "$bundle_icon" ]; then
+  printf 'packaged macOS application icon is missing: %s\n' "$bundle_icon" >&2
+  exit 1
+fi
 
 # Ad-hoc signing keeps a locally built bundle internally consistent but
 # carries no Apple trust identity. It must never be represented as Developer

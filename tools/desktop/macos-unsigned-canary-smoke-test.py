@@ -51,8 +51,21 @@ class MacosUnsignedCanarySmokeTests(unittest.TestCase):
                     shift
                   fi
                 done
-                mkdir -p "$mountpoint/Chaft.app/Contents/MacOS"
-                : > "$mountpoint/Chaft.app/Contents/MacOS/ChaftDesktop"
+                mkdir -p \
+                  "$mountpoint/Chaft.app/Contents/MacOS" \
+                  "$mountpoint/Chaft.app/Contents/Resources"
+                : > "$mountpoint/Chaft.app/Contents/MacOS/Chaft"
+                printf '%s\n' \
+                  '<?xml version="1.0" encoding="UTF-8"?>' \
+                  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+                  '<plist version="1.0"><dict>' \
+                  '<key>CFBundleName</key><string>Chaft</string>' \
+                  '<key>CFBundleExecutable</key><string>Chaft</string>' \
+                  '<key>CFBundleIconFile</key><string>Chaft.icns</string>' \
+                  '</dict></plist>' \
+                  > "$mountpoint/Chaft.app/Contents/Info.plist"
+                printf 'synthetic Chaft icon\n' \
+                  > "$mountpoint/Chaft.app/Contents/Resources/Chaft.icns"
                 ;;
               detach) ;;
               *) exit 2 ;;
@@ -73,7 +86,7 @@ class MacosUnsignedCanarySmokeTests(unittest.TestCase):
                   *.dmg) exit 1 ;;
                   *)
                     printf '%s\\n' \
-                      'Executable=ChaftDesktop' \
+                      'Executable=Chaft' \
                       'Signature=adhoc' \
                       'TeamIdentifier=not set' >&2
                     ;;
