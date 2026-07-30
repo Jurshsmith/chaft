@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import legacyCanaryManifest from "./release-history/0.1.0-canary.1.json";
 import rawManifest from "./release-manifest.json";
 import {
   buildReleaseCollection,
@@ -267,11 +268,26 @@ describe("release manifest", () => {
   });
 
   it("rejects a forged revision for an immutable legacy release", () => {
-    const invalid = structuredClone(rawManifest);
+    const invalid = structuredClone(legacyCanaryManifest);
     invalid.commit = "b".repeat(40);
     expect(() => validateReleaseManifest(invalid)).toThrow(
       /exact immutable published legacy release/,
     );
+  });
+
+  it("accepts a current four-target release with immutable legacy history", () => {
+    const current = currentTargetRelease(
+      publishedCanaryRelease("0.1.0-canary.3"),
+    );
+    current.commit = "b".repeat(40);
+    current.publishedAt = "2026-07-30T04:56:00Z";
+    const releases = buildReleaseCollection(current, {
+      "./release-history/0.1.0-canary.1.json": legacyCanaryManifest,
+    });
+    expect(releases.map((release) => release.version)).toEqual([
+      "0.1.0-canary.3",
+      "0.1.0-canary.1",
+    ]);
   });
 
   it("rejects a duplicated desktop target in place of Apple Silicon", () => {
