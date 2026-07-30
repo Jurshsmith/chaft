@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaft.ai/schemas/landing-hero-preview-cycle.schema.json",
+  "title": "Chaft landing-page hero preview cycle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "systemName",
+    "name",
+    "title",
+    "status",
+    "baseRevision",
+    "sourceDesign",
+    "runtimeEnvironment",
+    "invariants",
+    "governance",
+    "slots",
+    "selection"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "./preview-cycle.schema.json"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "systemName": {
+      "type": "string",
+      "const": "Chaft Previews"
+    },
+    "name": {
+      "type": "string",
+      "const": "landing-hero"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "foundation",
+        "ready",
+        "active",
+        "review",
+        "selected",
+        "closed"
+      ]
+    },
+    "baseRevision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        }
+      ]
+    },
+    "sourceDesign": {
+      "type": "object"
+    },
+    "runtimeEnvironment": {
+      "type": "object"
+    },
+    "invariants": {
+      "type": "object"
+    },
+    "governance": {
+      "type": "object"
+    },
+    "slots": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object"
+      }
+    },
+    "selection": {
+      "type": "object"
+    }
+  }
+}

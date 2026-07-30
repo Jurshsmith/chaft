@@ -63,8 +63,24 @@ path-prefixed output against reserved validation URLs.
 It verifies published and draft routes, metadata, headings, navigation, links,
 canonical URLs, sitemap coverage, and the physical Cloudflare asset layout
 before running the exact-pinned Wrangler version in strict dry-run mode against
-the route-less Worker configuration. A standalone `pnpm build` fails unless
+the reviewed Worker configuration. It also validates the checked-in Chaft
+Previews cycle manifest. A standalone `pnpm build` fails unless
 `SITE_URL` is set, preventing deployable output with localhost metadata.
+
+Browser, accessibility, visual-layout, and performance QA is a separate gate
+because it requires installed browser binaries:
+
+```sh
+pnpm exec playwright install --with-deps chromium firefox webkit
+CHAFT_DEPLOYMENT_MODE=preview \
+CHAFT_PREVIEW_BRANCH=preview/landing-hero-1 \
+SITE_URL=https://hero-1.chaft.ai \
+pnpm qa
+```
+
+See [`previews/landing-hero/README.md`](previews/landing-hero/README.md) for the
+four fixed Preview slots, invariant product contract, review process, and
+focused QA commands.
 
 ## Release manifest contract
 
@@ -171,19 +187,21 @@ that current development packages are signed production downloads.
 ## Deployment foundation
 
 `wrangler.jsonc` defines an asset-only `chaft-website` Worker for Cloudflare
-Workers Static Assets. It has no Worker script, asset binding, route, or Custom
-Domain; `workers_dev` and preview URLs are disabled. Wrangler is an exact
-development dependency, and validation uses dry-run mode only. The production
-build rewrites `_headers` and `_redirects` for the configured `SITE_URL` base
-path and physically nests every public asset beneath that path. Headings,
-navigation, controls, and labels keep the bundled Space Grotesk UI font and its
-OFL license. Body copy uses Chillax from Fontshare's official API under the ITF
-Free Font License; those font files are not redistributed with the site.
-Cloudflare control files stay at the asset root, as required by Workers Static
-Assets.
+Workers Static Assets. It has no Worker script or runtime binding and owns the
+exact Custom Domains `chaft.ai` and `www.chaft.ai`. `workers_dev` and
+Cloudflare-generated preview URLs are disabled. Wrangler is an exact
+development dependency. Validation performs a strict dry run, while protected
+deployment installs an already verified immutable artifact rather than
+rebuilding it. The production build rewrites `_headers` and `_redirects` for
+the configured `SITE_URL` base path and physically nests every public asset
+beneath that path. Headings, navigation, controls, and labels keep the bundled
+Space Grotesk UI font and its OFL license. Body copy uses Chillax from
+Fontshare's official API under the ITF Free Font License; those font files are
+not redistributed with the site. Cloudflare control files stay at the asset
+root, as required by Workers Static Assets.
 
-The `Website` GitHub Actions workflow always validates pull requests and pushes
-against `https://website-validation.invalid`. A push to `main` builds a
+The main `CI` workflow owns pull-request validation. The `Website` workflow
+validates pushes against `https://website-validation.invalid`; a push to `main` builds a
 production candidate only when the `WEBSITE_SITE_URL` repository variable is
 set. While it is unset, validation passes and candidate construction is
 intentionally skipped; no placeholder origin is built. Manual candidate
@@ -211,13 +229,20 @@ duplicate paths, extra or missing files, digest mismatches, oversized assets,
 and `website-validation.invalid`. Deployment installs the verified `site/`
 bytes into `dist/`; it does not rebuild them.
 
-The checked-in deploy and rollback workflows are inert scaffolding. Their
-production jobs contain literal `false` conditions, so completed Website runs
-and manual rollback requests cannot read production credentials or mutate
-Cloudflare. Setting `WEBSITE_SITE_URL` enables candidate construction only.
-Removing either hard stop requires the separately reviewed infrastructure,
-domain, governance, credential, and activation change. The public application
-repository intentionally does not depend on private operational documentation.
+The checked-in deploy workflow consumes only a successful immutable candidate
+from the current `main` commit. The production GitHub environment, exact
+private-governance revision, scoped Cloudflare credentials, pre-deployment
+inventory checks, post-deployment verification, and non-cancelling concurrency
+group protect the mutation. The rollback workflow restores only an explicitly
+named retained Worker version with matching source and deployment evidence; it
+never infers “previous.”
+
+Chaft Previews uses a separate exact four-slot allowlist, Preview-only
+configuration, credentials, environments, governance component, and
+concurrency. Candidate branches have no credentials. A trusted workflow from
+protected `main` verifies each immutable static artifact before deploying it to
+the branch's fixed Preview slot. The production Worker and its two domains must
+remain unchanged before and after every Preview deployment.
 
 Desktop installers do not belong in the website artifact. Publish them as
 immutable GitHub Release assets or through dedicated object storage.

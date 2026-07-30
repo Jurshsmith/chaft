@@ -36,6 +36,7 @@ async function run(script, { siteUrl = ROOT_VALIDATION_SITE_URL } = {}) {
 }
 
 await run("validate:docs");
+await run("validate:preview-cycle");
 await run("check");
 await run("test");
 await run("build:validation");

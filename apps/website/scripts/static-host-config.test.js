@@ -17,6 +17,13 @@ describe("static-host configuration", () => {
     expect(renderRedirects("")).toContain("/downloads /download/ 301");
   });
 
+  it("adds the complete indexing policy only for a Preview build", () => {
+    expect(renderHeaders("", { isPreview: true })).toContain(
+      "\n  X-Robots-Tag: noindex, nofollow, noarchive\n",
+    );
+    expect(renderHeaders("")).not.toContain("X-Robots-Tag");
+  });
+
   it("prefixes cache rules and redirects for a path deployment", () => {
     const base = deploymentBase("https://example.com/chaft/");
     expect(base).toBe("/chaft");

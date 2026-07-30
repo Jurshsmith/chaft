@@ -1,0 +1,181 @@
+name: Chaft Preview candidate
+
+# Preview branches build and test static bytes without Cloudflare, private
+# governance, or environment credentials. A separate default-branch-owned
+# workflow revalidates the exact artifact before any preview-only mutation.
+
+on:
+  push:
+    branches:
+      - preview/landing-hero-1
+      - preview/landing-hero-2
+      - preview/landing-hero-3
+      - preview/landing-hero-4
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaft-preview-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: Validate immutable Preview candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+    defaults:
+      run:
+        working-directory: apps/website
+    steps:
+      - name: Checkout exact Preview source without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: apps/website/pnpm-lock.yaml
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve exact branch to Preview slot
+        id: preview
+        shell: bash
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          resolution="$(node scripts/preview-slot-contract.mjs resolve-branch \
+            --branch "${SOURCE_BRANCH}" \
+            --commit "${SOURCE_COMMIT}")"
+          RESOLUTION="${resolution}" node - <<'NODE'
+          const fs = require("node:fs");
+          const value = JSON.parse(process.env.RESOLUTION);
+          const expectedKeys = [
+            "artifactName",
+            "branch",
+            "domain",
+            "environment",
+            "siteUrl",
+            "slot",
+            "worker",
+            "wranglerEnvironment",
+          ].sort();
+          if (
+            JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys) ||
+            value.branch !== process.env.SOURCE_BRANCH
+          ) {
+            throw new Error("preview slot resolution returned an unexpected identity");
+          }
+          for (const [name, output] of [
+            ["artifact_name", value.artifactName],
+            ["branch", value.branch],
+            ["domain", value.domain],
+            ["environment", value.environment],
+            ["site_url", value.siteUrl],
+            ["slot", value.slot],
+            ["worker", value.worker],
+            ["wrangler_environment", value.wranglerEnvironment],
+          ]) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${output}\n`);
+          }
+          NODE
+
+      - name: Validate website without deployment credentials
+        run: pnpm validate
+
+      - name: Install browser engines for common Preview QA
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+
+      - name: Build and run common accessibility performance and visual QA
+        env:
+          CHAFT_DEPLOYMENT_MODE: preview
+          CHAFT_PREVIEW_BRANCH: ${{ steps.preview.outputs.branch }}
+          SITE_URL: ${{ steps.preview.outputs.site_url }}
+        run: pnpm qa
+
+      - name: Upload common Preview QA evidence
+        if: ${{ always() && steps.preview.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-preview-qa-${{ steps.preview.outputs.slot }}-${{ github.sha }}
+          path: |
+            apps/website/playwright-report/
+            apps/website/test-results/previews/
+            apps/website/.qa/lighthouse/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+          archive: true
+
+      - name: Create and verify immutable Preview artifact
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-preview-artifact
+          CHAFT_DEPLOYMENT_MODE: preview
+          CHAFT_PREVIEW_BRANCH: ${{ steps.preview.outputs.branch }}
+          SITE_URL: ${{ steps.preview.outputs.site_url }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/deployment-artifact-cli.mjs create \
+            --source dist \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --repository "${SOURCE_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+          node scripts/deployment-artifact-cli.mjs verify \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --repository "${SOURCE_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+
+      - name: Upload immutable Preview artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.preview.outputs.artifact_name }}
+          path: ${{ runner.temp }}/chaft-preview-artifact/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+          archive: true
+
+      - name: Record Preview candidate evidence
+        shell: bash
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          PREVIEW_BRANCH: ${{ steps.preview.outputs.branch }}
+          PREVIEW_DOMAIN: ${{ steps.preview.outputs.domain }}
+          PREVIEW_SLOT: ${{ steps.preview.outputs.slot }}
+          PREVIEW_WORKER: ${{ steps.preview.outputs.worker }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          {
+            echo "### Chaft Preview candidate"
+            echo
+            echo "- Preview branch: \`${PREVIEW_BRANCH}\`"
+            echo "- Preview slot: \`${PREVIEW_SLOT}\`"
+            echo "- Worker: \`${PREVIEW_WORKER}\`"
+            echo "- Domain: \`${PREVIEW_DOMAIN}\`"
+            echo "- Source commit: \`${SOURCE_COMMIT}\`"
+            echo "- Artifact ID: \`${ARTIFACT_ID}\`"
+            echo "- Artifact digest: \`${ARTIFACT_DIGEST}\`"
+            echo "- Preview deployed: **no**"
+          } >> "${GITHUB_STEP_SUMMARY}"

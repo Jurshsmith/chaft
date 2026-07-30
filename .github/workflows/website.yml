@@ -72,6 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ASTRO_TELEMETRY_DISABLED: "1"
+      CHAFT_DEPLOYMENT_MODE: ${{ github.event_name == 'push' && 'production' || '' }}
       SITE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.site_url || vars.WEBSITE_SITE_URL }}
     defaults:
       run:

@@ -1,6 +1,6 @@
 # Chaft
 
-Chaft is experimental, open-source team chat for small teams. It keeps workspace
+Chaft is early-stage, open-source team chat for small teams. It keeps workspace
 history on participating devices, encrypts message and attachment content before
 replication, and syncs signed history directly between trusted peers.
 
@@ -234,10 +234,10 @@ SITE_URL=https://example.com make website-build
 SITE_URL=https://example.com/chaft make website-build
 ```
 
-The checked-in Wrangler configuration is asset-only. Canonical production
-builds use `SITE_URL=https://chaft.ai`; preview URLs remain disabled. Deploy and
-rollback workflows remain protected by reviewed infrastructure gates so
-validation and candidate creation cannot mutate Cloudflare unexpectedly.
+The production Worker is asset-only; `workers.dev` and generated preview URLs remain disabled.
+Chaft Previews maps four exact `preview/landing-hero-N` branches to
+`hero-N.chaft.ai` slots through credential-free builds and trusted deployment gates.
+Production stays unchanged until selection; see the [Preview cycle guide](apps/website/previews/landing-hero/README.md).
 
 ## Packages and downloads
 

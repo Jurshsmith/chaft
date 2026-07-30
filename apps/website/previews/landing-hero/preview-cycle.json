@@ -1,0 +1,96 @@
+{
+  "$schema": "./preview-cycle.schema.json",
+  "schemaVersion": 1,
+  "systemName": "Chaft Previews",
+  "name": "landing-hero",
+  "title": "Landing-page hero preview cycle",
+  "status": "foundation",
+  "baseRevision": null,
+  "sourceDesign": {
+    "fileUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft",
+    "sourceSectionNodeId": "164:75",
+    "versionId": null,
+    "note": "Record the immutable Figma version and each Preview frame before the Preview cycle becomes active."
+  },
+  "runtimeEnvironment": {
+    "deploymentModeName": "CHAFT_DEPLOYMENT_MODE",
+    "deploymentModeValue": "preview",
+    "branchName": "CHAFT_PREVIEW_BRANCH",
+    "siteUrlName": "SITE_URL"
+  },
+  "invariants": {
+    "headline": "Team chat that runs on your devices.",
+    "bodyCopySha256": "2db41bdb5926d7968600052a638be5b5c6b5ee614013a8e2bbe7c3202693ac3b",
+    "primaryAction": "Download Chaft",
+    "secondaryAction": "Read the docs",
+    "sourceAction": "Explore the source",
+    "securityCopy": "Unaudited software. Not for sensitive or production communication.",
+    "typography": {
+      "bodyCopy": "Chillax",
+      "headingsNavigationButtonsAndLabels": "Space Grotesk"
+    }
+  },
+  "governance": {
+    "componentPath": "cloudflare/website-previews/component.yaml",
+    "productionWorker": "chaft-website",
+    "productionDomains": [
+      "chaft.ai",
+      "www.chaft.ai"
+    ],
+    "productionMustRemainUnchanged": true,
+    "workersDevEnabled": false,
+    "cloudflarePreviewUrlsEnabled": false
+  },
+  "slots": [
+    {
+      "id": "hero-1",
+      "status": "foundation",
+      "branch": "preview/landing-hero-1",
+      "worker": "chaft-website-hero-1",
+      "domain": "hero-1.chaft.ai",
+      "siteUrl": "https://hero-1.chaft.ai",
+      "githubEnvironment": "chaft-preview-hero-1",
+      "figmaFrameNodeId": null,
+      "direction": "A glowing earth and communication network with responsive nodes and particle dust."
+    },
+    {
+      "id": "hero-2",
+      "status": "foundation",
+      "branch": "preview/landing-hero-2",
+      "worker": "chaft-website-hero-2",
+      "domain": "hero-2.chaft.ai",
+      "siteUrl": "https://hero-2.chaft.ai",
+      "githubEnvironment": "chaft-preview-hero-2",
+      "figmaFrameNodeId": null,
+      "direction": "Particle dust forming the Chaft mark, with responsive motion around the mark."
+    },
+    {
+      "id": "hero-3",
+      "status": "foundation",
+      "branch": "preview/landing-hero-3",
+      "worker": "chaft-website-hero-3",
+      "domain": "hero-3.chaft.ai",
+      "siteUrl": "https://hero-3.chaft.ai",
+      "githubEnvironment": "chaft-preview-hero-3",
+      "figmaFrameNodeId": null,
+      "direction": "A circular particle network with communication nodes and lightweight chat activity."
+    },
+    {
+      "id": "hero-4",
+      "status": "foundation",
+      "branch": "preview/landing-hero-4",
+      "worker": "chaft-website-hero-4",
+      "domain": "hero-4.chaft.ai",
+      "siteUrl": "https://hero-4.chaft.ai",
+      "githubEnvironment": "chaft-preview-hero-4",
+      "figmaFrameNodeId": null,
+      "direction": "A full-width blue pixel connection field replacing the current side illustration."
+    }
+  ],
+  "selection": {
+    "status": "not-started",
+    "selectedSlot": null,
+    "decisionRecord": null,
+    "productionRevision": null
+  }
+}
