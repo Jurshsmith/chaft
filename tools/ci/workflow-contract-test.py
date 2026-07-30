@@ -552,6 +552,33 @@ class CiWorkflowContractTests(unittest.TestCase):
             "retained Preview record does not authorize this reset target",
             source,
         )
+        trusted_main_build = source.split(
+            "      - name: Build and seal current trusted main for the Preview slot\n",
+            1,
+        )[1].split("\n      - name:", 1)[0]
+        artifact_create = trusted_main_build.index(
+            "deployment-artifact-cli.mjs create"
+        )
+        artifact_verify = trusted_main_build.index(
+            "deployment-artifact-cli.mjs verify"
+        )
+        fresh_destination = trusted_main_build.index(
+            "rm -rf -- dist"
+        )
+        artifact_install = trusted_main_build.index(
+            "deployment-artifact-cli.mjs install"
+        )
+        artifact_compare = trusted_main_build.index(
+            "deployment-artifact-cli.mjs compare"
+        )
+        static_validation = trusted_main_build.index(
+            "preview-static-artifact-validator.mjs"
+        )
+        self.assertLess(artifact_create, artifact_verify)
+        self.assertLess(artifact_verify, fresh_destination)
+        self.assertLess(fresh_destination, artifact_install)
+        self.assertLess(artifact_install, artifact_compare)
+        self.assertLess(artifact_compare, static_validation)
         self.assertIn("pnpm exec wrangler rollback", source)
         self.assertIn("pnpm exec wrangler deploy", source)
         self.assertIn("--config wrangler.preview.jsonc", source)
