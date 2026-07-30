@@ -1,0 +1,489 @@
+<div
+  class="particle-mark"
+  data-particle-mark
+  role="img"
+  aria-label="The Chaft chat mark assembled from a stable field of mint particles, surrounded by softly moving connection dust"
+>
+  <canvas class="particle-mark__canvas" data-particle-mark-canvas aria-hidden="true"></canvas>
+
+  <svg
+    class="particle-mark__fallback"
+    viewBox="0 0 640 640"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <defs>
+      <pattern id="hero-2-particle-grid" width="13" height="13" patternUnits="userSpaceOnUse">
+        <circle cx="2.4" cy="2.4" r="1.8" fill="#8ff4c0"></circle>
+        <circle cx="8.8" cy="8.8" r="1" fill="#3fd68d" opacity="0.7"></circle>
+      </pattern>
+      <filter id="hero-2-particle-glow" x="-35%" y="-35%" width="170%" height="170%">
+        <feGaussianBlur stdDeviation="8" result="blur"></feGaussianBlur>
+        <feMerge>
+          <feMergeNode in="blur"></feMergeNode>
+          <feMergeNode in="SourceGraphic"></feMergeNode>
+        </feMerge>
+      </filter>
+    </defs>
+
+    <g
+      fill="none"
+      stroke="url(#hero-2-particle-grid)"
+      stroke-linecap="round"
+      filter="url(#hero-2-particle-glow)"
+    >
+      <path d="M178 171V132a45 45 0 0 1 45-45h247a45 45 0 0 1 45 45v150" stroke-width="18"></path>
+      <path d="m472 175 77 81a45 45 0 0 1 12 31v190a45 45 0 0 1-45 45H401" stroke-width="16" opacity="0.64"></path>
+      <path d="m407 510-84 80a45 45 0 0 1-31 12H183a45 45 0 0 1-45-45V448" stroke-width="16" opacity="0.56"></path>
+      <rect x="148" y="150" width="344" height="344" rx="42" stroke-width="22"></rect>
+    </g>
+
+    <path
+      d="M320 222c-70 0-126 52-126 117 0 34 15 65 40 86l-41 42h128c70 0 126-52 126-128S390 222 320 222Z"
+      fill="url(#hero-2-particle-grid)"
+      filter="url(#hero-2-particle-glow)"
+    ></path>
+  </svg>
+
+  <span class="particle-mark__orbit particle-mark__orbit--wide" aria-hidden="true"></span>
+  <span class="particle-mark__orbit particle-mark__orbit--tight" aria-hidden="true"></span>
+  <span class="particle-mark__node particle-mark__node--one" aria-hidden="true"></span>
+  <span class="particle-mark__node particle-mark__node--two" aria-hidden="true"></span>
+  <span class="particle-mark__node particle-mark__node--three" aria-hidden="true"></span>
+</div>
+
+<script>
+  type Particle = {
+    alpha: number;
+    core: boolean;
+    homeX: number;
+    homeY: number;
+    phase: number;
+    size: number;
+    tone: number;
+  };
+
+  type Point = {
+    x: number;
+    y: number;
+    tone?: number;
+  };
+
+  const TWO_PI = Math.PI * 2;
+
+  function seededRandom(seed: number) {
+    let value = seed >>> 0;
+    return () => {
+      value = (value * 1664525 + 1013904223) >>> 0;
+      return value / 4294967296;
+    };
+  }
+
+  function roundedRectangleDistance(
+    x: number,
+    y: number,
+    halfWidth: number,
+    halfHeight: number,
+    radius: number,
+  ) {
+    const horizontal = Math.abs(x) - halfWidth + radius;
+    const vertical = Math.abs(y) - halfHeight + radius;
+    return (
+      Math.min(Math.max(horizontal, vertical), 0) +
+      Math.hypot(Math.max(horizontal, 0), Math.max(vertical, 0)) -
+      radius
+    );
+  }
+
+  function rotatePoint(x: number, y: number, angle: number) {
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return {
+      x: x * cosine - y * sine,
+      y: x * sine + y * cosine,
+    };
+  }
+
+  function createMarkPoints() {
+    const points: Point[] = [];
+    const step = 0.034;
+
+    for (let y = -0.62; y <= 0.62; y += step) {
+      for (let x = -0.62; x <= 0.62; x += step) {
+        const centralFrame =
+          Math.abs(roundedRectangleDistance(x, y, 0.43, 0.43, 0.085)) <
+          step * 0.62;
+
+        const upperCoordinates = rotatePoint(x - 0.01, y + 0.13, -0.02);
+        const upperFrame =
+          y < -0.08 &&
+          Math.abs(
+            roundedRectangleDistance(
+              upperCoordinates.x,
+              upperCoordinates.y,
+              0.39,
+              0.39,
+              0.08,
+            ),
+          ) <
+            step * 0.52;
+
+        const rightCoordinates = rotatePoint(x - 0.13, y - 0.015, -0.01);
+        const rightFrame =
+          x > 0.08 &&
+          Math.abs(
+            roundedRectangleDistance(
+              rightCoordinates.x,
+              rightCoordinates.y,
+              0.39,
+              0.39,
+              0.08,
+            ),
+          ) <
+            step * 0.52;
+
+        const lowerCoordinates = rotatePoint(x + 0.08, y - 0.13, 0.02);
+        const lowerFrame =
+          y > 0.12 &&
+          Math.abs(
+            roundedRectangleDistance(
+              lowerCoordinates.x,
+              lowerCoordinates.y,
+              0.37,
+              0.37,
+              0.08,
+            ),
+          ) <
+            step * 0.48;
+
+        const bubbleCircle = Math.hypot(x - 0.015, y + 0.01) <= 0.268;
+        const bubbleTail =
+          y >= 0.17 &&
+          y <= 0.31 &&
+          x >= -0.3 &&
+          x <= -0.03 &&
+          x <= -0.03 - (y - 0.17) * 1.32;
+
+        if (bubbleCircle || bubbleTail) {
+          points.push({ x, y, tone: 2 });
+        } else if (centralFrame) {
+          points.push({ x, y, tone: 1 });
+        } else if (upperFrame || rightFrame || lowerFrame) {
+          points.push({ x, y, tone: 0 });
+        }
+      }
+    }
+
+    return points;
+  }
+
+  const markPoints = createMarkPoints();
+
+  function setupParticleMark(root: HTMLElement) {
+    const canvas = root.querySelector<HTMLCanvasElement>("[data-particle-mark-canvas]");
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const pointer = { active: false, x: 0, y: 0 };
+    let particles: Particle[] = [];
+    let cssWidth = 1;
+    let cssHeight = 1;
+    let frame = 0;
+    let visible = true;
+
+    const motionIsEnabled = () =>
+      !reducedMotion.matches && finePointer.matches;
+
+    const render = (time = 0) => {
+      context.clearRect(0, 0, cssWidth, cssHeight);
+
+      const glow = context.createRadialGradient(
+        cssWidth * 0.57,
+        cssHeight * 0.48,
+        0,
+        cssWidth * 0.57,
+        cssHeight * 0.48,
+        Math.min(cssWidth, cssHeight) * 0.5,
+      );
+      glow.addColorStop(0, "rgba(61, 228, 148, 0.09)");
+      glow.addColorStop(0.52, "rgba(34, 181, 112, 0.035)");
+      glow.addColorStop(1, "rgba(4, 18, 13, 0)");
+      context.fillStyle = glow;
+      context.fillRect(0, 0, cssWidth, cssHeight);
+
+      for (const particle of particles) {
+        let x = particle.homeX;
+        let y = particle.homeY;
+
+        if (motionIsEnabled()) {
+          if (particle.core) {
+            x += Math.sin(time * 0.00042 + particle.phase) * 0.38;
+            y += Math.cos(time * 0.00036 + particle.phase) * 0.38;
+          } else {
+            x += Math.sin(time * 0.00026 + particle.phase) * 2.4;
+            y += Math.cos(time * 0.00022 + particle.phase * 1.37) * 2;
+
+            if (pointer.active) {
+              const deltaX = x - pointer.x;
+              const deltaY = y - pointer.y;
+              const distance = Math.max(1, Math.hypot(deltaX, deltaY));
+              const reach = 92;
+              if (distance < reach) {
+                const force = (1 - distance / reach) * 19;
+                x += (deltaX / distance) * force;
+                y += (deltaY / distance) * force;
+              }
+            }
+          }
+        }
+
+        const colors = particle.core
+          ? ["104, 224, 159", "137, 242, 188", "205, 255, 227"]
+          : ["68, 188, 125", "112, 229, 162", "182, 248, 210"];
+        context.beginPath();
+        context.arc(x, y, particle.size, 0, TWO_PI);
+        context.fillStyle = `rgba(${colors[particle.tone]}, ${particle.alpha})`;
+        context.fill();
+      }
+
+      if (visible && motionIsEnabled()) {
+        frame = window.requestAnimationFrame(render);
+      }
+    };
+
+    const layout = () => {
+      const bounds = root.getBoundingClientRect();
+      cssWidth = Math.max(1, bounds.width);
+      cssHeight = Math.max(1, bounds.height);
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(cssWidth * pixelRatio);
+      canvas.height = Math.round(cssHeight * pixelRatio);
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+      const random = seededRandom(22024);
+      const scale = Math.min(cssWidth * 0.78, cssHeight * 0.74);
+      const centerX = cssWidth * 0.54;
+      const centerY = cssHeight * 0.49;
+      const core = markPoints.map((point) => ({
+        alpha: 0.54 + random() * 0.42,
+        core: true,
+        homeX: centerX + point.x * scale,
+        homeY: centerY + point.y * scale,
+        phase: random() * TWO_PI,
+        size: 0.72 + random() * 1.34,
+        tone: point.tone ?? 0,
+      }));
+      const dust = Array.from({ length: Math.round(170 + cssWidth * 0.12) }, () => {
+        const angle = random() * TWO_PI;
+        const distance = (0.39 + random() * 0.48) * scale;
+        return {
+          alpha: 0.12 + random() * 0.46,
+          core: false,
+          homeX: centerX + Math.cos(angle) * distance * (0.88 + random() * 0.3),
+          homeY: centerY + Math.sin(angle) * distance,
+          phase: random() * TWO_PI,
+          size: 0.55 + random() * 1.05,
+          tone: Math.floor(random() * 3),
+        };
+      });
+
+      particles = [...dust, ...core];
+      root.classList.add("is-ready");
+      window.cancelAnimationFrame(frame);
+      render();
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!motionIsEnabled()) return;
+      const bounds = canvas.getBoundingClientRect();
+      pointer.x = event.clientX - bounds.left;
+      pointer.y = event.clientY - bounds.top;
+      pointer.active = true;
+    };
+
+    const handlePointerLeave = () => {
+      pointer.active = false;
+    };
+
+    const restart = () => {
+      window.cancelAnimationFrame(frame);
+      render();
+    };
+
+    const resizeObserver = new ResizeObserver(layout);
+    resizeObserver.observe(root);
+    root.addEventListener("pointermove", handlePointerMove, { passive: true });
+    root.addEventListener("pointerleave", handlePointerLeave, { passive: true });
+    reducedMotion.addEventListener("change", restart);
+    finePointer.addEventListener("change", restart);
+
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      visible = entry?.isIntersecting ?? true;
+      restart();
+    });
+    intersectionObserver.observe(root);
+  }
+
+  document
+    .querySelectorAll<HTMLElement>("[data-particle-mark]")
+    .forEach(setupParticleMark);
+</script>
+
+<style>
+  .particle-mark {
+    position: relative;
+    isolation: isolate;
+    min-height: clamp(27rem, 48vw, 38rem);
+    overflow: hidden;
+    border: 1px solid rgb(126 235 178 / 22%);
+    border-radius: clamp(1rem, 2vw, 1.5rem);
+    background:
+      linear-gradient(rgb(139 243 188 / 3%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(139 243 188 / 3%) 1px, transparent 1px),
+      radial-gradient(circle at 53% 48%, rgb(43 177 109 / 12%), transparent 48%),
+      #071710;
+    background-size:
+      32px 32px,
+      32px 32px,
+      auto,
+      auto;
+    box-shadow:
+      inset 0 0 0 1px rgb(5 17 12 / 70%),
+      0 30px 80px rgb(1 8 5 / 34%);
+    cursor: crosshair;
+  }
+
+  .particle-mark::before,
+  .particle-mark::after {
+    position: absolute;
+    z-index: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    content: "";
+  }
+
+  .particle-mark::before {
+    top: 17%;
+    left: 20%;
+    width: 56%;
+    aspect-ratio: 1;
+    background: rgb(46 215 133 / 8%);
+    filter: blur(70px);
+  }
+
+  .particle-mark::after {
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 90px rgb(1 10 7 / 86%);
+  }
+
+  .particle-mark__canvas,
+  .particle-mark__fallback {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+  }
+
+  .particle-mark__canvas {
+    opacity: 0;
+    transition: opacity 320ms ease-out;
+  }
+
+  .particle-mark.is-ready .particle-mark__canvas {
+    opacity: 1;
+  }
+
+  .particle-mark__fallback {
+    padding: 4%;
+    opacity: 0.84;
+    transition: opacity 240ms ease-out;
+  }
+
+  .particle-mark.is-ready .particle-mark__fallback {
+    opacity: 0;
+  }
+
+  .particle-mark__orbit {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 54%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgb(119 234 173 / 13%);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+
+  .particle-mark__orbit--wide {
+    width: 84%;
+  }
+
+  .particle-mark__orbit--tight {
+    width: 61%;
+    border-style: dashed;
+    opacity: 0.7;
+  }
+
+  .particle-mark__node {
+    position: absolute;
+    z-index: 3;
+    width: 0.42rem;
+    height: 0.42rem;
+    border: 1px solid #baffda;
+    border-radius: 50%;
+    background: #63dfa1;
+    box-shadow:
+      0 0 0 0.32rem rgb(99 223 161 / 8%),
+      0 0 1rem rgb(99 223 161 / 58%);
+    pointer-events: none;
+  }
+
+  .particle-mark__node--one {
+    top: 19%;
+    left: 24%;
+  }
+
+  .particle-mark__node--two {
+    top: 29%;
+    right: 12%;
+  }
+
+  .particle-mark__node--three {
+    right: 21%;
+    bottom: 15%;
+  }
+
+  @media (max-width: 940px) {
+    .particle-mark {
+      min-height: clamp(25rem, 72vw, 36rem);
+      cursor: default;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .particle-mark {
+      min-height: 22rem;
+      border-radius: 1rem;
+    }
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .particle-mark {
+      cursor: default;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .particle-mark__canvas,
+    .particle-mark__fallback {
+      transition: none;
+    }
+  }
+</style>
