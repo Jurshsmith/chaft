@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "chaft-website-preview-template",
+  "compatibility_date": "2026-07-26",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    "run_worker_first": false
+  },
+  "env": {
+    "hero-1": {
+      "name": "chaft-website-hero-1",
+      "routes": [
+        {
+          "pattern": "hero-1.chaft.ai",
+          "custom_domain": true
+        }
+      ]
+    },
+    "hero-2": {
+      "name": "chaft-website-hero-2",
+      "routes": [
+        {
+          "pattern": "hero-2.chaft.ai",
+          "custom_domain": true
+        }
+      ]
+    },
+    "hero-3": {
+      "name": "chaft-website-hero-3",
+      "routes": [
+        {
+          "pattern": "hero-3.chaft.ai",
+          "custom_domain": true
+        }
+      ]
+    },
+    "hero-4": {
+      "name": "chaft-website-hero-4",
+      "routes": [
+        {
+          "pattern": "hero-4.chaft.ai",
+          "custom_domain": true
+        }
+      ]
+    }
+  }
+}

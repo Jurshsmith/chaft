@@ -1,0 +1,1300 @@
+name: Deploy Chaft Preview
+
+# GitHub runs workflow_run workflows from the default branch. This workflow
+# checks out only an exact current main revision for executable tooling. Static
+# candidate bytes are verified and installed, but candidate code is never run
+# in a job that can access preview credentials.
+
+on:
+  workflow_run:
+    workflows:
+      - Chaft Preview candidate
+    types:
+      - completed
+    branches:
+      - preview/landing-hero-1
+      - preview/landing-hero-2
+      - preview/landing-hero-3
+      - preview/landing-hero-4
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: chaft-preview-deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    name: Verify trusted Preview deployment input
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      artifact_digest: ${{ steps.artifact.outputs.artifact_digest }}
+      artifact_id: ${{ steps.artifact.outputs.artifact_id }}
+      artifact_manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
+      artifact_name: ${{ steps.artifact.outputs.artifact_name }}
+      artifact_size: ${{ steps.artifact.outputs.artifact_size }}
+      branch: ${{ steps.preview.outputs.branch }}
+      domain: ${{ steps.preview.outputs.domain }}
+      environment: ${{ steps.preview.outputs.environment }}
+      site_url: ${{ steps.preview.outputs.site_url }}
+      slot: ${{ steps.preview.outputs.slot }}
+      source_commit: ${{ steps.preview.outputs.source_commit }}
+      trusted_qa_artifact_digest: ${{ steps.trusted_qa_upload.outputs.artifact-digest }}
+      trusted_qa_artifact_id: ${{ steps.trusted_qa_upload.outputs.artifact-id }}
+      trusted_qa_artifact_name: ${{ steps.trusted_qa.outputs.artifact_name }}
+      trusted_commit: ${{ steps.trusted.outputs.commit }}
+      worker: ${{ steps.preview.outputs.worker }}
+      wrangler_environment: ${{ steps.preview.outputs.wrangler_environment }}
+    steps:
+      - name: Resolve exact current trusted main revision
+        id: trusted
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${DEFAULT_BRANCH}" != "main" ]]; then
+            echo "::error::The trusted default branch must remain main."
+            exit 1
+          fi
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/main" \
+            --jq '.sha')"
+          if [[ ! "${WORKFLOW_SHA}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::Trusted workflow revision is malformed."
+            exit 1
+          fi
+          if [[ "${current_main}" != "${WORKFLOW_SHA}" ]]; then
+            echo "::error::The trusted workflow revision is no longer current main."
+            exit 1
+          fi
+          echo "commit=${WORKFLOW_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout exact trusted main tooling without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.trusted.outputs.commit }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install exact trusted verifier dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve exact Preview allowlist identity and branch head
+        id: preview
+        shell: bash
+        working-directory: apps/website
+        env:
+          CANDIDATE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${CANDIDATE_SHA}" =~ ^([a-f0-9]{40}|[a-f0-9]{64})$ ]]; then
+            echo "::error::Preview candidate commit is malformed."
+            exit 1
+          fi
+          resolution="$(node scripts/preview-slot-contract.mjs resolve-branch \
+            --branch "${CANDIDATE_BRANCH}" \
+            --commit "${CANDIDATE_SHA}")"
+          encoded_branch="$(node -e \
+            'process.stdout.write(encodeURIComponent(process.argv[1]))' \
+            "${CANDIDATE_BRANCH}")"
+          current_branch="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${encoded_branch}" \
+            --jq '.sha')"
+          if [[ "${current_branch}" != "${CANDIDATE_SHA}" ]]; then
+            echo "::error::Preview candidate is superseded by a newer branch commit."
+            exit 1
+          fi
+          RESOLUTION="${resolution}" node - <<'NODE'
+          const fs = require("node:fs");
+          const value = JSON.parse(process.env.RESOLUTION);
+          for (const [name, output] of [
+            ["artifact_name", value.artifactName],
+            ["branch", value.branch],
+            ["domain", value.domain],
+            ["environment", value.environment],
+            ["site_url", value.siteUrl],
+            ["slot", value.slot],
+            ["worker", value.worker],
+            ["wrangler_environment", value.wranglerEnvironment],
+          ]) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${output}\n`);
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `source_commit=${process.env.CANDIDATE_SHA}\n`,
+          );
+          NODE
+
+      - name: Resolve exact immutable GitHub artifact identity
+        id: artifact
+        shell: bash
+        env:
+          CANDIDATE_BRANCH: ${{ steps.preview.outputs.branch }}
+          CANDIDATE_SHA: ${{ steps.preview.outputs.source_commit }}
+          EXPECTED_NAME: ${{ steps.preview.outputs.artifact_name }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?name=${EXPECTED_NAME}&per_page=100" \
+            > "${RUNNER_TEMP}/preview-candidate-artifacts.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-candidate-artifacts.json`,
+              "utf8",
+            ),
+          );
+          const artifacts = payload.artifacts;
+          if (!Array.isArray(artifacts) || artifacts.length !== 1) {
+            throw new Error(`expected one exact Preview artifact, received ${artifacts?.length}`);
+          }
+          const artifact = artifacts[0];
+          if (
+            artifact.name !== process.env.EXPECTED_NAME ||
+            artifact.expired !== false ||
+            !Number.isSafeInteger(artifact.id) ||
+            artifact.id <= 0 ||
+            !Number.isSafeInteger(artifact.size_in_bytes) ||
+            artifact.size_in_bytes <= 0 ||
+            !/^sha256:[a-f0-9]{64}$/.test(artifact.digest) ||
+            artifact.workflow_run?.id !== Number(process.env.SOURCE_RUN_ID) ||
+            artifact.workflow_run?.head_sha !== process.env.CANDIDATE_SHA ||
+            artifact.workflow_run?.head_branch !== process.env.CANDIDATE_BRANCH
+          ) {
+            throw new Error("Preview artifact identity does not match the source workflow");
+          }
+          for (const [name, value] of [
+            ["artifact_digest", artifact.digest],
+            ["artifact_id", artifact.id],
+            ["artifact_name", artifact.name],
+            ["artifact_size", artifact.size_in_bytes],
+          ]) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Download exact Preview artifact outside the trusted checkout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.preview.outputs.artifact_name }}
+          path: ${{ runner.temp }}/chaft-preview-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+
+      - name: Verify and dry-run static bytes with trusted tooling
+        id: verify
+        shell: bash
+        working-directory: apps/website
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-preview-artifact
+          CHAFT_DEPLOYMENT_MODE: preview
+          CHAFT_PREVIEW_BRANCH: ${{ steps.preview.outputs.branch }}
+          SITE_URL: ${{ steps.preview.outputs.site_url }}
+          SOURCE_COMMIT: ${{ steps.preview.outputs.source_commit }}
+          WRANGLER_ENVIRONMENT: ${{ steps.preview.outputs.wrangler_environment }}
+        run: |
+          set -euo pipefail
+          verification="$(node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}")"
+          manifest_sha256="$(node -e '
+            const value = JSON.parse(process.argv[1]);
+            if (!/^[a-f0-9]{64}$/.test(value.manifestSha256)) process.exit(1);
+            process.stdout.write(value.manifestSha256);
+          ' "${verification}")"
+          echo "manifest_sha256=${manifest_sha256}" >> "${GITHUB_OUTPUT}"
+          node scripts/deployment-artifact-cli.mjs compare \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+          node scripts/preview-static-artifact-validator.mjs \
+            --dist dist \
+            --branch "${CHAFT_PREVIEW_BRANCH}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            > "${RUNNER_TEMP}/preview-static-verification.json"
+          pnpm exec wrangler deploy \
+            --config wrangler.preview.jsonc \
+            --env "${WRANGLER_ENVIRONMENT}" \
+            --dry-run \
+            --strict \
+            --outdir .wrangler/preview-dry-run
+
+      - name: Install browser engines for trusted Preview QA
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+        working-directory: apps/website
+
+      - name: Run main-owned QA against installed candidate bytes
+        id: trusted_qa
+        working-directory: apps/website
+        env:
+          CHAFT_DEPLOYMENT_MODE: preview
+          CHAFT_PREVIEW_BRANCH: ${{ steps.preview.outputs.branch }}
+          SITE_URL: ${{ steps.preview.outputs.site_url }}
+        run: |
+          set -euo pipefail
+          echo "artifact_name=chaft-preview-trusted-qa-${{ steps.preview.outputs.slot }}-${{ steps.preview.outputs.source_commit }}" >> "${GITHUB_OUTPUT}"
+          pnpm qa:browser
+          pnpm qa:lighthouse
+
+      - name: Retain main-owned Preview QA evidence
+        id: trusted_qa_upload
+        if: ${{ always() && steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-preview-trusted-qa-${{ steps.preview.outputs.slot }}-${{ steps.preview.outputs.source_commit }}
+          path: |
+            apps/website/playwright-report/
+            apps/website/test-results/previews/
+            apps/website/.qa/lighthouse/
+            ${{ runner.temp }}/preview-static-verification.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+          archive: true
+
+      - name: Recheck trusted main and Preview branch after preflight
+        shell: bash
+        env:
+          CANDIDATE_BRANCH: ${{ steps.preview.outputs.branch }}
+          CANDIDATE_SHA: ${{ steps.preview.outputs.source_commit }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ steps.trusted.outputs.commit }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/main" \
+            --jq '.sha')"
+          encoded_branch="$(node -e \
+            'process.stdout.write(encodeURIComponent(process.argv[1]))' \
+            "${CANDIDATE_BRANCH}")"
+          current_branch="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${encoded_branch}" \
+            --jq '.sha')"
+          test "${current_main}" = "${TRUSTED_SHA}"
+          test "${current_branch}" = "${CANDIDATE_SHA}"
+
+  deploy:
+    if: ${{ needs.preflight.result == 'success' }}
+    name: Deploy verified Preview slot
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ needs.preflight.outputs.environment }}
+      url: ${{ needs.preflight.outputs.site_url }}
+    steps:
+      - name: Checkout exact trusted main tooling without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.trusted_commit }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install exact trusted deployment dependencies
+        working-directory: apps/website
+        run: pnpm install --frozen-lockfile
+
+      - name: Download original immutable Preview artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.preflight.outputs.artifact_name }}
+          path: ${{ runner.temp }}/chaft-preview-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+
+      - name: Reverify and install static bytes without rebuilding
+        shell: bash
+        working-directory: apps/website
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/chaft-preview-artifact
+          CHAFT_DEPLOYMENT_MODE: preview
+          CHAFT_PREVIEW_BRANCH: ${{ needs.preflight.outputs.branch }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.preflight.outputs.artifact_manifest_sha256 }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          verification="$(node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}")"
+          manifest_sha256="$(node -e '
+            const value = JSON.parse(process.argv[1]);
+            process.stdout.write(value.manifestSha256);
+          ' "${verification}")"
+          test "${manifest_sha256}" = "${EXPECTED_MANIFEST_SHA256}"
+          node scripts/deployment-artifact-cli.mjs compare \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
+          node scripts/preview-static-artifact-validator.mjs \
+            --dist dist \
+            --branch "${CHAFT_PREVIEW_BRANCH}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            > "${RUNNER_TEMP}/preview-static-verification.json"
+
+      - name: Checkout current private Preview governance revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Jurshsmith/chaft-infra
+          ref: main
+          path: _governance
+          fetch-depth: 0
+          persist-credentials: false
+          ssh-key: ${{ secrets.CHAFT_PREVIEWS_INFRA_DEPLOY_KEY }}
+
+      - name: Prove exact enabled Preview governance
+        id: governance
+        env:
+          EXPECTED_INFRA_COMMIT: ${{ vars.CHAFT_PREVIEWS_INFRA_COMMIT }}
+          GOVERNANCE_KEY_CONFIGURED: ${{ secrets.CHAFT_PREVIEWS_INFRA_DEPLOY_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "${GOVERNANCE_KEY_CONFIGURED}" != "true" ]]; then
+            echo "::error::CHAFT_PREVIEWS_INFRA_DEPLOY_KEY is not configured."
+            exit 1
+          fi
+          node apps/website/scripts/preview-governance-validation.mjs \
+            --repository-root _governance \
+            --component _governance/cloudflare/website-previews/component.yaml \
+            --expected-commit "${EXPECTED_INFRA_COMMIT}" \
+            > "${RUNNER_TEMP}/preview-governance-verification.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const value = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-governance-verification.json`,
+              "utf8",
+            ),
+          );
+          if (!/^[a-f0-9]{40}$/.test(value.foundationCommit)) {
+            throw new Error("Preview governance foundation commit is malformed");
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `foundation_commit=${value.foundationCommit}\n`,
+          );
+          NODE
+
+      - name: Prove trusted main and candidate include the enabled foundation
+        env:
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.source_commit }}
+          FOUNDATION_COMMIT: ${{ steps.governance.outputs.foundation_commit }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ needs.preflight.outputs.trusted_commit }}
+        run: |
+          set -euo pipefail
+          for head in "${TRUSTED_SHA}" "${CANDIDATE_SHA}"; do
+            status="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${FOUNDATION_COMMIT}...${head}" \
+              --jq '.status')"
+            if [[ "${status}" != "ahead" && "${status}" != "identical" ]]; then
+              echo "::error::${head} does not include the enabled Chaft Previews foundation."
+              exit 1
+            fi
+          done
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${FOUNDATION_COMMIT}...${CANDIDATE_SHA}" \
+            > "${RUNNER_TEMP}/preview-scope-comparison.json"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${TRUSTED_SHA}...${CANDIDATE_SHA}" \
+            > "${RUNNER_TEMP}/preview-base-comparison.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const scope = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-scope-comparison.json`,
+              "utf8",
+            ),
+          );
+          const comparison = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-base-comparison.json`,
+              "utf8",
+            ),
+          );
+          const allowed = [
+            /^apps\/website\/previews\/landing-hero\/preview-cycle\.json$/,
+            /^apps\/website\/src\/pages\/index\.astro$/,
+            /^apps\/website\/src\/components\/previews\/[A-Za-z0-9._/-]+$/,
+            /^apps\/website\/src\/assets\/previews\/[A-Za-z0-9._/-]+$/,
+            /^apps\/website\/public\/previews\/[A-Za-z0-9._/-]+$/,
+          ];
+          if (
+            scope.status !== "ahead" ||
+            scope.merge_base_commit?.sha !== process.env.FOUNDATION_COMMIT ||
+            !Number.isSafeInteger(scope.total_commits) ||
+            scope.total_commits < 1 ||
+            scope.total_commits > 50 ||
+            !Array.isArray(scope.files) ||
+            scope.files.length < 1 ||
+            scope.files.length > 100 ||
+            scope.files.some(
+              (file) =>
+                !["added", "modified", "removed"].includes(file.status) ||
+                file.previous_filename !== undefined ||
+                !allowed.some((pattern) => pattern.test(file.filename)),
+            )
+          ) {
+            throw new Error(
+              "Preview candidate exceeds the exact landing-hero path, commit, or file scope",
+            );
+          }
+          if (comparison.merge_base_commit?.sha !== process.env.FOUNDATION_COMMIT) {
+            throw new Error(
+              "Preview candidate and current main do not share the exact enabled base revision",
+            );
+          }
+          NODE
+
+      - name: Require an active immutable Preview cycle
+        working-directory: apps/website
+        env:
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.source_commit }}
+          FOUNDATION_COMMIT: ${{ steps.governance.outputs.foundation_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/apps/website/previews/landing-hero/preview-cycle.json?ref=${CANDIDATE_SHA}" \
+            > "${RUNNER_TEMP}/preview-cycle-content.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-cycle-content.json`,
+              "utf8",
+            ),
+          );
+          if (
+            payload.type !== "file" ||
+            payload.encoding !== "base64" ||
+            typeof payload.content !== "string"
+          ) {
+            throw new Error("candidate Preview cycle manifest response is malformed");
+          }
+          const bytes = Buffer.from(payload.content.replace(/\s/g, ""), "base64");
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/preview-cycle.json`, bytes);
+          NODE
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { validatePreviewCycle } from "./scripts/preview-cycle-validation.mjs";
+
+          const manifest = JSON.parse(
+            readFileSync(`${process.env.RUNNER_TEMP}/preview-cycle.json`, "utf8"),
+          );
+          const errors = validatePreviewCycle(manifest);
+          if (errors.length > 0) {
+            throw new Error(`candidate Preview cycle manifest is invalid: ${errors.join("; ")}`);
+          }
+          const frameIds = manifest.slots?.map((slot) => slot.figmaFrameNodeId);
+          if (
+            manifest.status !== "active" ||
+            manifest.slots?.some((slot) => slot.status !== "ready") ||
+            manifest.baseRevision !== process.env.FOUNDATION_COMMIT ||
+            !/^[A-Za-z0-9_-]{6,128}$/.test(manifest.sourceDesign?.versionId) ||
+            !Array.isArray(frameIds) ||
+            frameIds.length !== 4 ||
+            new Set(frameIds).size !== 4 ||
+            frameIds.some((value) => !/^\d+:\d+$/.test(value))
+          ) {
+            throw new Error(
+              "Preview deployment requires one active cycle pinned to the enabled base revision and four immutable Figma frames",
+            );
+          }
+          NODE
+
+      - name: Recheck all trusted identities after environment approval
+        shell: bash
+        working-directory: apps/website
+        env:
+          CANDIDATE_BRANCH: ${{ needs.preflight.outputs.branch }}
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.source_commit }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_DOMAIN: ${{ needs.preflight.outputs.domain }}
+          PREVIEW_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          PREVIEW_SLOT: ${{ needs.preflight.outputs.slot }}
+          PREVIEW_WORKER: ${{ needs.preflight.outputs.worker }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          TRUSTED_SHA: ${{ needs.preflight.outputs.trusted_commit }}
+          WRANGLER_ENVIRONMENT: ${{ needs.preflight.outputs.wrangler_environment }}
+        run: |
+          set -euo pipefail
+          if [[ "${CLOUDFLARE_ACCOUNT_ID}" != "1354b55cd97e5051f32727c8dad4399d" ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID does not match reviewed Preview governance."
+            exit 1
+          fi
+          node scripts/preview-slot-contract.mjs verify \
+            --branch "${CANDIDATE_BRANCH}" \
+            --domain "${PREVIEW_DOMAIN}" \
+            --environment "${PREVIEW_ENVIRONMENT}" \
+            --site-url "${SITE_URL}" \
+            --slot "${PREVIEW_SLOT}" \
+            --worker "${PREVIEW_WORKER}" \
+            --wrangler-environment "${WRANGLER_ENVIRONMENT}"
+          current_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/main" \
+            --jq '.sha')"
+          encoded_branch="$(node -e \
+            'process.stdout.write(encodeURIComponent(process.argv[1]))' \
+            "${CANDIDATE_BRANCH}")"
+          current_branch="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${encoded_branch}" \
+            --jq '.sha')"
+          test "${current_main}" = "${TRUSTED_SHA}"
+          test "${current_branch}" = "${CANDIDATE_SHA}"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=open \
+            -f base=main \
+            -f head="${GITHUB_REPOSITORY_OWNER}:${CANDIDATE_BRANCH}" \
+            -f per_page=100 \
+            > "${RUNNER_TEMP}/preview-open-pulls.json"
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const pulls = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/preview-open-pulls.json`, "utf8"),
+          );
+          if (
+            !Array.isArray(pulls) ||
+            pulls.length !== 1 ||
+            pulls[0].state !== "open" ||
+            pulls[0].base?.ref !== "main" ||
+            pulls[0].base?.repo?.full_name !== process.env.GITHUB_REPOSITORY ||
+            pulls[0].head?.ref !== process.env.CANDIDATE_BRANCH ||
+            pulls[0].head?.sha !== process.env.CANDIDATE_SHA ||
+            pulls[0].head?.repo?.full_name !== process.env.GITHUB_REPOSITORY
+          ) {
+            throw new Error(
+              "exactly one same-repository open PR from the current Preview head to main is required",
+            );
+          }
+          NODE
+
+      - name: Capture exact Preview and production identities before mutation
+        id: before
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_READ_API_TOKEN }}
+          PREVIEW_DOMAIN: ${{ needs.preflight.outputs.domain }}
+          PREVIEW_WORKER: ${{ needs.preflight.outputs.worker }}
+          WRANGLER_ENVIRONMENT: ${{ needs.preflight.outputs.wrangler_environment }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_PREVIEW_READ_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler deployments status \
+            --config wrangler.preview.jsonc \
+            --env "${WRANGLER_ENVIRONMENT}" \
+            --json > "${RUNNER_TEMP}/preview-deployment-before.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=${PREVIEW_WORKER}" \
+            --output "${RUNNER_TEMP}/preview-domains-before-response.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/chaft-website/deployments" \
+            --output "${RUNNER_TEMP}/production-deployments-before-response.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/production-domains-before-response.json"
+          for hostname in chaft.ai www.chaft.ai; do
+            curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 20 \
+              "https://${hostname}/.well-known/chaft-deployment.json" \
+              --output "${RUNNER_TEMP}/production-${hostname}-before.json"
+          done
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/preview-deployment-before.json`, "utf8"),
+          );
+          const active = deployment.versions?.filter((version) => version.percentage === 100);
+          if (
+            typeof deployment.id !== "string" ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id) ||
+            active?.length !== 1 ||
+            !/^[a-f0-9-]{32,64}$/i.test(active[0].version_id)
+          ) {
+            throw new Error("Preview slot is not one explicit provisioned version at 100 percent");
+          }
+          const payload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-domains-before-response.json`,
+              "utf8",
+            ),
+          );
+          const domains = payload.result
+            ?.filter((domain) => domain.service === process.env.PREVIEW_WORKER)
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }));
+          if (
+            payload.success !== true ||
+            domains?.length !== 1 ||
+            domains[0].hostname !== process.env.PREVIEW_DOMAIN ||
+            domains[0].service !== process.env.PREVIEW_WORKER ||
+            domains[0].zoneName !== "chaft.ai"
+          ) {
+            throw new Error(`unexpected Preview Custom Domains: ${JSON.stringify(domains)}`);
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/preview-domains-before.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
+          const productionDeploymentsPayload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-deployments-before-response.json`,
+              "utf8",
+            ),
+          );
+          const productionDeployments =
+            productionDeploymentsPayload.result?.deployments;
+          const currentProduction = productionDeployments?.[0];
+          const productionActive = currentProduction?.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          if (
+            productionDeploymentsPayload.success !== true ||
+            !Array.isArray(productionDeployments) ||
+            productionDeployments.length < 1 ||
+            !/^[a-f0-9-]{32,64}$/i.test(currentProduction?.id) ||
+            productionActive?.length !== 1 ||
+            !/^[a-f0-9-]{32,64}$/i.test(productionActive[0].version_id)
+          ) {
+            throw new Error(
+              "Preview read credentials cannot prove the active production deployment",
+            );
+          }
+          const productionDomainsPayload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-domains-before-response.json`,
+              "utf8",
+            ),
+          );
+          const productionDomains = productionDomainsPayload.result
+            ?.filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          if (
+            productionDomainsPayload.success !== true ||
+            JSON.stringify(productionDomains) !==
+              JSON.stringify([
+                {
+                  hostname: "chaft.ai",
+                  service: "chaft-website",
+                  zoneName: "chaft.ai",
+                },
+                {
+                  hostname: "www.chaft.ai",
+                  service: "chaft-website",
+                  zoneName: "chaft.ai",
+                },
+              ])
+          ) {
+            throw new Error(
+              "Preview read credentials cannot prove the exact production Custom Domains",
+            );
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/production-cloudflare-before.json`,
+            `${JSON.stringify(
+              {
+                deploymentId: currentProduction.id,
+                versionId: productionActive[0].version_id,
+                domains: productionDomains,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `previous_deployment_id=${deployment.id}\nprevious_version_id=${active[0].version_id}\n`,
+          );
+          NODE
+
+      - name: Deploy exact static bytes to the allowlisted Preview Worker
+        id: deploy
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
+          DEPLOY_MESSAGE: Preview ${{ needs.preflight.outputs.slot }} ${{ needs.preflight.outputs.source_commit }} from run ${{ github.event.workflow_run.id }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          WRANGLER_ENVIRONMENT: ${{ needs.preflight.outputs.wrangler_environment }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/preview-wrangler-deploy.ndjson
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_PREVIEW_API_TOKEN is not configured."
+            exit 1
+          fi
+          pnpm exec wrangler deploy \
+            --config wrangler.preview.jsonc \
+            --env "${WRANGLER_ENVIRONMENT}" \
+            --strict \
+            --tag "${SOURCE_COMMIT}" \
+            --message "${DEPLOY_MESSAGE}"
+
+      - name: Extract exact deployed Preview version
+        id: version
+        env:
+          EXPECTED_WORKER: ${{ needs.preflight.outputs.worker }}
+          WRANGLER_OUTPUT_FILE: ${{ runner.temp }}/preview-wrangler-deploy.ndjson
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const records = fs
+            .readFileSync(process.env.WRANGLER_OUTPUT_FILE, "utf8")
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+          const deployments = records.filter(
+            (record) => record.type === "deploy" && record.version === 1,
+          );
+          const sessions = records.filter(
+            (record) => record.type === "wrangler-session" && record.version === 1,
+          );
+          if (sessions.length !== 1 || sessions[0].wrangler_version !== "4.114.0") {
+            throw new Error("Wrangler output does not identify the pinned 4.114.0 session");
+          }
+          if (deployments.length !== 1) {
+            throw new Error(`expected one Wrangler deploy record, received ${deployments.length}`);
+          }
+          const deployment = deployments[0];
+          if (
+            deployment.worker_name !== process.env.EXPECTED_WORKER ||
+            deployment.worker_name_overridden !== false ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.version_id)
+          ) {
+            throw new Error("Wrangler deployed an unexpected Preview Worker identity");
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `version_id=${deployment.version_id}\n`,
+          );
+          NODE
+
+      - name: Confirm active Preview version with read-only credentials
+        id: status
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_READ_API_TOKEN }}
+          EXPECTED_VERSION_ID: ${{ steps.version.outputs.version_id }}
+          WRANGLER_ENVIRONMENT: ${{ needs.preflight.outputs.wrangler_environment }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..10}; do
+            pnpm exec wrangler deployments status \
+              --config wrangler.preview.jsonc \
+              --env "${WRANGLER_ENVIRONMENT}" \
+              --json > "${RUNNER_TEMP}/preview-deployment-after.json"
+            if node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/preview-deployment-after.json`, "utf8"),
+          );
+          const versions = deployment.versions;
+          if (
+            !Array.isArray(versions) ||
+            versions.length !== 1 ||
+            versions[0].version_id !== process.env.EXPECTED_VERSION_ID ||
+            versions[0].percentage !== 100 ||
+            !/^[a-f0-9-]{32,64}$/i.test(deployment.id)
+          ) {
+            process.exit(1);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `deployment_id=${deployment.id}\n`);
+          NODE
+            then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::Expected Preview Worker version did not reach 100 percent."
+          exit 1
+
+      - name: Prove Preview domain and production marker isolation
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_READ_API_TOKEN }}
+          PREVIEW_DOMAIN: ${{ needs.preflight.outputs.domain }}
+          PREVIEW_WORKER: ${{ needs.preflight.outputs.worker }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=${PREVIEW_WORKER}" \
+            --output "${RUNNER_TEMP}/preview-domains-after-response.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/chaft-website/deployments" \
+            --output "${RUNNER_TEMP}/production-deployments-after-response.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/production-domains-after-response.json"
+          for hostname in chaft.ai www.chaft.ai; do
+            curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 20 \
+              "https://${hostname}/.well-known/chaft-deployment.json" \
+              --output "${RUNNER_TEMP}/production-${hostname}-after.json"
+            cmp \
+              "${RUNNER_TEMP}/production-${hostname}-before.json" \
+              "${RUNNER_TEMP}/production-${hostname}-after.json"
+          done
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-domains-after-response.json`,
+              "utf8",
+            ),
+          );
+          const domains = payload.result
+            ?.filter((domain) => domain.service === process.env.PREVIEW_WORKER)
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }));
+          const before = JSON.parse(
+            fs.readFileSync(`${process.env.RUNNER_TEMP}/preview-domains-before.json`, "utf8"),
+          );
+          if (
+            payload.success !== true ||
+            JSON.stringify(domains) !== JSON.stringify(before)
+          ) {
+            throw new Error("Preview Custom Domain identity changed during deployment");
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/preview-domains-after.json`,
+            `${JSON.stringify(domains, null, 2)}\n`,
+          );
+          const productionDeploymentsPayload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-deployments-after-response.json`,
+              "utf8",
+            ),
+          );
+          const currentProduction =
+            productionDeploymentsPayload.result?.deployments?.[0];
+          const productionActive = currentProduction?.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          const productionDomainsPayload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-domains-after-response.json`,
+              "utf8",
+            ),
+          );
+          const productionDomains = productionDomainsPayload.result
+            ?.filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          if (
+            productionDeploymentsPayload.success !== true ||
+            productionActive?.length !== 1 ||
+            productionDomainsPayload.success !== true
+          ) {
+            throw new Error("production isolation recheck failed");
+          }
+          const productionAfter = {
+            deploymentId: currentProduction.id,
+            versionId: productionActive[0].version_id,
+            domains: productionDomains,
+          };
+          const productionBefore = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-cloudflare-before.json`,
+              "utf8",
+            ),
+          );
+          if (JSON.stringify(productionAfter) !== JSON.stringify(productionBefore)) {
+            throw new Error(
+              "production Worker deployment, version, or Custom Domains changed",
+            );
+          }
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/production-cloudflare-after.json`,
+            `${JSON.stringify(productionAfter, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Verify complete public Preview contract
+        shell: bash
+        working-directory: apps/website
+        env:
+          PREVIEW_BRANCH: ${{ needs.preflight.outputs.branch }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          node scripts/preview-public-deployment-verifier.mjs \
+            --branch "${PREVIEW_BRANCH}" \
+            --commit "${SOURCE_COMMIT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --attempts 12 \
+            --delay-ms 5000 \
+            --output "${RUNNER_TEMP}/preview-public-verification.json"
+
+      - name: Create durable Preview deployment record
+        env:
+          ARTIFACT_DIGEST: ${{ needs.preflight.outputs.artifact_digest }}
+          ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+          ARTIFACT_MANIFEST_SHA256: ${{ needs.preflight.outputs.artifact_manifest_sha256 }}
+          ARTIFACT_NAME: ${{ needs.preflight.outputs.artifact_name }}
+          ARTIFACT_SIZE: ${{ needs.preflight.outputs.artifact_size }}
+          DEPLOYMENT_ID: ${{ steps.status.outputs.deployment_id }}
+          FOUNDATION_COMMIT: ${{ steps.governance.outputs.foundation_commit }}
+          GOVERNANCE_COMMIT: ${{ vars.CHAFT_PREVIEWS_INFRA_COMMIT }}
+          PREVIOUS_DEPLOYMENT_ID: ${{ steps.before.outputs.previous_deployment_id }}
+          PREVIOUS_VERSION_ID: ${{ steps.before.outputs.previous_version_id }}
+          PREVIEW_BRANCH: ${{ needs.preflight.outputs.branch }}
+          PREVIEW_DOMAIN: ${{ needs.preflight.outputs.domain }}
+          PREVIEW_ENVIRONMENT: ${{ needs.preflight.outputs.environment }}
+          PREVIEW_SLOT: ${{ needs.preflight.outputs.slot }}
+          PREVIEW_WORKER: ${{ needs.preflight.outputs.worker }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRUSTED_COMMIT: ${{ needs.preflight.outputs.trusted_commit }}
+          TRUSTED_QA_ARTIFACT_DIGEST: ${{ needs.preflight.outputs.trusted_qa_artifact_digest }}
+          TRUSTED_QA_ARTIFACT_ID: ${{ needs.preflight.outputs.trusted_qa_artifact_id }}
+          TRUSTED_QA_ARTIFACT_NAME: ${{ needs.preflight.outputs.trusted_qa_artifact_name }}
+          TRUSTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRUSTED_RUN_ID: ${{ github.run_id }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/preview-deployment-evidence"
+          node - <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const readJson = (name) =>
+            JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, "utf8"));
+          const digest = (name) =>
+            createHash("sha256")
+              .update(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`))
+              .digest("hex");
+          const record = {
+            schemaVersion: 1,
+            artifactKind: "chaft-preview-deployment-record",
+            result: "passed",
+            recordedAt: new Date().toISOString(),
+            preview: {
+              branch: process.env.PREVIEW_BRANCH,
+              domain: process.env.PREVIEW_DOMAIN,
+              environment: process.env.PREVIEW_ENVIRONMENT,
+              siteUrl: process.env.SITE_URL,
+              slot: process.env.PREVIEW_SLOT,
+              worker: process.env.PREVIEW_WORKER,
+            },
+            source: {
+              repository: process.env.GITHUB_REPOSITORY,
+              commit: process.env.SOURCE_COMMIT,
+              workflowRunId: Number(process.env.SOURCE_RUN_ID),
+            },
+            trusted: {
+              branch: "main",
+              commit: process.env.TRUSTED_COMMIT,
+              foundationCommit: process.env.FOUNDATION_COMMIT,
+              workflowPath: ".github/workflows/deploy-website-preview.yml",
+              workflowRunAttempt: Number(process.env.TRUSTED_RUN_ATTEMPT),
+              workflowRunId: Number(process.env.TRUSTED_RUN_ID),
+            },
+            governance: {
+              repository: "Jurshsmith/chaft-infra",
+              commit: process.env.GOVERNANCE_COMMIT,
+              verification: readJson("preview-governance-verification.json"),
+            },
+            artifact: {
+              digest: process.env.ARTIFACT_DIGEST,
+              id: Number(process.env.ARTIFACT_ID),
+              manifestSha256: process.env.ARTIFACT_MANIFEST_SHA256,
+              name: process.env.ARTIFACT_NAME,
+              sizeInBytes: Number(process.env.ARTIFACT_SIZE),
+            },
+            trustedQa: {
+              artifactDigest: process.env.TRUSTED_QA_ARTIFACT_DIGEST,
+              artifactId: Number(process.env.TRUSTED_QA_ARTIFACT_ID),
+              artifactName: process.env.TRUSTED_QA_ARTIFACT_NAME,
+            },
+            staticValidation: readJson("preview-static-verification.json"),
+            cloudflare: {
+              deploymentId: process.env.DEPLOYMENT_ID,
+              previousDeploymentId: process.env.PREVIOUS_DEPLOYMENT_ID,
+              previousVersionId: process.env.PREVIOUS_VERSION_ID,
+              versionId: process.env.VERSION_ID,
+              domains: readJson("preview-domains-after.json"),
+            },
+            productionIsolation: {
+              apexMarkerSha256: digest("production-chaft.ai-after.json"),
+              cloudflare: readJson("production-cloudflare-after.json"),
+              wwwMarkerSha256: digest("production-www.chaft.ai-after.json"),
+            },
+            verification: readJson("preview-public-verification.json"),
+          };
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/preview-deployment-evidence/deployment-record.json`,
+            `${JSON.stringify(record, null, 2)}\n`,
+          );
+          NODE
+
+      - name: Retain successful Preview deployment evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-preview-deployment-${{ needs.preflight.outputs.slot }}-${{ steps.version.outputs.version_id }}
+          path: ${{ runner.temp }}/preview-deployment-evidence/deployment-record.json
+          if-no-files-found: error
+          retention-days: 90
+          archive: true
+
+      - name: Record verified Preview deployment
+        env:
+          PREVIEW_BRANCH: ${{ needs.preflight.outputs.branch }}
+          PREVIEW_SLOT: ${{ needs.preflight.outputs.slot }}
+          SITE_URL: ${{ needs.preflight.outputs.site_url }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+        run: |
+          {
+            echo "### Chaft Preview deployed"
+            echo
+            echo "- Preview branch: \`${PREVIEW_BRANCH}\`"
+            echo "- Preview slot: \`${PREVIEW_SLOT}\`"
+            echo "- Source commit: \`${SOURCE_COMMIT}\`"
+            echo "- Worker version: \`${VERSION_ID}\`"
+            echo "- URL: ${SITE_URL}"
+            echo "- Production markers unchanged: **yes**"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Restore captured Preview version after a failed deployment
+        if: >-
+          ${{
+            failure() &&
+            steps.before.outcome == 'success' &&
+            steps.deploy.outcome != 'skipped' &&
+            steps.before.outputs.previous_version_id != ''
+          }}
+        shell: bash
+        working-directory: apps/website
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN }}
+          CLOUDFLARE_READ_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_READ_API_TOKEN }}
+          PREVIOUS_VERSION_ID: ${{ steps.before.outputs.previous_version_id }}
+          PREVIEW_DOMAIN: ${{ needs.preflight.outputs.domain }}
+          PREVIEW_SLOT: ${{ needs.preflight.outputs.slot }}
+          PREVIEW_WORKER: ${{ needs.preflight.outputs.worker }}
+          WRANGLER_ENVIRONMENT: ${{ needs.preflight.outputs.wrangler_environment }}
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler rollback "${PREVIOUS_VERSION_ID}" \
+            --config wrangler.preview.jsonc \
+            --env "${WRANGLER_ENVIRONMENT}" \
+            --message "Compensate failed ${PREVIEW_SLOT} deployment" \
+            --yes
+          CLOUDFLARE_API_TOKEN="${CLOUDFLARE_READ_API_TOKEN}" \
+            pnpm exec wrangler deployments status \
+            --config wrangler.preview.jsonc \
+            --env "${WRANGLER_ENVIRONMENT}" \
+            --json > "${RUNNER_TEMP}/preview-compensation-status.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_READ_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=${PREVIEW_WORKER}" \
+            --output "${RUNNER_TEMP}/preview-compensation-domains.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_READ_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/chaft-website/deployments" \
+            --output "${RUNNER_TEMP}/production-compensation-deployments.json"
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 20 \
+            --header "Authorization: Bearer ${CLOUDFLARE_READ_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains?service=chaft-website" \
+            --output "${RUNNER_TEMP}/production-compensation-domains.json"
+          for hostname in chaft.ai www.chaft.ai; do
+            curl --fail --silent --show-error \
+              --connect-timeout 5 \
+              --max-time 20 \
+              "https://${hostname}/.well-known/chaft-deployment.json" \
+              --output "${RUNNER_TEMP}/production-${hostname}-compensated.json"
+            cmp \
+              "${RUNNER_TEMP}/production-${hostname}-before.json" \
+              "${RUNNER_TEMP}/production-${hostname}-compensated.json"
+          done
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const deployment = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-compensation-status.json`,
+              "utf8",
+            ),
+          );
+          const active = deployment.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          if (
+            active?.length !== 1 ||
+            active[0].version_id !== process.env.PREVIOUS_VERSION_ID
+          ) {
+            throw new Error("failed Preview deployment compensation did not restore the captured version");
+          }
+          const payload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-compensation-domains.json`,
+              "utf8",
+            ),
+          );
+          const domains = payload.result
+            ?.filter((domain) => domain.service === process.env.PREVIEW_WORKER)
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }));
+          const before = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/preview-domains-before.json`,
+              "utf8",
+            ),
+          );
+          if (
+            payload.success !== true ||
+            JSON.stringify(domains) !== JSON.stringify(before)
+          ) {
+            throw new Error("failed Preview deployment compensation changed the Custom Domain");
+          }
+          const productionDeployments = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-compensation-deployments.json`,
+              "utf8",
+            ),
+          );
+          const currentProduction = productionDeployments.result?.deployments?.[0];
+          const productionActive = currentProduction?.versions?.filter(
+            (version) => version.percentage === 100,
+          );
+          const productionDomainsPayload = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-compensation-domains.json`,
+              "utf8",
+            ),
+          );
+          const productionDomains = productionDomainsPayload.result
+            ?.filter((domain) => domain.service === "chaft-website")
+            .map(({ hostname, service, zone_name: zoneName }) => ({
+              hostname,
+              service,
+              zoneName,
+            }))
+            .sort((left, right) => left.hostname.localeCompare(right.hostname));
+          const productionBefore = JSON.parse(
+            fs.readFileSync(
+              `${process.env.RUNNER_TEMP}/production-cloudflare-before.json`,
+              "utf8",
+            ),
+          );
+          const productionAfter = {
+            deploymentId: currentProduction?.id,
+            versionId: productionActive?.[0]?.version_id,
+            domains: productionDomains,
+          };
+          if (
+            productionDeployments.success !== true ||
+            productionActive?.length !== 1 ||
+            productionDomainsPayload.success !== true ||
+            JSON.stringify(productionAfter) !== JSON.stringify(productionBefore)
+          ) {
+            throw new Error("failed Preview compensation could not prove production isolation");
+          }
+          NODE

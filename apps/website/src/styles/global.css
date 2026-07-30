@@ -33,8 +33,8 @@
   --text-strong: #17211f;
   --text-soft: #34403c;
   --text-muted: #5e6965;
-  --text-faint: #66706c;
-  --accent: #08765b;
+  --text-faint: #59645f;
+  --accent: #077054;
   --accent-bright: #4bc3a2;
   --on-accent: #fffdf7;
   --success: #247b59;
@@ -212,6 +212,7 @@ p {
   --text-muted: #b5c0bc;
   --text-soft: #dce4e0;
   --text-strong: #fffdf7;
+  --on-accent: #111a17;
   background: var(--surface-ink);
   color: var(--text-strong);
 }

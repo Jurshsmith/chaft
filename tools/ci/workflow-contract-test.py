@@ -19,6 +19,9 @@ GIT_ATTRIBUTES_PATH = ROOT / ".gitattributes"
 WORKFLOWS = ROOT / ".github/workflows"
 CI_PATH = WORKFLOWS / "ci.yml"
 WEBSITE_PATH = WORKFLOWS / "website.yml"
+WEBSITE_PREVIEW_PATH = WORKFLOWS / "website-preview.yml"
+DEPLOY_WEBSITE_PREVIEW_PATH = WORKFLOWS / "deploy-website-preview.yml"
+RESET_WEBSITE_PREVIEW_PATH = WORKFLOWS / "reset-website-preview.yml"
 RELEASE_INPUTS_PATH = WORKFLOWS / "build-desktop-release-inputs.yml"
 PROMOTION_PATH = WORKFLOWS / "promote-desktop-release.yml"
 CANARY_PUBLISH_PATH = WORKFLOWS / "publish-desktop-canary.yml"
@@ -318,6 +321,13 @@ class CiWorkflowContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.ci = CI_PATH.read_text(encoding="utf-8")
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
+        cls.website_preview = WEBSITE_PREVIEW_PATH.read_text(encoding="utf-8")
+        cls.deploy_website_preview = DEPLOY_WEBSITE_PREVIEW_PATH.read_text(
+            encoding="utf-8"
+        )
+        cls.reset_website_preview = RESET_WEBSITE_PREVIEW_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.release_inputs = RELEASE_INPUTS_PATH.read_text(encoding="utf-8")
         cls.promotion = PROMOTION_PATH.read_text(encoding="utf-8")
         cls.canary_publish = CANARY_PUBLISH_PATH.read_text(encoding="utf-8")
@@ -363,6 +373,215 @@ class CiWorkflowContractTests(unittest.TestCase):
         website_job = job_block(self.ci, "website")
         self.assertIn("pnpm install --frozen-lockfile", website_job)
         self.assertIn("pnpm validate", website_job)
+
+    def test_preview_candidate_is_exact_credential_free_and_immutable(
+        self,
+    ) -> None:
+        source = self.website_preview
+        trigger = source.split("\npermissions:\n", 1)[0]
+        expected_branches = {
+            "preview/landing-hero-1",
+            "preview/landing-hero-2",
+            "preview/landing-hero-3",
+            "preview/landing-hero-4",
+        }
+        triggered = set(
+            re.findall(
+                r"^      - (preview/landing-hero-[1-4])$",
+                trigger,
+                re.MULTILINE,
+            )
+        )
+        self.assertEqual(triggered, expected_branches)
+        self.assertNotIn("pull_request_target", source)
+        self.assertNotIn("workflow_dispatch:", trigger)
+        self.assertNotIn("secrets.", source)
+        self.assertNotIn("CLOUDFLARE_API_TOKEN", source)
+        self.assertNotIn("CHAFT_PREVIEWS_INFRA_DEPLOY_KEY", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertIn("CHAFT_DEPLOYMENT_MODE: preview", source)
+        self.assertIn("CHAFT_PREVIEW_BRANCH:", source)
+        self.assertIn("pnpm qa", source)
+        self.assertEqual(source.count("\n        run: pnpm build\n"), 0)
+        self.assertIn(
+            "name: chaft-preview-qa-${{ steps.preview.outputs.slot }}-"
+            "${{ github.sha }}",
+            source,
+        )
+        self.assertIn(
+            "if: ${{ always() && steps.preview.outcome == 'success' }}",
+            source,
+        )
+        self.assertIn("deployment-artifact-cli.mjs create", source)
+        self.assertIn("deployment-artifact-cli.mjs verify", source)
+        self.assertIn("include-hidden-files: true", source)
+        self.assertIn("archive: true", source)
+        self.assertIn("retention-days: 14", source)
+
+    def test_preview_deploy_is_default_branch_owned_and_slot_isolated(
+        self,
+    ) -> None:
+        source = self.deploy_website_preview
+        self.assertIn("workflow_run:", source)
+        self.assertNotIn(
+            "workflow_dispatch:",
+            source.split("\npermissions:\n", 1)[0],
+        )
+        self.assertNotIn("pull_request_target", source)
+        self.assertIn(
+            "github.event.workflow_run.head_repository.full_name == "
+            "github.repository",
+            source,
+        )
+        self.assertIn("github.event.workflow_run.event == 'push'", source)
+        self.assertIn(
+            "github.event.workflow_run.conclusion == 'success'",
+            source,
+        )
+        self.assertIn(
+            "group: chaft-preview-deploy-"
+            "${{ github.event.workflow_run.head_branch }}",
+            source,
+        )
+        self.assertIn("cancel-in-progress: false", source)
+
+        preflight = job_block(source, "preflight")
+        deploy = job_block(source, "deploy")
+        self.assertIn("ref: ${{ steps.trusted.outputs.commit }}", preflight)
+        self.assertNotIn(
+            "ref: ${{ github.event.workflow_run.head_sha }}",
+            source,
+        )
+        self.assertIn("current_branch", preflight)
+        self.assertIn("artifact.workflow_run?.head_sha", preflight)
+        self.assertIn("artifact.workflow_run?.head_branch", preflight)
+        self.assertIn("digest-mismatch: error", preflight)
+        self.assertIn("timeout-minutes: 45", preflight)
+        self.assertIn("pnpm qa:browser", preflight)
+        self.assertIn("pnpm qa:lighthouse", preflight)
+        self.assertIn("preview-static-artifact-validator.mjs", preflight)
+        self.assertIn("chaft-preview-trusted-qa-", preflight)
+        self.assertNotIn("secrets.", preflight)
+        self.assertIn(
+            "ref: ${{ needs.preflight.outputs.trusted_commit }}",
+            deploy,
+        )
+        self.assertIn("preview-slot-contract.mjs verify", deploy)
+        self.assertIn("preview-governance-validation.mjs", deploy)
+        self.assertIn("/compare/${FOUNDATION_COMMIT}...${head}", deploy)
+        self.assertIn("preview-scope-comparison.json", deploy)
+        self.assertIn("preview-base-comparison.json", deploy)
+        self.assertIn("scope.total_commits > 50", deploy)
+        self.assertIn("scope.files.length > 100", deploy)
+        self.assertIn(
+            "apps\\/website\\/src\\/components\\/previews\\/",
+            deploy,
+        )
+        self.assertIn("preview-cycle-content.json", deploy)
+        self.assertIn('manifest.status !== "active"', deploy)
+        self.assertIn('slot.status !== "ready"', deploy)
+        self.assertIn("pulls.length !== 1", deploy)
+        self.assertIn('pulls[0].base?.ref !== "main"', deploy)
+        self.assertIn(
+            "pulls[0].head?.sha !== process.env.CANDIDATE_SHA",
+            deploy,
+        )
+        self.assertIn("CLOUDFLARE_PREVIEW_API_TOKEN", deploy)
+        self.assertIn("CLOUDFLARE_PREVIEW_READ_API_TOKEN", deploy)
+        self.assertIn("CHAFT_PREVIEWS_INFRA_DEPLOY_KEY", deploy)
+        self.assertIn("  pull-requests: read\n", source)
+        self.assertNotIn("secrets.CLOUDFLARE_API_TOKEN }}", deploy)
+        self.assertNotIn("secrets.CLOUDFLARE_READ_API_TOKEN }}", deploy)
+        self.assertNotIn("--config wrangler.jsonc", deploy)
+        self.assertIn("--config wrangler.preview.jsonc", deploy)
+        self.assertIn("production-${hostname}-before.json", deploy)
+        self.assertIn("production-${hostname}-after.json", deploy)
+        self.assertIn(
+            "/workers/scripts/chaft-website/deployments",
+            deploy,
+        )
+        self.assertIn("production-cloudflare-before.json", deploy)
+        self.assertIn("production-cloudflare-after.json", deploy)
+        self.assertIn("preview-public-deployment-verifier.mjs", deploy)
+        self.assertIn('"chaft-preview-deployment-record"', deploy)
+        self.assertIn(
+            "steps.deploy.outcome != 'skipped'",
+            deploy,
+        )
+        self.assertIn("Compensate failed ${PREVIEW_SLOT} deployment", deploy)
+        self.assertIn("retention-days: 90", deploy)
+
+    def test_preview_reset_requires_trusted_main_or_retained_evidence(
+        self,
+    ) -> None:
+        source = self.reset_website_preview
+        trigger = source.split("\npermissions:\n", 1)[0]
+        self.assertIn("workflow_dispatch:", trigger)
+        self.assertIn("- trusted-main", trigger)
+        self.assertIn("- retained-version", trigger)
+        self.assertIn("target_version_id:", trigger)
+        self.assertIn("expected_source_commit:", trigger)
+        self.assertIn(
+            "inputs.confirmation == format('reset {0}', inputs.preview_slot)",
+            source,
+        )
+        self.assertIn("github.ref == 'refs/heads/main'", source)
+        self.assertIn(
+            "group: chaft-preview-deploy-"
+            "${{ format('preview/landing-{0}', inputs.preview_slot) }}",
+            source,
+        )
+        self.assertIn("current_main", source)
+        self.assertIn(
+            "chaft-preview-deployment-${{ inputs.preview_slot }}-",
+            source,
+        )
+        self.assertIn("artifacts.length !== 1", source)
+        self.assertIn("artifact.digest", source)
+        self.assertIn("artifact.id", source)
+        self.assertIn(
+            'trustedRun.path !== ".github/workflows/deploy-website-preview.yml"',
+            source,
+        )
+        self.assertIn(
+            'run.path !== ".github/workflows/website-preview.yml"',
+            source,
+        )
+        self.assertIn("digest-mismatch: error", source)
+        self.assertIn(
+            "retained Preview record does not authorize this reset target",
+            source,
+        )
+        self.assertIn("pnpm exec wrangler rollback", source)
+        self.assertIn("pnpm exec wrangler deploy", source)
+        self.assertIn("--config wrangler.preview.jsonc", source)
+        self.assertNotIn("--config wrangler.jsonc", source)
+        self.assertNotIn("secrets.CLOUDFLARE_API_TOKEN }}", source)
+        self.assertNotIn("secrets.CLOUDFLARE_READ_API_TOKEN }}", source)
+        self.assertNotIn("wrangler delete", source)
+        self.assertNotIn("gh api --method DELETE", source)
+        self.assertIn("--connect-timeout 5", source)
+        self.assertIn("--max-time 20", source)
+        self.assertIn(
+            "/workers/scripts/chaft-website/deployments",
+            source,
+        )
+        self.assertIn("production-reset-cloudflare-before.json", source)
+        self.assertIn("production-reset-compensation-deployments.json", source)
+        self.assertIn("production-reset-compensation-domains.json", source)
+        self.assertIn("Compensate failed ${SLOT} reset", source)
+        self.assertIn('"chaft-preview-reset-record"', source)
+        self.assertIn("retention-days: 90", source)
+
+    def test_preview_workflows_use_only_preview_terminology(self) -> None:
+        combined = "\n".join(
+            (
+                self.website_preview,
+                self.deploy_website_preview,
+                self.reset_website_preview,
+            )
+        ).lower()
+        self.assertNotIn("experiment", combined)
 
     def test_rust_work_is_split_without_redundant_all_target_test_compile(
         self,
@@ -479,7 +698,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             ("pull_request", "refs/pull/7/merge"),
             ("push", "refs/tags/v0.1.0"),
             ("workflow_dispatch", "refs/tags/v0.1.0"),
-            ("workflow_dispatch", "refs/heads/cache-experiment"),
+            ("workflow_dispatch", "refs/heads/cache-scratch"),
         )
         for event_name, ref in rejected:
             with self.subTest(event_name=event_name, ref=ref):

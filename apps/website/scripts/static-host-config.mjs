@@ -2,6 +2,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { deploymentMountPath } from "./deployment-artifact.mjs";
+import {
+  PREVIEW_ROBOTS_POLICY,
+  resolveWebsiteDeployment,
+} from "../src/lib/preview-contract.mjs";
 
 export function deploymentBase(siteUrl) {
   const mountPath = deploymentMountPath(siteUrl);
@@ -15,13 +19,16 @@ export function withDeploymentBase(base, pathname) {
   return `${base}${pathname}`;
 }
 
-export function renderHeaders(base) {
+export function renderHeaders(base, { isPreview = false } = {}) {
+  const previewIndexingHeader = isPreview
+    ? `\n  X-Robots-Tag: ${PREVIEW_ROBOTS_POLICY}`
+    : "";
   return `/*
   Cross-Origin-Opener-Policy: same-origin
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
-  X-Frame-Options: DENY
+  X-Frame-Options: DENY${previewIndexingHeader}
 
 ${withDeploymentBase(base, "/.well-known/chaft-deployment.json")}
   Cache-Control: no-store
@@ -40,13 +47,26 @@ ${withDeploymentBase(base, "/source")} https://github.com/Jurshsmith/chaft 302
 `;
 }
 
-export function writeStaticHostConfig(distDirectory, siteUrl) {
+export function writeStaticHostConfig(
+  distDirectory,
+  siteUrl,
+  environment = process.env,
+) {
   // Read first so a missing Astro-copied provider file fails the build rather
   // than silently producing a partially configured deployment artifact.
   readFileSync(join(distDirectory, "_headers"), "utf8");
   readFileSync(join(distDirectory, "_redirects"), "utf8");
 
   const base = deploymentBase(siteUrl);
-  writeFileSync(join(distDirectory, "_headers"), renderHeaders(base), "utf8");
+  const deployment = resolveWebsiteDeployment({
+    deploymentMode: environment.CHAFT_DEPLOYMENT_MODE,
+    previewBranch: environment.CHAFT_PREVIEW_BRANCH,
+    siteUrl,
+  });
+  writeFileSync(
+    join(distDirectory, "_headers"),
+    renderHeaders(base, deployment),
+    "utf8",
+  );
   writeFileSync(join(distDirectory, "_redirects"), renderRedirects(base), "utf8");
 }

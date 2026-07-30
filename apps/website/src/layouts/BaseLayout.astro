@@ -5,6 +5,12 @@ import mark from "../../../desktop-qt/resources/branding/chaft-mark.png";
 
 import SiteFooter from "../components/SiteFooter.astro";
 import SiteHeader from "../components/SiteHeader.astro";
+import {
+  PREVIEW_ROBOTS_POLICY,
+  PRODUCTION_ORIGIN,
+  previewSlotLabel,
+  resolveWebsiteDeployment,
+} from "../lib/preview-contract.mjs";
 import { sitePath } from "../lib/site-path";
 import "../styles/global.css";
 
@@ -22,13 +28,26 @@ const socialTitle =
   title === siteName
     ? "Chaft — Open-source team chat that runs on your devices."
     : fullTitle;
-const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url);
-const socialImage = new URL(sitePath("/og-chaft-v3.png"), Astro.site ?? Astro.url);
+const deployment = resolveWebsiteDeployment({
+  deploymentMode: process.env.CHAFT_DEPLOYMENT_MODE,
+  previewBranch: process.env.CHAFT_PREVIEW_BRANCH,
+  siteUrl: process.env.SITE_URL ?? Astro.site ?? Astro.url,
+});
+const canonicalBase = deployment.isPreview
+  ? new URL(PRODUCTION_ORIGIN)
+  : Astro.site ?? Astro.url;
+const canonical = new URL(Astro.url.pathname, canonicalBase);
+const socialImage = new URL(sitePath("/og-chaft-v3.png"), canonicalBase);
 const socialImageAlt =
   "Chaft logo beside a peer network and the message: Team chat that runs on your devices.";
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
 const chillaxStylesheet =
   "https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&display=swap";
+const robotsPolicy = deployment.isPreview
+  ? PREVIEW_ROBOTS_POLICY
+  : noindex
+    ? "noindex, nofollow"
+    : undefined;
 ---
 
 <!doctype html>
@@ -39,7 +58,7 @@ const chillaxStylesheet =
     <meta name="generator" content={Astro.generator} />
     <meta name="theme-color" content="#f4f1e8" />
     <meta name="description" content={description} />
-    {noindex && <meta name="robots" content="noindex, nofollow" />}
+    {robotsPolicy && <meta name="robots" content={robotsPolicy} />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/png" href={favicon.src} sizes="64x64" />
     <link rel="preconnect" href="https://api.fontshare.com" />
@@ -71,10 +90,50 @@ const chillaxStylesheet =
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
+    {deployment.preview && (
+      <aside
+        class="chaft-preview-badge"
+        aria-label={`Chaft Preview slot ${deployment.preview.slot}`}
+      >
+        <strong>Chaft Preview</strong>
+        <span aria-hidden="true">·</span>
+        <span>{previewSlotLabel(deployment.preview.slot)}</span>
+      </aside>
+    )}
     <SiteHeader />
     <main id="main-content">
       <slot />
     </main>
     <SiteFooter />
+    {deployment.isPreview && (
+      <style is:inline>
+        {`
+          .chaft-preview-badge {
+            position: fixed;
+            right: max(0.75rem, env(safe-area-inset-right));
+            bottom: max(0.75rem, env(safe-area-inset-bottom));
+            z-index: 40;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            max-width: calc(100vw - 1.5rem);
+            padding: 0.45rem 0.65rem;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-sm);
+            background: var(--surface-raised);
+            box-shadow: 3px 3px 0 rgb(23 33 31 / 14%);
+            color: var(--text-soft);
+            font-family: var(--font-ui);
+            font-size: 0.72rem;
+            line-height: 1.2;
+          }
+
+          .chaft-preview-badge strong {
+            color: var(--text-strong);
+            font-weight: 500;
+          }
+        `}
+      </style>
+    )}
   </body>
 </html>
