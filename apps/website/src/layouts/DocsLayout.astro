@@ -115,6 +115,7 @@ const {
   .docs-prose :global(p),
   .docs-prose :global(li) {
     color: var(--text-muted);
+    font-family: var(--font-body);
     font-size: 1.02rem;
     line-height: 1.72;
   }
@@ -210,6 +211,10 @@ const {
     background: var(--surface-raised);
     color: var(--text-strong);
     font-weight: 500;
+  }
+
+  .docs-prose :global(td) {
+    font-family: var(--font-body);
   }
 
   .docs-prose :global(table a) {
