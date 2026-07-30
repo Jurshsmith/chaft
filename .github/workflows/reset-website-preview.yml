@@ -366,6 +366,13 @@ jobs:
             --repository "${GITHUB_REPOSITORY}" \
             --commit "${SOURCE_COMMIT}" \
             --site-url "${SITE_URL}"
+          rm -rf -- dist
+          node scripts/deployment-artifact-cli.mjs install \
+            --artifact "${ARTIFACT_DIRECTORY}" \
+            --destination dist \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${SOURCE_COMMIT}" \
+            --site-url "${SITE_URL}"
           node scripts/deployment-artifact-cli.mjs compare \
             --artifact "${ARTIFACT_DIRECTORY}" \
             --destination dist \
