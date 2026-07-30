@@ -1,0 +1,109 @@
+---
+import PeerMeshVisual from "../PeerMeshVisual.astro";
+import LandingHeroCopy from "./LandingHeroCopy.astro";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+}
+
+const { hasPublishedDownloads } = Astro.props;
+---
+
+<section class="hero" data-chaft-hero="baseline">
+  <div class="shell hero__grid">
+    <LandingHeroCopy {hasPublishedDownloads} />
+
+    <div class="hero__visual">
+      <PeerMeshVisual />
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(4.5rem, 9vw, 7.5rem);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .hero::after {
+    position: absolute;
+    top: 12%;
+    right: -9rem;
+    z-index: -1;
+    width: 27rem;
+    height: 27rem;
+    border: 1px solid var(--brand-coral);
+    border-radius: 50%;
+    opacity: 0.42;
+    content: "";
+  }
+
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(23rem, 0.85fr);
+    gap: clamp(3rem, 8vw, 7rem);
+    align-items: center;
+  }
+
+  .hero :global(.hero__copy) {
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero :global(h1) {
+    max-width: 10.5ch;
+    margin-bottom: 1.8rem;
+    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
+  }
+
+  .hero :global(h1 em) {
+    display: block;
+    color: var(--brand-coral);
+    font-family: var(--font-editorial);
+    font-size: 1.04em;
+    font-weight: 400;
+    letter-spacing: -0.045em;
+  }
+
+  .hero :global(.hero__actions) {
+    margin-top: 2.25rem;
+  }
+
+  .hero :global(.hero__note) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+  }
+
+  .hero__visual {
+    position: relative;
+  }
+
+  .hero__visual::before {
+    position: absolute;
+    inset: -0.8rem 0.8rem 0.8rem -0.8rem;
+    z-index: -1;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--brand-coral);
+    content: "";
+  }
+
+  @media (max-width: 940px) {
+    .hero__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero__visual {
+      width: min(100%, 42rem);
+      margin-inline: auto;
+    }
+  }
+</style>

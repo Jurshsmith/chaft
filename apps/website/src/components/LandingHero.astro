@@ -1,0 +1,40 @@
+---
+import BaselineLandingHero from "./landing/BaselineLandingHero.astro";
+import HeroOneLandingHero from "./previews/hero-1/LandingHero.astro";
+import HeroTwoLandingHero from "./previews/hero-2/LandingHero.astro";
+import HeroThreeLandingHero from "./previews/hero-3/LandingHero.astro";
+import HeroFourLandingHero from "./previews/hero-4/LandingHero.astro";
+import { resolveWebsiteDeployment } from "../lib/preview-contract.mjs";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+}
+
+const deployment = resolveWebsiteDeployment({
+  deploymentMode: process.env.CHAFT_DEPLOYMENT_MODE,
+  previewBranch: process.env.CHAFT_PREVIEW_BRANCH,
+  siteUrl: process.env.SITE_URL ?? Astro.site ?? Astro.url,
+});
+function previewHeroForSlot(slot: string) {
+  switch (slot) {
+    case "hero-1":
+      return HeroOneLandingHero;
+    case "hero-2":
+      return HeroTwoLandingHero;
+    case "hero-3":
+      return HeroThreeLandingHero;
+    case "hero-4":
+      return HeroFourLandingHero;
+    default:
+      throw new Error(
+        `No landing hero renderer is assigned to Preview slot ${slot}`,
+      );
+  }
+}
+
+const LandingHeroComponent = deployment.preview
+  ? previewHeroForSlot(deployment.preview.slot)
+  : BaselineLandingHero;
+---
+
+<LandingHeroComponent {...Astro.props} />

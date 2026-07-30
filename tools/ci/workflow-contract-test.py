@@ -474,12 +474,18 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("scope.total_commits > 50", deploy)
         self.assertIn("scope.files.length > 100", deploy)
         self.assertIn(
-            "apps\\/website\\/src\\/components\\/previews\\/",
+            "apps/website/src/components/previews/${slot}/",
+            deploy,
+        )
+        self.assertNotIn(
+            "/^apps\\/website\\/src\\/pages\\/index\\.astro$/",
             deploy,
         )
         self.assertIn("preview-cycle-content.json", deploy)
         self.assertIn('manifest.status !== "active"', deploy)
         self.assertIn('slot.status !== "ready"', deploy)
+        self.assertIn("referenceSnapshotSha256", deploy)
+        self.assertNotIn("manifest.sourceDesign?.versionId", deploy)
         self.assertIn("pulls.length !== 1", deploy)
         self.assertIn('pulls[0].base?.ref !== "main"', deploy)
         self.assertIn(

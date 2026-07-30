@@ -3,7 +3,7 @@ import { Image } from "astro:assets";
 
 import DownloadGrid from "../components/DownloadGrid.astro";
 import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
-import PeerMeshVisual from "../components/PeerMeshVisual.astro";
+import LandingHero from "../components/LandingHero.astro";
 import { currentRelease } from "../data/releases";
 import desktopCanary from "../assets/desktop-canary-linux.png";
 import BaseLayout from "../layouts/BaseLayout.astro";
@@ -26,10 +26,6 @@ const structuredData = {
 };
 
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
-const primaryHref = hasPublishedDownloads
-  ? sitePath("/download/")
-  : "#how-it-works";
-const primaryLabel = hasPublishedDownloads ? "Download Chaft" : "See how Chaft works";
 
 const features = [
   {
@@ -58,42 +54,7 @@ const steps = [
 ---
 
 <BaseLayout title="Chaft" description={description} structuredData={structuredData}>
-  <section class="hero">
-    <div class="shell hero__grid">
-      <div class="hero__copy">
-        <p class="eyebrow">Open source · Canary</p>
-        <h1>Team chat that runs <em>on your devices.</em></h1>
-        <p class="lede">
-          Chaft is early-stage chat for small teams. Messages stay on participating
-          devices, sync directly between trusted peers, and are encrypted before
-          replication. No subscription or central workspace server is required.
-        </p>
-        <div class="button-row hero__actions">
-          <a class="button" href={primaryHref}>
-            {primaryLabel}
-            <span aria-hidden="true">→</span>
-          </a>
-          <a
-            class="button button--secondary"
-            href={hasPublishedDownloads
-              ? sitePath("/docs/")
-              : sitePath("/docs/getting-started/build-desktop/")}
-          >
-            {hasPublishedDownloads ? "Read the docs" : "Build from source"}
-          </a>
-          <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
-        </div>
-        <p class="hero__note body-copy">
-          <span class="status">Canary</span>
-          Unaudited software. Not for sensitive or production communication.
-        </p>
-      </div>
-
-      <div class="hero__visual">
-        <PeerMeshVisual />
-      </div>
-    </div>
-  </section>
+  <LandingHero {hasPublishedDownloads} />
 
   <div class="trust-rail">
     <dl class="shell trust-rail__inner" aria-label="Chaft attributes">
@@ -280,82 +241,6 @@ const steps = [
 </BaseLayout>
 
 <style>
-  .hero {
-    position: relative;
-    overflow: hidden;
-    padding-block: clamp(4.5rem, 9vw, 7.5rem);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .hero::after {
-    position: absolute;
-    top: 12%;
-    right: -9rem;
-    z-index: -1;
-    width: 27rem;
-    height: 27rem;
-    border: 1px solid var(--brand-coral);
-    border-radius: 50%;
-    opacity: 0.42;
-    content: "";
-  }
-
-  .hero__grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(23rem, 0.85fr);
-    gap: clamp(3rem, 8vw, 7rem);
-    align-items: center;
-  }
-
-  .hero__copy {
-    position: relative;
-    z-index: 2;
-  }
-
-  .hero h1 {
-    max-width: 10.5ch;
-    margin-bottom: 1.8rem;
-    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
-  }
-
-  .hero h1 em {
-    display: block;
-    color: var(--brand-coral);
-    font-family: var(--font-editorial);
-    font-size: 1.04em;
-    font-weight: 400;
-    letter-spacing: -0.045em;
-  }
-
-  .hero__actions {
-    margin-top: 2.25rem;
-  }
-
-  .hero__note {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.7rem;
-    align-items: center;
-    margin-top: 2rem;
-    margin-bottom: 0;
-    color: var(--text-faint);
-    font-size: 0.8rem;
-  }
-
-  .hero__visual {
-    position: relative;
-  }
-
-  .hero__visual::before {
-    position: absolute;
-    inset: -0.8rem 0.8rem 0.8rem -0.8rem;
-    z-index: -1;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    background: var(--brand-coral);
-    content: "";
-  }
-
   .trust-rail {
     background: var(--surface-raised);
   }
@@ -547,17 +432,8 @@ const steps = [
   }
 
   @media (max-width: 940px) {
-    .hero__grid {
-      grid-template-columns: 1fr;
-    }
-
     .docs-entry__links {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .hero__visual {
-      width: min(100%, 42rem);
-      margin-inline: auto;
     }
   }
 

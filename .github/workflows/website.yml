@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - apps/website/**
+      - "!apps/website/previews/**"
+      - "!apps/website/src/components/previews/**"
+      - "!apps/website/src/assets/previews/**"
+      - "!apps/website/public/previews/**"
       - guides/public/**
       - README.md
       - SECURITY.md

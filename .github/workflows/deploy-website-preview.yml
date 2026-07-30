@@ -431,6 +431,7 @@ jobs:
           CANDIDATE_SHA: ${{ needs.preflight.outputs.source_commit }}
           FOUNDATION_COMMIT: ${{ steps.governance.outputs.foundation_commit }}
           GH_TOKEN: ${{ github.token }}
+          PREVIEW_SLOT: ${{ needs.preflight.outputs.slot }}
           TRUSTED_SHA: ${{ needs.preflight.outputs.trusted_commit }}
         run: |
           set -euo pipefail
@@ -463,12 +464,21 @@ jobs:
               "utf8",
             ),
           );
+          if (!/^hero-[1-4]$/.test(process.env.PREVIEW_SLOT)) {
+            throw new Error("Preview slot path identity is malformed");
+          }
+          const slot = process.env.PREVIEW_SLOT;
           const allowed = [
             /^apps\/website\/previews\/landing-hero\/preview-cycle\.json$/,
-            /^apps\/website\/src\/pages\/index\.astro$/,
-            /^apps\/website\/src\/components\/previews\/[A-Za-z0-9._/-]+$/,
-            /^apps\/website\/src\/assets\/previews\/[A-Za-z0-9._/-]+$/,
-            /^apps\/website\/public\/previews\/[A-Za-z0-9._/-]+$/,
+            new RegExp(
+              `^apps/website/src/components/previews/${slot}/[A-Za-z0-9._/-]+$`,
+            ),
+            new RegExp(
+              `^apps/website/src/assets/previews/${slot}/[A-Za-z0-9._/-]+$`,
+            ),
+            new RegExp(
+              `^apps/website/public/previews/${slot}/[A-Za-z0-9._/-]+$`,
+            ),
           ];
           if (
             scope.status !== "ahead" ||
@@ -497,7 +507,7 @@ jobs:
           }
           NODE
 
-      - name: Require an active immutable Preview cycle
+      - name: Require an active reviewed Preview cycle
         working-directory: apps/website
         env:
           CANDIDATE_SHA: ${{ needs.preflight.outputs.source_commit }}
@@ -528,7 +538,10 @@ jobs:
           NODE
           node --input-type=module - <<'NODE'
           import { readFileSync } from "node:fs";
-          import { validatePreviewCycle } from "./scripts/preview-cycle-validation.mjs";
+          import {
+            referenceSnapshotSha256,
+            validatePreviewCycle,
+          } from "./scripts/preview-cycle-validation.mjs";
 
           const manifest = JSON.parse(
             readFileSync(`${process.env.RUNNER_TEMP}/preview-cycle.json`, "utf8"),
@@ -537,19 +550,15 @@ jobs:
           if (errors.length > 0) {
             throw new Error(`candidate Preview cycle manifest is invalid: ${errors.join("; ")}`);
           }
-          const frameIds = manifest.slots?.map((slot) => slot.figmaFrameNodeId);
           if (
             manifest.status !== "active" ||
             manifest.slots?.some((slot) => slot.status !== "ready") ||
             manifest.baseRevision !== process.env.FOUNDATION_COMMIT ||
-            !/^[A-Za-z0-9_-]{6,128}$/.test(manifest.sourceDesign?.versionId) ||
-            !Array.isArray(frameIds) ||
-            frameIds.length !== 4 ||
-            new Set(frameIds).size !== 4 ||
-            frameIds.some((value) => !/^\d+:\d+$/.test(value))
+            manifest.sourceDesign?.referenceSnapshot?.sha256 !==
+              referenceSnapshotSha256(manifest)
           ) {
             throw new Error(
-              "Preview deployment requires one active cycle pinned to the enabled base revision and four immutable Figma frames",
+              "Preview deployment requires one active cycle pinned to the enabled base revision and exact reviewed Figma reference snapshot",
             );
           }
           NODE

@@ -30,6 +30,7 @@ function response(body, { headers = {}, status = 200 } = {}) {
 function html(pathname, { asset = false, warnings = false } = {}) {
   return `<!doctype html><html><head><link rel="canonical" href="${origin}${pathname}"></head>
     <body>
+      ${pathname === "/" ? '<section class="hero" data-chaft-hero="baseline"></section>' : ""}
       ${asset ? '<script src="/_astro/site.hash.js"></script>' : ""}
       ${warnings ? `<strong>Unsigned canary</strong><p>${sensitiveUseWarning}</p>` : ""}
       <span>${tag}</span>
@@ -322,6 +323,29 @@ describe("public deployment verifier", () => {
     expect([...fixture.fileRequests.values()]).toEqual(
       [...fixture.payloads].map(() => ({ count: 1, redirect: "follow" })),
     );
+  });
+
+  it("rejects a Preview hero on the production origin", async () => {
+    const fixture = releaseFixture();
+    const fetchImpl = async (input, options) => {
+      const result = await fixture.fetchImpl(input, options);
+      const url = new URL(input);
+      if (url.origin !== origin || url.pathname !== "/") return result;
+      return new Response(
+        (await result.text()).replace(
+          'data-chaft-hero="baseline"',
+          'data-chaft-hero="hero-1"',
+        ),
+        {
+          status: result.status,
+          headers: result.headers,
+        },
+      );
+    };
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture, fetchImpl)),
+    ).rejects.toThrow(/production home must render the baseline hero/);
   });
 
   it("accepts the exact immutable legacy three-target canary set", async () => {

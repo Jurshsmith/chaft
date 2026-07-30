@@ -198,13 +198,19 @@ export function validatePreviewStaticArtifact({
   const header = element(homeHtml, "header", "site header");
   const footer = element(homeHtml, "footer", "site footer");
   const main = element(homeHtml, "main", "main content");
-  const hero =
+  const heroPattern =
     /<section\b[^>]*class=(["'])[^"']*\bhero\b[^"']*\1[^>]*>[\s\S]*?<\/section>/i;
-  if (!hero.test(main)) fail("home page is missing the exact hero section");
+  const hero = heroPattern.exec(main)?.[0];
+  if (!hero) fail("home page is missing the exact hero section");
+  if (
+    attribute(hero, /<section\b[^>]*>/gi, "data-chaft-hero") !== preview.slot
+  ) {
+    fail(`home page must render the exact ${preview.slot} hero`);
+  }
   const actualContentHashes = {
     header: sha256(visibleText(header)),
     footer: sha256(visibleText(footer)),
-    nonHero: sha256(visibleText(main.replace(hero, ""))),
+    nonHero: sha256(visibleText(main.replace(heroPattern, ""))),
   };
   for (const [name, expected] of Object.entries(expectedContentHashes)) {
     if (actualContentHashes[name] !== expected) {

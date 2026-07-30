@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -9,6 +10,21 @@ const manifestUrl = new URL(
 );
 const EXPECTED_FIGMA_FILE_URL =
   "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft";
+const EXPECTED_SOURCE_SECTION_NODE_ID = "164:75";
+const EXPECTED_SOURCE_SECTION_URL = `${EXPECTED_FIGMA_FILE_URL}?node-id=164-75`;
+const EXPECTED_FIGMA_LAST_MODIFIED_AT = "2026-07-30T11:13:58Z";
+const REFERENCE_SNAPSHOT_CANONICALIZATION =
+  "chaft-preview-figma-reference-v1";
+const EXPECTED_REFERENCE_SNAPSHOT_SHA256 =
+  "29188bdcbc245e12efe0af21ac3f58dc023763c6b61e29c82b2d7337bef99de5";
+const EXPECTED_REFERENCE_NOTE =
+  "Reviewed reference snapshot of the linked Figma section, visual nodes, prompt nodes, and prompt text. The digest binds this repository record; the Figma links themselves remain mutable.";
+const EXPECTED_FIGMA_REFERENCES = Object.freeze([
+  Object.freeze({ referenceNodeId: "173:98", promptNodeId: "173:100" }),
+  Object.freeze({ referenceNodeId: "175:118", promptNodeId: "175:120" }),
+  Object.freeze({ referenceNodeId: "175:122", promptNodeId: "175:124" }),
+  Object.freeze({ referenceNodeId: "177:131", promptNodeId: "177:133" }),
+]);
 const EXPECTED_DIRECTIONS = Object.freeze([
   "A glowing earth and communication network with responsive nodes and particle dust.",
   "Particle dust forming the Chaft mark, with responsive motion around the mark.",
@@ -25,6 +41,15 @@ export const EXPECTED_PREVIEW_SLOTS = Object.freeze(
       domain: slot.domain,
       siteUrl: slot.siteUrl,
       githubEnvironment: slot.environment,
+      figmaReferenceNodeId:
+        EXPECTED_FIGMA_REFERENCES[index].referenceNodeId,
+      figmaReferenceUrl: figmaNodeUrl(
+        EXPECTED_FIGMA_REFERENCES[index].referenceNodeId,
+      ),
+      figmaPromptNodeId: EXPECTED_FIGMA_REFERENCES[index].promptNodeId,
+      figmaPromptUrl: figmaNodeUrl(
+        EXPECTED_FIGMA_REFERENCES[index].promptNodeId,
+      ),
       direction: EXPECTED_DIRECTIONS[index],
     }),
   ),
@@ -52,6 +77,36 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function figmaNodeUrl(nodeId) {
+  return `${EXPECTED_FIGMA_FILE_URL}?node-id=${nodeId.replace(":", "-")}`;
+}
+
+function referenceSnapshotPayload(manifest) {
+  return {
+    fileUrl: manifest.sourceDesign?.fileUrl,
+    sourceSectionNodeId: manifest.sourceDesign?.sourceSectionNodeId,
+    sourceSectionUrl: manifest.sourceDesign?.sourceSectionUrl,
+    observedLastModifiedAt: manifest.sourceDesign?.observedLastModifiedAt,
+    slots: Array.isArray(manifest.slots)
+      ? manifest.slots.map((slot) => ({
+          id: slot?.id,
+          referenceNodeId: slot?.figmaReferenceNodeId,
+          referenceUrl: slot?.figmaReferenceUrl,
+          promptNodeId: slot?.figmaPromptNodeId,
+          promptUrl: slot?.figmaPromptUrl,
+          prompt: slot?.direction,
+        }))
+      : [],
+  };
+}
+
+export function referenceSnapshotSha256(manifest) {
+  const bytes = `${REFERENCE_SNAPSHOT_CANONICALIZATION}\n${JSON.stringify(
+    referenceSnapshotPayload(manifest),
+  )}`;
+  return createHash("sha256").update(bytes, "utf8").digest("hex");
+}
+
 function compareExactRecord(actual, expected, label, errors) {
   if (!isRecord(actual)) {
     errors.push(`${label} must be an object`);
@@ -65,14 +120,43 @@ function compareExactRecord(actual, expected, label, errors) {
   }
 }
 
+function compareExactKeys(actual, expected, label, errors) {
+  if (!isRecord(actual)) return;
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = [...expected].sort();
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+    errors.push(`${label} must contain only its exact schema v2 fields`);
+  }
+}
+
 export function validatePreviewCycle(manifest) {
   const errors = [];
 
   if (!isRecord(manifest)) {
     return ["Preview cycle manifest must be an object"];
   }
-  if (manifest.schemaVersion !== 1) {
-    errors.push("schemaVersion must equal 1");
+  compareExactKeys(
+    manifest,
+    [
+      "$schema",
+      "schemaVersion",
+      "systemName",
+      "name",
+      "title",
+      "status",
+      "baseRevision",
+      "sourceDesign",
+      "runtimeEnvironment",
+      "invariants",
+      "governance",
+      "slots",
+      "selection",
+    ],
+    "manifest",
+    errors,
+  );
+  if (manifest.schemaVersion !== 2) {
+    errors.push("schemaVersion must equal 2");
   }
   if (manifest.systemName !== "Chaft Previews") {
     errors.push('systemName must equal "Chaft Previews"');
@@ -109,6 +193,24 @@ export function validatePreviewCycle(manifest) {
     "invariants",
     errors,
   );
+  compareExactKeys(
+    manifest.runtimeEnvironment,
+    Object.keys(EXPECTED_RUNTIME_ENVIRONMENT),
+    "runtimeEnvironment",
+    errors,
+  );
+  compareExactKeys(
+    manifest.invariants,
+    [...Object.keys(EXPECTED_INVARIANTS), "typography"],
+    "invariants",
+    errors,
+  );
+  compareExactKeys(
+    manifest.invariants?.typography,
+    ["bodyCopy", "headingsNavigationButtonsAndLabels"],
+    "invariants.typography",
+    errors,
+  );
 
   if (
     manifest.invariants?.typography?.bodyCopy !== "Chillax" ||
@@ -127,6 +229,12 @@ export function validatePreviewCycle(manifest) {
     manifest.slots.forEach((slot, index) => {
       const expected = EXPECTED_PREVIEW_SLOTS[index];
       compareExactRecord(slot, expected, `slots[${index}]`, errors);
+      compareExactKeys(
+        slot,
+        [...Object.keys(expected), "status"],
+        `slots[${index}]`,
+        errors,
+      );
 
       for (const key of [
         "id",
@@ -150,12 +258,6 @@ export function validatePreviewCycle(manifest) {
       ) {
         errors.push(`slots[${index}].status is unsupported`);
       }
-      if (
-        slot?.figmaFrameNodeId !== null &&
-        !/^\d+:\d+$/.test(slot.figmaFrameNodeId)
-      ) {
-        errors.push(`slots[${index}].figmaFrameNodeId is malformed`);
-      }
     });
   }
 
@@ -171,11 +273,35 @@ export function validatePreviewCycle(manifest) {
   ) {
     errors.push("governance must preserve the exact production and Preview boundaries");
   }
+  compareExactKeys(
+    manifest.governance,
+    [
+      "componentPath",
+      "productionWorker",
+      "productionDomains",
+      "productionMustRemainUnchanged",
+      "workersDevEnabled",
+      "cloudflarePreviewUrlsEnabled",
+    ],
+    "governance",
+    errors,
+  );
 
   const selection = manifest.selection;
   if (!isRecord(selection)) {
     errors.push("selection must be an object");
   } else {
+    compareExactKeys(
+      selection,
+      [
+        "status",
+        "selectedSlot",
+        "decisionRecord",
+        "productionRevision",
+      ],
+      "selection",
+      errors,
+    );
     if (
       !["not-started", "reviewing", "selected", "promoted", "closed"].includes(
         selection.status,
@@ -205,19 +331,68 @@ export function validatePreviewCycle(manifest) {
     }
   }
 
+  const sourceDesign = manifest.sourceDesign;
+  compareExactKeys(
+    sourceDesign,
+    [
+      "fileUrl",
+      "sourceSectionNodeId",
+      "sourceSectionUrl",
+      "observedLastModifiedAt",
+      "referenceSnapshot",
+      "note",
+    ],
+    "sourceDesign",
+    errors,
+  );
+  compareExactKeys(
+    sourceDesign?.referenceSnapshot,
+    ["canonicalization", "sha256"],
+    "sourceDesign.referenceSnapshot",
+    errors,
+  );
   if (
-    manifest.sourceDesign?.sourceSectionNodeId !== "164:75" ||
-    manifest.sourceDesign?.fileUrl !== EXPECTED_FIGMA_FILE_URL
-  ) {
-    errors.push("sourceDesign must identify the exact reviewed Figma file and section");
-  }
-  if (
-    manifest.status !== "foundation" &&
-    (manifest.sourceDesign?.versionId === null ||
-      manifest.slots?.some((slot) => slot.figmaFrameNodeId === null))
+    sourceDesign?.fileUrl !== EXPECTED_FIGMA_FILE_URL ||
+    sourceDesign?.sourceSectionNodeId !== EXPECTED_SOURCE_SECTION_NODE_ID ||
+    sourceDesign?.sourceSectionUrl !== EXPECTED_SOURCE_SECTION_URL ||
+    sourceDesign?.observedLastModifiedAt !== EXPECTED_FIGMA_LAST_MODIFIED_AT ||
+    sourceDesign?.note !== EXPECTED_REFERENCE_NOTE
   ) {
     errors.push(
-      "an immutable Figma version and four frame nodes are required after foundation",
+      "sourceDesign must identify the exact reviewed Figma file, section link, and observed timestamp",
+    );
+  }
+  if (
+    !isRecord(sourceDesign?.referenceSnapshot) ||
+    sourceDesign.referenceSnapshot.canonicalization !==
+      REFERENCE_SNAPSHOT_CANONICALIZATION ||
+    sourceDesign.referenceSnapshot.sha256 !==
+      EXPECTED_REFERENCE_SNAPSHOT_SHA256 ||
+    referenceSnapshotSha256(manifest) !== EXPECTED_REFERENCE_SNAPSHOT_SHA256
+  ) {
+    errors.push(
+      "sourceDesign reference snapshot must match the exact reviewed Figma links, nodes, prompts, timestamp, and digest",
+    );
+  }
+  const figmaNodeIds = Array.isArray(manifest.slots)
+    ? manifest.slots.flatMap((slot) => [
+        slot?.figmaReferenceNodeId,
+        slot?.figmaPromptNodeId,
+      ])
+    : [];
+  if (
+    figmaNodeIds.length !== 8 ||
+    new Set(figmaNodeIds).size !== 8 ||
+    figmaNodeIds.some((value) => !/^\d+:\d+$/.test(value))
+  ) {
+    errors.push("the four Figma reference and prompt node pairs must be unique");
+  }
+  if (
+    Object.hasOwn(sourceDesign ?? {}, "versionId") ||
+    manifest.slots?.some((slot) => Object.hasOwn(slot ?? {}, "figmaFrameNodeId"))
+  ) {
+    errors.push(
+      "legacy Figma versionId and figmaFrameNodeId fields are not accepted",
     );
   }
 

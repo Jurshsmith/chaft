@@ -1,6 +1,6 @@
 {
   "$schema": "./preview-cycle.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "systemName": "Chaft Previews",
   "name": "landing-hero",
   "title": "Landing-page hero preview cycle",
@@ -9,8 +9,13 @@
   "sourceDesign": {
     "fileUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft",
     "sourceSectionNodeId": "164:75",
-    "versionId": null,
-    "note": "Record the immutable Figma version and each Preview frame before the Preview cycle becomes active."
+    "sourceSectionUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=164-75",
+    "observedLastModifiedAt": "2026-07-30T11:13:58Z",
+    "referenceSnapshot": {
+      "canonicalization": "chaft-preview-figma-reference-v1",
+      "sha256": "29188bdcbc245e12efe0af21ac3f58dc023763c6b61e29c82b2d7337bef99de5"
+    },
+    "note": "Reviewed reference snapshot of the linked Figma section, visual nodes, prompt nodes, and prompt text. The digest binds this repository record; the Figma links themselves remain mutable."
   },
   "runtimeEnvironment": {
     "deploymentModeName": "CHAFT_DEPLOYMENT_MODE",
@@ -50,7 +55,10 @@
       "domain": "hero-1.chaft.ai",
       "siteUrl": "https://hero-1.chaft.ai",
       "githubEnvironment": "chaft-preview-hero-1",
-      "figmaFrameNodeId": null,
+      "figmaReferenceNodeId": "173:98",
+      "figmaReferenceUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=173-98",
+      "figmaPromptNodeId": "173:100",
+      "figmaPromptUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=173-100",
       "direction": "A glowing earth and communication network with responsive nodes and particle dust."
     },
     {
@@ -61,7 +69,10 @@
       "domain": "hero-2.chaft.ai",
       "siteUrl": "https://hero-2.chaft.ai",
       "githubEnvironment": "chaft-preview-hero-2",
-      "figmaFrameNodeId": null,
+      "figmaReferenceNodeId": "175:118",
+      "figmaReferenceUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-118",
+      "figmaPromptNodeId": "175:120",
+      "figmaPromptUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-120",
       "direction": "Particle dust forming the Chaft mark, with responsive motion around the mark."
     },
     {
@@ -72,7 +83,10 @@
       "domain": "hero-3.chaft.ai",
       "siteUrl": "https://hero-3.chaft.ai",
       "githubEnvironment": "chaft-preview-hero-3",
-      "figmaFrameNodeId": null,
+      "figmaReferenceNodeId": "175:122",
+      "figmaReferenceUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-122",
+      "figmaPromptNodeId": "175:124",
+      "figmaPromptUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-124",
       "direction": "A circular particle network with communication nodes and lightweight chat activity."
     },
     {
@@ -83,7 +97,10 @@
       "domain": "hero-4.chaft.ai",
       "siteUrl": "https://hero-4.chaft.ai",
       "githubEnvironment": "chaft-preview-hero-4",
-      "figmaFrameNodeId": null,
+      "figmaReferenceNodeId": "177:131",
+      "figmaReferenceUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=177-131",
+      "figmaPromptNodeId": "177:133",
+      "figmaPromptUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=177-133",
       "direction": "A full-width blue pixel connection field replacing the current side illustration."
     }
   ],

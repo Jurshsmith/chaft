@@ -11,6 +11,18 @@ export const previewInvariants = Object.freeze({
     "Unaudited software. Not for sensitive or production communication.",
 });
 
+export const expectedPreviewHero = (() => {
+  const value = process.env.CHAFT_PREVIEW_BRANCH?.match(
+    /^preview\/landing-(hero-[1-4])$/,
+  )?.[1];
+  if (!value) {
+    throw new Error(
+      "Preview QA requires an exact preview/landing-hero-N branch",
+    );
+  }
+  return value;
+})();
+
 export async function openLandingPage(page: Page) {
   await page.emulateMedia({
     colorScheme: "light",

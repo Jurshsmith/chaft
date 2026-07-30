@@ -170,6 +170,14 @@ export async function verifyPreviewDeployment({
     assertRobotsValue(robotsMeta(html), label);
     if (label === "home") homeHtml = html;
   }
+  assert(
+    tagAttribute(
+      homeHtml,
+      /<section\b[^>]*\bclass=(["'])[^"']*\bhero\b[^"']*\1[^>]*>/gi,
+      "data-chaft-hero",
+    ) === preview.slot,
+    `home must render the exact ${preview.slot} hero`,
+  );
 
   const notFound = await request(
     "/definitely-not-a-page-chaft-preview-verification",
