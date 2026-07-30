@@ -1,0 +1,436 @@
+---
+const particleCount = 240;
+const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+const particles = Array.from({ length: particleCount }, (_, index) => {
+  const vertical = 1 - (2 * (index + 0.5)) / particleCount;
+  const latitudeRadius = Math.sqrt(1 - vertical * vertical);
+  const angle = index * goldenAngle;
+  const horizontal = Math.cos(angle) * latitudeRadius;
+  const depth = Math.sin(angle) * latitudeRadius;
+  const perspective = 0.88 + (depth + 1) * 0.06;
+
+  return {
+    depth,
+    x: Number((310 + horizontal * 211 * perspective).toFixed(2)),
+    y: Number((310 + vertical * 211 * perspective).toFixed(2)),
+    radius: Number((0.75 + (depth + 1) * 0.62).toFixed(2)),
+    opacity: Number((0.2 + (depth + 1) * 0.32).toFixed(2)),
+  };
+}).sort((left, right) => left.depth - right.depth);
+---
+
+<div class="hero-one-globe" data-hero-one-globe>
+  <div class="hero-one-globe__aura" aria-hidden="true"></div>
+  <svg
+    class="hero-one-globe__svg"
+    viewBox="0 0 620 620"
+    role="img"
+    aria-labelledby="hero-one-globe-title hero-one-globe-description"
+    focusable="false"
+  >
+    <title id="hero-one-globe-title">A distributed communication globe</title>
+    <desc id="hero-one-globe-description">
+      A glowing particle globe connects four fixed device nodes without a central
+      hub.
+    </desc>
+
+    <defs>
+      <radialGradient id="hero-one-globe-core" cx="50%" cy="44%" r="58%">
+        <stop offset="0%" stop-color="#66edc4" stop-opacity="0.2"></stop>
+        <stop offset="58%" stop-color="#2ea986" stop-opacity="0.07"></stop>
+        <stop offset="100%" stop-color="#091310" stop-opacity="0"></stop>
+      </radialGradient>
+      <linearGradient id="hero-one-link" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#e8fff7" stop-opacity="0.24"></stop>
+        <stop offset="48%" stop-color="#70f3ca" stop-opacity="0.92"></stop>
+        <stop offset="100%" stop-color="#f58b72" stop-opacity="0.34"></stop>
+      </linearGradient>
+      <filter id="hero-one-soft-glow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="5" result="blur"></feGaussianBlur>
+        <feMerge>
+          <feMergeNode in="blur"></feMergeNode>
+          <feMergeNode in="SourceGraphic"></feMergeNode>
+        </feMerge>
+      </filter>
+      <filter id="hero-one-node-glow" x="-150%" y="-150%" width="400%" height="400%">
+        <feGaussianBlur stdDeviation="8" result="blur"></feGaussianBlur>
+        <feMerge>
+          <feMergeNode in="blur"></feMergeNode>
+          <feMergeNode in="SourceGraphic"></feMergeNode>
+        </feMerge>
+      </filter>
+      <clipPath id="hero-one-globe-clip">
+        <circle cx="310" cy="310" r="217"></circle>
+      </clipPath>
+    </defs>
+
+    <circle
+      class="hero-one-globe__core"
+      cx="310"
+      cy="310"
+      r="236"
+      fill="url(#hero-one-globe-core)"
+      aria-hidden="true"
+    ></circle>
+
+    <g
+      class="hero-one-globe__wireframe"
+      clip-path="url(#hero-one-globe-clip)"
+      aria-hidden="true"
+    >
+      <circle cx="310" cy="310" r="216"></circle>
+      <ellipse cx="310" cy="310" rx="134" ry="216"></ellipse>
+      <ellipse cx="310" cy="310" rx="48" ry="216"></ellipse>
+      <ellipse cx="310" cy="310" rx="216" ry="134"></ellipse>
+      <ellipse cx="310" cy="310" rx="216" ry="52"></ellipse>
+      <path d="M102 250 Q310 344 518 250"></path>
+      <path d="M108 373 Q310 278 512 373"></path>
+    </g>
+
+    <g class="hero-one-globe__particles" aria-hidden="true">
+      {
+        particles.map((particle) => (
+          <circle
+            class="hero-one-globe__particle"
+            cx={particle.x}
+            cy={particle.y}
+            r={particle.radius}
+            data-x={particle.x}
+            data-y={particle.y}
+            data-depth={particle.depth < 0 ? "back" : "front"}
+            style={`--particle-opacity: ${particle.opacity}`}
+          />
+        ))
+      }
+    </g>
+
+    <g class="hero-one-globe__links" aria-hidden="true">
+      <path d="M183 188 Q274 267 409 166"></path>
+      <path d="M409 166 Q461 250 452 373"></path>
+      <path d="M452 373 Q347 438 245 445"></path>
+      <path d="M245 445 Q169 335 183 188"></path>
+      <path d="M183 188 Q312 326 452 373"></path>
+      <path d="M409 166 Q329 312 245 445"></path>
+    </g>
+
+    <g class="hero-one-globe__signals" aria-hidden="true">
+      <circle cx="294" cy="281" r="3"></circle>
+      <circle cx="378" cy="211" r="2.4"></circle>
+      <circle cx="411" cy="349" r="2.8"></circle>
+      <circle cx="268" cy="410" r="2.4"></circle>
+    </g>
+
+    <g
+      class="hero-one-globe__node hero-one-globe__node--mint"
+      transform="translate(183 188)"
+      aria-hidden="true"
+    >
+      <circle r="25"></circle>
+      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
+      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
+    </g>
+    <g
+      class="hero-one-globe__node hero-one-globe__node--ivory"
+      transform="translate(409 166)"
+      aria-hidden="true"
+    >
+      <circle r="25"></circle>
+      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
+      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
+    </g>
+    <g
+      class="hero-one-globe__node hero-one-globe__node--coral"
+      transform="translate(452 373)"
+      aria-hidden="true"
+    >
+      <circle r="25"></circle>
+      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
+      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
+    </g>
+    <g
+      class="hero-one-globe__node hero-one-globe__node--mint"
+      transform="translate(245 445)"
+      aria-hidden="true"
+    >
+      <circle r="25"></circle>
+      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
+      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
+    </g>
+
+    <circle
+      class="hero-one-globe__orbit"
+      cx="310"
+      cy="310"
+      r="258"
+      aria-hidden="true"
+    ></circle>
+  </svg>
+  <div class="hero-one-globe__grain" aria-hidden="true"></div>
+</div>
+
+<script>
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const precisePointer = window.matchMedia("(pointer: fine)");
+
+  for (const root of document.querySelectorAll<HTMLElement>("[data-hero-one-globe]")) {
+    if (reducedMotion.matches || !precisePointer.matches) continue;
+
+    const particles = Array.from(
+      root.querySelectorAll<SVGCircleElement>(".hero-one-globe__particle"),
+    );
+    let pointerX = -1_000;
+    let pointerY = -1_000;
+    let animationFrame = 0;
+
+    const render = () => {
+      animationFrame = 0;
+      const bounds = root.getBoundingClientRect();
+      const localX = ((pointerX - bounds.left) / bounds.width) * 620;
+      const localY = ((pointerY - bounds.top) / bounds.height) * 620;
+
+      for (const particle of particles) {
+        const homeX = Number(particle.dataset.x);
+        const homeY = Number(particle.dataset.y);
+        const deltaX = homeX - localX;
+        const deltaY = homeY - localY;
+        const distance = Math.hypot(deltaX, deltaY);
+        const influence = Math.max(0, 1 - distance / 118);
+
+        if (influence === 0) {
+          particle.style.removeProperty("transform");
+          particle.style.removeProperty("opacity");
+          continue;
+        }
+
+        const scale = distance > 0 ? (influence * 5.5) / distance : 0;
+        particle.style.transform = `translate(${deltaX * scale}px, ${deltaY * scale}px)`;
+        particle.style.opacity = String(
+          Math.min(1, Number(particle.style.getPropertyValue("--particle-opacity")) + influence * 0.28),
+        );
+      }
+    };
+
+    const requestRender = () => {
+      if (animationFrame === 0) {
+        animationFrame = window.requestAnimationFrame(render);
+      }
+    };
+
+    root.addEventListener("pointermove", (event) => {
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      requestRender();
+    });
+
+    root.addEventListener("pointerleave", () => {
+      for (const particle of particles) {
+        particle.style.removeProperty("transform");
+        particle.style.removeProperty("opacity");
+      }
+    });
+  }
+</script>
+
+<style>
+  .hero-one-globe {
+    position: relative;
+    isolation: isolate;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border: 1px solid rgb(167 255 228 / 16%);
+    border-radius: clamp(1rem, 3vw, 1.7rem);
+    background:
+      radial-gradient(circle at 51% 47%, rgb(54 194 151 / 12%), transparent 40%),
+      radial-gradient(circle at 82% 16%, rgb(216 86 63 / 10%), transparent 26%),
+      linear-gradient(148deg, #0d1c18 0%, #08100e 58%, #050a09 100%);
+    box-shadow:
+      0 2rem 6rem rgb(0 0 0 / 32%),
+      inset 0 1px 0 rgb(255 255 255 / 4%);
+    contain: layout paint;
+  }
+
+  .hero-one-globe::before {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background-image:
+      linear-gradient(rgb(121 246 207 / 3%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(121 246 207 / 3%) 1px, transparent 1px);
+    background-size: 34px 34px;
+    content: "";
+    mask-image: radial-gradient(circle at center, black, transparent 78%);
+  }
+
+  .hero-one-globe__aura {
+    position: absolute;
+    inset: 14%;
+    z-index: -1;
+    border-radius: 50%;
+    background: rgb(64 222 176 / 9%);
+    filter: blur(42px);
+  }
+
+  .hero-one-globe__svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .hero-one-globe__core {
+    filter: url("#hero-one-soft-glow");
+  }
+
+  .hero-one-globe__wireframe {
+    fill: none;
+    stroke: #6be8c1;
+    stroke-dasharray: 2 9;
+    stroke-linecap: round;
+    stroke-width: 0.8;
+    opacity: 0.18;
+  }
+
+  .hero-one-globe__particle {
+    fill: #a2ffe1;
+    opacity: var(--particle-opacity);
+    transform-box: fill-box;
+    transform-origin: center;
+    transition:
+      transform 140ms ease-out,
+      opacity 140ms ease-out;
+    will-change: transform;
+  }
+
+  .hero-one-globe__particle[data-depth="back"] {
+    fill: #3ca784;
+  }
+
+  .hero-one-globe__links {
+    fill: none;
+    stroke: url("#hero-one-link");
+    stroke-dasharray: 1 8;
+    stroke-linecap: round;
+    stroke-width: 1.35;
+    opacity: 0.8;
+  }
+
+  .hero-one-globe__links path {
+    animation: hero-one-signal-flow 14s linear infinite;
+  }
+
+  .hero-one-globe__links path:nth-child(even) {
+    animation-direction: reverse;
+    animation-duration: 18s;
+  }
+
+  .hero-one-globe__signals {
+    fill: #d9fff2;
+    filter: url("#hero-one-node-glow");
+  }
+
+  .hero-one-globe__signals circle {
+    animation: hero-one-signal-pulse 2.8s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .hero-one-globe__signals circle:nth-child(2) {
+    animation-delay: -0.7s;
+  }
+
+  .hero-one-globe__signals circle:nth-child(3) {
+    animation-delay: -1.4s;
+  }
+
+  .hero-one-globe__signals circle:nth-child(4) {
+    animation-delay: -2.1s;
+  }
+
+  .hero-one-globe__node circle {
+    fill: currentColor;
+    opacity: 0.12;
+    filter: url("#hero-one-node-glow");
+  }
+
+  .hero-one-globe__node path:first-of-type {
+    fill: #0b1714;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+
+  .hero-one-globe__node path:last-of-type {
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.2;
+  }
+
+  .hero-one-globe__node--mint {
+    color: #72f1c9;
+  }
+
+  .hero-one-globe__node--ivory {
+    color: #f2fff9;
+  }
+
+  .hero-one-globe__node--coral {
+    color: #ff8b72;
+  }
+
+  .hero-one-globe__orbit {
+    fill: none;
+    stroke: #a5ffe2;
+    stroke-dasharray: 1 14;
+    stroke-linecap: round;
+    stroke-width: 1;
+    opacity: 0.18;
+  }
+
+  .hero-one-globe__grain {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 13% 28%, rgb(255 255 255 / 34%) 0 1px, transparent 1.4px),
+      radial-gradient(circle at 84% 35%, rgb(113 240 199 / 28%) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 72% 82%, rgb(255 255 255 / 22%) 0 1px, transparent 1.4px);
+    background-size:
+      83px 89px,
+      109px 97px,
+      131px 127px;
+    opacity: 0.45;
+  }
+
+  @keyframes hero-one-signal-flow {
+    to {
+      stroke-dashoffset: -72;
+    }
+  }
+
+  @keyframes hero-one-signal-pulse {
+    0%,
+    100% {
+      opacity: 0.36;
+      transform: scale(0.8);
+    }
+
+    50% {
+      opacity: 1;
+      transform: scale(1.35);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-one-globe__links path,
+    .hero-one-globe__signals circle {
+      animation: none;
+    }
+
+    .hero-one-globe__particle {
+      transition: none;
+    }
+  }
+</style>
