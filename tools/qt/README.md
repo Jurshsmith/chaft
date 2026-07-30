@@ -147,22 +147,45 @@ faster.
 The base per-target identity is checked into the manifest and includes its
 logical platform and architecture plus a canonical hash of the manifest, build
 driver, and every CMake/C++/QML verification probe. CI extends that identity
-with a canonical fingerprint of the target-bound hosted-runner image, native
-architecture, CMake, Ninja, compiler, and Python versions. The provisioning job
-passes that exact identity and fingerprint to consumers, so the producer
-identity remains the only cache key. After installing their platform tools,
-every consumer independently captures its target/runner/toolchain contract and
-must reproduce the provision job's fingerprint before it may restore or use
-the cache. A hosted-image or architecture change between jobs therefore fails
-clearly instead of mixing SDK and consumer toolchains.
+with a canonical build-provenance fingerprint of the target-bound hosted-runner
+image, native architecture, CMake, Ninja, compiler, and Python versions. The
+full runner contract includes both the hosted image family (`imageOS`) and the
+provider's opaque image revision (`imageVersion`). The provisioning job's exact
+identity remains the only cache key, so a new image revision still invalidates
+the build cache and produces distinct SDK provenance.
+
+Consumers use a separate, narrowly defined compatibility fingerprint before
+restoring that exact producer cache:
+
+```sh
+python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+  --target TARGET \
+  --toolchain-contract /absolute/path/to/qt-toolchain.json
+```
+
+The compatibility helper first validates the complete target-bound contract
+with `build_qt.py`. It then fingerprints the schema, target, platform, runner
+OS, native architecture, hosted image family, and every captured tool version.
+It omits only `runner.imageVersion`, because GitHub can schedule related jobs on
+different rollout revisions of the same hosted image while their effective
+build tools remain identical. No other runner or toolchain field is relaxed.
+
+Each provisioner exports both fingerprints. A consumer independently captures
+its contract and must match the producer's compatibility fingerprint before it
+may restore the cache. Restore still uses the producer's exact identity, and
+`verify --toolchain-fingerprint` validates the restored SDK against the full
+producer fingerprint embedded in its provenance. Thus a harmless hosted-image
+rollout does not strand consumers, while an OS, architecture, image family,
+CMake, Ninja, compiler, Python, target, or SDK-provenance mismatch continues to
+fail closed.
 
 Any source, patch, build, feature, platform, plugin, recipe, probe, runner
-image, architecture, target, or build-tool change therefore invalidates the
-cache. `build` writes the complete toolchain contract and
-`chaft-qt-sdk-provenance.json` inside the prefix and marks it complete only
-after all probes pass. `verify` rejects incomplete provenance or any
-source-material, recipe-material, toolchain, identity, target, platform,
-architecture, or manifest mismatch.
+image revision, architecture, target, or build-tool change therefore
+invalidates the producer cache. `build` writes the complete toolchain contract
+and `chaft-qt-sdk-provenance.json` inside the prefix and marks it complete only
+after all probes pass. `verify` rejects incomplete provenance or any source
+material, recipe material, toolchain, identity, target, platform, architecture,
+or manifest mismatch.
 
 Desktop release provenance embeds that complete, verified SDK provenance and
 the corresponding-source recipe contract. Tag release inputs additionally
@@ -175,4 +198,5 @@ Run the network-free tooling contracts with:
 ```sh
 python3 tools/qt/build_qt_test.py
 python3 tools/qt/source_bundle_test.py
+python3 tools/ci/qt-toolchain-compatibility-test.py
 ```

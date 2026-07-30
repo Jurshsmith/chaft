@@ -37,6 +37,8 @@ QT_CACHE_RESTORE_ACTION = (
     "actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae"
 )
 QT_CACHE_KEY = "chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}"
+QT_COMPATIBILITY_TOOL = "tools/ci/qt-toolchain-compatibility.py"
+QT_COMPATIBILITY_TEST = "tools/ci/qt-toolchain-compatibility-test.py"
 LINUX_DEPENDENCIES = "tools/qt/install-linux-dependencies.sh"
 LINUX_DEPENDENCIES_PATH = ROOT / LINUX_DEPENDENCIES
 LINUX_PACKAGE_DEPENDENCIES = (
@@ -720,6 +722,10 @@ class CiWorkflowContractTests(unittest.TestCase):
             "python3 tools/qt/source_bundle_test.py",
             classify,
         )
+        self.assertIn(
+            f"python3 {QT_COMPATIBILITY_TEST}",
+            classify,
+        )
         self.assertIn("  CHAFT_QT_VERSION: 6.8.4\n", self.ci)
         provisioning = {
             "qt_sdk_linux": ("ubuntu-22.04", "linux-x86_64"),
@@ -740,8 +746,24 @@ class CiWorkflowContractTests(unittest.TestCase):
                     block,
                 )
                 self.assertIn("tools/qt/build_qt.py toolchain-fingerprint", block)
+                self.assertIn(QT_COMPATIBILITY_TOOL, block)
                 self.assertIn("tools/qt/build_qt.py identity", block)
                 self.assertIn("--toolchain-contract", block)
+                self.assertIn(
+                    "compatibility_fingerprint: "
+                    "${{ steps.qt-sdk.outputs.compatibility_fingerprint }}",
+                    block,
+                )
+                self.assertIn(
+                    "toolchain_fingerprint: "
+                    "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}",
+                    block,
+                )
+                self.assertIn(
+                    'echo "compatibility_fingerprint='
+                    '${compatibility_fingerprint}"',
+                    block,
+                )
                 self.assertIn(
                     f"--target {target}",
                     block,
@@ -804,6 +826,20 @@ class CiWorkflowContractTests(unittest.TestCase):
                         f"needs.{dependency}.result == 'success'",
                         block,
                     )
+                    self.assertIn(
+                        f"needs.{dependency}.outputs."
+                        "compatibility_fingerprint",
+                        block,
+                    )
+                    self.assertIn(
+                        f"needs.{dependency}.outputs."
+                        "toolchain_fingerprint",
+                        block,
+                    )
+                    self.assertIn(
+                        f"needs.{dependency}.outputs.identity",
+                        block,
+                    )
                 restore = action_inputs(block, QT_CACHE_RESTORE_ACTION)
                 self.assertEqual(
                     restore,
@@ -823,18 +859,38 @@ class CiWorkflowContractTests(unittest.TestCase):
                     "tools/qt/build_qt.py toolchain-contract",
                     block,
                 )
-                self.assertIn(
+                self.assertNotIn(
                     "tools/qt/build_qt.py toolchain-fingerprint",
                     block,
                 )
-                self.assertIn("consumer_fingerprint", block)
+                self.assertIn(QT_COMPATIBILITY_TOOL, block)
+                self.assertIn("consumer_compatibility", block)
                 self.assertIn("refusing the cache", block)
+                self.assertIn(
+                    "tools/qt/build_qt.py identity",
+                    block,
+                )
+                self.assertIn("expected_identity", block)
+                self.assertIn(
+                    "not bound to its full toolchain fingerprint",
+                    block,
+                )
                 self.assertIn(
                     "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json",
                     block,
                 )
                 self.assertIn("--toolchain-contract", block)
-                self.assertNotIn("--toolchain-fingerprint", block)
+                self.assertIn("--toolchain-fingerprint", block)
+                self.assertIn(
+                    "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}",
+                    block,
+                )
+                verify = block.split(
+                    "tools/qt/build_qt.py verify",
+                    1,
+                )[1]
+                self.assertIn("--toolchain-fingerprint", verify)
+                self.assertNotIn("--toolchain-contract", verify)
                 if job != "desktop_contracts":
                     self.assertIn(
                         '--target "${{ matrix.qt-target }}"',
@@ -842,8 +898,16 @@ class CiWorkflowContractTests(unittest.TestCase):
                     )
                     self.assertNotIn("matrix.qt-platform", block)
                 self.assertLess(
-                    block.index("consumer_fingerprint"),
+                    block.index(QT_COMPATIBILITY_TOOL),
                     block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
+                )
+                self.assertLess(
+                    block.index("refusing the cache"),
+                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
+                )
+                self.assertLess(
+                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
+                    block.index("tools/qt/build_qt.py verify"),
                 )
 
         self.assertNotIn("jurplel/install-qt-action", self.ci)

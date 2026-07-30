@@ -47,6 +47,7 @@ jobs:
       - name: Validate CI classifier contracts
         run: |
           python3 tools/ci/classify-changes-test.py
+          python3 tools/ci/qt-toolchain-compatibility-test.py
           python3 tools/ci/required-check-test.py
           python3 tools/ci/workflow-contract-test.py
           python3 tools/macos/build-local-test.py
@@ -452,6 +453,7 @@ jobs:
     outputs:
       identity: ${{ steps.qt-sdk.outputs.identity }}
       toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.qt-sdk.outputs.compatibility_fingerprint }}
     if: >-
       needs.classify.outputs.desktop_contract == 'true' ||
       needs.classify.outputs.desktop == 'true' ||
@@ -486,6 +488,11 @@ jobs:
               --target linux-x86_64 \
               --toolchain-contract "${contract}"
           )"
+          compatibility_fingerprint="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target linux-x86_64 \
+              --toolchain-contract "${contract}"
+          )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
               --target linux-x86_64 \
@@ -493,6 +500,8 @@ jobs:
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+          echo "compatibility_fingerprint=${compatibility_fingerprint}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve Linux Qt SDK cache
         id: qt-cache
@@ -523,6 +532,7 @@ jobs:
     outputs:
       identity: ${{ steps.qt-sdk.outputs.identity }}
       toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.qt-sdk.outputs.compatibility_fingerprint }}
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
@@ -556,6 +566,11 @@ jobs:
               --target macos-x86_64 \
               --toolchain-contract "${contract}"
           )"
+          compatibility_fingerprint="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target macos-x86_64 \
+              --toolchain-contract "${contract}"
+          )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
               --target macos-x86_64 \
@@ -563,6 +578,8 @@ jobs:
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+          echo "compatibility_fingerprint=${compatibility_fingerprint}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve macOS Qt SDK cache
         id: qt-cache
@@ -593,6 +610,7 @@ jobs:
     outputs:
       identity: ${{ steps.qt-sdk.outputs.identity }}
       toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.qt-sdk.outputs.compatibility_fingerprint }}
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
@@ -626,6 +644,11 @@ jobs:
               --target macos-arm64 \
               --toolchain-contract "${contract}"
           )"
+          compatibility_fingerprint="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target macos-arm64 \
+              --toolchain-contract "${contract}"
+          )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
               --target macos-arm64 \
@@ -633,6 +656,8 @@ jobs:
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+          echo "compatibility_fingerprint=${compatibility_fingerprint}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve macOS Apple Silicon Qt SDK cache
         id: qt-cache
@@ -663,6 +688,7 @@ jobs:
     outputs:
       identity: ${{ steps.qt-sdk.outputs.identity }}
       toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.qt-sdk.outputs.compatibility_fingerprint }}
     if: >-
       needs.classify.outputs.desktop == 'true' ||
       needs.classify.outputs.package == 'true'
@@ -701,6 +727,11 @@ jobs:
               --target windows-x86_64 \
               --toolchain-contract "${contract}"
           )"
+          compatibility_fingerprint="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target windows-x86_64 \
+              --toolchain-contract "${contract}"
+          )"
           identity="$(
             python3 tools/qt/build_qt.py identity \
               --target windows-x86_64 \
@@ -708,6 +739,8 @@ jobs:
           )"
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+          echo "compatibility_fingerprint=${compatibility_fingerprint}" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Restore or reserve Windows Qt SDK cache
         id: qt-cache
@@ -768,23 +801,40 @@ jobs:
         env:
           PROVISIONED_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
           PROVISIONED_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          PROVISIONED_COMPATIBILITY: ${{ needs.qt_sdk_linux.outputs.compatibility_fingerprint }}
         run: |
           contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
           python3 tools/qt/build_qt.py toolchain-contract \
             --target linux-x86_64 \
             --output "${contract}"
-          consumer_fingerprint="$(
-            python3 tools/qt/build_qt.py toolchain-fingerprint \
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
               --target linux-x86_64 \
               --toolchain-contract "${contract}"
           )"
-          if [[ -z "${PROVISIONED_IDENTITY}" || \
-                -z "${PROVISIONED_TOOLCHAIN}" ]]; then
-            echo "::error::Provisioned Linux Qt SDK identity is missing."
+          if [[ -z "${PROVISIONED_IDENTITY}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is missing; refusing the cache."
             exit 1
           fi
-          if [[ "${consumer_fingerprint}" != "${PROVISIONED_TOOLCHAIN}" ]]; then
-            echo "::error::Linux consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${PROVISIONED_TOOLCHAIN}; refusing the cache."
+          if [[ ! "${PROVISIONED_TOOLCHAIN}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Linux Qt SDK toolchain fingerprint is invalid; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${PROVISIONED_COMPATIBILITY}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Linux Qt SDK compatibility fingerprint is invalid; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target linux-x86_64 \
+              --toolchain-fingerprint "${PROVISIONED_TOOLCHAIN}"
+          )"
+          if [[ "${PROVISIONED_IDENTITY}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is not bound to its full toolchain fingerprint; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${PROVISIONED_COMPATIBILITY}" ]]; then
+            echo "::error::Linux consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${PROVISIONED_COMPATIBILITY}; refusing the cache."
             exit 1
           fi
           echo "identity=${PROVISIONED_IDENTITY}" >> "$GITHUB_OUTPUT"
@@ -807,8 +857,8 @@ jobs:
           python3 tools/qt/build_qt.py verify \
             --target linux-x86_64 \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
-            --toolchain-contract \
-              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
 
       - name: Run platform-independent desktop contracts
         run: tools/desktop/ci-gates.sh --stage contracts Linux
@@ -903,29 +953,37 @@ jobs:
         env:
           LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
           LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          LINUX_COMPATIBILITY: ${{ needs.qt_sdk_linux.outputs.compatibility_fingerprint }}
           MACOS_X86_64_IDENTITY: ${{ needs.qt_sdk_macos_x86_64.outputs.identity }}
           MACOS_X86_64_TOOLCHAIN: ${{ needs.qt_sdk_macos_x86_64.outputs.toolchain_fingerprint }}
+          MACOS_X86_64_COMPATIBILITY: ${{ needs.qt_sdk_macos_x86_64.outputs.compatibility_fingerprint }}
           MACOS_ARM64_IDENTITY: ${{ needs.qt_sdk_macos_arm64.outputs.identity }}
           MACOS_ARM64_TOOLCHAIN: ${{ needs.qt_sdk_macos_arm64.outputs.toolchain_fingerprint }}
+          MACOS_ARM64_COMPATIBILITY: ${{ needs.qt_sdk_macos_arm64.outputs.compatibility_fingerprint }}
           WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
           WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
+          WINDOWS_COMPATIBILITY: ${{ needs.qt_sdk_windows.outputs.compatibility_fingerprint }}
         run: |
           case "${{ matrix.qt-target }}" in
             linux-x86_64)
               identity="${LINUX_IDENTITY}"
               fingerprint="${LINUX_TOOLCHAIN}"
+              compatibility="${LINUX_COMPATIBILITY}"
               ;;
             macos-x86_64)
               identity="${MACOS_X86_64_IDENTITY}"
               fingerprint="${MACOS_X86_64_TOOLCHAIN}"
+              compatibility="${MACOS_X86_64_COMPATIBILITY}"
               ;;
             macos-arm64)
               identity="${MACOS_ARM64_IDENTITY}"
               fingerprint="${MACOS_ARM64_TOOLCHAIN}"
+              compatibility="${MACOS_ARM64_COMPATIBILITY}"
               ;;
             windows-x86_64)
               identity="${WINDOWS_IDENTITY}"
               fingerprint="${WINDOWS_TOOLCHAIN}"
+              compatibility="${WINDOWS_COMPATIBILITY}"
               ;;
             *)
               echo "::error::Unsupported Qt SDK platform."
@@ -936,17 +994,34 @@ jobs:
           python3 tools/qt/build_qt.py toolchain-contract \
             --target "${{ matrix.qt-target }}" \
             --output "${contract}"
-          consumer_fingerprint="$(
-            python3 tools/qt/build_qt.py toolchain-fingerprint \
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
               --target "${{ matrix.qt-target }}" \
               --toolchain-contract "${contract}"
           )"
-          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
-            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}."
+          if [[ -z "${identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}; refusing the cache."
             exit 1
           fi
-          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
-            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+          if [[ ! "${fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK toolchain fingerprint is invalid for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${compatibility}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK compatibility fingerprint is invalid for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target "${{ matrix.qt-target }}" \
+              --toolchain-fingerprint "${fingerprint}"
+          )"
+          if [[ "${identity}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is not bound to its full toolchain fingerprint for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
+            echo "::error::${{ matrix.name }} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the cache."
             exit 1
           fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -969,8 +1044,8 @@ jobs:
           python3 tools/qt/build_qt.py verify \
             --target "${{ matrix.qt-target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
-            --toolchain-contract \
-              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
 
       - name: Run cross-platform desktop debug smoke
         env:
@@ -1118,29 +1193,37 @@ jobs:
         env:
           LINUX_IDENTITY: ${{ needs.qt_sdk_linux.outputs.identity }}
           LINUX_TOOLCHAIN: ${{ needs.qt_sdk_linux.outputs.toolchain_fingerprint }}
+          LINUX_COMPATIBILITY: ${{ needs.qt_sdk_linux.outputs.compatibility_fingerprint }}
           MACOS_X86_64_IDENTITY: ${{ needs.qt_sdk_macos_x86_64.outputs.identity }}
           MACOS_X86_64_TOOLCHAIN: ${{ needs.qt_sdk_macos_x86_64.outputs.toolchain_fingerprint }}
+          MACOS_X86_64_COMPATIBILITY: ${{ needs.qt_sdk_macos_x86_64.outputs.compatibility_fingerprint }}
           MACOS_ARM64_IDENTITY: ${{ needs.qt_sdk_macos_arm64.outputs.identity }}
           MACOS_ARM64_TOOLCHAIN: ${{ needs.qt_sdk_macos_arm64.outputs.toolchain_fingerprint }}
+          MACOS_ARM64_COMPATIBILITY: ${{ needs.qt_sdk_macos_arm64.outputs.compatibility_fingerprint }}
           WINDOWS_IDENTITY: ${{ needs.qt_sdk_windows.outputs.identity }}
           WINDOWS_TOOLCHAIN: ${{ needs.qt_sdk_windows.outputs.toolchain_fingerprint }}
+          WINDOWS_COMPATIBILITY: ${{ needs.qt_sdk_windows.outputs.compatibility_fingerprint }}
         run: |
           case "${{ matrix.qt-target }}" in
             linux-x86_64)
               identity="${LINUX_IDENTITY}"
               fingerprint="${LINUX_TOOLCHAIN}"
+              compatibility="${LINUX_COMPATIBILITY}"
               ;;
             macos-x86_64)
               identity="${MACOS_X86_64_IDENTITY}"
               fingerprint="${MACOS_X86_64_TOOLCHAIN}"
+              compatibility="${MACOS_X86_64_COMPATIBILITY}"
               ;;
             macos-arm64)
               identity="${MACOS_ARM64_IDENTITY}"
               fingerprint="${MACOS_ARM64_TOOLCHAIN}"
+              compatibility="${MACOS_ARM64_COMPATIBILITY}"
               ;;
             windows-x86_64)
               identity="${WINDOWS_IDENTITY}"
               fingerprint="${WINDOWS_TOOLCHAIN}"
+              compatibility="${WINDOWS_COMPATIBILITY}"
               ;;
             *)
               echo "::error::Unsupported Qt SDK platform."
@@ -1151,17 +1234,34 @@ jobs:
           python3 tools/qt/build_qt.py toolchain-contract \
             --target "${{ matrix.qt-target }}" \
             --output "${contract}"
-          consumer_fingerprint="$(
-            python3 tools/qt/build_qt.py toolchain-fingerprint \
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
               --target "${{ matrix.qt-target }}" \
               --toolchain-contract "${contract}"
           )"
-          if [[ -z "${identity}" || -z "${fingerprint}" ]]; then
-            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}."
+          if [[ -z "${identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${{ matrix.qt-target }}; refusing the cache."
             exit 1
           fi
-          if [[ "${consumer_fingerprint}" != "${fingerprint}" ]]; then
-            echo "::error::${{ matrix.name }} consumer toolchain ${consumer_fingerprint} does not match provisioned Qt SDK toolchain ${fingerprint}; refusing the cache."
+          if [[ ! "${fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK toolchain fingerprint is invalid for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${compatibility}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK compatibility fingerprint is invalid for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target "${{ matrix.qt-target }}" \
+              --toolchain-fingerprint "${fingerprint}"
+          )"
+          if [[ "${identity}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is not bound to its full toolchain fingerprint for ${{ matrix.qt-target }}; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
+            echo "::error::${{ matrix.name }} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the cache."
             exit 1
           fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
@@ -1184,8 +1284,8 @@ jobs:
           python3 tools/qt/build_qt.py verify \
             --target "${{ matrix.qt-target }}" \
             --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
-            --toolchain-contract \
-              "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
 
       - name: Validate Linux desktop metadata
         if: runner.os == 'Linux'
