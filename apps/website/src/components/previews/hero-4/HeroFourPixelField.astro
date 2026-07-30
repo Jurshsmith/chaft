@@ -1,0 +1,361 @@
+<div
+  class="pixel-field"
+  data-hero-four
+  role="img"
+  aria-label="A field of pale blue pixels linking four bright communication nodes"
+>
+  <canvas aria-hidden="true"></canvas>
+  <div class="pixel-field__fallback" aria-hidden="true">
+    <span class="pixel-field__node pixel-field__node--one"></span>
+    <span class="pixel-field__node pixel-field__node--two"></span>
+    <span class="pixel-field__node pixel-field__node--three"></span>
+    <span class="pixel-field__node pixel-field__node--four"></span>
+  </div>
+</div>
+
+<script>
+  type FieldPixel = {
+    x: number;
+    y: number;
+    phase: number;
+    size: number;
+    strength: number;
+  };
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const interactivePointer = window.matchMedia(
+    "(hover: hover) and (pointer: fine)",
+  );
+
+  for (const root of document.querySelectorAll("[data-hero-four]")) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === "true") continue;
+
+    const canvas = root.querySelector("canvas");
+    const host = root.closest(".hero");
+    if (!(canvas instanceof HTMLCanvasElement) || !(host instanceof HTMLElement)) continue;
+
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) continue;
+
+    root.dataset.ready = "true";
+
+    let width = 0;
+    let height = 0;
+    let pixelRatio = 1;
+    let frame = 0;
+    let visible = true;
+    let lastDraw = 0;
+    let pixels: FieldPixel[] = [];
+    const pointer = { active: false, x: 0, y: 0 };
+
+    const communicationNodes = [
+      { x: 0.61, y: 0.25, size: 6 },
+      { x: 0.82, y: 0.42, size: 8 },
+      { x: 0.67, y: 0.69, size: 7 },
+      { x: 0.9, y: 0.78, size: 5 },
+    ];
+
+    const hash = (x: number, y: number) => {
+      const value = Math.sin(x * 91.17 + y * 53.41) * 43758.5453;
+      return value - Math.floor(value);
+    };
+
+    const distanceToSegment = (
+      px: number,
+      py: number,
+      ax: number,
+      ay: number,
+      bx: number,
+      by: number,
+    ) => {
+      const abx = bx - ax;
+      const aby = by - ay;
+      const denominator = abx * abx + aby * aby;
+      const t = denominator
+        ? Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / denominator))
+        : 0;
+      return Math.hypot(px - (ax + abx * t), py - (ay + aby * t));
+    };
+
+    const rebuild = () => {
+      const bounds = root.getBoundingClientRect();
+      width = Math.max(1, Math.round(bounds.width));
+      height = Math.max(1, Math.round(bounds.height));
+      pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const spacing = width < 620 ? 18 : 20;
+      const nextPixels: FieldPixel[] = [];
+      for (let y = spacing / 2; y < height; y += spacing) {
+        for (let x = spacing / 2; x < width; x += spacing) {
+          const random = hash(Math.round(x / spacing), Math.round(y / spacing));
+          if (random < 0.19) continue;
+
+          const normalizedX = x / width;
+          const normalizedY = y / height;
+          const nearestNode = Math.min(
+            ...communicationNodes.map((node) =>
+              Math.hypot(normalizedX - node.x, normalizedY - node.y)
+            ),
+          );
+          const nearestLink = Math.min(
+            distanceToSegment(normalizedX, normalizedY, 0.61, 0.25, 0.82, 0.42),
+            distanceToSegment(normalizedX, normalizedY, 0.82, 0.42, 0.67, 0.69),
+            distanceToSegment(normalizedX, normalizedY, 0.67, 0.69, 0.9, 0.78),
+          );
+
+          nextPixels.push({
+            x,
+            y,
+            phase: random * Math.PI * 2,
+            size: random > 0.93 ? 3 : random > 0.7 ? 2 : 1,
+            strength:
+              0.13 +
+              Math.max(0, 0.45 - nearestNode * 2.2) +
+              Math.max(0, 0.2 - nearestLink * 2.7),
+          });
+        }
+      }
+      pixels = nextPixels;
+      draw(0);
+    };
+
+    const draw = (time: number) => {
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const motionTime = reduceMotion.matches ? 0 : time * 0.00034;
+      for (const pixel of pixels) {
+        const dx = pixel.x - pointer.x;
+        const dy = pixel.y - pointer.y;
+        const distance = Math.hypot(dx, dy);
+        const influence =
+          pointer.active && !reduceMotion.matches
+            ? Math.max(0, 1 - distance / 145)
+            : 0;
+        const drift =
+          reduceMotion.matches ? 0 : Math.sin(motionTime * 6 + pixel.phase) * 0.65;
+        const offset = influence * 7;
+        const x = pixel.x + (distance ? (dx / distance) * offset : 0) + drift;
+        const y = pixel.y + (distance ? (dy / distance) * offset : 0) - drift;
+        const alpha = Math.min(
+          0.92,
+          pixel.strength + influence * 0.55 +
+            (reduceMotion.matches ? 0 : Math.sin(motionTime * 4 + pixel.phase) * 0.035),
+        );
+        const size = pixel.size + influence * 1.7;
+
+        context.fillStyle = `rgba(184, 220, 255, ${Math.max(0.08, alpha)})`;
+        context.fillRect(
+          Math.round(x - size / 2),
+          Math.round(y - size / 2),
+          Math.max(1, Math.round(size)),
+          Math.max(1, Math.round(size)),
+        );
+      }
+
+      context.save();
+      context.lineWidth = 1;
+      context.setLineDash([2, 7]);
+      context.strokeStyle = "rgba(226, 244, 255, 0.42)";
+      context.beginPath();
+      communicationNodes.forEach((node, index) => {
+        const x = node.x * width;
+        const y = node.y * height;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+      context.restore();
+
+      for (const [index, node] of communicationNodes.entries()) {
+        const pulse =
+          reduceMotion.matches
+            ? 0
+            : (Math.sin(motionTime * 5 + index * 1.4) + 1) * 1.8;
+        const x = node.x * width;
+        const y = node.y * height;
+        context.fillStyle = "rgba(240, 249, 255, 0.18)";
+        context.fillRect(
+          Math.round(x - node.size - pulse),
+          Math.round(y - node.size - pulse),
+          Math.round((node.size + pulse) * 2),
+          Math.round((node.size + pulse) * 2),
+        );
+        context.fillStyle = "#f7fbff";
+        context.fillRect(
+          Math.round(x - node.size / 2),
+          Math.round(y - node.size / 2),
+          node.size,
+          node.size,
+        );
+      }
+    };
+
+    const animate = (time: number) => {
+      if (
+        !reduceMotion.matches &&
+        interactivePointer.matches &&
+        visible &&
+        document.visibilityState === "visible"
+      ) {
+        if (time - lastDraw > 32) {
+          draw(time);
+          lastDraw = time;
+        }
+        frame = window.requestAnimationFrame(animate);
+      }
+    };
+
+    const restartAnimation = () => {
+      window.cancelAnimationFrame(frame);
+      if (
+        reduceMotion.matches ||
+        !interactivePointer.matches ||
+        !visible ||
+        document.visibilityState !== "visible"
+      ) {
+        draw(0);
+        return;
+      }
+      frame = window.requestAnimationFrame(animate);
+    };
+
+    const updatePointer = (event: PointerEvent) => {
+      if (
+        reduceMotion.matches ||
+        !interactivePointer.matches ||
+        (event.pointerType !== "mouse" && event.pointerType !== "pen")
+      ) {
+        return;
+      }
+      const bounds = root.getBoundingClientRect();
+      pointer.x = event.clientX - bounds.left;
+      pointer.y = event.clientY - bounds.top;
+      pointer.active = true;
+    };
+
+    const clearPointer = () => {
+      pointer.active = false;
+    };
+
+    const resizeObserver = new ResizeObserver(rebuild);
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      visible = entry?.isIntersecting ?? true;
+      restartAnimation();
+    });
+
+    resizeObserver.observe(root);
+    intersectionObserver.observe(root);
+    host.addEventListener("pointermove", updatePointer, { passive: true });
+    host.addEventListener("pointerleave", clearPointer, { passive: true });
+    reduceMotion.addEventListener("change", restartAnimation);
+    interactivePointer.addEventListener("change", restartAnimation);
+    document.addEventListener("visibilitychange", restartAnimation);
+    rebuild();
+    restartAnimation();
+  }
+</script>
+
+<style>
+  .pixel-field {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background:
+      linear-gradient(90deg, rgb(5 20 53 / 98%) 0%, rgb(5 20 53 / 92%) 38%, rgb(10 65 148 / 26%) 72%, transparent 100%),
+      radial-gradient(circle at 82% 45%, rgb(178 220 255 / 36%), transparent 31%),
+      linear-gradient(135deg, #071737 0%, #0c3d92 54%, #7ebcf2 100%);
+    isolation: isolate;
+  }
+
+  .pixel-field::before {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(rgb(192 224 255 / 8%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(192 224 255 / 8%) 1px, transparent 1px);
+    background-size: 20px 20px;
+    content: "";
+    mask-image: linear-gradient(90deg, transparent 4%, #000 42%, #000);
+  }
+
+  .pixel-field::after {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, rgb(3 14 38 / 92%) 0%, rgb(3 14 38 / 68%) 36%, transparent 72%),
+      linear-gradient(180deg, rgb(3 14 38 / 12%), rgb(3 14 38 / 44%));
+    content: "";
+  }
+
+  canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+  }
+
+  .pixel-field__fallback {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+  }
+
+  .pixel-field__node {
+    position: absolute;
+    width: 0.5rem;
+    height: 0.5rem;
+    background: #f7fbff;
+    box-shadow:
+      0 0 0 0.45rem rgb(226 244 255 / 12%),
+      0 0 2.4rem rgb(226 244 255 / 68%);
+  }
+
+  .pixel-field__node--one {
+    top: 25%;
+    left: 61%;
+  }
+
+  .pixel-field__node--two {
+    top: 42%;
+    left: 82%;
+  }
+
+  .pixel-field__node--three {
+    top: 69%;
+    left: 67%;
+  }
+
+  .pixel-field__node--four {
+    top: 78%;
+    left: 90%;
+  }
+
+  .pixel-field[data-ready="true"] .pixel-field__fallback {
+    display: none;
+  }
+
+  @media (max-width: 700px) {
+    .pixel-field {
+      background:
+        linear-gradient(180deg, rgb(5 20 53 / 98%) 0%, rgb(5 20 53 / 88%) 58%, rgb(10 65 148 / 22%) 100%),
+        radial-gradient(circle at 72% 77%, rgb(178 220 255 / 34%), transparent 33%),
+        linear-gradient(145deg, #071737 0%, #0c3d92 62%, #7ebcf2 100%);
+    }
+
+    .pixel-field::after {
+      background: linear-gradient(180deg, rgb(3 14 38 / 70%) 0%, rgb(3 14 38 / 48%) 65%, transparent);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pixel-field__node {
+      box-shadow: 0 0 0 0.4rem rgb(226 244 255 / 14%);
+    }
+  }
+</style>
