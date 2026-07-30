@@ -83,7 +83,7 @@ const steps = [
           </a>
           <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">Explore the source</a>
         </div>
-        <p class="hero__note">
+        <p class="hero__note body-copy">
           <span class="status">Canary</span>
           Unaudited software. Not for sensitive or production communication.
         </p>
@@ -123,7 +123,7 @@ const steps = [
           <p class="eyebrow">Chaft Desktop</p>
           <h2>A working canary, not a concept mockup.</h2>
         </div>
-        <p>
+        <p class="body-copy">
           This native Linux capture comes from Chaft's deterministic desktop smoke
           test. It shows the current room list, messages, replies, attachments, access
           controls, and synchronization state.
@@ -153,7 +153,7 @@ const steps = [
           <p class="eyebrow">Lower infrastructure, clear tradeoffs</p>
           <h2>Built without a permanent SaaS bill.</h2>
         </div>
-        <p>
+        <p class="body-copy">
           Participating devices provide the storage, compute, and most synchronization.
           That lowers recurring infrastructure, but makes reachability and backups your
           team's responsibility.
@@ -165,7 +165,7 @@ const steps = [
           <article class="feature-card">
             <span class="feature-card__index">{String(index + 1).padStart(2, "0")}</span>
             <h3>{feature.title}</h3>
-            <p>{feature.copy}</p>
+            <p class="body-copy">{feature.copy}</p>
           </article>
         ))}
       </div>
@@ -179,7 +179,7 @@ const steps = [
           <p class="eyebrow">How it works</p>
           <h2>Create a workspace. Invite your team. Sync directly.</h2>
         </div>
-        <p>
+        <p class="body-copy">
           Each device keeps its own identity and verified history. Chaft exchanges
           updates when trusted peers are reachable.
         </p>
@@ -191,7 +191,7 @@ const steps = [
             <span>{step.number}</span>
             <div>
               <h3>{step.title}</h3>
-              <p>{step.copy}</p>
+              <p class="body-copy">{step.copy}</p>
             </div>
           </li>
         ))}
@@ -207,7 +207,7 @@ const steps = [
           <h2>Start with what you need.</h2>
         </div>
         <div class="docs-entry__copy">
-          <p>
+          <p class="body-copy">
             Try the current workflow, review the security boundaries, or understand
             the architecture. Contributor guides cover builds, tests, and releases.
           </p>
@@ -248,7 +248,7 @@ const steps = [
               : "Packages are being validated for Windows, macOS, and Linux."}
           </h2>
         </div>
-        <p>
+        <p class="body-copy">
           {hasPublishedDownloads
             ? "Choose a platform to see the exact package, size, checksum, and signing state."
             : "No public package is available yet. Build from source or watch the release status while native packages complete verification."}
@@ -256,7 +256,7 @@ const steps = [
       </div>
       <DownloadGrid compact />
       <div class="download-footer">
-        <p>
+        <p class="body-copy">
           {hasPublishedDownloads
             ? `Chaft ${currentRelease.version} artifacts and verification details are ready.`
             : "Canary packages are pending. CI artifacts are not public downloads."}

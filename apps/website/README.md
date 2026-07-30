@@ -175,9 +175,12 @@ Workers Static Assets. It has no Worker script, asset binding, route, or Custom
 Domain; `workers_dev` and preview URLs are disabled. Wrangler is an exact
 development dependency, and validation uses dry-run mode only. The production
 build rewrites `_headers` and `_redirects` for the configured `SITE_URL` base
-path, physically nests every public asset beneath that path, and includes the
-OFL license for its subsetted Space Grotesk fonts. Cloudflare control files stay
-at the asset root, as required by Workers Static Assets.
+path and physically nests every public asset beneath that path. Headings,
+navigation, controls, and labels keep the bundled Space Grotesk UI font and its
+OFL license. Body copy uses Chillax from Fontshare's official API under the ITF
+Free Font License; those font files are not redistributed with the site.
+Cloudflare control files stay at the asset root, as required by Workers Static
+Assets.
 
 The `Website` GitHub Actions workflow always validates pull requests and pushes
 against `https://website-validation.invalid`. A push to `main` builds a

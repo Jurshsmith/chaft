@@ -27,6 +27,8 @@ const socialImage = new URL(sitePath("/og-chaft-v3.png"), Astro.site ?? Astro.ur
 const socialImageAlt =
   "Chaft logo beside a peer network and the message: Team chat that runs on your devices.";
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
+const chillaxStylesheet =
+  "https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&display=swap";
 ---
 
 <!doctype html>
@@ -40,6 +42,9 @@ const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png"
     {noindex && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/png" href={favicon.src} sizes="64x64" />
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin="anonymous" />
+    <link rel="stylesheet" href={chillaxStylesheet} />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={siteName} />
