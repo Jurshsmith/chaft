@@ -45,10 +45,16 @@ function assertCommonHeaders(response, label) {
   );
 }
 
-async function responseText(response, label, maximumBytes = 5 * 1024 * 1024) {
+async function responseBytes(response, label, maximumBytes = 5 * 1024 * 1024) {
   const bytes = new Uint8Array(await response.arrayBuffer());
   assert(bytes.byteLength <= maximumBytes, `${label} response is too large`);
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return bytes;
+}
+
+async function responseText(response, label, maximumBytes = 5 * 1024 * 1024) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    await responseBytes(response, label, maximumBytes),
+  );
 }
 
 function tagAttribute(html, selectorPattern, attribute) {
@@ -223,7 +229,12 @@ export async function verifyPreviewDeployment({
       cacheControl.includes("public"),
     "Astro asset must use one-year immutable caching",
   );
-  await responseText(asset, "Astro asset", 25 * 1024 * 1024);
+  const assetBytes = await responseBytes(
+    asset,
+    "Astro asset",
+    25 * 1024 * 1024,
+  );
+  assert(assetBytes.byteLength > 0, "Astro asset must not be empty");
   checks.push({
     detail: assetUrl.pathname,
     name: "hashed-asset",

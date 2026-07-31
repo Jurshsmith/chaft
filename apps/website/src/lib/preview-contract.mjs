@@ -3,6 +3,42 @@ import { PREVIEW_SLOTS as REVIEWED_PREVIEW_SLOTS } from "../../scripts/preview-s
 export const PRODUCTION_ORIGIN = "https://chaft.ai";
 export const PREVIEW_ROBOTS_POLICY = "noindex, nofollow, noarchive";
 export const PREVIEW_ROBOTS_TEXT = "User-agent: *\nDisallow: /\n";
+export const PRODUCTION_ROBOTS_CONTENT_SIGNAL =
+  "search=yes, ai-train=no, use=reference";
+export const PRODUCTION_ROBOTS_RIGHTS_NOTICE = [
+  "# The Content-Signal directives below state Chaft's permitted content uses.",
+  "# Any restriction reserves all applicable rights, including under Article 4",
+  "# of Directive (EU) 2019/790.",
+].join("\n");
+export const PRODUCTION_ROBOTS_BLOCKED_CRAWLERS = Object.freeze([
+  "Amazonbot",
+  "Applebot-Extended",
+  "Bytespider",
+  "CCBot",
+  "ClaudeBot",
+  "CloudflareBrowserRenderingCrawler",
+  "Google-Extended",
+  "GPTBot",
+  "meta-externalagent",
+]);
+
+export function productionRobotsText(sitemap) {
+  const sitemapUrl = sitemap instanceof URL ? sitemap : new URL(sitemap);
+  const blockedCrawlers = PRODUCTION_ROBOTS_BLOCKED_CRAWLERS.flatMap(
+    (crawler) => [`User-agent: ${crawler}`, "Disallow: /", ""],
+  );
+  return [
+    PRODUCTION_ROBOTS_RIGHTS_NOTICE,
+    "",
+    "User-agent: *",
+    `Content-Signal: ${PRODUCTION_ROBOTS_CONTENT_SIGNAL}`,
+    "Allow: /",
+    "",
+    ...blockedCrawlers,
+    `Sitemap: ${sitemapUrl.href}`,
+    "",
+  ].join("\n");
+}
 
 // The trusted deployment tooling owns the exact allowlist. Website metadata,
 // indexing controls, and the deployment workflow all consume the same frozen

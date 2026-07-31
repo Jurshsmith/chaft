@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { productionRobotsText } from "../src/lib/preview-contract.mjs";
 import { verifyPublicDeployment } from "./public-deployment-verifier.mjs";
 
 const commit = "04cf7c01900335545d55ed8878cdc37dea1d6e88";
@@ -227,7 +228,9 @@ function releaseFixture(mutator) {
       });
     }
     if (pathname === "/robots.txt") {
-      return response(`Sitemap: ${origin}/sitemap-index.xml`);
+      return response(productionRobotsText(`${origin}/sitemap-index.xml`), {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
     }
     if (pathname === "/sitemap-index.xml") {
       return response(`<loc>${origin}/sitemap-0.xml</loc>`);
@@ -346,6 +349,23 @@ describe("public deployment verifier", () => {
     await expect(
       verifyPublicDeployment(verificationOptions(fixture, fetchImpl)),
     ).rejects.toThrow(/production home must render the baseline hero/);
+  });
+
+  it("rejects zone-level managed robots content prepended at the edge", async () => {
+    const fixture = releaseFixture();
+    const fetchImpl = async (input, options) => {
+      const result = await fixture.fetchImpl(input, options);
+      const url = new URL(input);
+      if (url.origin !== origin || url.pathname !== "/robots.txt") return result;
+      return response(
+        `# BEGIN Cloudflare Managed content\nUser-agent: *\nAllow: /\n# END Cloudflare Managed Content\n\n${await result.text()}`,
+        { headers: { "Content-Type": "text/plain; charset=utf-8" } },
+      );
+    };
+
+    await expect(
+      verifyPublicDeployment(verificationOptions(fixture, fetchImpl)),
+    ).rejects.toThrow(/exact source-controlled production policy/);
   });
 
   it("accepts the exact immutable legacy three-target canary set", async () => {
