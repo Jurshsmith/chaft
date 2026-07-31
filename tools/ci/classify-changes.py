@@ -6,7 +6,8 @@ The classifier is deliberately fail closed:
 * unknown repository paths enable every scope;
 * malformed paths and unusable pull-request diff metadata are fatal;
 * scheduled and manually dispatched runs enable every scope;
-* main-branch pushes always add benchmark and release-package coverage.
+* main-branch pushes add benchmark and release-package coverage unless every
+  changed path belongs to the isolated Chaft Previews content allowlist.
 
 GitHub Actions usage can rely entirely on environment variables:
 
@@ -56,6 +57,12 @@ WEBSITE_ROOT_FILES = frozenset(
         "README.md",
         "SECURITY.md",
     }
+)
+PREVIEW_ONLY_WEBSITE_PREFIXES = (
+    "apps/website/previews/",
+    "apps/website/public/previews/",
+    "apps/website/src/assets/previews/",
+    "apps/website/src/components/previews/",
 )
 RUST_WORKSPACE_PREFIXES = (
     "application/",
@@ -394,8 +401,19 @@ def classify_paths(
         reasons.append("unknown paths require full coverage")
 
     if event_name == "push" and ref == "refs/heads/main":
-        enabled.update({"benchmark", "release_contract", "package"})
-        reasons.append("main pushes require benchmark and release-package coverage")
+        preview_only = bool(normalized_paths) and all(
+            _has_prefix(path, PREVIEW_ONLY_WEBSITE_PREFIXES)
+            for path in normalized_paths
+        )
+        if preview_only:
+            reasons.append(
+                "preview-only main pushes require website coverage only"
+            )
+        else:
+            enabled.update({"benchmark", "release_contract", "package"})
+            reasons.append(
+                "main pushes require benchmark and release-package coverage"
+            )
 
     if full:
         enabled.update(ALL_RUNNABLE_SCOPES)
