@@ -1,35 +1,122 @@
 ---
+import { Image } from "astro:assets";
+
+import mark from "../../../desktop-qt/resources/branding/chaft-mark.png";
 import { sitePath } from "../lib/site-path";
 
 const year = new Date().getUTCFullYear();
+const principles = [
+  "On-device history",
+  "Direct sync",
+  "Encrypted content",
+  "AGPL source",
+];
+const navigationGroups = [
+  {
+    label: "Product",
+    links: [
+      { href: sitePath("/download/"), label: "Download" },
+      { href: sitePath("/releases/"), label: "Releases" },
+      { href: sitePath("/security/"), label: "Security" },
+    ],
+  },
+  {
+    label: "Understand",
+    links: [
+      { href: sitePath("/docs/"), label: "Documentation" },
+      {
+        href: sitePath("/docs/getting-started/build-desktop/"),
+        label: "Getting started",
+      },
+      {
+        href: sitePath("/docs/concepts/architecture/"),
+        label: "Architecture",
+      },
+    ],
+  },
+  {
+    label: "Build with us",
+    links: [
+      { href: "https://github.com/Jurshsmith/chaft", label: "Source" },
+      {
+        href: "https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md",
+        label: "Contributing",
+      },
+      {
+        href: "https://github.com/Jurshsmith/chaft/blob/main/LICENSE",
+        label: "AGPL-3.0-or-later",
+      },
+    ],
+  },
+];
 ---
 
 <footer class="site-footer">
   <div class="shell site-footer__inner">
-    <div>
-      <a class="footer-brand" href={sitePath("/")}>chaft</a>
-      <p class="body-copy">Open-source team chat that runs on your devices.</p>
+    <div class="site-footer__masthead">
+      <span class="footer-mark" aria-hidden="true">
+        <Image
+          src={mark}
+          alt=""
+          width={52}
+          height={52}
+          format="webp"
+          quality={90}
+          loading="lazy"
+        />
+      </span>
+
+      <ul class="footer-principles" aria-label="Chaft product principles">
+        {principles.map((principle) => <li>{principle}</li>)}
+      </ul>
     </div>
 
-    <nav aria-label="Footer navigation">
-      <a href={sitePath("/docs/")}>Documentation</a>
-      <a href={sitePath("/docs/getting-started/build-desktop/")}>Getting started</a>
-      <a href={sitePath("/docs/concepts/architecture/")}>Architecture</a>
-      <a href={sitePath("/download/")}>Download</a>
-      <a href={sitePath("/releases/")}>Releases</a>
-      <a href={sitePath("/security/")}>Security</a>
-      <a href="https://github.com/Jurshsmith/chaft/blob/main/CONTRIBUTING.md">
-        Contributing
-      </a>
-      <a href="https://github.com/Jurshsmith/chaft">Source</a>
-      <a href="https://github.com/Jurshsmith/chaft/blob/main/LICENSE">AGPL-3.0</a>
-      <a href={sitePath("/licenses/OFL-SpaceGrotesk.txt")}>Space Grotesk license</a>
-      <a href="https://www.fontshare.com/licenses/itf-ffl">Chillax license</a>
-    </nav>
+    <a class="footer-wordmark" href={sitePath("/")} aria-label="Chaft home">
+      <span>chaft</span>
+      <span class="footer-wordmark__aside" aria-hidden="true">
+        peer-to-peer<br />team chat
+      </span>
+    </a>
 
-    <p class="site-footer__meta">
-      © {year} Chaft. Canary software · Not for sensitive production use.
-    </p>
+    <div class="site-footer__main">
+      <section class="footer-pitch" aria-labelledby="footer-pitch-title">
+        <p class="footer-pitch__eyebrow">Team chat, kept close</p>
+        <h2 id="footer-pitch-title">Your team. Your devices. Your history.</h2>
+        <p class="body-copy footer-pitch__copy">
+          Chaft stores history on participating devices, encrypts message content,
+          and syncs directly between trusted peers when they are reachable.
+        </p>
+        <a class="footer-download" href={sitePath("/download/")}>
+          Download the current canary
+          <span aria-hidden="true">→</span>
+        </a>
+      </section>
+
+      <nav class="footer-nav" aria-label="Footer navigation">
+        {navigationGroups.map((group) => (
+          <div class="footer-nav__group">
+            <p class="footer-nav__title">{group.label}</p>
+            <ul>
+              {group.links.map((link) => (
+                <li><a href={link.href}>{link.label}</a></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </div>
+
+    <div class="site-footer__bottom">
+      <p>© {year} Chaft.</p>
+      <p class="site-footer__warning">
+        <span aria-hidden="true"></span>
+        Unaudited canary software. Not for sensitive or production communication.
+      </p>
+      <nav class="footer-legal" aria-label="Font licenses">
+        <a href={sitePath("/licenses/OFL-SpaceGrotesk.txt")}>Space Grotesk</a>
+        <a href="https://www.fontshare.com/licenses/itf-ffl">Chillax</a>
+      </nav>
+    </div>
   </div>
 </footer>
 
@@ -40,68 +127,364 @@ const year = new Date().getUTCFullYear();
     --text-muted: #b5c0bc;
     --text-soft: #dce4e0;
     --text-strong: #fffdf7;
+    position: relative;
+    overflow: hidden;
     border-top: 1px solid var(--border-subtle);
-    background: var(--surface-ink);
+    background:
+      radial-gradient(circle at 8% 12%, rgb(75 195 162 / 14%), transparent 25rem),
+      linear-gradient(145deg, #17211f 0%, #111a17 72%);
+    color: var(--text-strong);
+  }
+
+  .site-footer::before {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(rgb(255 253 247 / 2.8%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 253 247 / 2.8%) 1px, transparent 1px);
+    background-size: 42px 42px;
+    content: "";
+    mask-image: linear-gradient(to bottom, black, transparent 72%);
+    pointer-events: none;
   }
 
   .site-footer__inner {
+    position: relative;
+    padding-block: clamp(2rem, 4vw, 3.75rem) 1.5rem;
+  }
+
+  .site-footer__masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+
+  .footer-mark {
     display: grid;
-    grid-template-columns: minmax(13rem, 1fr) auto;
-    gap: 2rem 4rem;
-    padding-block: 3.5rem;
+    width: 52px;
+    height: 52px;
+    flex: 0 0 52px;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid rgb(255 253 247 / 22%);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    box-shadow: 5px 5px 0 rgb(0 0 0 / 18%);
   }
 
-  .footer-brand {
-    display: inline-block;
-    margin-block-end: 0.35rem;
-    color: var(--text-strong);
-    font-family: var(--font-editorial);
-    font-size: 1.55rem;
-    font-style: italic;
-    font-weight: 500;
-    letter-spacing: -0.04em;
-    text-decoration: none;
+  .footer-mark img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
   }
 
-  p {
-    margin: 0;
-    font-size: 0.88rem;
-  }
-
-  nav {
+  .footer-principles {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.65rem 1.4rem;
     justify-content: flex-end;
-    align-content: start;
+    gap: 0.55rem 1.15rem;
+    margin: 0;
+    padding: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.025em;
+    list-style: none;
   }
 
-  nav a {
-    color: var(--text-muted);
-    font-size: 0.88rem;
+  .footer-principles li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.48rem;
+  }
+
+  .footer-principles li::before {
+    width: 0.42rem;
+    height: 0.42rem;
+    flex: 0 0 0.42rem;
+    border-radius: 50%;
+    background: var(--accent-bright);
+    box-shadow: 0 0 0 4px rgb(75 195 162 / 10%);
+    content: "";
+  }
+
+  .footer-wordmark {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: clamp(3.5rem, 7vw, 6.5rem) clamp(2.8rem, 6vw, 5.5rem);
+    color: var(--text-strong);
     text-decoration: none;
   }
 
-  nav a:hover {
-    color: var(--accent-bright);
+  .footer-wordmark > span:first-child {
+    font-family: var(--font-ui);
+    font-size: clamp(6.2rem, 21.5vw, 18rem);
+    font-weight: 500;
+    letter-spacing: -0.09em;
+    line-height: 0.64;
   }
 
-  .site-footer__meta {
-    grid-column: 1 / -1;
-    padding-top: 1.5rem;
+  .footer-wordmark__aside {
+    margin-block-start: 0.15rem;
+    color: var(--accent-bright);
+    font-family: var(--font-mono);
+    font-size: clamp(0.62rem, 1vw, 0.75rem);
+    letter-spacing: 0.08em;
+    line-height: 1.5;
+    text-align: right;
+    text-transform: uppercase;
+  }
+
+  .footer-wordmark::after {
+    position: absolute;
+    right: 0;
+    bottom: clamp(1.5rem, 3vw, 2.5rem);
+    width: clamp(2.8rem, 5vw, 4.2rem);
+    height: 2px;
+    background: var(--brand-coral);
+    content: "";
+    transform-origin: right;
+    transition: transform var(--motion-quick);
+  }
+
+  .footer-wordmark:hover::after {
+    transform: scaleX(1.7);
+  }
+
+  .site-footer__main {
+    display: grid;
+    grid-template-columns: minmax(17rem, 1.05fr) minmax(28rem, 1.55fr);
+    gap: clamp(3rem, 8vw, 8rem);
+    padding-block: clamp(3rem, 6vw, 5rem);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .footer-pitch__eyebrow,
+  .footer-nav__title {
+    margin: 0;
+    color: var(--accent-bright);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  .footer-pitch h2 {
+    max-width: 12ch;
+    margin-block: 1.1rem 1rem;
+    color: var(--text-strong);
+    font-family: var(--font-ui);
+    font-size: clamp(2rem, 4vw, 3.7rem);
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    line-height: 1.02;
+  }
+
+  .footer-pitch__copy {
+    max-width: 34rem;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: clamp(0.94rem, 1.4vw, 1.05rem);
+    line-height: 1.65;
+  }
+
+  .footer-download {
+    display: inline-flex;
+    min-height: 3rem;
+    align-items: center;
+    gap: 1.35rem;
+    margin-block-start: 1.8rem;
+    padding: 0.68rem 0.85rem 0.68rem 1rem;
+    border: 1px solid var(--accent-bright);
+    border-radius: var(--radius-sm);
+    background: var(--accent-bright);
+    color: #111a17;
+    font-size: 0.84rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    transition:
+      border-color var(--motion-quick),
+      background-color var(--motion-quick),
+      color var(--motion-quick);
+  }
+
+  .footer-download span {
+    font-size: 1rem;
+    transition: transform var(--motion-quick);
+  }
+
+  .footer-download:hover {
+    border-color: var(--text-strong);
+    background: var(--text-strong);
+  }
+
+  .footer-download:hover span {
+    transform: translateX(0.2rem);
+  }
+
+  .footer-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(8rem, 1fr));
+    gap: 2rem;
+  }
+
+  .footer-nav__group ul {
+    display: grid;
+    gap: 0.72rem;
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .footer-nav a,
+  .footer-legal a {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: color var(--motion-quick);
+  }
+
+  .footer-nav a:hover,
+  .footer-legal a:hover {
+    color: var(--text-strong);
+  }
+
+  .site-footer__bottom {
+    display: grid;
+    grid-template-columns: auto minmax(16rem, 1fr) auto;
+    align-items: center;
+    gap: 1.5rem 2.5rem;
+    padding-block-start: 1.5rem;
     border-top: 1px solid var(--border-subtle);
     color: var(--text-faint);
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.68rem;
+    line-height: 1.5;
   }
 
-  @media (max-width: 680px) {
-    .site-footer__inner {
+  .site-footer__bottom p {
+    margin: 0;
+    color: inherit;
+    font: inherit;
+  }
+
+  .site-footer__warning {
+    display: inline-flex;
+    align-items: center;
+    justify-self: center;
+    gap: 0.55rem;
+    text-align: center;
+  }
+
+  .site-footer__warning > span {
+    width: 0.4rem;
+    height: 0.4rem;
+    flex: 0 0 0.4rem;
+    border-radius: 50%;
+    background: var(--brand-coral);
+  }
+
+  .footer-legal {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 1rem;
+  }
+
+  .footer-legal a {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: inherit;
+  }
+
+  @media (max-width: 900px) {
+    .site-footer__main {
+      grid-template-columns: 1fr;
+      gap: 3.5rem;
+    }
+
+    .site-footer__bottom {
+      grid-template-columns: 1fr auto;
+    }
+
+    .site-footer__warning {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      justify-self: start;
+      text-align: left;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .site-footer__masthead {
+      align-items: flex-start;
+    }
+
+    .footer-principles {
+      max-width: 12rem;
+      justify-content: flex-start;
+    }
+
+    .footer-wordmark {
+      padding-block: 4rem 3.5rem;
+    }
+
+    .footer-wordmark > span:first-child {
+      font-size: clamp(5rem, 29vw, 8rem);
+    }
+
+    .footer-wordmark__aside {
+      display: none;
+    }
+
+    .footer-nav {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2.5rem 1.5rem;
+    }
+
+    .site-footer__bottom {
       grid-template-columns: 1fr;
     }
 
-    nav {
+    .site-footer__warning {
+      grid-column: auto;
+      grid-row: auto;
+    }
+
+    .footer-legal {
       justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 390px) {
+    .site-footer__masthead {
+      display: grid;
+    }
+
+    .footer-principles {
+      max-width: none;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .footer-nav {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .footer-wordmark::after,
+    .footer-download,
+    .footer-download span {
+      transition: none;
     }
   }
 </style>
