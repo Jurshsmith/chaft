@@ -91,7 +91,7 @@
     },
     {
       "id": "hero-4",
-      "status": "ready",
+      "status": "selected",
       "branch": "preview/landing-hero-4",
       "worker": "chaft-website-hero-4",
       "domain": "hero-4.chaft.ai",
@@ -105,9 +105,9 @@
     }
   ],
   "selection": {
-    "status": "not-started",
-    "selectedSlot": null,
-    "decisionRecord": null,
+    "status": "selected",
+    "selectedSlot": "hero-4",
+    "decisionRecord": "Preview 4 selected for production after live review of the four fixed Preview slots.",
     "productionRevision": null
   }
 }

@@ -1,0 +1,193 @@
+---
+import LandingHeroCopy from "./LandingHeroCopy.astro";
+import ConversationMeshVisual from "./ConversationMeshVisual.astro";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+  heroId?: "baseline" | "hero-4";
+}
+
+const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
+---
+
+<section class="hero" data-chaft-hero={heroId}>
+  <div class="shell hero__grid">
+    <LandingHeroCopy {hasPublishedDownloads} />
+    <ConversationMeshVisual />
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    display: grid;
+    min-height: clamp(46rem, 82vh, 55rem);
+    overflow: hidden;
+    align-items: center;
+    padding-block: clamp(5.75rem, 9vw, 7.5rem);
+    border-bottom: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 88% 22%, rgb(75 195 162 / 10%), transparent 31rem),
+      radial-gradient(circle at 67% 82%, rgb(138 201 227 / 10%), transparent 28rem),
+      var(--surface-base);
+  }
+
+  .hero::before {
+    position: absolute;
+    top: 10%;
+    right: -14%;
+    width: 54%;
+    height: 78%;
+    border-radius: 50%;
+    background: rgb(75 195 162 / 8%);
+    content: "";
+    filter: blur(70px);
+    pointer-events: none;
+  }
+
+  .hero::after {
+    position: absolute;
+    inset: auto 0 0;
+    z-index: 1;
+    height: 6rem;
+    background: linear-gradient(transparent, rgb(244 241 232 / 72%));
+    content: "";
+    pointer-events: none;
+  }
+
+  .hero__grid {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(25rem, 0.82fr);
+    gap: clamp(2.5rem, 5vw, 5.5rem);
+    align-items: center;
+  }
+
+  .hero :global(.hero__copy) {
+    position: relative;
+    width: min(100%, 39rem);
+  }
+
+  .hero :global(h1) {
+    max-width: 10.5ch;
+    margin-bottom: 1.65rem;
+    color: var(--text-strong);
+    font-size: clamp(3.35rem, 5.75vw, 5.65rem);
+    text-wrap: balance;
+  }
+
+  .hero :global(h1 em) {
+    display: block;
+    color: var(--accent);
+    font-family: var(--font-editorial);
+    font-size: 1.04em;
+    font-weight: 400;
+    letter-spacing: -0.045em;
+  }
+
+  .hero :global(.hero__actions) {
+    margin-top: 2.25rem;
+  }
+
+  .hero :global(.eyebrow) {
+    color: var(--accent);
+  }
+
+  .hero :global(.eyebrow::before) {
+    background: var(--brand-coral);
+    box-shadow: 0 0 1.2rem rgb(216 86 63 / 24%);
+  }
+
+  .hero :global(.lede) {
+    max-width: 37rem;
+    color: var(--text-soft);
+  }
+
+  .hero :global(.button) {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .hero :global(.button:hover) {
+    background: #075f49;
+    box-shadow: 4px 4px 0 rgb(23 33 31 / 16%);
+  }
+
+  .hero :global(.button--secondary) {
+    border-color: var(--border-subtle);
+    background: rgb(255 253 247 / 72%);
+    color: var(--text-strong);
+    backdrop-filter: blur(8px);
+  }
+
+  .hero :global(.button--secondary:hover) {
+    border-color: var(--border-strong);
+    background: var(--surface-raised);
+  }
+
+  .hero :global(.button--quiet) {
+    background: transparent;
+    color: var(--text-strong);
+    text-decoration-color: rgb(23 33 31 / 36%);
+  }
+
+  .hero :global(.button--quiet:hover) {
+    background: transparent;
+    color: var(--accent);
+  }
+
+  .hero :global(.hero__note) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 0;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+
+  .hero :global(.status) {
+    border-color: var(--border-subtle);
+    background: rgb(255 253 247 / 68%);
+    color: var(--text-strong);
+    backdrop-filter: blur(8px);
+  }
+
+  @media (max-width: 1050px) {
+    .hero {
+      min-height: auto;
+      padding-block: 6.5rem 7.5rem;
+    }
+
+    .hero__grid {
+      grid-template-columns: 1fr;
+      gap: 4.5rem;
+    }
+
+    .hero :global(.hero__copy) {
+      width: min(100%, 44rem);
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3.4rem, 8vw, 6rem);
+    }
+  }
+
+  @media (max-width: 680px) {
+    .hero {
+      min-height: auto;
+      align-items: start;
+      padding-block: 5rem 6.5rem;
+    }
+
+    .hero__grid {
+      gap: 3.4rem;
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3rem, 15vw, 4.75rem);
+    }
+  }
+</style>
