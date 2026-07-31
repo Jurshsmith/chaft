@@ -11,7 +11,7 @@ const commonHeaders = {
   "X-Robots-Tag": "noindex, nofollow, noarchive",
 };
 
-function html(pathname) {
+function html(pathname, hero = "hero-1") {
   return `<!doctype html>
 <html>
   <head>
@@ -20,11 +20,14 @@ function html(pathname) {
     <meta property="og:url" content="https://chaft.ai${pathname}" />
     <link rel="stylesheet" href="/_astro/app.AbCd1234.css" />
   </head>
-  <body>Chaft Preview</body>
+  <body>
+    Chaft Preview
+    ${pathname === "/" ? `<section class="hero" data-chaft-hero="${hero}"></section>` : ""}
+  </body>
 </html>`;
 }
 
-function fixtureFetch({ wrongWorker = false } = {}) {
+function fixtureFetch({ wrongHero = false, wrongWorker = false } = {}) {
   return async (request) => {
     const url = new URL(request);
     if (url.pathname === "/.well-known/chaft-deployment.json") {
@@ -65,7 +68,10 @@ function fixtureFetch({ wrongWorker = false } = {}) {
         status: 404,
       });
     }
-    return new Response(html(url.pathname), { headers: commonHeaders });
+    return new Response(
+      html(url.pathname, wrongHero ? "hero-2" : "hero-1"),
+      { headers: commonHeaders },
+    );
   };
 }
 
@@ -98,6 +104,17 @@ describe("public Chaft Preview verification", () => {
         repository: "Jurshsmith/chaft",
       }),
     ).rejects.toThrow(/exact preview source identity/);
+  });
+
+  it("rejects a different hero rendered on the slot", async () => {
+    await expect(
+      verifyPreviewDeployment({
+        branch: "preview/landing-hero-1",
+        expectedCommit: commit,
+        fetchImpl: fixtureFetch({ wrongHero: true }),
+        repository: "Jurshsmith/chaft",
+      }),
+    ).rejects.toThrow(/home must render the exact hero-1 hero/);
   });
 
   it("rejects non-allowlisted branches before making a request", async () => {

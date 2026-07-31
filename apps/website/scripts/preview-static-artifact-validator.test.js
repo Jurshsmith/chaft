@@ -16,7 +16,7 @@ function html(pathname) {
     pathname === "/"
       ? `<header>Header</header>
     <main>
-      <section class="hero">
+      <section class="hero" data-chaft-hero="hero-1">
         <a href="/download/">Download Chaft <span>→</span></a>
         <a href="/docs/">Read the docs</a>
         <a href="https://github.com/Jurshsmith/chaft">Explore the source</a>
@@ -153,5 +153,24 @@ describe("trusted Preview static artifact validation", () => {
         sourceCommit,
       }),
     ).toThrow(/security warning must retain/);
+  });
+
+  it("rejects a baseline or different slot hero", async () => {
+    const root = await fixture();
+    const page = await readFile(join(root, "index.html"), "utf8");
+    await writeFile(
+      join(root, "index.html"),
+      page.replace('data-chaft-hero="hero-1"', 'data-chaft-hero="baseline"'),
+    );
+
+    expect(() =>
+      validatePreviewStaticArtifact({
+        branch: "preview/landing-hero-1",
+        distDirectory: root,
+        expectedContentHashes,
+        repository: "Jurshsmith/chaft",
+        sourceCommit,
+      }),
+    ).toThrow(/must render the exact hero-1 hero/);
   });
 });

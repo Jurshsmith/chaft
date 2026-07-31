@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXPECTED_PREVIEW_SLOTS,
   readPreviewCycle,
+  referenceSnapshotSha256,
   validatePreviewCycle,
 } from "./preview-cycle-validation.mjs";
 
@@ -27,6 +28,10 @@ describe("Chaft Previews cycle manifest", () => {
           domain,
           siteUrl,
           githubEnvironment,
+          figmaReferenceNodeId,
+          figmaReferenceUrl,
+          figmaPromptNodeId,
+          figmaPromptUrl,
           direction,
         }) => ({
           id,
@@ -35,6 +40,10 @@ describe("Chaft Previews cycle manifest", () => {
           domain,
           siteUrl,
           githubEnvironment,
+          figmaReferenceNodeId,
+          figmaReferenceUrl,
+          figmaPromptNodeId,
+          figmaPromptUrl,
           direction,
         }),
       ),
@@ -64,29 +73,60 @@ describe("Chaft Previews cycle manifest", () => {
     );
   });
 
-  it("pins the reviewed Figma file and all four direction prompts", () => {
+  it("pins the reviewed Figma links, node pairs, prompts, timestamp, and digest", () => {
+    const checkedIn = readPreviewCycle();
+    expect(referenceSnapshotSha256(checkedIn)).toBe(
+      checkedIn.sourceDesign.referenceSnapshot.sha256,
+    );
+
     const manifest = clone(readPreviewCycle());
     manifest.sourceDesign.fileUrl =
       "https://www.figma.com/design/another-file/Unreviewed";
+    manifest.sourceDesign.observedLastModifiedAt = "2026-07-30T11:14:00Z";
+    manifest.slots[0].figmaReferenceUrl =
+      "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=173-99";
     manifest.slots[2].direction = "A different direction";
 
     expect(validatePreviewCycle(manifest)).toEqual(
       expect.arrayContaining([
-        "sourceDesign must identify the exact reviewed Figma file and section",
+        "sourceDesign must identify the exact reviewed Figma file, section link, and observed timestamp",
+        expect.stringContaining("slots[0].figmaReferenceUrl must equal"),
         expect.stringContaining("slots[2].direction must equal"),
+        "sourceDesign reference snapshot must match the exact reviewed Figma links, nodes, prompts, timestamp, and digest",
       ]),
     );
   });
 
-  it("requires a frozen source revision and Figma frames before activation", () => {
+  it("requires a frozen source revision before activation", () => {
     const manifest = clone(readPreviewCycle());
     manifest.status = "active";
 
+    expect(validatePreviewCycle(manifest)).toContain(
+      "baseRevision is required after the foundation stage",
+    );
+  });
+
+  it("rejects duplicate Figma node identities and a stale digest", () => {
+    const manifest = clone(readPreviewCycle());
+    manifest.slots[1].figmaPromptNodeId =
+      manifest.slots[0].figmaReferenceNodeId;
+
     expect(validatePreviewCycle(manifest)).toEqual(
       expect.arrayContaining([
-        "baseRevision is required after the foundation stage",
-        "an immutable Figma version and four frame nodes are required after foundation",
+        expect.stringContaining("slots[1].figmaPromptNodeId must equal"),
+        "the four Figma reference and prompt node pairs must be unique",
+        "sourceDesign reference snapshot must match the exact reviewed Figma links, nodes, prompts, timestamp, and digest",
       ]),
+    );
+  });
+
+  it("rejects legacy mutable-version placeholder fields", () => {
+    const manifest = clone(readPreviewCycle());
+    manifest.sourceDesign.versionId = "unverified-version";
+    manifest.slots[0].figmaFrameNodeId = "173:98";
+
+    expect(validatePreviewCycle(manifest)).toContain(
+      "legacy Figma versionId and figmaFrameNodeId fields are not accepted",
     );
   });
 

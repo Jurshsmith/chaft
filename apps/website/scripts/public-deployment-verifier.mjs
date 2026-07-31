@@ -655,6 +655,10 @@ export async function verifyPublicDeployment({
     if (label === "home") homeHtml = html;
     record(label, response, pathname);
   }
+  assert(
+    /\bdata-chaft-hero=(["'])baseline\1/i.test(homeHtml),
+    "production home must render the baseline hero",
+  );
 
   for (const [pathname, expectedStatus, expectedLocation, label] of [
     ["/downloads", 301, `${origin}/download/`, "downloads-redirect"],

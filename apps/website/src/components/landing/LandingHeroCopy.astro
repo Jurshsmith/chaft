@@ -1,0 +1,47 @@
+---
+import { sitePath } from "../../lib/site-path";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+}
+
+const { hasPublishedDownloads } = Astro.props;
+const primaryHref = hasPublishedDownloads
+  ? sitePath("/download/")
+  : "#how-it-works";
+const primaryLabel = hasPublishedDownloads
+  ? "Download Chaft"
+  : "See how Chaft works";
+const secondaryHref = hasPublishedDownloads
+  ? sitePath("/docs/")
+  : sitePath("/docs/getting-started/build-desktop/");
+const secondaryLabel = hasPublishedDownloads
+  ? "Read the docs"
+  : "Build from source";
+---
+
+<div class="hero__copy">
+  <p class="eyebrow">Open source · Canary</p>
+  <h1>Team chat that runs <em>on your devices.</em></h1>
+  <p class="lede">
+    Chaft is early-stage chat for small teams. Messages stay on participating
+    devices, sync directly between trusted peers, and are encrypted before
+    replication. No subscription or central workspace server is required.
+  </p>
+  <div class="button-row hero__actions">
+    <a class="button" href={primaryHref}>
+      {primaryLabel}
+      <span aria-hidden="true">→</span>
+    </a>
+    <a class="button button--secondary" href={secondaryHref}>
+      {secondaryLabel}
+    </a>
+    <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft">
+      Explore the source
+    </a>
+  </div>
+  <p class="hero__note body-copy">
+    <span class="status">Canary</span>
+    Unaudited software. Not for sensitive or production communication.
+  </p>
+</div>

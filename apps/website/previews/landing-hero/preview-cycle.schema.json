@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chaft.ai/schemas/landing-hero-preview-cycle.schema.json",
-  "title": "Chaft landing-page hero preview cycle",
+  "title": "Chaft landing-page hero Preview cycle",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "$schema",
     "schemaVersion",
     "systemName",
     "name",
@@ -20,19 +21,15 @@
   ],
   "properties": {
     "$schema": {
-      "type": "string",
       "const": "./preview-cycle.schema.json"
     },
     "schemaVersion": {
-      "type": "integer",
-      "const": 1
+      "const": 2
     },
     "systemName": {
-      "type": "string",
       "const": "Chaft Previews"
     },
     "name": {
-      "type": "string",
       "const": "landing-hero"
     },
     "title": {
@@ -61,27 +58,478 @@
       ]
     },
     "sourceDesign": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileUrl",
+        "sourceSectionNodeId",
+        "sourceSectionUrl",
+        "observedLastModifiedAt",
+        "referenceSnapshot",
+        "note"
+      ],
+      "properties": {
+        "fileUrl": {
+          "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft"
+        },
+        "sourceSectionNodeId": {
+          "const": "164:75"
+        },
+        "sourceSectionUrl": {
+          "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=164-75"
+        },
+        "observedLastModifiedAt": {
+          "const": "2026-07-30T11:13:58Z"
+        },
+        "referenceSnapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "canonicalization",
+            "sha256"
+          ],
+          "properties": {
+            "canonicalization": {
+              "const": "chaft-preview-figma-reference-v1"
+            },
+            "sha256": {
+              "const": "29188bdcbc245e12efe0af21ac3f58dc023763c6b61e29c82b2d7337bef99de5"
+            }
+          }
+        },
+        "note": {
+          "const": "Reviewed reference snapshot of the linked Figma section, visual nodes, prompt nodes, and prompt text. The digest binds this repository record; the Figma links themselves remain mutable."
+        }
+      }
     },
     "runtimeEnvironment": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deploymentModeName",
+        "deploymentModeValue",
+        "branchName",
+        "siteUrlName"
+      ],
+      "properties": {
+        "deploymentModeName": {
+          "const": "CHAFT_DEPLOYMENT_MODE"
+        },
+        "deploymentModeValue": {
+          "const": "preview"
+        },
+        "branchName": {
+          "const": "CHAFT_PREVIEW_BRANCH"
+        },
+        "siteUrlName": {
+          "const": "SITE_URL"
+        }
+      }
     },
     "invariants": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "headline",
+        "bodyCopySha256",
+        "primaryAction",
+        "secondaryAction",
+        "sourceAction",
+        "securityCopy",
+        "typography"
+      ],
+      "properties": {
+        "headline": {
+          "const": "Team chat that runs on your devices."
+        },
+        "bodyCopySha256": {
+          "const": "2db41bdb5926d7968600052a638be5b5c6b5ee614013a8e2bbe7c3202693ac3b"
+        },
+        "primaryAction": {
+          "const": "Download Chaft"
+        },
+        "secondaryAction": {
+          "const": "Read the docs"
+        },
+        "sourceAction": {
+          "const": "Explore the source"
+        },
+        "securityCopy": {
+          "const": "Unaudited software. Not for sensitive or production communication."
+        },
+        "typography": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bodyCopy",
+            "headingsNavigationButtonsAndLabels"
+          ],
+          "properties": {
+            "bodyCopy": {
+              "const": "Chillax"
+            },
+            "headingsNavigationButtonsAndLabels": {
+              "const": "Space Grotesk"
+            }
+          }
+        }
+      }
     },
     "governance": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "componentPath",
+        "productionWorker",
+        "productionDomains",
+        "productionMustRemainUnchanged",
+        "workersDevEnabled",
+        "cloudflarePreviewUrlsEnabled"
+      ],
+      "properties": {
+        "componentPath": {
+          "const": "cloudflare/website-previews/component.yaml"
+        },
+        "productionWorker": {
+          "const": "chaft-website"
+        },
+        "productionDomains": {
+          "const": [
+            "chaft.ai",
+            "www.chaft.ai"
+          ]
+        },
+        "productionMustRemainUnchanged": {
+          "const": true
+        },
+        "workersDevEnabled": {
+          "const": false
+        },
+        "cloudflarePreviewUrlsEnabled": {
+          "const": false
+        }
+      }
     },
     "slots": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {
-        "type": "object"
-      }
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/hero1"
+        },
+        {
+          "$ref": "#/$defs/hero2"
+        },
+        {
+          "$ref": "#/$defs/hero3"
+        },
+        {
+          "$ref": "#/$defs/hero4"
+        }
+      ],
+      "items": false
     },
     "selection": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "selectedSlot",
+        "decisionRecord",
+        "productionRevision"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not-started",
+            "reviewing",
+            "selected",
+            "promoted",
+            "closed"
+          ]
+        },
+        "selectedSlot": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "hero-1",
+                "hero-2",
+                "hero-3",
+                "hero-4"
+              ]
+            }
+          ]
+        },
+        "decisionRecord": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "productionRevision": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "slotStatus": {
+      "enum": [
+        "foundation",
+        "ready",
+        "active",
+        "review",
+        "selected",
+        "closed"
+      ]
+    },
+    "hero1": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "hero-1"
+            },
+            "branch": {
+              "const": "preview/landing-hero-1"
+            },
+            "worker": {
+              "const": "chaft-website-hero-1"
+            },
+            "domain": {
+              "const": "hero-1.chaft.ai"
+            },
+            "siteUrl": {
+              "const": "https://hero-1.chaft.ai"
+            },
+            "githubEnvironment": {
+              "const": "chaft-preview-hero-1"
+            },
+            "figmaReferenceNodeId": {
+              "const": "173:98"
+            },
+            "figmaReferenceUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=173-98"
+            },
+            "figmaPromptNodeId": {
+              "const": "173:100"
+            },
+            "figmaPromptUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=173-100"
+            },
+            "direction": {
+              "const": "A glowing earth and communication network with responsive nodes and particle dust."
+            }
+          }
+        }
+      ]
+    },
+    "hero2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "hero-2"
+            },
+            "branch": {
+              "const": "preview/landing-hero-2"
+            },
+            "worker": {
+              "const": "chaft-website-hero-2"
+            },
+            "domain": {
+              "const": "hero-2.chaft.ai"
+            },
+            "siteUrl": {
+              "const": "https://hero-2.chaft.ai"
+            },
+            "githubEnvironment": {
+              "const": "chaft-preview-hero-2"
+            },
+            "figmaReferenceNodeId": {
+              "const": "175:118"
+            },
+            "figmaReferenceUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-118"
+            },
+            "figmaPromptNodeId": {
+              "const": "175:120"
+            },
+            "figmaPromptUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-120"
+            },
+            "direction": {
+              "const": "Particle dust forming the Chaft mark, with responsive motion around the mark."
+            }
+          }
+        }
+      ]
+    },
+    "hero3": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "hero-3"
+            },
+            "branch": {
+              "const": "preview/landing-hero-3"
+            },
+            "worker": {
+              "const": "chaft-website-hero-3"
+            },
+            "domain": {
+              "const": "hero-3.chaft.ai"
+            },
+            "siteUrl": {
+              "const": "https://hero-3.chaft.ai"
+            },
+            "githubEnvironment": {
+              "const": "chaft-preview-hero-3"
+            },
+            "figmaReferenceNodeId": {
+              "const": "175:122"
+            },
+            "figmaReferenceUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-122"
+            },
+            "figmaPromptNodeId": {
+              "const": "175:124"
+            },
+            "figmaPromptUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=175-124"
+            },
+            "direction": {
+              "const": "A circular particle network with communication nodes and lightweight chat activity."
+            }
+          }
+        }
+      ]
+    },
+    "hero4": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "hero-4"
+            },
+            "branch": {
+              "const": "preview/landing-hero-4"
+            },
+            "worker": {
+              "const": "chaft-website-hero-4"
+            },
+            "domain": {
+              "const": "hero-4.chaft.ai"
+            },
+            "siteUrl": {
+              "const": "https://hero-4.chaft.ai"
+            },
+            "githubEnvironment": {
+              "const": "chaft-preview-hero-4"
+            },
+            "figmaReferenceNodeId": {
+              "const": "177:131"
+            },
+            "figmaReferenceUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=177-131"
+            },
+            "figmaPromptNodeId": {
+              "const": "177:133"
+            },
+            "figmaPromptUrl": {
+              "const": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft?node-id=177-133"
+            },
+            "direction": {
+              "const": "A full-width blue pixel connection field replacing the current side illustration."
+            }
+          }
+        }
+      ]
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "branch",
+        "worker",
+        "domain",
+        "siteUrl",
+        "githubEnvironment",
+        "figmaReferenceNodeId",
+        "figmaReferenceUrl",
+        "figmaPromptNodeId",
+        "figmaPromptUrl",
+        "direction"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/slotStatus"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "siteUrl": {
+          "type": "string"
+        },
+        "githubEnvironment": {
+          "type": "string"
+        },
+        "figmaReferenceNodeId": {
+          "type": "string",
+          "pattern": "^\\d+:\\d+$"
+        },
+        "figmaReferenceUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "figmaPromptNodeId": {
+          "type": "string",
+          "pattern": "^\\d+:\\d+$"
+        },
+        "figmaPromptUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "direction": {
+          "type": "string"
+        }
+      }
     }
   }
 }
