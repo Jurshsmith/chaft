@@ -22,6 +22,12 @@ GitHub environments cannot be supplied by pull-request code or workflow input.
 `workers.dev`, Cloudflare-generated preview URLs, and wildcard domains remain
 disabled.
 
+Cloudflare's zone-level managed `robots.txt` rewriting must also remain
+disabled. The source build owns the production content-use signals and blocked
+AI-crawler groups, while every Preview artifact owns an exact
+`User-agent: *` / `Disallow: /` policy with no sitemap. Both public deployment
+verifiers fail closed if the edge changes those source-controlled bytes.
+
 ## Reviewed Figma references
 
 The source is the
