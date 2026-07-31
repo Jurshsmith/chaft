@@ -1,6 +1,7 @@
 import { sitePath } from "../lib/site-path";
 import {
   PREVIEW_ROBOTS_TEXT,
+  productionRobotsText,
   resolveWebsiteDeployment,
 } from "../lib/preview-contract.mjs";
 
@@ -22,7 +23,7 @@ export function GET({ site }: { site: URL | undefined }) {
   }
 
   const sitemap = new URL(sitePath("/sitemap-index.xml"), base);
-  return new Response(`User-agent: *\nAllow: /\nSitemap: ${sitemap}\n`, {
+  return new Response(productionRobotsText(sitemap), {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
     },

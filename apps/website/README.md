@@ -200,6 +200,12 @@ Fontshare's official API under the ITF Free Font License; those font files are
 not redistributed with the site. Cloudflare control files stay at the asset
 root, as required by Workers Static Assets.
 
+The zone-level Cloudflare managed `robots.txt` feature remains disabled so the
+edge cannot prepend a conflicting generic `Allow: /` group. Production
+content-use signals and blocked AI-crawler groups are source-controlled in the
+site build; Preview builds instead emit an exact disallow-all policy with no
+sitemap. Public verification checks both policies byte for byte.
+
 The main `CI` workflow owns pull-request validation. The `Website` workflow
 validates pushes against `https://website-validation.invalid`; a push to `main` builds a
 production candidate only when the `WEBSITE_SITE_URL` repository variable is
