@@ -12,7 +12,7 @@ function clone(value) {
 }
 
 describe("Chaft Previews cycle manifest", () => {
-  it("accepts the checked-in four-slot foundation", () => {
+  it("accepts the checked-in four-slot cycle", () => {
     expect(validatePreviewCycle(readPreviewCycle())).toEqual([]);
   });
 
@@ -100,6 +100,7 @@ describe("Chaft Previews cycle manifest", () => {
   it("requires a frozen source revision before activation", () => {
     const manifest = clone(readPreviewCycle());
     manifest.status = "active";
+    manifest.baseRevision = null;
 
     expect(validatePreviewCycle(manifest)).toContain(
       "baseRevision is required after the foundation stage",
