@@ -1,6 +1,6 @@
 ---
 import LandingHeroCopy from "../../landing/LandingHeroCopy.astro";
-import HeroFourPixelField from "./HeroFourPixelField.astro";
+import HeroFourConversationMesh from "./HeroFourConversationMesh.astro";
 
 interface Props {
   hasPublishedDownloads: boolean;
@@ -10,10 +10,9 @@ const { hasPublishedDownloads } = Astro.props;
 ---
 
 <section class="hero" data-chaft-hero="hero-4">
-  <HeroFourPixelField />
-
   <div class="shell hero__grid">
     <LandingHeroCopy {hasPublishedDownloads} />
+    <HeroFourConversationMesh />
   </div>
 </section>
 
@@ -21,19 +20,35 @@ const { hasPublishedDownloads } = Astro.props;
   .hero {
     position: relative;
     display: grid;
-    min-height: clamp(43rem, 78vh, 52rem);
+    min-height: clamp(46rem, 82vh, 55rem);
     overflow: hidden;
     align-items: center;
-    padding-block: clamp(5.5rem, 11vw, 8rem);
+    padding-block: clamp(5.75rem, 9vw, 7.5rem);
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-base);
+    background:
+      radial-gradient(circle at 88% 22%, rgb(75 195 162 / 10%), transparent 31rem),
+      radial-gradient(circle at 67% 82%, rgb(138 201 227 / 10%), transparent 28rem),
+      var(--surface-base);
+  }
+
+  .hero::before {
+    position: absolute;
+    top: 10%;
+    right: -14%;
+    width: 54%;
+    height: 78%;
+    border-radius: 50%;
+    background: rgb(75 195 162 / 8%);
+    content: "";
+    filter: blur(70px);
+    pointer-events: none;
   }
 
   .hero::after {
     position: absolute;
     inset: auto 0 0;
     z-index: 1;
-    height: 8rem;
+    height: 6rem;
     background: linear-gradient(transparent, rgb(244 241 232 / 72%));
     content: "";
     pointer-events: none;
@@ -42,18 +57,22 @@ const { hasPublishedDownloads } = Astro.props;
   .hero__grid {
     position: relative;
     z-index: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(25rem, 0.82fr);
+    gap: clamp(2.5rem, 5vw, 5.5rem);
+    align-items: center;
   }
 
   .hero :global(.hero__copy) {
     position: relative;
-    width: min(100%, 44rem);
+    width: min(100%, 39rem);
   }
 
   .hero :global(h1) {
     max-width: 10.5ch;
-    margin-bottom: 1.8rem;
+    margin-bottom: 1.65rem;
     color: var(--text-strong);
-    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
+    font-size: clamp(3.35rem, 5.75vw, 5.65rem);
     text-wrap: balance;
   }
 
@@ -80,6 +99,7 @@ const { hasPublishedDownloads } = Astro.props;
   }
 
   .hero :global(.lede) {
+    max-width: 37rem;
     color: var(--text-soft);
   }
 
@@ -134,11 +154,35 @@ const { hasPublishedDownloads } = Astro.props;
     backdrop-filter: blur(8px);
   }
 
+  @media (max-width: 1050px) {
+    .hero {
+      min-height: auto;
+      padding-block: 6.5rem 7.5rem;
+    }
+
+    .hero__grid {
+      grid-template-columns: 1fr;
+      gap: 4.5rem;
+    }
+
+    .hero :global(.hero__copy) {
+      width: min(100%, 44rem);
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3.4rem, 8vw, 6rem);
+    }
+  }
+
   @media (max-width: 680px) {
     .hero {
-      min-height: 48rem;
+      min-height: auto;
       align-items: start;
-      padding-block: 5rem 7rem;
+      padding-block: 5rem 6.5rem;
+    }
+
+    .hero__grid {
+      gap: 3.4rem;
     }
 
     .hero :global(h1) {
