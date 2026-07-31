@@ -13,7 +13,7 @@ const SECURITY_COPY =
 const ROBOTS_POLICY = ["noarchive", "nofollow", "noindex"];
 const STABLE_CONTENT_SHA256 = Object.freeze({
   header: "380dc1538be4f1cebdaee78ae1a5a1d21f9e2ca3946ccf11c53f413140bd6c83",
-  footer: "933a0ccac3c790e752f903bc50b2c9ebc8e6ff3314896cf9b5871fe3ee33e6d1",
+  footer: "3b8ef16fe108e8080e5802358d6a5772b490d426cd59b5f8d5aaf6418f1424df",
   nonHero:
     "42eacb4226e69d0bafa149abb4c70dad81eb4b5df8eb695504f880ef6a3f009a",
 });
