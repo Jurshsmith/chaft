@@ -1,12 +1,177 @@
 ---
-throw new Error(
-  "Preview slot hero-2 is still using its foundation placeholder; install the reviewed hero-2 renderer before building this Preview.",
-);
+import LandingHeroCopy from "../../landing/LandingHeroCopy.astro";
+import ParticleMarkHeroVisual from "./ParticleMarkHeroVisual.astro";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+}
+
+const { hasPublishedDownloads } = Astro.props;
 ---
 
-<section
-  class="hero"
-  data-chaft-hero="hero-2-placeholder"
-  data-chaft-preview-placeholder="true"
->
+<section class="hero" data-chaft-hero="hero-2">
+  <div class="shell hero__grid">
+    <LandingHeroCopy {hasPublishedDownloads} />
+
+    <div class="hero__visual">
+      <ParticleMarkHeroVisual />
+    </div>
+  </div>
 </section>
+
+<style>
+  .hero {
+    --accent: #76e7ad;
+    --border-strong: #506d5d;
+    --border-subtle: #263d32;
+    --on-accent: #06120c;
+    --surface-active: #153126;
+    --text-faint: #8da99b;
+    --text-muted: #bdcdc5;
+    --text-soft: #deebe4;
+    --text-strong: #f7fff9;
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(5rem, 9vw, 8rem);
+    border-bottom: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 77% 46%, rgb(54 202 128 / 11%), transparent 34rem),
+      linear-gradient(115deg, #07140f 0%, #07140f 52%, #0a1c14 100%);
+    color: var(--text-strong);
+  }
+
+  .hero::before {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(rgb(129 237 181 / 2.5%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(129 237 181 / 2.5%) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: linear-gradient(to right, transparent, #000 62%, transparent);
+    pointer-events: none;
+    content: "";
+  }
+
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.96fr) minmax(25rem, 1.04fr);
+    gap: clamp(2.75rem, 6vw, 6rem);
+    align-items: center;
+  }
+
+  .hero :global(.hero__copy) {
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero :global(h1) {
+    max-width: 11.5ch;
+    margin-bottom: 1.8rem;
+    color: var(--text-strong);
+    font-size: clamp(3.35rem, 6.9vw, 6.2rem);
+  }
+
+  .hero :global(h1 em) {
+    display: block;
+    color: var(--accent);
+    font-family: var(--font-editorial);
+    font-size: 1.04em;
+    font-weight: 400;
+    letter-spacing: -0.045em;
+  }
+
+  .hero :global(.eyebrow) {
+    color: var(--accent);
+  }
+
+  .hero :global(.eyebrow::before) {
+    background: var(--accent);
+    box-shadow: 0 0 0.8rem rgb(118 231 173 / 64%);
+  }
+
+  .hero :global(.lede) {
+    max-width: 42rem;
+    color: var(--text-muted);
+  }
+
+  .hero :global(.hero__actions) {
+    margin-top: 2.25rem;
+  }
+
+  .hero :global(.hero__note) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+  }
+
+  .hero__visual {
+    position: relative;
+  }
+
+  .hero__visual::before {
+    position: absolute;
+    inset: 1rem -1rem -1rem 1rem;
+    z-index: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 1.5rem;
+    background: rgb(15 46 33 / 42%);
+    content: "";
+  }
+
+  .hero__visual > :global(*) {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero :global(.button) {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .hero :global(.button:hover) {
+    background: #9af4c4;
+  }
+
+  .hero :global(.button--secondary) {
+    border-color: var(--border-strong);
+    background: transparent;
+    color: var(--text-strong);
+  }
+
+  .hero :global(.button--secondary:hover) {
+    border-color: var(--accent);
+    background: var(--surface-active);
+  }
+
+  .hero :global(.button--quiet) {
+    background: transparent;
+    color: var(--text-soft);
+    text-decoration-color: var(--border-strong);
+  }
+
+  .hero :global(.button--quiet:hover) {
+    background: transparent;
+    color: var(--accent);
+  }
+
+  .hero :global(.status) {
+    border-color: var(--border-strong);
+    color: var(--text-soft);
+  }
+
+  @media (max-width: 940px) {
+    .hero__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero__visual {
+      width: min(100%, 42rem);
+      margin-inline: auto;
+    }
+  }
+</style>
