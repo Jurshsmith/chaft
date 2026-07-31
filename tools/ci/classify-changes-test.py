@@ -339,6 +339,35 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertFalse(result.scopes["full"])
 
+    def test_preview_only_main_push_keeps_website_only_coverage(self) -> None:
+        result = self.classify(
+            "apps/website/previews/landing-hero/preview-cycle.json",
+            "apps/website/public/previews/example.txt",
+            "apps/website/src/assets/previews/hero.webp",
+            "apps/website/src/components/previews/hero-1/LandingHero.astro",
+            event_name="push",
+            ref="refs/heads/main",
+        )
+        self.assertEqual(enabled(result), {"website"})
+        self.assertFalse(result.scopes["full"])
+        self.assertIn(
+            "preview-only main pushes require website coverage only",
+            result.reasons,
+        )
+
+    def test_mixed_preview_main_push_keeps_release_coverage(self) -> None:
+        result = self.classify(
+            "apps/website/src/components/previews/hero-1/LandingHero.astro",
+            "README.md",
+            event_name="push",
+            ref="refs/heads/main",
+        )
+        self.assertEqual(
+            enabled(result),
+            {"website", "benchmark", "release_contract", "package"},
+        )
+        self.assertFalse(result.scopes["full"])
+
     def test_non_main_push_has_no_event_override(self) -> None:
         result = self.classify(
             "README.md",

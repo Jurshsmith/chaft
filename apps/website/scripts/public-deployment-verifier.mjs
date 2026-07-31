@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { productionRobotsText } from "../src/lib/preview-contract.mjs";
+
 const COMMON_HEADERS = {
   "cross-origin-opener-policy": "same-origin",
   "referrer-policy": "strict-origin-when-cross-origin",
@@ -766,12 +768,21 @@ export async function verifyPublicDeployment({
       signal: AbortSignal.timeout(10_000),
     });
     assert(response.status === 200, `${label} must return 200`);
-    // Cloudflare's zone-level managed robots feature prepends content signals
-    // outside the Static Assets response path, so it does not preserve the
-    // Worker `_headers` rules. The sitemap remains a normal static response.
-    if (label !== "robots") assertCommonHeaders(response, label);
+    // The zone-level managed robots feature must remain off. Production and
+    // Preview indexing policies are exact source-controlled Worker bytes.
+    assertCommonHeaders(response, label);
     const text = await body(response, label);
-    assert(text.includes(origin), `${label} does not reference the production origin`);
+    if (label === "robots") {
+      assert(
+        text === productionRobotsText(`${origin}/sitemap-index.xml`),
+        "robots does not match the exact source-controlled production policy",
+      );
+    } else {
+      assert(
+        text.includes(origin),
+        `${label} does not reference the production origin`,
+      );
+    }
     record(label, response, pathname);
   }
 

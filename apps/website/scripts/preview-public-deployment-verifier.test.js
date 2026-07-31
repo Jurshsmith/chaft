@@ -27,7 +27,12 @@ function html(pathname, hero = "hero-1") {
 </html>`;
 }
 
-function fixtureFetch({ wrongHero = false, wrongWorker = false } = {}) {
+function fixtureFetch({
+  emptyAsset = false,
+  binaryAsset = false,
+  wrongHero = false,
+  wrongWorker = false,
+} = {}) {
   return async (request) => {
     const url = new URL(request);
     if (url.pathname === "/.well-known/chaft-deployment.json") {
@@ -55,7 +60,12 @@ function fixtureFetch({ wrongHero = false, wrongWorker = false } = {}) {
       });
     }
     if (url.pathname.startsWith("/_astro/")) {
-      return new Response("body{}", {
+      const assetBody = emptyAsset
+        ? new Uint8Array()
+        : binaryAsset
+          ? new Uint8Array([0xff, 0xfe, 0x00, 0x01])
+          : "body{}";
+      return new Response(assetBody, {
         headers: {
           ...commonHeaders,
           "Cache-Control": "public, max-age=31536000, immutable",
@@ -93,6 +103,31 @@ describe("public Chaft Preview verification", () => {
       slot: "hero-1",
       worker: "chaft-website-hero-1",
     });
+  });
+
+  it("accepts a binary hashed Astro asset", async () => {
+    await expect(
+      verifyPreviewDeployment({
+        branch: "preview/landing-hero-1",
+        expectedCommit: commit,
+        fetchImpl: fixtureFetch({ binaryAsset: true }),
+        repository: "Jurshsmith/chaft",
+      }),
+    ).resolves.toMatchObject({
+      result: "passed",
+      slot: "hero-1",
+    });
+  });
+
+  it("rejects an empty hashed Astro asset", async () => {
+    await expect(
+      verifyPreviewDeployment({
+        branch: "preview/landing-hero-1",
+        expectedCommit: commit,
+        fetchImpl: fixtureFetch({ emptyAsset: true }),
+        repository: "Jurshsmith/chaft",
+      }),
+    ).rejects.toThrow(/Astro asset must not be empty/);
   });
 
   it("rejects a marker from another preview slot", async () => {
