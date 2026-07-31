@@ -2,7 +2,7 @@
   class="pixel-field"
   data-hero-four
   role="img"
-  aria-label="A field of pale blue pixels linking four bright communication nodes"
+  aria-label="A field of pale blue and green pixels linking four communication nodes"
 >
   <canvas aria-hidden="true"></canvas>
   <div class="pixel-field__fallback" aria-hidden="true">
@@ -148,7 +148,12 @@
         );
         const size = pixel.size + influence * 1.7;
 
-        context.fillStyle = `rgba(184, 220, 255, ${Math.max(0.08, alpha)})`;
+        const colorProgress = Math.max(0, Math.min(1, (x / width - 0.42) / 0.58));
+        const red = Math.round(112 - colorProgress * 105);
+        const green = Math.round(170 - colorProgress * 58);
+        const blue = Math.round(209 - colorProgress * 125);
+        context.fillStyle =
+          `rgba(${red}, ${green}, ${blue}, ${Math.max(0.06, alpha * 0.68)})`;
         context.fillRect(
           Math.round(x - size / 2),
           Math.round(y - size / 2),
@@ -160,7 +165,7 @@
       context.save();
       context.lineWidth = 1;
       context.setLineDash([2, 7]);
-      context.strokeStyle = "rgba(226, 244, 255, 0.42)";
+      context.strokeStyle = "rgba(7, 112, 84, 0.38)";
       context.beginPath();
       communicationNodes.forEach((node, index) => {
         const x = node.x * width;
@@ -178,14 +183,14 @@
             : (Math.sin(motionTime * 5 + index * 1.4) + 1) * 1.8;
         const x = node.x * width;
         const y = node.y * height;
-        context.fillStyle = "rgba(240, 249, 255, 0.18)";
+        context.fillStyle = "rgba(75, 195, 162, 0.2)";
         context.fillRect(
           Math.round(x - node.size - pulse),
           Math.round(y - node.size - pulse),
           Math.round((node.size + pulse) * 2),
           Math.round((node.size + pulse) * 2),
         );
-        context.fillStyle = "#f7fbff";
+        context.fillStyle = "#077054";
         context.fillRect(
           Math.round(x - node.size / 2),
           Math.round(y - node.size / 2),
@@ -266,9 +271,10 @@
     inset: 0;
     overflow: hidden;
     background:
-      linear-gradient(90deg, rgb(5 20 53 / 98%) 0%, rgb(5 20 53 / 92%) 38%, rgb(10 65 148 / 26%) 72%, transparent 100%),
-      radial-gradient(circle at 82% 45%, rgb(178 220 255 / 36%), transparent 31%),
-      linear-gradient(135deg, #071737 0%, #0c3d92 54%, #7ebcf2 100%);
+      linear-gradient(90deg, rgb(244 241 232 / 100%) 0%, rgb(244 241 232 / 94%) 36%, rgb(244 241 232 / 38%) 61%, transparent 79%),
+      radial-gradient(circle at 88% 47%, rgb(75 195 162 / 44%), transparent 34%),
+      radial-gradient(circle at 63% 43%, rgb(169 213 255 / 48%), transparent 36%),
+      linear-gradient(120deg, #f4f1e8 0%, #eef1eb 43%, #d9edf0 68%, #b8e4d2 100%);
     isolation: isolate;
   }
 
@@ -276,8 +282,8 @@
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(rgb(192 224 255 / 8%) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(192 224 255 / 8%) 1px, transparent 1px);
+      linear-gradient(rgb(49 86 79 / 7%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(49 86 79 / 7%) 1px, transparent 1px);
     background-size: 20px 20px;
     content: "";
     mask-image: linear-gradient(90deg, transparent 4%, #000 42%, #000);
@@ -287,8 +293,8 @@
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(90deg, rgb(3 14 38 / 92%) 0%, rgb(3 14 38 / 68%) 36%, transparent 72%),
-      linear-gradient(180deg, rgb(3 14 38 / 12%), rgb(3 14 38 / 44%));
+      linear-gradient(90deg, rgb(244 241 232 / 96%) 0%, rgb(244 241 232 / 76%) 38%, transparent 72%),
+      linear-gradient(180deg, transparent 56%, rgb(244 241 232 / 34%));
     content: "";
   }
 
@@ -310,10 +316,10 @@
     position: absolute;
     width: 0.5rem;
     height: 0.5rem;
-    background: #f7fbff;
+    background: #077054;
     box-shadow:
-      0 0 0 0.45rem rgb(226 244 255 / 12%),
-      0 0 2.4rem rgb(226 244 255 / 68%);
+      0 0 0 0.45rem rgb(75 195 162 / 14%),
+      0 0 2.4rem rgb(75 195 162 / 58%);
   }
 
   .pixel-field__node--one {
@@ -343,19 +349,20 @@
   @media (max-width: 700px) {
     .pixel-field {
       background:
-        linear-gradient(180deg, rgb(5 20 53 / 98%) 0%, rgb(5 20 53 / 88%) 58%, rgb(10 65 148 / 22%) 100%),
-        radial-gradient(circle at 72% 77%, rgb(178 220 255 / 34%), transparent 33%),
-        linear-gradient(145deg, #071737 0%, #0c3d92 62%, #7ebcf2 100%);
+        linear-gradient(180deg, rgb(244 241 232 / 100%) 0%, rgb(244 241 232 / 94%) 54%, rgb(244 241 232 / 34%) 79%, transparent 100%),
+        radial-gradient(circle at 74% 82%, rgb(75 195 162 / 44%), transparent 36%),
+        radial-gradient(circle at 61% 65%, rgb(169 213 255 / 46%), transparent 38%),
+        linear-gradient(155deg, #f4f1e8 0%, #edf1eb 50%, #d8ecef 72%, #b8e4d2 100%);
     }
 
     .pixel-field::after {
-      background: linear-gradient(180deg, rgb(3 14 38 / 70%) 0%, rgb(3 14 38 / 48%) 65%, transparent);
+      background: linear-gradient(180deg, rgb(244 241 232 / 92%) 0%, rgb(244 241 232 / 68%) 62%, transparent);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .pixel-field__node {
-      box-shadow: 0 0 0 0.4rem rgb(226 244 255 / 14%);
+      box-shadow: 0 0 0 0.4rem rgb(75 195 162 / 16%);
     }
   }
 </style>

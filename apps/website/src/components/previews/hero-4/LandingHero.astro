@@ -26,7 +26,7 @@ const { hasPublishedDownloads } = Astro.props;
     align-items: center;
     padding-block: clamp(5.5rem, 11vw, 8rem);
     border-bottom: 1px solid var(--border-subtle);
-    background: #071737;
+    background: var(--surface-base);
   }
 
   .hero::after {
@@ -34,7 +34,7 @@ const { hasPublishedDownloads } = Astro.props;
     inset: auto 0 0;
     z-index: 1;
     height: 8rem;
-    background: linear-gradient(transparent, rgb(3 14 38 / 48%));
+    background: linear-gradient(transparent, rgb(244 241 232 / 72%));
     content: "";
     pointer-events: none;
   }
@@ -52,14 +52,14 @@ const { hasPublishedDownloads } = Astro.props;
   .hero :global(h1) {
     max-width: 10.5ch;
     margin-bottom: 1.8rem;
-    color: #f7fbff;
+    color: var(--text-strong);
     font-size: clamp(3.4rem, 7.5vw, 6.4rem);
     text-wrap: balance;
   }
 
   .hero :global(h1 em) {
     display: block;
-    color: #a9d5ff;
+    color: var(--accent);
     font-family: var(--font-editorial);
     font-size: 1.04em;
     font-weight: 400;
@@ -71,49 +71,49 @@ const { hasPublishedDownloads } = Astro.props;
   }
 
   .hero :global(.eyebrow) {
-    color: #a9d5ff;
+    color: var(--accent);
   }
 
   .hero :global(.eyebrow::before) {
-    background: #f7fbff;
-    box-shadow: 0 0 1.2rem rgb(226 244 255 / 80%);
+    background: var(--brand-coral);
+    box-shadow: 0 0 1.2rem rgb(216 86 63 / 24%);
   }
 
   .hero :global(.lede) {
-    color: #d3e6f7;
+    color: var(--text-soft);
   }
 
   .hero :global(.button) {
-    background: #f7fbff;
-    color: #09265b;
+    background: var(--accent);
+    color: var(--on-accent);
   }
 
   .hero :global(.button:hover) {
-    background: #dceeff;
-    box-shadow: 4px 4px 0 rgb(0 9 30 / 34%);
+    background: #075f49;
+    box-shadow: 4px 4px 0 rgb(23 33 31 / 16%);
   }
 
   .hero :global(.button--secondary) {
-    border-color: rgb(211 230 247 / 62%);
-    background: rgb(5 20 53 / 34%);
-    color: #f7fbff;
+    border-color: var(--border-subtle);
+    background: rgb(255 253 247 / 72%);
+    color: var(--text-strong);
     backdrop-filter: blur(8px);
   }
 
   .hero :global(.button--secondary:hover) {
-    border-color: #f7fbff;
-    background: rgb(169 213 255 / 16%);
+    border-color: var(--border-strong);
+    background: var(--surface-raised);
   }
 
   .hero :global(.button--quiet) {
     background: transparent;
-    color: #d3e6f7;
-    text-decoration-color: rgb(211 230 247 / 55%);
+    color: var(--text-strong);
+    text-decoration-color: rgb(23 33 31 / 36%);
   }
 
   .hero :global(.button--quiet:hover) {
     background: transparent;
-    color: #fff;
+    color: var(--accent);
   }
 
   .hero :global(.hero__note) {
@@ -123,14 +123,14 @@ const { hasPublishedDownloads } = Astro.props;
     align-items: center;
     margin-top: 2rem;
     margin-bottom: 0;
-    color: #bdd4e8;
+    color: var(--text-muted);
     font-size: 0.8rem;
   }
 
   .hero :global(.status) {
-    border-color: rgb(211 230 247 / 32%);
-    background: rgb(5 20 53 / 46%);
-    color: #f7fbff;
+    border-color: var(--border-subtle);
+    background: rgb(255 253 247 / 68%);
+    color: var(--text-strong);
     backdrop-filter: blur(8px);
   }
 
