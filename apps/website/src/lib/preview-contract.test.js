@@ -5,8 +5,12 @@ import {
   PREVIEW_ROBOTS_TEXT,
   PREVIEW_SLOTS,
   PRODUCTION_ORIGIN,
+  PRODUCTION_ROBOTS_BLOCKED_CRAWLERS,
+  PRODUCTION_ROBOTS_CONTENT_SIGNAL,
+  PRODUCTION_ROBOTS_RIGHTS_NOTICE,
   previewSlotForBranch,
   previewSlotLabel,
+  productionRobotsText,
   resolveWebsiteDeployment,
 } from "./preview-contract.mjs";
 
@@ -88,6 +92,28 @@ describe("Chaft Preview contract", () => {
     expect(PREVIEW_ROBOTS_POLICY).toBe("noindex, nofollow, noarchive");
     expect(PREVIEW_ROBOTS_TEXT).toBe("User-agent: *\nDisallow: /\n");
     expect(PREVIEW_ROBOTS_TEXT).not.toContain("Sitemap:");
+  });
+
+  it("keeps the production AI-use policy source-controlled", () => {
+    const sitemap = `${PRODUCTION_ORIGIN}/sitemap-index.xml`;
+    const robots = productionRobotsText(sitemap);
+    expect(PRODUCTION_ROBOTS_CONTENT_SIGNAL).toBe(
+      "search=yes, ai-train=no, use=reference",
+    );
+    expect(
+      robots.startsWith(
+        `${PRODUCTION_ROBOTS_RIGHTS_NOTICE}\n\nUser-agent: *\nContent-Signal: ${PRODUCTION_ROBOTS_CONTENT_SIGNAL}\nAllow: /\n`,
+      ),
+    ).toBe(true);
+    expect(PRODUCTION_ROBOTS_RIGHTS_NOTICE).toContain(
+      "Directive (EU) 2019/790",
+    );
+    for (const crawler of PRODUCTION_ROBOTS_BLOCKED_CRAWLERS) {
+      expect(robots).toContain(`User-agent: ${crawler}\nDisallow: /\n`);
+    }
+    expect(robots.endsWith(`Sitemap: ${sitemap}\n`)).toBe(true);
+    expect(PRODUCTION_ROBOTS_BLOCKED_CRAWLERS).toHaveLength(9);
+    expect(Object.isFrozen(PRODUCTION_ROBOTS_BLOCKED_CRAWLERS)).toBe(true);
   });
 
   it("rejects missing, unknown, or inexact Preview branches", () => {
