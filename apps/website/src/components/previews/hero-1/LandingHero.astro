@@ -1,12 +1,128 @@
 ---
-throw new Error(
-  "Preview slot hero-1 is still using its foundation placeholder; install the reviewed hero-1 renderer before building this Preview.",
-);
+import LandingHeroCopy from "../../landing/LandingHeroCopy.astro";
+import HeroOneVisual from "./HeroOneVisual.astro";
+
+interface Props {
+  hasPublishedDownloads: boolean;
+}
+
+const { hasPublishedDownloads } = Astro.props;
 ---
 
-<section
-  class="hero"
-  data-chaft-hero="hero-1-placeholder"
-  data-chaft-preview-placeholder="true"
->
+<section class="hero" data-chaft-hero="hero-1">
+  <div class="shell hero__grid">
+    <LandingHeroCopy {hasPublishedDownloads} />
+
+    <div class="hero__visual">
+      <HeroOneVisual />
+    </div>
+  </div>
 </section>
+
+<style>
+  .hero {
+    --accent: #69e5bc;
+    --border-strong: #4a5e57;
+    --border-subtle: #273a34;
+    --on-accent: #07110e;
+    --surface-active: #1b312a;
+    --text-faint: #91a29d;
+    --text-muted: #b1c1bc;
+    --text-soft: #d7e4df;
+    --text-strong: #fffdf7;
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(4.5rem, 9vw, 7.5rem);
+    border-bottom: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 83% 50%, rgb(83 221 176 / 8%), transparent 34%),
+      linear-gradient(112deg, #101c19 0%, #0a1210 53%, #070c0b 100%);
+    color: var(--text-strong);
+  }
+
+  .hero::after {
+    position: absolute;
+    top: 4%;
+    right: -13rem;
+    width: 38rem;
+    height: 38rem;
+    border-radius: 50%;
+    background: rgb(75 195 162 / 7%);
+    filter: blur(70px);
+    content: "";
+    pointer-events: none;
+  }
+
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(23rem, 0.85fr);
+    gap: clamp(3rem, 8vw, 7rem);
+    align-items: center;
+  }
+
+  .hero :global(.hero__copy) {
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero :global(.eyebrow) {
+    color: var(--accent);
+  }
+
+  .hero :global(h1) {
+    max-width: 10.5ch;
+    margin-bottom: 1.8rem;
+    color: var(--text-strong);
+    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
+  }
+
+  .hero :global(h1 em) {
+    display: block;
+    color: #78e9c4;
+    font-family: var(--font-editorial);
+    font-size: 1.04em;
+    font-weight: 400;
+    letter-spacing: -0.045em;
+  }
+
+  .hero :global(.hero__actions) {
+    margin-top: 2.25rem;
+  }
+
+  .hero :global(.hero__note) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 2rem;
+    margin-bottom: 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+  }
+
+  .hero__visual {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero__visual::before {
+    position: absolute;
+    inset: -0.7rem 0.7rem 0.7rem -0.7rem;
+    z-index: -1;
+    border: 1px solid rgb(105 229 188 / 25%);
+    border-radius: 1.85rem;
+    background: rgb(105 229 188 / 5%);
+    content: "";
+  }
+
+  @media (max-width: 940px) {
+    .hero__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero__visual {
+      width: min(100%, 42rem);
+      margin-inline: auto;
+    }
+  }
+</style>
