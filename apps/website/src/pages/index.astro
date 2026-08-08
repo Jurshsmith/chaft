@@ -3,7 +3,6 @@ import DownloadGrid from "../components/DownloadGrid.astro";
 import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
 import LandingHero from "../components/LandingHero.astro";
 import ProductRevealSection from "../components/landing/ProductRevealSection.astro";
-import SecurityOverviewSection from "../components/landing/SecurityOverviewSection.astro";
 import { currentRelease } from "../data/releases";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
@@ -36,8 +35,8 @@ const features = [
     copy: "Trusted devices exchange signed history directly. Optional encrypted replicas can improve availability without reading message content.",
   },
   {
-    title: "Team-owned continuity",
-    copy: "Device reachability, recovery, and durable backups stay with your team. Optional replicas can improve availability without guaranteeing it.",
+    title: "Content protection",
+    copy: "Message and attachment content is encrypted before replication. The current canary does not hide all metadata.",
   },
   {
     title: "Public boundaries",
@@ -77,8 +76,6 @@ const steps = [
   </div>
 
   <ProductRevealSection />
-
-  <SecurityOverviewSection />
 
   <section class="section" id="why-chaft">
     <div class="shell">
