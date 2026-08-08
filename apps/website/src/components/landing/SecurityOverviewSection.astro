@@ -7,35 +7,46 @@ import { sitePath } from "../../lib/site-path";
 
 <section
   class="security-overview section--deep"
-  id="security-overview"
-  aria-labelledby="security-overview-title"
-  data-security-overview
+  id="security-page-hero"
+  aria-labelledby="security-page-title"
+  data-security-page-hero
   data-security-motion="static"
 >
   <div class="shell security-overview__grid">
     <div class="security-overview__copy" data-security-copy>
-      <p class="eyebrow">Security model · Unaudited canary</p>
-      <h2 id="security-overview-title">Encrypted content. Signed, verifiable history.</h2>
+      <p class="eyebrow">Security status · Unaudited canary</p>
+      <h1 id="security-page-title">Encrypted content. Signed, verifiable history.</h1>
       <p class="body-copy security-overview__lede">
         Chaft encrypts message and attachment content before replication, verifies
-        signed history, and treats peers and optional replicas as untrusted. No central
-        server is authoritative for workspace history.
+        signed history, and treats peers and optional replicas as untrusted.
       </p>
 
       <div class="security-overview__boundary" data-security-boundary>
         <span>Current boundary</span>
         <p>
-          Metadata is not fully hidden, and this canary has not been independently
-          audited.
+          No central server is authoritative for workspace history. Metadata is not
+          fully hidden.
         </p>
       </div>
 
       <div class="security-overview__actions">
         <a
+          class="button"
+          href="https://github.com/Jurshsmith/chaft/security/advisories/new"
+        >
+          Report privately
+        </a>
+        <a
           class="button button--secondary"
           href={sitePath("/docs/concepts/security-model/")}
         >
-          Read the security model <span aria-hidden="true">→</span>
+          Read the security model
+        </a>
+        <a
+          class="button button--quiet"
+          href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md"
+        >
+          Read the full policy
         </a>
       </div>
     </div>
@@ -57,7 +68,8 @@ import { sitePath } from "../../lib/site-path";
           sizes="(max-width: 820px) min(100vw - 2.5rem, 44rem), min(45.75vw, 41.125rem)"
           format="webp"
           quality={88}
-          loading="lazy"
+          loading="eager"
+          fetchpriority="high"
           decoding="async"
         />
         <figcaption id="security-overview-caption">
@@ -70,35 +82,23 @@ import { sitePath } from "../../lib/site-path";
 </section>
 
 <script>
-  document.querySelectorAll<HTMLElement>("[data-security-overview]").forEach((section) => {
+  document.querySelectorAll<HTMLElement>("[data-security-page-hero]").forEach((section) => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let observer: IntersectionObserver | null = null;
 
     const showSection = () => {
       section.setAttribute("data-security-visible", "");
-      observer?.disconnect();
-      observer = null;
     };
 
     const configureMotion = () => {
-      observer?.disconnect();
-      observer = null;
-
-      if (reducedMotion.matches || !("IntersectionObserver" in window)) {
-        section.dataset.securityMotion = reducedMotion.matches ? "reduced" : "static";
+      if (reducedMotion.matches) {
+        section.dataset.securityMotion = "reduced";
         showSection();
         return;
       }
 
       section.dataset.securityMotion = "entrance";
       section.removeAttribute("data-security-visible");
-      observer = new IntersectionObserver(
-        ([entry]) => {
-          if (entry?.isIntersecting) showSection();
-        },
-        { threshold: 0.18 },
-      );
-      observer.observe(section);
+      requestAnimationFrame(() => requestAnimationFrame(showSection));
     };
 
     reducedMotion.addEventListener("change", configureMotion);
@@ -146,7 +146,7 @@ import { sitePath } from "../../lib/site-path";
     max-width: 31rem;
   }
 
-  .security-overview__copy h2 {
+  .security-overview__copy h1 {
     max-width: 12ch;
     margin-block-end: 1.5rem;
     font-size: clamp(2.5rem, 5vw, 4.55rem);
@@ -201,6 +201,8 @@ import { sitePath } from "../../lib/site-path";
 
   .security-overview__actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     align-items: center;
   }
 
@@ -279,36 +281,10 @@ import { sitePath } from "../../lib/site-path";
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    .security-overview[data-security-motion="entrance"] .security-overview__copy > *,
     .security-overview[data-security-motion="entrance"] .security-overview__visual {
       transition:
         opacity 520ms ease-out,
         transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
-    }
-
-    .security-overview[data-security-motion="entrance"] .security-overview__copy > :nth-child(2) {
-      transition-delay: 40ms;
-    }
-
-    .security-overview[data-security-motion="entrance"] .security-overview__copy > :nth-child(3) {
-      transition-delay: 80ms;
-    }
-
-    .security-overview[data-security-motion="entrance"] .security-overview__copy > :nth-child(4) {
-      transition-delay: 140ms;
-    }
-
-    .security-overview[data-security-motion="entrance"] .security-overview__copy > :nth-child(5) {
-      transition-delay: 190ms;
-    }
-
-    .security-overview[data-security-motion="entrance"] .security-overview__visual {
-      transition-delay: 90ms;
-    }
-
-    .security-overview[data-security-motion="entrance"]:not([data-security-visible]) .security-overview__copy > * {
-      transform: translate3d(0, 0.65rem, 0);
-      opacity: 0;
     }
 
     .security-overview[data-security-motion="entrance"]:not([data-security-visible]) .security-overview__visual {
@@ -331,7 +307,7 @@ import { sitePath } from "../../lib/site-path";
       max-width: 38rem;
     }
 
-    .security-overview__copy h2 {
+    .security-overview__copy h1 {
       max-width: 14ch;
     }
 
@@ -346,7 +322,7 @@ import { sitePath } from "../../lib/site-path";
       padding-block: 4.5rem;
     }
 
-    .security-overview__copy h2 {
+    .security-overview__copy h1 {
       font-size: clamp(2.15rem, 11vw, 3rem);
     }
 
@@ -366,7 +342,7 @@ import { sitePath } from "../../lib/site-path";
       display: none;
     }
 
-    .security-overview__actions .button {
+    .security-overview__actions .button:first-child {
       width: 100%;
     }
   }

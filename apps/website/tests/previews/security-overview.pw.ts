@@ -1,13 +1,24 @@
-import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { type Page, expect, test } from "@playwright/test";
 
-import { openLandingPage } from "./support";
+async function openSecurityPage(page: Page) {
+  const response = await page.goto("/security/", { waitUntil: "domcontentloaded" });
+  expect(response?.ok()).toBe(true);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+}
 
-test("keeps the security overview honest, responsive, and static with reduced motion", async ({
+test("keeps the security design on its canonical page and static with reduced motion", async ({
   page,
 }) => {
-  await openLandingPage(page);
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  const homeResponse = await page.goto("/", { waitUntil: "domcontentloaded" });
+  expect(homeResponse?.ok()).toBe(true);
+  await expect(page.locator("[data-security-page-hero]")).toHaveCount(0);
+  await openSecurityPage(page);
 
-  const section = page.locator("[data-security-overview]");
+  const section = page.locator("[data-security-page-hero]");
   const copy = page.locator("[data-security-copy]");
   const visual = page.locator("[data-security-visual]");
   const image = visual.locator("img");
@@ -16,7 +27,7 @@ test("keeps the security overview honest, responsive, and static with reduced mo
   await expect(section).toBeVisible();
   await expect(section).toHaveAttribute("data-security-motion", "reduced");
   await expect(section).toHaveAttribute("data-security-visible", "");
-  await expect(section.getByRole("heading", { level: 2 })).toHaveText(
+  await expect(section.getByRole("heading", { level: 1 })).toHaveText(
     "Encrypted content. Signed, verifiable history.",
   );
   await expect(section).toContainText(
@@ -27,10 +38,18 @@ test("keeps the security overview honest, responsive, and static with reduced mo
     "No central server is authoritative for workspace history.",
   );
   await expect(section).toContainText("Metadata is not fully hidden");
-  await expect(section).toContainText("has not been independently audited");
+  await expect(page.locator(".security-summary")).toContainText("Independent audit");
+  await expect(page.locator(".security-summary")).toContainText("Not completed");
+  await expect(section.getByRole("link", { name: "Report privately" })).toHaveAttribute(
+    "href",
+    "https://github.com/Jurshsmith/chaft/security/advisories/new",
+  );
   await expect(
     section.getByRole("link", { name: "Read the security model" }),
   ).toHaveAttribute("href", "/docs/concepts/security-model/");
+  await expect(
+    section.getByRole("link", { name: "Read the full policy" }),
+  ).toHaveAttribute("href", "https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md");
   await expect(section.locator("figcaption")).toContainText(
     "Shielded tile: encrypted message and attachment content.",
   );
@@ -89,15 +108,40 @@ test("keeps the security overview honest, responsive, and static with reduced mo
   expect(dimensions.documentWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
 });
 
-test("reveals the security overview once without persistent motion", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
-  const response = await page.goto("/", { waitUntil: "domcontentloaded" });
-  expect(response?.ok()).toBe(true);
-  await page.evaluate(async () => {
-    await document.fonts.ready;
+test("@accessibility keeps the security page free of serious WCAG findings", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await openSecurityPage(page);
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze();
+
+  await testInfo.attach("security-axe-results.json", {
+    body: Buffer.from(JSON.stringify(results, null, 2)),
+    contentType: "application/json",
   });
 
-  const section = page.locator("[data-security-overview]");
+  const blockingFindings = results.violations.filter(
+    ({ impact }) => impact === "serious" || impact === "critical",
+  );
+  expect(
+    blockingFindings,
+    blockingFindings
+      .map(
+        ({ id, impact, help, nodes }) =>
+          `${impact ?? "unknown"} ${id}: ${help} (${nodes.length} nodes)`,
+      )
+      .join("\n"),
+  ).toEqual([]);
+});
+
+test("reveals only the security visual once without persistent motion", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
+  await openSecurityPage(page);
+
+  const section = page.locator("[data-security-page-hero]");
   const visual = page.locator("[data-security-visual]");
   await expect(section).toHaveAttribute("data-security-motion", "entrance");
   await section.scrollIntoViewIfNeeded();
@@ -144,10 +188,10 @@ test("keeps the complete security overview visible without JavaScript", async ({
     viewport: { height: 900, width: 1440 },
   });
   const page = await context.newPage();
-  const response = await page.goto("/", { waitUntil: "domcontentloaded" });
+  const response = await page.goto("/security/", { waitUntil: "domcontentloaded" });
   expect(response?.ok()).toBe(true);
 
-  const section = page.locator("[data-security-overview]");
+  const section = page.locator("[data-security-page-hero]");
   const copy = page.locator("[data-security-copy]");
   const visual = page.locator("[data-security-visual]");
   await section.scrollIntoViewIfNeeded();

@@ -1,24 +1,13 @@
 ---
-import PageHero from "../components/PageHero.astro";
+import SecurityOverviewSection from "../components/landing/SecurityOverviewSection.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
-import { sitePath } from "../lib/site-path";
 
 const description =
   "Chaft's current security model, known canary-stage limits, and private vulnerability reporting process.";
 ---
 
 <BaseLayout title="Security" description={description}>
-  <PageHero
-    eyebrow="Security status · Unaudited canary"
-    title="What Chaft protects today."
-    lede="Chaft encrypts message and attachment content, verifies signed history, and treats peers as untrusted. It has not completed an independent security audit and is not ready for sensitive production use."
-  >
-    <div class="button-row">
-      <a class="button" href="https://github.com/Jurshsmith/chaft/security/advisories/new">Report privately</a>
-      <a class="button button--secondary" href={sitePath("/docs/concepts/security-model/")}>Security model</a>
-      <a class="button button--quiet" href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md">Full policy</a>
-    </div>
-  </PageHero>
+  <SecurityOverviewSection />
 
   <section class="security-summary" aria-label="Current security status">
     <dl class="shell security-summary__inner">
