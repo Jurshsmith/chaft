@@ -21,72 +21,128 @@ const { hasPublishedDownloads } = Astro.props;
 
 <style>
   .hero {
-    --accent: #69e5bc;
-    --border-strong: #4a5e57;
-    --border-subtle: #273a34;
-    --on-accent: #07110e;
-    --surface-active: #1b312a;
-    --text-faint: #91a29d;
-    --text-muted: #b1c1bc;
-    --text-soft: #d7e4df;
-    --text-strong: #fffdf7;
+    --accent: #0b7253;
+    --border-strong: #c8c8bc;
+    --border-subtle: #ddddd2;
+    --on-accent: #fffdf7;
+    --surface-active: #e4eee7;
+    --text-faint: #6f7771;
+    --text-muted: #58625d;
+    --text-soft: #35423d;
+    --text-strong: #17211f;
     position: relative;
+    display: grid;
+    min-height: calc(100svh - 6.8rem);
     overflow: hidden;
-    padding-block: clamp(4.5rem, 9vw, 7.5rem);
+    align-items: center;
+    padding-block: clamp(3rem, 4vw, 4rem);
     border-bottom: 1px solid var(--border-subtle);
     background:
-      radial-gradient(circle at 83% 50%, rgb(83 221 176 / 8%), transparent 34%),
-      linear-gradient(112deg, #101c19 0%, #0a1210 53%, #070c0b 100%);
+      radial-gradient(circle at 76% 47%, rgb(18 126 90 / 8%), transparent 34rem),
+      radial-gradient(circle at 16% 12%, rgb(255 255 255 / 78%), transparent 29rem),
+      linear-gradient(116deg, #faf8f2 0%, #f4f1e8 53%, #eeece3 100%);
     color: var(--text-strong);
+  }
+
+  .hero::before {
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(circle at 16% 28%, rgb(23 33 31 / 12%) 0 0.55px, transparent 0.75px),
+      radial-gradient(circle at 72% 64%, rgb(11 114 83 / 12%) 0 0.55px, transparent 0.8px);
+    background-position:
+      0 0,
+      1.2rem 1.7rem;
+    background-size:
+      3.8rem 4.3rem,
+      5.1rem 4.7rem;
+    content: "";
+    opacity: 0.34;
+    pointer-events: none;
   }
 
   .hero::after {
     position: absolute;
-    top: 4%;
-    right: -13rem;
-    width: 38rem;
-    height: 38rem;
+    top: 9%;
+    right: -16rem;
+    width: 42rem;
+    height: 42rem;
+    border: 1px solid rgb(11 114 83 / 10%);
     border-radius: 50%;
-    background: rgb(75 195 162 / 7%);
-    filter: blur(70px);
     content: "";
     pointer-events: none;
   }
 
   .hero__grid {
+    position: relative;
+    z-index: 1;
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(23rem, 0.85fr);
-    gap: clamp(3rem, 8vw, 7rem);
+    grid-template-columns: minmax(0, 0.78fr) minmax(31rem, 1.22fr);
+    gap: clamp(2rem, 5vw, 5rem);
     align-items: center;
   }
 
   .hero :global(.hero__copy) {
     position: relative;
     z-index: 2;
+    width: min(100%, 35rem);
   }
 
   .hero :global(.eyebrow) {
     color: var(--accent);
   }
 
+  .hero :global(.eyebrow::before) {
+    background: var(--accent);
+    box-shadow: none;
+  }
+
   .hero :global(h1) {
-    max-width: 10.5ch;
-    margin-bottom: 1.8rem;
+    max-width: 9.4ch;
+    margin-bottom: 1.65rem;
     color: var(--text-strong);
-    font-size: clamp(3.4rem, 7.5vw, 6.4rem);
+    font-size: clamp(3.5rem, 5.25vw, 5.15rem);
+    line-height: 0.94;
+    text-wrap: balance;
   }
 
   .hero :global(h1 em) {
     display: block;
-    color: #78e9c4;
-    font-family: var(--font-editorial);
-    font-size: 1.04em;
-    font-weight: 400;
-    letter-spacing: -0.045em;
+    color: #0b7253;
+    font-family: inherit;
+    font-size: 1em;
+    font-style: normal;
+    font-weight: inherit;
+    letter-spacing: inherit;
+  }
+
+  .hero :global(.lede) {
+    max-width: 35rem;
+    color: var(--text-muted);
+    font-size: clamp(1rem, 1.25vw, 1.1rem);
   }
 
   .hero :global(.hero__actions) {
-    margin-top: 2.25rem;
+    margin-top: 2.1rem;
+  }
+
+  .hero :global(.button) {
+    box-shadow: none;
+  }
+
+  .hero :global(.button:hover) {
+    background: #075e44;
+    box-shadow: none;
+  }
+
+  .hero :global(.button--secondary) {
+    border-color: #c9cec8;
+    background: rgb(255 255 255 / 52%);
+    color: var(--text-strong);
+  }
+
+  .hero :global(.button--quiet) {
+    color: var(--text-muted);
   }
 
   .hero :global(.hero__note) {
@@ -94,35 +150,71 @@ const { hasPublishedDownloads } = Astro.props;
     flex-wrap: wrap;
     gap: 0.7rem;
     align-items: center;
-    margin-top: 2rem;
+    margin-top: 1.75rem;
     margin-bottom: 0;
     color: var(--text-faint);
-    font-size: 0.8rem;
+    font-size: 0.76rem;
+  }
+
+  .hero :global(.status) {
+    border-color: #bfc8c1;
+    background: rgb(255 255 255 / 46%);
+    color: var(--text-soft);
   }
 
   .hero__visual {
     position: relative;
     z-index: 1;
+    min-width: 0;
   }
 
-  .hero__visual::before {
-    position: absolute;
-    inset: -0.7rem 0.7rem 0.7rem -0.7rem;
-    z-index: -1;
-    border: 1px solid rgb(105 229 188 / 25%);
-    border-radius: 1.85rem;
-    background: rgb(105 229 188 / 5%);
-    content: "";
+  @media (max-width: 1060px) {
+    .hero__grid {
+      grid-template-columns: minmax(0, 0.88fr) minmax(27rem, 1.12fr);
+      gap: 1.75rem;
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3.35rem, 7vw, 5.3rem);
+    }
   }
 
-  @media (max-width: 940px) {
+  @media (max-width: 900px) {
+    .hero {
+      min-height: auto;
+      padding-block: clamp(3.75rem, 8vw, 5rem);
+    }
+
     .hero__grid {
       grid-template-columns: 1fr;
+      gap: 2.25rem;
+    }
+
+    .hero :global(.hero__copy) {
+      width: min(100%, 42rem);
+    }
+
+    .hero :global(h1) {
+      max-width: 10ch;
     }
 
     .hero__visual {
-      width: min(100%, 42rem);
+      width: min(100%, 46rem);
       margin-inline: auto;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .hero {
+      padding-block: 3.25rem 2.75rem;
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3rem, 15vw, 4.3rem);
+    }
+
+    .hero :global(.hero__note) {
+      align-items: flex-start;
     }
   }
 </style>

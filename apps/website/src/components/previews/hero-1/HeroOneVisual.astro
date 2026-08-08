@@ -1,436 +1,738 @@
----
-const particleCount = 240;
-const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+<div
+  class="orbital-network"
+  role="img"
+  aria-label="A translucent peer network orb surrounded by local history, chat, device, and terminal activity"
+>
+  <div class="orbital-network__horizon"></div>
 
-const particles = Array.from({ length: particleCount }, (_, index) => {
-  const vertical = 1 - (2 * (index + 0.5)) / particleCount;
-  const latitudeRadius = Math.sqrt(1 - vertical * vertical);
-  const angle = index * goldenAngle;
-  const horizontal = Math.cos(angle) * latitudeRadius;
-  const depth = Math.sin(angle) * latitudeRadius;
-  const perspective = 0.88 + (depth + 1) * 0.06;
+  <div class="orbital-network__sphere">
+    <span class="orbital-network__surface"></span>
+    <span class="orbital-network__wire orbital-network__wire--meridian-a"></span>
+    <span class="orbital-network__wire orbital-network__wire--meridian-b"></span>
+    <span class="orbital-network__wire orbital-network__wire--latitude-a"></span>
+    <span class="orbital-network__wire orbital-network__wire--latitude-b"></span>
 
-  return {
-    depth,
-    x: Number((310 + horizontal * 211 * perspective).toFixed(2)),
-    y: Number((310 + vertical * 211 * perspective).toFixed(2)),
-    radius: Number((0.75 + (depth + 1) * 0.62).toFixed(2)),
-    opacity: Number((0.2 + (depth + 1) * 0.32).toFixed(2)),
-  };
-}).sort((left, right) => left.depth - right.depth);
----
+    <span class="orbital-network__orbit orbital-network__orbit--outer">
+      <i></i>
+      <i></i>
+      <i></i>
+    </span>
+    <span class="orbital-network__orbit orbital-network__orbit--middle">
+      <i></i>
+      <i></i>
+    </span>
+    <span class="orbital-network__orbit orbital-network__orbit--tilted">
+      <i></i>
+      <i></i>
+      <i></i>
+    </span>
 
-<div class="hero-one-globe" data-hero-one-globe>
-  <div class="hero-one-globe__aura" aria-hidden="true"></div>
-  <svg
-    class="hero-one-globe__svg"
-    viewBox="0 0 620 620"
-    role="img"
-    aria-labelledby="hero-one-globe-title hero-one-globe-description"
-    focusable="false"
-  >
-    <title id="hero-one-globe-title">A distributed communication globe</title>
-    <desc id="hero-one-globe-description">
-      A glowing particle globe connects four fixed device nodes without a central
-      hub.
-    </desc>
+    <span class="orbital-network__core">
+      <i></i>
+    </span>
+  </div>
 
-    <defs>
-      <radialGradient id="hero-one-globe-core" cx="50%" cy="44%" r="58%">
-        <stop offset="0%" stop-color="#66edc4" stop-opacity="0.2"></stop>
-        <stop offset="58%" stop-color="#2ea986" stop-opacity="0.07"></stop>
-        <stop offset="100%" stop-color="#091310" stop-opacity="0"></stop>
-      </radialGradient>
-      <linearGradient id="hero-one-link" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#e8fff7" stop-opacity="0.24"></stop>
-        <stop offset="48%" stop-color="#70f3ca" stop-opacity="0.92"></stop>
-        <stop offset="100%" stop-color="#f58b72" stop-opacity="0.34"></stop>
-      </linearGradient>
-      <filter id="hero-one-soft-glow" x="-100%" y="-100%" width="300%" height="300%">
-        <feGaussianBlur stdDeviation="5" result="blur"></feGaussianBlur>
-        <feMerge>
-          <feMergeNode in="blur"></feMergeNode>
-          <feMergeNode in="SourceGraphic"></feMergeNode>
-        </feMerge>
-      </filter>
-      <filter id="hero-one-node-glow" x="-150%" y="-150%" width="400%" height="400%">
-        <feGaussianBlur stdDeviation="8" result="blur"></feGaussianBlur>
-        <feMerge>
-          <feMergeNode in="blur"></feMergeNode>
-          <feMergeNode in="SourceGraphic"></feMergeNode>
-        </feMerge>
-      </filter>
-      <clipPath id="hero-one-globe-clip">
-        <circle cx="310" cy="310" r="217"></circle>
-      </clipPath>
-    </defs>
+  <div class="product-fragment product-fragment--receipt">
+    <div class="product-fragment__topline">
+      <span class="product-fragment__signal"></span>
+      <span>History verified</span>
+      <time>12:42</time>
+    </div>
+    <strong>Local copy is current</strong>
+    <span class="product-fragment__meta">8c14…92f · signed</span>
+  </div>
 
-    <circle
-      class="hero-one-globe__core"
-      cx="310"
-      cy="310"
-      r="236"
-      fill="url(#hero-one-globe-core)"
-      aria-hidden="true"
-    ></circle>
+  <div class="product-fragment product-fragment--message">
+    <div class="product-fragment__person">
+      <span class="product-fragment__avatar">JS</span>
+      <span><strong>Josh</strong><small>Design systems</small></span>
+      <time>now</time>
+    </div>
+    <p>Ship the keyboard pass?</p>
+    <span class="product-fragment__reply">Replying to interface review</span>
+  </div>
 
-    <g
-      class="hero-one-globe__wireframe"
-      clip-path="url(#hero-one-globe-clip)"
-      aria-hidden="true"
-    >
-      <circle cx="310" cy="310" r="216"></circle>
-      <ellipse cx="310" cy="310" rx="134" ry="216"></ellipse>
-      <ellipse cx="310" cy="310" rx="48" ry="216"></ellipse>
-      <ellipse cx="310" cy="310" rx="216" ry="134"></ellipse>
-      <ellipse cx="310" cy="310" rx="216" ry="52"></ellipse>
-      <path d="M102 250 Q310 344 518 250"></path>
-      <path d="M108 373 Q310 278 512 373"></path>
-    </g>
+  <div class="product-fragment product-fragment--peers">
+    <div class="product-fragment__topline">
+      <span class="product-fragment__signal"></span>
+      <span>Direct sync</span>
+      <span class="product-fragment__tag">Live</span>
+    </div>
+    <strong>3 devices reachable</strong>
+    <div class="product-fragment__devices" aria-hidden="true">
+      <span>MB</span>
+      <span>JL</span>
+      <span>RK</span>
+    </div>
+  </div>
 
-    <g class="hero-one-globe__particles" aria-hidden="true">
-      {
-        particles.map((particle) => (
-          <circle
-            class="hero-one-globe__particle"
-            cx={particle.x}
-            cy={particle.y}
-            r={particle.radius}
-            data-x={particle.x}
-            data-y={particle.y}
-            data-depth={particle.depth < 0 ? "back" : "front"}
-            style={`--particle-opacity: ${particle.opacity}`}
-          />
-        ))
-      }
-    </g>
-
-    <g class="hero-one-globe__links" aria-hidden="true">
-      <path d="M183 188 Q274 267 409 166"></path>
-      <path d="M409 166 Q461 250 452 373"></path>
-      <path d="M452 373 Q347 438 245 445"></path>
-      <path d="M245 445 Q169 335 183 188"></path>
-      <path d="M183 188 Q312 326 452 373"></path>
-      <path d="M409 166 Q329 312 245 445"></path>
-    </g>
-
-    <g class="hero-one-globe__signals" aria-hidden="true">
-      <circle cx="294" cy="281" r="3"></circle>
-      <circle cx="378" cy="211" r="2.4"></circle>
-      <circle cx="411" cy="349" r="2.8"></circle>
-      <circle cx="268" cy="410" r="2.4"></circle>
-    </g>
-
-    <g
-      class="hero-one-globe__node hero-one-globe__node--mint"
-      transform="translate(183 188)"
-      aria-hidden="true"
-    >
-      <circle r="25"></circle>
-      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
-      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
-    </g>
-    <g
-      class="hero-one-globe__node hero-one-globe__node--ivory"
-      transform="translate(409 166)"
-      aria-hidden="true"
-    >
-      <circle r="25"></circle>
-      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
-      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
-    </g>
-    <g
-      class="hero-one-globe__node hero-one-globe__node--coral"
-      transform="translate(452 373)"
-      aria-hidden="true"
-    >
-      <circle r="25"></circle>
-      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
-      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
-    </g>
-    <g
-      class="hero-one-globe__node hero-one-globe__node--mint"
-      transform="translate(245 445)"
-      aria-hidden="true"
-    >
-      <circle r="25"></circle>
-      <path d="M0 -10 12 -4 12 10 0 16 -12 10 -12 -4Z"></path>
-      <path d="M0 -10V3M-12 -4 0 3 12 -4M0 3V16"></path>
-    </g>
-
-    <circle
-      class="hero-one-globe__orbit"
-      cx="310"
-      cy="310"
-      r="258"
-      aria-hidden="true"
-    ></circle>
-  </svg>
-  <div class="hero-one-globe__grain" aria-hidden="true"></div>
+  <div class="terminal-fragment">
+    <div class="terminal-fragment__bar">
+      <span></span><span></span><span></span>
+      <small>workspace / status</small>
+    </div>
+    <code><b>$</b> chaft sync --status</code>
+    <code><i>✓</i> history verified</code>
+    <code><i>✓</i> 3 trusted peers reachable</code>
+    <code class="terminal-fragment__quiet">waiting for signed events<span>_</span></code>
+  </div>
 </div>
 
-<script>
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const precisePointer = window.matchMedia("(pointer: fine)");
-
-  for (const root of document.querySelectorAll<HTMLElement>("[data-hero-one-globe]")) {
-    if (reducedMotion.matches || !precisePointer.matches) continue;
-
-    const particles = Array.from(
-      root.querySelectorAll<SVGCircleElement>(".hero-one-globe__particle"),
-    );
-    let pointerX = -1_000;
-    let pointerY = -1_000;
-    let animationFrame = 0;
-
-    const render = () => {
-      animationFrame = 0;
-      const bounds = root.getBoundingClientRect();
-      const localX = ((pointerX - bounds.left) / bounds.width) * 620;
-      const localY = ((pointerY - bounds.top) / bounds.height) * 620;
-
-      for (const particle of particles) {
-        const homeX = Number(particle.dataset.x);
-        const homeY = Number(particle.dataset.y);
-        const deltaX = homeX - localX;
-        const deltaY = homeY - localY;
-        const distance = Math.hypot(deltaX, deltaY);
-        const influence = Math.max(0, 1 - distance / 118);
-
-        if (influence === 0) {
-          particle.style.removeProperty("transform");
-          particle.style.removeProperty("opacity");
-          continue;
-        }
-
-        const scale = distance > 0 ? (influence * 5.5) / distance : 0;
-        particle.style.transform = `translate(${deltaX * scale}px, ${deltaY * scale}px)`;
-        particle.style.opacity = String(
-          Math.min(1, Number(particle.style.getPropertyValue("--particle-opacity")) + influence * 0.28),
-        );
-      }
-    };
-
-    const requestRender = () => {
-      if (animationFrame === 0) {
-        animationFrame = window.requestAnimationFrame(render);
-      }
-    };
-
-    root.addEventListener("pointermove", (event) => {
-      pointerX = event.clientX;
-      pointerY = event.clientY;
-      requestRender();
-    });
-
-    root.addEventListener("pointerleave", () => {
-      for (const particle of particles) {
-        particle.style.removeProperty("transform");
-        particle.style.removeProperty("opacity");
-      }
-    });
-  }
-</script>
-
 <style>
-  .hero-one-globe {
+  .orbital-network {
     position: relative;
     isolation: isolate;
     width: 100%;
-    aspect-ratio: 1;
-    overflow: hidden;
-    border: 1px solid rgb(167 255 228 / 16%);
-    border-radius: clamp(1rem, 3vw, 1.7rem);
-    background:
-      radial-gradient(circle at 51% 47%, rgb(54 194 151 / 12%), transparent 40%),
-      radial-gradient(circle at 82% 16%, rgb(216 86 63 / 10%), transparent 26%),
-      linear-gradient(148deg, #0d1c18 0%, #08100e 58%, #050a09 100%);
-    box-shadow:
-      0 2rem 6rem rgb(0 0 0 / 32%),
-      inset 0 1px 0 rgb(255 255 255 / 4%);
+    min-height: clamp(35rem, 46vw, 43rem);
+    color: #17211f;
     contain: layout paint;
   }
 
-  .hero-one-globe::before {
+  .orbital-network::before {
     position: absolute;
-    inset: 0;
-    z-index: -2;
-    background-image:
-      linear-gradient(rgb(121 246 207 / 3%) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(121 246 207 / 3%) 1px, transparent 1px);
-    background-size: 34px 34px;
-    content: "";
-    mask-image: radial-gradient(circle at center, black, transparent 78%);
-  }
-
-  .hero-one-globe__aura {
-    position: absolute;
-    inset: 14%;
-    z-index: -1;
-    border-radius: 50%;
-    background: rgb(64 222 176 / 9%);
-    filter: blur(42px);
-  }
-
-  .hero-one-globe__svg {
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-  }
-
-  .hero-one-globe__core {
-    filter: url("#hero-one-soft-glow");
-  }
-
-  .hero-one-globe__wireframe {
-    fill: none;
-    stroke: #6be8c1;
-    stroke-dasharray: 2 9;
-    stroke-linecap: round;
-    stroke-width: 0.8;
-    opacity: 0.18;
-  }
-
-  .hero-one-globe__particle {
-    fill: #a2ffe1;
-    opacity: var(--particle-opacity);
-    transform-box: fill-box;
-    transform-origin: center;
-    transition:
-      transform 140ms ease-out,
-      opacity 140ms ease-out;
-    will-change: transform;
-  }
-
-  .hero-one-globe__particle[data-depth="back"] {
-    fill: #3ca784;
-  }
-
-  .hero-one-globe__links {
-    fill: none;
-    stroke: url("#hero-one-link");
-    stroke-dasharray: 1 8;
-    stroke-linecap: round;
-    stroke-width: 1.35;
-    opacity: 0.8;
-  }
-
-  .hero-one-globe__links path {
-    animation: hero-one-signal-flow 14s linear infinite;
-  }
-
-  .hero-one-globe__links path:nth-child(even) {
-    animation-direction: reverse;
-    animation-duration: 18s;
-  }
-
-  .hero-one-globe__signals {
-    fill: #d9fff2;
-    filter: url("#hero-one-node-glow");
-  }
-
-  .hero-one-globe__signals circle {
-    animation: hero-one-signal-pulse 2.8s ease-in-out infinite;
-    transform-box: fill-box;
-    transform-origin: center;
-  }
-
-  .hero-one-globe__signals circle:nth-child(2) {
-    animation-delay: -0.7s;
-  }
-
-  .hero-one-globe__signals circle:nth-child(3) {
-    animation-delay: -1.4s;
-  }
-
-  .hero-one-globe__signals circle:nth-child(4) {
-    animation-delay: -2.1s;
-  }
-
-  .hero-one-globe__node circle {
-    fill: currentColor;
-    opacity: 0.12;
-    filter: url("#hero-one-node-glow");
-  }
-
-  .hero-one-globe__node path:first-of-type {
-    fill: #0b1714;
-    stroke: currentColor;
-    stroke-width: 2;
-  }
-
-  .hero-one-globe__node path:last-of-type {
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 1.2;
-  }
-
-  .hero-one-globe__node--mint {
-    color: #72f1c9;
-  }
-
-  .hero-one-globe__node--ivory {
-    color: #f2fff9;
-  }
-
-  .hero-one-globe__node--coral {
-    color: #ff8b72;
-  }
-
-  .hero-one-globe__orbit {
-    fill: none;
-    stroke: #a5ffe2;
-    stroke-dasharray: 1 14;
-    stroke-linecap: round;
-    stroke-width: 1;
-    opacity: 0.18;
-  }
-
-  .hero-one-globe__grain {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    pointer-events: none;
+    inset: 8% 3% 6% 8%;
+    z-index: -3;
+    border-radius: 48% 52% 49% 51%;
     background:
-      radial-gradient(circle at 13% 28%, rgb(255 255 255 / 34%) 0 1px, transparent 1.4px),
-      radial-gradient(circle at 84% 35%, rgb(113 240 199 / 28%) 0 1px, transparent 1.5px),
-      radial-gradient(circle at 72% 82%, rgb(255 255 255 / 22%) 0 1px, transparent 1.4px);
-    background-size:
-      83px 89px,
-      109px 97px,
-      131px 127px;
-    opacity: 0.45;
+      radial-gradient(circle at 52% 46%, rgb(34 139 101 / 12%), transparent 36%),
+      radial-gradient(circle at 66% 58%, rgb(255 255 255 / 82%), transparent 55%);
+    content: "";
   }
 
-  @keyframes hero-one-signal-flow {
-    to {
-      stroke-dashoffset: -72;
+  .orbital-network::after {
+    position: absolute;
+    right: 5%;
+    bottom: 8%;
+    left: 5%;
+    z-index: -2;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(23 33 31 / 14%), transparent);
+    content: "";
+  }
+
+  .orbital-network__horizon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: -2;
+    width: min(42rem, 93%);
+    aspect-ratio: 2.5;
+    border: 1px solid rgb(11 114 83 / 10%);
+    border-radius: 50%;
+    opacity: 0.86;
+    transform: translate(-50%, -50%) rotate(-8deg);
+  }
+
+  .orbital-network__sphere {
+    position: absolute;
+    top: 50%;
+    left: 53%;
+    z-index: 0;
+    width: min(34rem, 47vw);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    perspective: 52rem;
+    transform: translate3d(-50%, -50%, 0);
+    transform-style: preserve-3d;
+    animation: orbital-sphere-drift 15s ease-in-out infinite;
+  }
+
+  .orbital-network__surface {
+    position: absolute;
+    inset: 16%;
+    border: 1px solid rgb(11 114 83 / 22%);
+    border-radius: 50% 48% 51% 49%;
+    background:
+      radial-gradient(circle at 39% 31%, rgb(255 255 255 / 92%) 0 3%, transparent 24%),
+      radial-gradient(circle at 58% 58%, rgb(19 130 91 / 14%), transparent 57%),
+      rgb(245 249 244 / 34%);
+    box-shadow:
+      inset -1.4rem -1.1rem 3.7rem rgb(9 88 63 / 8%),
+      inset 1.2rem 1.3rem 2.8rem rgb(255 255 255 / 74%),
+      0 1.8rem 5rem rgb(51 75 66 / 8%);
+    backdrop-filter: blur(2px);
+  }
+
+  .orbital-network__surface::before,
+  .orbital-network__surface::after {
+    position: absolute;
+    border-radius: 50%;
+    content: "";
+  }
+
+  .orbital-network__surface::before {
+    inset: 9%;
+    border: 1px dashed rgb(11 114 83 / 14%);
+  }
+
+  .orbital-network__surface::after {
+    inset: 43%;
+    background: #0b7253;
+    box-shadow:
+      0 0 0 0.42rem rgb(11 114 83 / 10%),
+      0 0 0 0.85rem rgb(11 114 83 / 5%);
+  }
+
+  .orbital-network__wire {
+    position: absolute;
+    z-index: 1;
+    display: block;
+    border: 1px solid rgb(11 114 83 / 17%);
+    border-radius: 48% 52% 50% 50%;
+    opacity: 0.72;
+    animation: orbital-wire-breathe 8s ease-in-out infinite;
+  }
+
+  .orbital-network__wire--meridian-a {
+    inset: 17% 35%;
+    transform: rotate(12deg);
+  }
+
+  .orbital-network__wire--meridian-b {
+    inset: 17% 38%;
+    transform: rotate(72deg);
+  }
+
+  .orbital-network__wire--latitude-a {
+    inset: 31% 17%;
+    transform: rotate(-7deg);
+  }
+
+  .orbital-network__wire--latitude-b {
+    inset: 40% 17%;
+    border-style: dashed;
+    transform: rotate(15deg);
+    animation-delay: -4s;
+  }
+
+  .orbital-network__orbit {
+    position: absolute;
+    z-index: 2;
+    display: block;
+    border: 1px solid rgb(18 111 80 / 28%);
+    border-radius: 48% 52% 47% 53%;
+    transform-style: preserve-3d;
+  }
+
+  .orbital-network__orbit--outer {
+    inset: 7%;
+    border-style: dashed;
+    transform: rotate(14deg) scaleY(0.48);
+    animation: orbital-ring-outer 38s linear infinite;
+  }
+
+  .orbital-network__orbit--middle {
+    inset: 13% 1%;
+    transform: rotate(-34deg) scaleY(0.64);
+    animation: orbital-ring-middle 46s linear infinite reverse;
+  }
+
+  .orbital-network__orbit--tilted {
+    inset: 1% 17%;
+    border-style: dashed;
+    transform: rotate(68deg) scaleY(0.73);
+    animation: orbital-ring-tilted 52s linear infinite;
+  }
+
+  .orbital-network__orbit i {
+    position: absolute;
+    display: block;
+    width: 0.52rem;
+    height: 0.52rem;
+    border: 2px solid #f8f6ef;
+    border-radius: 50%;
+    background: #0b7253;
+    box-shadow: 0 0 0 0.25rem rgb(11 114 83 / 10%);
+  }
+
+  .orbital-network__orbit i:nth-child(1) {
+    top: 8%;
+    left: 25%;
+  }
+
+  .orbital-network__orbit i:nth-child(2) {
+    right: 8%;
+    bottom: 22%;
+  }
+
+  .orbital-network__orbit i:nth-child(3) {
+    bottom: 4%;
+    left: 29%;
+    width: 0.4rem;
+    height: 0.4rem;
+    background: #56655f;
+  }
+
+  .orbital-network__core {
+    position: absolute;
+    top: 48%;
+    left: 51%;
+    z-index: 3;
+    display: grid;
+    width: 2.15rem;
+    height: 2.15rem;
+    place-items: center;
+    border: 1px solid rgb(11 114 83 / 34%);
+    border-radius: 50%;
+    background: rgb(255 255 255 / 68%);
+    box-shadow:
+      0 0 0 0.72rem rgb(11 114 83 / 7%),
+      0 0 0 1.45rem rgb(11 114 83 / 3%);
+    transform: translate(-50%, -50%);
+  }
+
+  .orbital-network__core i {
+    width: 0.47rem;
+    height: 0.47rem;
+    border-radius: 50%;
+    background: #0b7253;
+  }
+
+  .product-fragment,
+  .terminal-fragment {
+    position: absolute;
+    z-index: 4;
+    font-family: var(--font-ui);
+  }
+
+  .product-fragment {
+    display: grid;
+    gap: 0.62rem;
+    padding: 0.86rem 0.92rem;
+    border: 1px solid rgb(85 99 92 / 18%);
+    border-radius: 0.82rem;
+    background: rgb(255 255 255 / 74%);
+    box-shadow:
+      0 1rem 2.8rem rgb(55 70 64 / 9%),
+      inset 0 1px 0 rgb(255 255 255 / 76%);
+    backdrop-filter: blur(13px);
+  }
+
+  .product-fragment strong {
+    color: #1b2823;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  .product-fragment time,
+  .product-fragment small,
+  .product-fragment__meta,
+  .product-fragment__reply {
+    color: #6d7772;
+    font-size: 0.59rem;
+    line-height: 1.35;
+  }
+
+  .product-fragment__topline {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    color: #4e5a55;
+    font-size: 0.62rem;
+  }
+
+  .product-fragment__topline time,
+  .product-fragment__tag {
+    margin-left: auto;
+  }
+
+  .product-fragment__signal {
+    width: 0.38rem;
+    height: 0.38rem;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #0b7253;
+    box-shadow: 0 0 0 0.2rem rgb(11 114 83 / 10%);
+  }
+
+  .product-fragment--receipt {
+    top: 8%;
+    left: 1%;
+    width: 12.1rem;
+    animation: orbital-fragment-float-a 12s ease-in-out infinite;
+  }
+
+  .product-fragment--message {
+    top: 4%;
+    right: 0;
+    width: 13.8rem;
+    animation: orbital-fragment-float-b 14s ease-in-out -5s infinite;
+  }
+
+  .product-fragment__person {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .product-fragment__person > span:nth-child(2) {
+    display: grid;
+  }
+
+  .product-fragment__avatar {
+    display: grid;
+    width: 1.75rem;
+    height: 1.75rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #dcebe3;
+    color: #0b654b;
+    font-size: 0.57rem;
+    font-weight: 600;
+  }
+
+  .product-fragment--message p {
+    margin: 0;
+    color: #1e2a25;
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .product-fragment__reply {
+    padding-left: 0.58rem;
+    border-left: 1px solid #91aa9e;
+  }
+
+  .product-fragment--peers {
+    right: 2%;
+    bottom: 8%;
+    width: 12.2rem;
+    animation: orbital-fragment-float-a 13s ease-in-out -7s infinite reverse;
+  }
+
+  .product-fragment__tag {
+    padding: 0.15rem 0.36rem;
+    border-radius: 999px;
+    background: #dfede6;
+    color: #0b654b;
+    font-size: 0.5rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .product-fragment__devices {
+    display: flex;
+  }
+
+  .product-fragment__devices span {
+    display: grid;
+    width: 1.55rem;
+    height: 1.55rem;
+    place-items: center;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #e7ebe7;
+    color: #4d5954;
+    font-size: 0.49rem;
+    font-weight: 600;
+  }
+
+  .product-fragment__devices span + span {
+    margin-left: -0.35rem;
+  }
+
+  .terminal-fragment {
+    bottom: 4%;
+    left: 0;
+    display: grid;
+    width: min(18.8rem, 53%);
+    overflow: hidden;
+    padding: 0 0.85rem 0.85rem;
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 0.85rem;
+    background: #17231f;
+    box-shadow: 0 1.2rem 3.2rem rgb(28 43 37 / 20%);
+    color: #e6eee9;
+    animation: orbital-fragment-float-b 15s ease-in-out -9s infinite reverse;
+  }
+
+  .terminal-fragment__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+    min-height: 2rem;
+    margin-bottom: 0.35rem;
+    border-bottom: 1px solid rgb(255 255 255 / 8%);
+  }
+
+  .terminal-fragment__bar > span {
+    width: 0.38rem;
+    height: 0.38rem;
+    border-radius: 50%;
+    background: #64716b;
+  }
+
+  .terminal-fragment__bar > span:first-child {
+    background: #4cab87;
+  }
+
+  .terminal-fragment__bar small {
+    margin-left: auto;
+    color: #84918b;
+    font-size: 0.52rem;
+  }
+
+  .terminal-fragment code {
+    display: block;
+    padding-block: 0.18rem;
+    color: #d9e3dd;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    line-height: 1.45;
+  }
+
+  .terminal-fragment code b,
+  .terminal-fragment code i {
+    color: #75d6ae;
+    font-style: normal;
+    font-weight: 500;
+  }
+
+  .terminal-fragment__quiet {
+    color: #7d8b84 !important;
+  }
+
+  .terminal-fragment__quiet span {
+    display: inline-block;
+    animation: orbital-cursor 1.6s steps(1, end) infinite;
+  }
+
+  @keyframes orbital-sphere-drift {
+    0%,
+    100% {
+      transform: translate3d(-50%, -50%, 0) rotate(-0.6deg);
+    }
+
+    50% {
+      transform: translate3d(-50%, calc(-50% - 0.45rem), 0) rotate(0.7deg);
     }
   }
 
-  @keyframes hero-one-signal-pulse {
+  @keyframes orbital-wire-breathe {
     0%,
     100% {
-      opacity: 0.36;
-      transform: scale(0.8);
+      opacity: 0.48;
+    }
+
+    50% {
+      opacity: 0.78;
+    }
+  }
+
+  @keyframes orbital-ring-outer {
+    from {
+      transform: rotate(14deg) scaleY(0.48);
+    }
+
+    to {
+      transform: rotate(374deg) scaleY(0.48);
+    }
+  }
+
+  @keyframes orbital-ring-middle {
+    from {
+      transform: rotate(-34deg) scaleY(0.64);
+    }
+
+    to {
+      transform: rotate(326deg) scaleY(0.64);
+    }
+  }
+
+  @keyframes orbital-ring-tilted {
+    from {
+      transform: rotate(68deg) scaleY(0.73);
+    }
+
+    to {
+      transform: rotate(428deg) scaleY(0.73);
+    }
+  }
+
+  @keyframes orbital-fragment-float-a {
+    0%,
+    100% {
+      opacity: 0.96;
+      transform: translate3d(0, -0.2rem, 0);
     }
 
     50% {
       opacity: 1;
-      transform: scale(1.35);
+      transform: translate3d(0.18rem, 0.35rem, 0);
+    }
+  }
+
+  @keyframes orbital-fragment-float-b {
+    0%,
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0.24rem, 0);
+    }
+
+    50% {
+      opacity: 0.97;
+      transform: translate3d(-0.16rem, -0.32rem, 0);
+    }
+  }
+
+  @keyframes orbital-cursor {
+    0%,
+    48% {
+      opacity: 1;
+    }
+
+    49%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @media (max-width: 1060px) {
+    .orbital-network {
+      min-height: 36rem;
+    }
+
+    .orbital-network__sphere {
+      width: min(29rem, 48vw);
+    }
+
+    .product-fragment--receipt {
+      left: 0;
+    }
+
+    .product-fragment--message {
+      right: 0;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .orbital-network {
+      min-height: 40rem;
+    }
+
+    .orbital-network__sphere {
+      width: min(32rem, 72vw);
+    }
+
+    .product-fragment--receipt {
+      left: 3%;
+    }
+
+    .product-fragment--message {
+      right: 3%;
+    }
+
+    .product-fragment--peers {
+      right: 5%;
+    }
+
+    .terminal-fragment {
+      left: 3%;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .orbital-network {
+      min-height: 33rem;
+    }
+
+    .orbital-network::before {
+      inset: 7% -12% 5%;
+    }
+
+    .orbital-network__sphere {
+      top: 48%;
+      left: 50%;
+      width: min(21rem, 90vw);
+    }
+
+    .product-fragment {
+      gap: 0.42rem;
+      padding: 0.68rem 0.7rem;
+    }
+
+    .product-fragment strong {
+      font-size: 0.68rem;
+    }
+
+    .product-fragment--receipt {
+      top: 0;
+      left: 0;
+      width: 9.7rem;
+    }
+
+    .product-fragment--message {
+      top: 4%;
+      right: 0;
+      width: 11.3rem;
+    }
+
+    .product-fragment--message p {
+      font-size: 0.7rem;
+    }
+
+    .product-fragment__reply {
+      display: none;
+    }
+
+    .product-fragment--peers {
+      top: 58%;
+      right: 0;
+      bottom: auto;
+      width: 10.4rem;
+    }
+
+    .terminal-fragment {
+      bottom: 0;
+      left: 0;
+      width: min(15.8rem, 76%);
+      padding-inline: 0.7rem;
+    }
+
+    .terminal-fragment code {
+      font-size: 0.54rem;
+    }
+  }
+
+  @media (max-width: 380px) {
+    .orbital-network {
+      min-height: 31rem;
+    }
+
+    .product-fragment--receipt {
+      width: 9rem;
+    }
+
+    .product-fragment--message {
+      width: 10.4rem;
+    }
+
+    .product-fragment__person {
+      gap: 0.38rem;
+    }
+
+    .product-fragment__avatar {
+      width: 1.45rem;
+      height: 1.45rem;
+    }
+
+    .product-fragment--peers {
+      width: 9.6rem;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .hero-one-globe__links path,
-    .hero-one-globe__signals circle {
+    .orbital-network__sphere,
+    .orbital-network__wire,
+    .orbital-network__orbit,
+    .product-fragment,
+    .terminal-fragment,
+    .terminal-fragment__quiet span {
       animation: none;
-    }
-
-    .hero-one-globe__particle {
-      transition: none;
     }
   }
 </style>
