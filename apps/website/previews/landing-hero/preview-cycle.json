@@ -5,7 +5,7 @@
   "name": "landing-hero",
   "title": "Landing-page hero preview cycle",
   "status": "active",
-  "baseRevision": "d307992314e3025fa3d0bef8d1be3992a5c686d0",
+  "baseRevision": "443f50ae6d217808c28fd2a99aba1abd3aa66022",
   "sourceDesign": {
     "fileUrl": "https://www.figma.com/design/hDvRvY0J6fna6OTWWlC639/Josh-s-Chaft",
     "sourceSectionNodeId": "164:75",
@@ -91,7 +91,7 @@
     },
     {
       "id": "hero-4",
-      "status": "selected",
+      "status": "ready",
       "branch": "preview/landing-hero-4",
       "worker": "chaft-website-hero-4",
       "domain": "hero-4.chaft.ai",
@@ -105,9 +105,9 @@
     }
   ],
   "selection": {
-    "status": "selected",
-    "selectedSlot": "hero-4",
-    "decisionRecord": "Preview 4 selected for production after live review of the four fixed Preview slots.",
+    "status": "not-started",
+    "selectedSlot": null,
+    "decisionRecord": null,
     "productionRevision": null
   }
 }
