@@ -1,6 +1,6 @@
 ---
 import LandingHeroCopy from "../../landing/LandingHeroCopy.astro";
-import ParticleMarkHeroVisual from "./ParticleMarkHeroVisual.astro";
+import CommunicationSurfaceVisual from "./CommunicationSurfaceVisual.astro";
 
 interface Props {
   hasPublishedDownloads: boolean;
@@ -14,29 +14,30 @@ const { hasPublishedDownloads } = Astro.props;
     <LandingHeroCopy {hasPublishedDownloads} />
 
     <div class="hero__visual">
-      <ParticleMarkHeroVisual />
+      <CommunicationSurfaceVisual />
     </div>
   </div>
 </section>
 
 <style>
   .hero {
-    --accent: #76e7ad;
-    --border-strong: #506d5d;
-    --border-subtle: #263d32;
-    --on-accent: #06120c;
-    --surface-active: #153126;
-    --text-faint: #8da99b;
-    --text-muted: #bdcdc5;
-    --text-soft: #deebe4;
-    --text-strong: #f7fff9;
+    --accent: #0b6f54;
+    --border-strong: #a9afa8;
+    --border-subtle: #d7d3c8;
+    --on-accent: #fffdf7;
+    --surface-active: #e4e9e2;
+    --text-faint: #68716c;
+    --text-muted: #59635f;
+    --text-soft: #36413d;
+    --text-strong: #17211f;
     position: relative;
     overflow: hidden;
-    padding-block: clamp(5rem, 9vw, 8rem);
+    padding-block: clamp(3.75rem, 4.5vw, 5.25rem);
     border-bottom: 1px solid var(--border-subtle);
     background:
-      radial-gradient(circle at 77% 46%, rgb(54 202 128 / 11%), transparent 34rem),
-      linear-gradient(115deg, #07140f 0%, #07140f 52%, #0a1c14 100%);
+      radial-gradient(circle at 76% 45%, rgb(92 151 125 / 12%), transparent 32rem),
+      radial-gradient(circle at 94% 24%, rgb(255 253 247 / 86%), transparent 23rem),
+      linear-gradient(115deg, #f8f5ed 0%, #f5f1e8 56%, #efede4 100%);
     color: var(--text-strong);
   }
 
@@ -44,18 +45,36 @@ const { hasPublishedDownloads } = Astro.props;
     position: absolute;
     inset: 0;
     background:
-      linear-gradient(rgb(129 237 181 / 2.5%) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(129 237 181 / 2.5%) 1px, transparent 1px);
-    background-size: 48px 48px;
-    mask-image: linear-gradient(to right, transparent, #000 62%, transparent);
+      radial-gradient(circle at 13% 31%, rgb(23 33 31 / 7%) 0 0.55px, transparent 0.8px),
+      radial-gradient(circle at 72% 67%, rgb(23 33 31 / 5%) 0 0.5px, transparent 0.75px);
+    background-size:
+      19px 23px,
+      29px 31px;
+    mask-image: linear-gradient(to right, transparent 2%, #000 44%, #000 96%, transparent);
+    opacity: 0.48;
+    pointer-events: none;
+    content: "";
+  }
+
+  .hero::after {
+    position: absolute;
+    top: 10%;
+    right: clamp(-12rem, -7vw, -5rem);
+    width: clamp(25rem, 44vw, 42rem);
+    aspect-ratio: 1.4;
+    border: 1px solid rgb(23 33 31 / 5%);
+    border-radius: 50%;
+    transform: rotate(-9deg);
     pointer-events: none;
     content: "";
   }
 
   .hero__grid {
+    position: relative;
+    z-index: 1;
     display: grid;
-    grid-template-columns: minmax(0, 0.96fr) minmax(25rem, 1.04fr);
-    gap: clamp(2.75rem, 6vw, 6rem);
+    grid-template-columns: minmax(0, 0.96fr) minmax(29rem, 1.04fr);
+    gap: clamp(2.5rem, 4vw, 4rem);
     align-items: center;
   }
 
@@ -65,19 +84,20 @@ const { hasPublishedDownloads } = Astro.props;
   }
 
   .hero :global(h1) {
-    max-width: 11.5ch;
+    max-width: 9ch;
     margin-bottom: 1.8rem;
     color: var(--text-strong);
-    font-size: clamp(3.35rem, 6.9vw, 6.2rem);
+    font-size: clamp(3.35rem, 5vw, 4.5rem);
   }
 
   .hero :global(h1 em) {
     display: block;
-    color: var(--accent);
-    font-family: var(--font-editorial);
-    font-size: 1.04em;
-    font-weight: 400;
-    letter-spacing: -0.045em;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    font-style: normal;
+    font-weight: inherit;
+    letter-spacing: inherit;
   }
 
   .hero :global(.eyebrow) {
@@ -86,16 +106,16 @@ const { hasPublishedDownloads } = Astro.props;
 
   .hero :global(.eyebrow::before) {
     background: var(--accent);
-    box-shadow: 0 0 0.8rem rgb(118 231 173 / 64%);
+    box-shadow: 0 0 0 0.28rem rgb(11 111 84 / 9%);
   }
 
   .hero :global(.lede) {
-    max-width: 42rem;
+    max-width: 39rem;
     color: var(--text-muted);
   }
 
   .hero :global(.hero__actions) {
-    margin-top: 2.25rem;
+    margin-top: 1.75rem;
   }
 
   .hero :global(.hero__note) {
@@ -103,7 +123,7 @@ const { hasPublishedDownloads } = Astro.props;
     flex-wrap: wrap;
     gap: 0.7rem;
     align-items: center;
-    margin-top: 2rem;
+    margin-top: 1.4rem;
     margin-bottom: 0;
     color: var(--text-faint);
     font-size: 0.8rem;
@@ -111,30 +131,29 @@ const { hasPublishedDownloads } = Astro.props;
 
   .hero__visual {
     position: relative;
+    min-width: 0;
   }
 
   .hero__visual::before {
     position: absolute;
-    inset: 1rem -1rem -1rem 1rem;
-    z-index: 0;
-    border: 1px solid var(--border-strong);
-    border-radius: 1.5rem;
-    background: rgb(15 46 33 / 42%);
+    top: 9%;
+    right: -7%;
+    bottom: 7%;
+    left: 17%;
+    z-index: -1;
+    border-radius: 50%;
+    background: rgb(90 145 120 / 8%);
+    filter: blur(48px);
     content: "";
   }
 
-  .hero__visual > :global(*) {
-    position: relative;
-    z-index: 1;
-  }
-
   .hero :global(.button) {
-    background: var(--accent);
+    background: var(--text-strong);
     color: var(--on-accent);
   }
 
   .hero :global(.button:hover) {
-    background: #9af4c4;
+    background: var(--accent);
   }
 
   .hero :global(.button--secondary) {
@@ -160,18 +179,33 @@ const { hasPublishedDownloads } = Astro.props;
   }
 
   .hero :global(.status) {
-    border-color: var(--border-strong);
+    border-color: var(--border-subtle);
+    background: rgb(255 253 247 / 52%);
     color: var(--text-soft);
   }
 
-  @media (max-width: 940px) {
+  @media (max-width: 1020px) {
     .hero__grid {
       grid-template-columns: 1fr;
     }
 
     .hero__visual {
-      width: min(100%, 42rem);
+      width: min(100%, 45rem);
       margin-inline: auto;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .hero {
+      padding-block: 3.25rem 4.25rem;
+    }
+
+    .hero__grid {
+      gap: 2.75rem;
+    }
+
+    .hero :global(h1) {
+      font-size: clamp(3rem, 16vw, 4.35rem);
     }
   }
 </style>
