@@ -9,607 +9,1139 @@ const { hasPublishedDownloads } = Astro.props;
 ---
 
 <section class="hero hero--preview-three" data-chaft-hero="hero-3">
-  <div
-    class="signal-sphere"
-    data-hero-three
-    role="img"
-    aria-label="A spherical field of connected peers with quiet message activity"
-  >
-    <canvas aria-hidden="true"></canvas>
-    <div class="signal-sphere__halo" aria-hidden="true"></div>
-    <div class="signal-sphere__activity" aria-hidden="true">
-      <span class="signal-sphere__message signal-sphere__message--one">
-        <i></i>
-        <b>Direct sync</b>
-        <small>2 peers reachable</small>
-      </span>
-      <span class="signal-sphere__message signal-sphere__message--two">
-        <i></i>
-        <b>History verified</b>
-        <small>local copy current</small>
-      </span>
-      <span class="signal-sphere__message signal-sphere__message--three">
-        <i></i>
-        <b>New message</b>
-        <small>encrypted content</small>
-      </span>
-    </div>
+  <div class="hero__atmosphere" aria-hidden="true">
+    <span class="hero__wash hero__wash--one"></span>
+    <span class="hero__wash hero__wash--two"></span>
   </div>
 
   <div class="shell hero__grid">
     <LandingHeroCopy {hasPublishedDownloads} />
+
+    <div
+      class="hero__visual"
+      role="img"
+      aria-label="A Chaft conversation syncing through signed events to three directly connected devices"
+    >
+      <div class="constellation">
+        <span class="constellation__index constellation__index--top" aria-hidden="true">
+          PRODUCT CONSTELLATION / 03
+        </span>
+        <span class="constellation__index constellation__index--side" aria-hidden="true">
+          CONVERSATION-LED
+        </span>
+
+        <span class="connection connection--presence" aria-hidden="true">
+          <i></i>
+          <b>presence</b>
+        </span>
+        <span class="connection connection--event" aria-hidden="true">
+          <i></i>
+          <b>signed event</b>
+        </span>
+        <span class="connection connection--sync" aria-hidden="true">
+          <i></i>
+          <b>direct sync</b>
+        </span>
+
+        <div class="conversation-card surface-card">
+          <div class="conversation-card__bar">
+            <div>
+              <span class="channel-mark">#</span>
+              <strong>product-launch</strong>
+            </div>
+            <span class="online-count"><i></i> 4 online</span>
+          </div>
+
+          <div class="conversation-card__context">
+            <span>Today</span>
+            <span>history verified on this device</span>
+          </div>
+
+          <div class="message message--maya">
+            <span class="avatar avatar--maya">M</span>
+            <div class="message__body">
+              <p class="message__meta"><strong>Maya</strong><time>10:42</time></p>
+              <p>Can you send the release note to everyone in this room?</p>
+            </div>
+          </div>
+
+          <div class="message message--you">
+            <span class="avatar avatar--you">Y</span>
+            <div class="message__body">
+              <p class="message__meta"><strong>You</strong><time>10:43</time></p>
+              <p>Done. It is signed and syncing directly now.</p>
+              <div class="message__attachment">
+                <span class="file-mark" aria-hidden="true">↗</span>
+                <span>
+                  <strong>release-note.md</strong>
+                  <small>18 KB · encrypted</small>
+                </span>
+                <span class="attachment-state">sent</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="message message--devon">
+            <span class="avatar avatar--devon">D</span>
+            <div class="message__body">
+              <p class="message__meta"><strong>Devon</strong><time>10:43</time></p>
+              <p>Received here. History is current on both devices.</p>
+              <span class="reaction">✓ 2</span>
+            </div>
+          </div>
+
+          <div class="composer-fragment">
+            <span>Message #product-launch</span>
+            <span class="composer-fragment__send" aria-hidden="true">↑</span>
+          </div>
+        </div>
+
+        <div class="presence-fragment surface-card">
+          <div class="fragment-heading">
+            <span>Presence</span>
+            <strong>03</strong>
+          </div>
+          <div class="presence-row">
+            <span class="presence-row__avatars">
+              <i class="avatar avatar--maya">M</i>
+              <i class="avatar avatar--devon">D</i>
+              <i class="avatar avatar--you">Y</i>
+            </span>
+            <span><b></b> reachable now</span>
+          </div>
+        </div>
+
+        <div class="api-fragment surface-card">
+          <div class="fragment-heading">
+            <span>Signed event</span>
+            <strong>202</strong>
+          </div>
+          <code><span>POST</span> /v1/messages</code>
+          <div class="api-fragment__meta">
+            <span>signature verified</span>
+            <span>24 ms</span>
+          </div>
+        </div>
+
+        <div class="delivery-fragment">
+          <span class="delivery-fragment__mark">✓</span>
+          <span>
+            <strong>Delivered</strong>
+            <small>3 devices · 10:43</small>
+          </span>
+        </div>
+
+        <div class="terminal-fragment">
+          <div class="terminal-fragment__bar">
+            <span><i></i><i></i><i></i></span>
+            <span>sync</span>
+          </div>
+          <code><span>$</span> chaft sync --room launch</code>
+          <code><b>✓</b> 3 peers · history current</code>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
-
-<script>
-  type SpherePoint = {
-    x: number;
-    y: number;
-    z: number;
-    size: number;
-    phase: number;
-  };
-
-  type ProjectedPoint = {
-    x: number;
-    y: number;
-    z: number;
-    scale: number;
-  };
-
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const interactivePointer = window.matchMedia(
-    "(hover: hover) and (pointer: fine)",
-  );
-
-  for (const root of document.querySelectorAll("[data-hero-three]")) {
-    if (!(root instanceof HTMLElement) || root.dataset.ready === "true") continue;
-
-    const canvas = root.querySelector("canvas");
-    const host = root.closest(".hero");
-    if (
-      !(canvas instanceof HTMLCanvasElement) ||
-      !(host instanceof HTMLElement)
-    ) {
-      continue;
-    }
-
-    const context = canvas.getContext("2d", { alpha: true });
-    if (!context) continue;
-
-    root.dataset.ready = "true";
-
-    let width = 0;
-    let height = 0;
-    let pixelRatio = 1;
-    let radius = 0;
-    let frame = 0;
-    let visible = true;
-    let lastDraw = 0;
-    let points: SpherePoint[] = [];
-    const pointer = { x: 0, y: 0, active: false };
-    const nodePositions = [0.04, 0.18, 0.37, 0.59, 0.81];
-    const links: Array<readonly [number, number]> = [
-      [0, 1],
-      [0, 2],
-      [1, 3],
-      [2, 3],
-      [2, 4],
-      [3, 4],
-    ];
-
-    const buildPoints = () => {
-      const count = width < 600 ? 420 : 720;
-      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-      points = Array.from({ length: count }, (_, index) => {
-        const y = 1 - (index / (count - 1)) * 2;
-        const ring = Math.sqrt(Math.max(0, 1 - y * y));
-        const angle = goldenAngle * index;
-        return {
-          x: Math.cos(angle) * ring,
-          y,
-          z: Math.sin(angle) * ring,
-          size: index % 17 === 0 ? 1.8 : index % 5 === 0 ? 1.25 : 0.85,
-          phase: (index * 0.61803398875) % 1,
-        };
-      });
-    };
-
-    const project = (
-      point: SpherePoint,
-      rotationY: number,
-      rotationX: number,
-    ): ProjectedPoint => {
-      const cosY = Math.cos(rotationY);
-      const sinY = Math.sin(rotationY);
-      const xzX = point.x * cosY - point.z * sinY;
-      const xzZ = point.x * sinY + point.z * cosY;
-      const cosX = Math.cos(rotationX);
-      const sinX = Math.sin(rotationX);
-      const yzY = point.y * cosX - xzZ * sinX;
-      const yzZ = point.y * sinX + xzZ * cosX;
-      const perspective = 1.75 / (2.25 - yzZ * 0.34);
-      return {
-        x: width / 2 + xzX * radius * perspective,
-        y: height * 0.54 + yzY * radius * perspective,
-        z: yzZ,
-        scale: perspective,
-      };
-    };
-
-    const draw = (time: number) => {
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, width, height);
-
-      const elapsed = reduceMotion.matches ? 0 : time * 0.000075;
-      const pointerY =
-        pointer.active && !reduceMotion.matches ? pointer.x * 0.14 : 0;
-      const pointerX =
-        pointer.active && !reduceMotion.matches ? pointer.y * 0.09 : 0;
-      const rotationY = 0.34 + elapsed + pointerY;
-      const rotationX = -0.08 + pointerX;
-      const projected = points.map((point) =>
-        project(point, rotationY, rotationX),
-      );
-
-      context.save();
-      context.globalCompositeOperation = "lighter";
-      for (let index = 0; index < points.length; index += 1) {
-        const point = points[index];
-        const screen = projected[index];
-        if (!point || !screen) continue;
-        const depth = Math.max(0.08, (screen.z + 1) / 2);
-        const shimmer = reduceMotion.matches
-          ? 0
-          : Math.sin(elapsed * 34 + point.phase * Math.PI * 2) * 0.08;
-        const alpha = Math.max(
-          0.08,
-          Math.min(0.78, 0.12 + depth * 0.5 + shimmer),
-        );
-        const size = Math.max(
-          0.8,
-          point.size * screen.scale * (0.8 + depth * 0.6),
-        );
-        context.fillStyle = `rgba(132, 240, 205, ${alpha})`;
-        context.beginPath();
-        context.arc(screen.x, screen.y, size, 0, Math.PI * 2);
-        context.fill();
-      }
-
-      const projectedNodes = nodePositions
-        .map(
-          (position) =>
-            projected[Math.round((projected.length - 1) * position)],
-        )
-        .filter(Boolean);
-      context.lineWidth = 1;
-      context.setLineDash([2, 6]);
-      for (const [fromIndex, toIndex] of links) {
-        const from = projectedNodes[fromIndex];
-        const to = projectedNodes[toIndex];
-        if (!from || !to) continue;
-        const depth = Math.max(0.14, ((from.z + to.z) / 2 + 1) / 2);
-        context.strokeStyle = `rgba(161, 239, 215, ${0.12 + depth * 0.32})`;
-        context.beginPath();
-        context.moveTo(from.x, from.y);
-        context.quadraticCurveTo(
-          width / 2 + (from.x + to.x - width) * 0.24,
-          height * 0.54 + (from.y + to.y - height * 1.08) * 0.24,
-          to.x,
-          to.y,
-        );
-        context.stroke();
-      }
-      context.setLineDash([]);
-
-      projectedNodes.forEach((node, index) => {
-        if (!node) return;
-        const depth = Math.max(0.18, (node.z + 1) / 2);
-        const pulse = reduceMotion.matches
-          ? 0
-          : (Math.sin(elapsed * 45 + index) + 1) * 1.2;
-        context.strokeStyle = `rgba(202, 255, 238, ${0.3 + depth * 0.55})`;
-        context.lineWidth = 1;
-        context.beginPath();
-        context.arc(node.x, node.y, 8 + pulse, 0, Math.PI * 2);
-        context.stroke();
-        context.fillStyle = "#d9fff2";
-        context.beginPath();
-        context.arc(node.x, node.y, 2.6 + depth * 1.4, 0, Math.PI * 2);
-        context.fill();
-      });
-      context.restore();
-    };
-
-    const rebuild = () => {
-      const bounds = root.getBoundingClientRect();
-      width = Math.max(1, Math.round(bounds.width));
-      height = Math.max(1, Math.round(bounds.height));
-      radius = Math.min(width * 0.42, height * 0.47, 390);
-      pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(width * pixelRatio);
-      canvas.height = Math.round(height * pixelRatio);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-      buildPoints();
-      draw(0);
-    };
-
-    const animate = (time: number) => {
-      if (
-        !reduceMotion.matches &&
-        interactivePointer.matches &&
-        visible &&
-        document.visibilityState === "visible"
-      ) {
-        if (time - lastDraw > 32) {
-          draw(time);
-          lastDraw = time;
-        }
-        frame = window.requestAnimationFrame(animate);
-      }
-    };
-
-    const restartAnimation = () => {
-      window.cancelAnimationFrame(frame);
-      if (
-        reduceMotion.matches ||
-        !interactivePointer.matches ||
-        !visible ||
-        document.visibilityState !== "visible"
-      ) {
-        draw(0);
-        return;
-      }
-      frame = window.requestAnimationFrame(animate);
-    };
-
-    const updatePointer = (event: PointerEvent) => {
-      if (
-        reduceMotion.matches ||
-        !interactivePointer.matches ||
-        (event.pointerType !== "mouse" && event.pointerType !== "pen")
-      ) {
-        return;
-      }
-      const bounds = root.getBoundingClientRect();
-      pointer.x = (event.clientX - bounds.left) / width - 0.5;
-      pointer.y = (event.clientY - bounds.top) / height - 0.5;
-      pointer.active = true;
-    };
-
-    const clearPointer = () => {
-      pointer.active = false;
-    };
-
-    const resizeObserver = new ResizeObserver(rebuild);
-    const intersectionObserver = new IntersectionObserver(([entry]) => {
-      visible = entry?.isIntersecting ?? true;
-      restartAnimation();
-    });
-
-    resizeObserver.observe(root);
-    intersectionObserver.observe(root);
-    host.addEventListener("pointermove", updatePointer, { passive: true });
-    host.addEventListener("pointerleave", clearPointer, { passive: true });
-    reduceMotion.addEventListener("change", restartAnimation);
-    interactivePointer.addEventListener("change", restartAnimation);
-    document.addEventListener("visibilitychange", restartAnimation);
-    rebuild();
-    restartAnimation();
-  }
-</script>
 
 <style>
   .hero {
     position: relative;
     display: grid;
-    min-height: clamp(48rem, 86vh, 57rem);
+    min-height: clamp(46rem, 82vh, 54rem);
     align-items: center;
     overflow: hidden;
-    padding-block: clamp(5.5rem, 11vw, 8rem);
+    padding-block: clamp(4.25rem, 8vw, 6.75rem);
     border-bottom: 1px solid var(--border-subtle);
-    background: #07110f;
+    background: #f4f0e6;
+    isolation: isolate;
+  }
+
+  .hero::before {
+    position: absolute;
+    inset: 0;
+    z-index: -3;
+    background-image: radial-gradient(rgb(23 33 31 / 8%) 0.7px, transparent 0.7px);
+    background-size: 17px 17px;
+    content: "";
+    opacity: 0.28;
+    mask-image: linear-gradient(90deg, transparent 2%, #000 64%, transparent 100%);
   }
 
   .hero::after {
     position: absolute;
-    inset: auto 0 0;
-    z-index: 1;
-    height: 9rem;
-    background: linear-gradient(transparent, rgb(7 17 15 / 82%));
+    top: 9%;
+    right: -9rem;
+    z-index: -2;
+    width: min(48vw, 43rem);
+    aspect-ratio: 1;
+    border: 1px solid rgb(7 112 84 / 11%);
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 5rem rgb(7 112 84 / 2.5%),
+      0 0 0 11rem rgb(7 112 84 / 1.5%);
     content: "";
+  }
+
+  .hero__atmosphere {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
     pointer-events: none;
   }
 
+  .hero__wash {
+    position: absolute;
+    display: block;
+    border-radius: 50%;
+    filter: blur(2px);
+  }
+
+  .hero__wash--one {
+    top: 4%;
+    right: 2%;
+    width: min(53vw, 46rem);
+    aspect-ratio: 1;
+    background: radial-gradient(circle, rgb(112 156 131 / 14%), transparent 69%);
+  }
+
+  .hero__wash--two {
+    right: 34%;
+    bottom: -28%;
+    width: 32rem;
+    aspect-ratio: 1;
+    background: radial-gradient(circle, rgb(214 173 117 / 13%), transparent 68%);
+  }
+
   .hero__grid {
-    position: relative;
-    z-index: 4;
+    display: grid;
+    grid-template-columns: minmax(0, 0.82fr) minmax(33rem, 1.28fr);
+    gap: clamp(2.5rem, 5vw, 5rem);
+    align-items: center;
   }
 
   .hero :global(.hero__copy) {
     position: relative;
-    width: min(100%, 54rem);
-    margin-inline: auto;
-    text-align: center;
+    z-index: 6;
+    max-width: 31rem;
+  }
+
+  .hero :global(.eyebrow) {
+    margin-bottom: 1.35rem;
+    color: #52625c;
+  }
+
+  .hero :global(.eyebrow)::before {
+    background: #087054;
+    box-shadow: 0 0 0 0.28rem rgb(8 112 84 / 9%);
   }
 
   .hero :global(h1) {
-    max-width: 11.5ch;
-    margin-inline: auto;
-    margin-bottom: 1.8rem;
-    color: #f5fff9;
-    font-size: clamp(3.5rem, 7vw, 6.2rem);
+    max-width: 9.5ch;
+    margin-bottom: 1.55rem;
+    font-size: clamp(3.5rem, 6vw, 5.65rem);
     text-wrap: balance;
   }
 
   .hero :global(h1 em) {
     display: block;
-    color: #84f0cd;
+    color: #087054;
     font-family: var(--font-editorial);
-    font-size: 1.04em;
+    font-size: 1.035em;
     font-weight: 400;
     letter-spacing: -0.045em;
   }
 
-  .hero :global(.hero__actions) {
-    justify-content: center;
-    margin-top: 2.25rem;
-  }
-
-  .hero :global(.eyebrow) {
-    justify-content: center;
-    color: #84f0cd;
-  }
-
-  .hero :global(.eyebrow)::before {
-    background: #d9fff2;
-    box-shadow: 0 0 1.2rem rgb(132 240 205 / 72%);
-  }
-
   .hero :global(.lede) {
-    max-width: 43rem;
-    margin-inline: auto;
-    color: #c5d9d2;
+    max-width: 31rem;
+    color: #4f5e59;
+    font-size: clamp(1.02rem, 1.45vw, 1.18rem);
+    line-height: 1.6;
+  }
+
+  .hero :global(.hero__actions) {
+    margin-top: 2rem;
   }
 
   .hero :global(.button) {
-    background: #84f0cd;
-    color: #07110f;
+    border-radius: 999px;
+    box-shadow: none;
   }
 
   .hero :global(.button:hover) {
-    background: #a9f6de;
-    box-shadow: 4px 4px 0 rgb(0 0 0 / 28%);
+    transform: translateY(-2px);
+    box-shadow: 0 0.45rem 1rem rgb(23 33 31 / 12%);
   }
 
   .hero :global(.button--secondary) {
-    border-color: rgb(197 217 210 / 48%);
-    background: rgb(7 17 15 / 48%);
-    color: #f5fff9;
-    backdrop-filter: blur(10px);
-  }
-
-  .hero :global(.button--secondary:hover) {
-    border-color: #d9fff2;
-    background: rgb(132 240 205 / 12%);
+    border-color: #aeb6af;
+    background: rgb(255 253 247 / 58%);
+    backdrop-filter: blur(8px);
   }
 
   .hero :global(.button--quiet) {
     background: transparent;
-    color: #c5d9d2;
-    text-decoration-color: rgb(197 217 210 / 48%);
+    box-shadow: none;
   }
 
   .hero :global(.button--quiet:hover) {
+    transform: none;
     background: transparent;
-    color: #f5fff9;
+    box-shadow: none;
   }
 
   .hero :global(.hero__note) {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: 0.7rem;
     align-items: center;
-    margin-top: 2rem;
+    max-width: 29rem;
+    margin-top: 1.8rem;
     margin-bottom: 0;
-    color: #9eb8af;
-    font-size: 0.8rem;
+    color: #65716d;
+    font-size: 0.78rem;
   }
 
   .hero :global(.status) {
-    border-color: rgb(197 217 210 / 28%);
-    background: rgb(7 17 15 / 52%);
-    color: #d9fff2;
-    backdrop-filter: blur(10px);
+    border-color: rgb(23 33 31 / 16%);
+    background: rgb(255 253 247 / 58%);
   }
 
-  .signal-sphere {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    background:
-      radial-gradient(circle at 50% 55%, rgb(55 191 151 / 13%), transparent 34%),
-      radial-gradient(
-        circle at 50% 55%,
-        transparent 0 39%,
-        rgb(6 22 19 / 66%) 64%
-      ),
-      #07110f;
-    isolation: isolate;
+  .hero__visual {
+    position: relative;
+    min-width: 0;
+    height: clamp(35rem, 46vw, 42rem);
   }
 
-  .signal-sphere::before {
+  .constellation {
     position: absolute;
     inset: 0;
-    background:
-      linear-gradient(rgb(130 216 190 / 3%) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(130 216 190 / 3%) 1px, transparent 1px);
-    background-size: 34px 34px;
+    min-width: 34rem;
+    font-family: var(--font-ui);
+  }
+
+  .constellation::before {
+    position: absolute;
+    inset: 7% 1% 5% 4%;
+    border: 1px solid rgb(23 33 31 / 7%);
+    border-radius: 48% 52% 45% 55%;
     content: "";
-    mask-image: radial-gradient(circle at 50% 55%, #000, transparent 68%);
+    transform: rotate(-5deg);
   }
 
-  .signal-sphere::after {
+  .constellation::after {
     position: absolute;
-    inset: 0;
-    z-index: 3;
-    background:
-      linear-gradient(
-        180deg,
-        rgb(7 17 15 / 78%) 0%,
-        transparent 34%,
-        transparent 72%,
-        rgb(7 17 15 / 82%) 100%
-      ),
-      radial-gradient(
-        ellipse at 50% 32%,
-        rgb(7 17 15 / 44%) 0%,
-        transparent 52%
-      );
+    top: 49%;
+    left: 44%;
+    z-index: 0;
+    width: 28rem;
+    height: 28rem;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgb(8 112 84 / 9%), transparent 68%);
     content: "";
     pointer-events: none;
   }
 
-  canvas {
+  .constellation__index {
     position: absolute;
-    inset: 0;
     z-index: 1;
-    width: 100%;
-    height: 100%;
-  }
-
-  .signal-sphere__halo {
-    position: absolute;
-    top: 54%;
-    left: 50%;
-    z-index: 0;
-    width: min(72vw, 47rem);
-    aspect-ratio: 1;
-    transform: translate(-50%, -50%);
-    border: 1px solid rgb(132 240 205 / 18%);
-    border-radius: 50%;
-    box-shadow:
-      inset 0 0 7rem rgb(66 218 170 / 9%),
-      0 0 7rem rgb(66 218 170 / 7%);
-  }
-
-  .signal-sphere__activity {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
+    color: #7a847f;
     font-family: var(--font-mono);
+    font-size: 0.59rem;
+    letter-spacing: 0.12em;
   }
 
-  .signal-sphere__message {
+  .constellation__index--top {
+    top: 1.5%;
+    left: 7%;
+  }
+
+  .constellation__index--side {
+    top: 27%;
+    right: -1.5rem;
+    transform: rotate(90deg);
+    transform-origin: right top;
+  }
+
+  .surface-card {
+    border: 1px solid rgb(23 33 31 / 14%);
+    background: rgb(255 253 247 / 88%);
+    box-shadow:
+      0 1.5rem 4rem rgb(35 50 44 / 9%),
+      0 0.18rem 0.5rem rgb(35 50 44 / 5%);
+    backdrop-filter: blur(16px);
+  }
+
+  .conversation-card {
     position: absolute;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.1rem 0.55rem;
-    min-width: 10rem;
-    padding: 0.65rem 0.8rem;
-    border: 1px solid rgb(169 238 217 / 18%);
-    border-radius: var(--radius-sm);
-    background: rgb(7 28 23 / 56%);
-    box-shadow: 0 1rem 3rem rgb(0 0 0 / 18%);
-    color: #d9fff2;
-    opacity: 0.64;
-    backdrop-filter: blur(10px);
+    top: 12%;
+    left: 5%;
+    z-index: 4;
+    width: min(70%, 31rem);
+    min-height: 25.8rem;
+    overflow: hidden;
+    border-radius: 1.1rem;
+    animation: primary-drift 14s ease-in-out infinite;
   }
 
-  .signal-sphere__message i {
-    grid-row: 1 / span 2;
+  .conversation-card__bar {
+    display: flex;
+    min-height: 3.7rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgb(23 33 31 / 10%);
+    background: rgb(255 255 255 / 48%);
+  }
+
+  .conversation-card__bar > div {
+    display: flex;
+    align-items: center;
+    gap: 0.48rem;
+  }
+
+  .conversation-card__bar strong {
+    color: #1a2522;
+    font-size: 0.84rem;
+    font-weight: 500;
+  }
+
+  .channel-mark {
+    display: grid;
+    width: 1.45rem;
+    height: 1.45rem;
+    place-items: center;
+    border-radius: 0.38rem;
+    background: #e3eee7;
+    color: #087054;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  .online-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #68736f;
+    font-family: var(--font-mono);
+    font-size: 0.59rem;
+    letter-spacing: 0.02em;
+  }
+
+  .online-count i {
     width: 0.42rem;
     height: 0.42rem;
-    margin-top: 0.18rem;
     border-radius: 50%;
-    background: #84f0cd;
-    box-shadow: 0 0 0 0.25rem rgb(132 240 205 / 11%);
+    background: #14906c;
+    box-shadow: 0 0 0 0.22rem rgb(20 144 108 / 9%);
   }
 
-  .signal-sphere__message b {
+  .conversation-card__context {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.75rem 1rem 0.25rem;
+    color: #87918d;
+    font-family: var(--font-mono);
+    font-size: 0.53rem;
+    letter-spacing: 0.03em;
+  }
+
+  .conversation-card__context::before,
+  .conversation-card__context::after {
+    height: 1px;
+    flex: 1;
+    background: rgb(23 33 31 / 8%);
+    content: "";
+  }
+
+  .conversation-card__context span:last-child {
+    position: absolute;
+    top: 4.35rem;
+    right: 1rem;
+    color: #087054;
+  }
+
+  .message {
+    display: grid;
+    grid-template-columns: 1.9rem minmax(0, 1fr);
+    gap: 0.65rem;
+    padding: 0.7rem 1rem 0;
+  }
+
+  .avatar {
+    display: grid;
+    width: 1.9rem;
+    height: 1.9rem;
+    place-items: center;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    color: #fffdf7;
     font-size: 0.62rem;
+    font-style: normal;
     font-weight: 500;
-    letter-spacing: 0.04em;
-    line-height: 1.2;
+  }
+
+  .avatar--maya {
+    background: #6f7169;
+  }
+
+  .avatar--devon {
+    background: #b46a4e;
+  }
+
+  .avatar--you {
+    background: #087054;
+  }
+
+  .message__body > p {
+    margin: 0;
+    color: #3f4b47;
+    font-family: var(--font-ui);
+    font-size: 0.72rem;
+    line-height: 1.46;
+  }
+
+  .message__meta {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    margin-bottom: 0.15rem !important;
+  }
+
+  .message__meta strong {
+    color: #1d2825;
+    font-size: 0.69rem;
+    font-weight: 500;
+  }
+
+  .message__meta time {
+    color: #929b97;
+    font-family: var(--font-mono);
+    font-size: 0.49rem;
+  }
+
+  .message__attachment {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.55rem;
+    align-items: center;
+    max-width: 16rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid rgb(8 112 84 / 15%);
+    border-radius: 0.55rem;
+    background: #f2f7f2;
+  }
+
+  .file-mark {
+    display: grid;
+    width: 1.55rem;
+    height: 1.55rem;
+    place-items: center;
+    border-radius: 0.38rem;
+    background: #dcece3;
+    color: #087054;
+    font-size: 0.62rem;
+  }
+
+  .message__attachment > span:nth-child(2) {
+    display: grid;
+  }
+
+  .message__attachment strong {
+    color: #26332f;
+    font-size: 0.58rem;
+    font-weight: 500;
+  }
+
+  .message__attachment small {
+    color: #76817d;
+    font-family: var(--font-mono);
+    font-size: 0.47rem;
+  }
+
+  .attachment-state {
+    color: #087054;
+    font-family: var(--font-mono);
+    font-size: 0.47rem;
     text-transform: uppercase;
   }
 
-  .signal-sphere__message small {
-    color: #83aa9d;
+  .reaction {
+    display: inline-flex;
+    margin-top: 0.35rem;
+    padding: 0.16rem 0.38rem;
+    border: 1px solid rgb(8 112 84 / 18%);
+    border-radius: 999px;
+    background: #edf5ef;
+    color: #087054;
+    font-family: var(--font-mono);
+    font-size: 0.49rem;
+  }
+
+  .composer-fragment {
+    position: absolute;
+    right: 0.85rem;
+    bottom: 0.8rem;
+    left: 0.85rem;
+    display: flex;
+    min-height: 2.35rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.48rem 0.45rem 0.75rem;
+    border: 1px solid rgb(23 33 31 / 12%);
+    border-radius: 0.65rem;
+    background: rgb(255 255 255 / 56%);
+    color: #8d9692;
+    font-size: 0.58rem;
+  }
+
+  .composer-fragment__send {
+    display: grid;
+    width: 1.5rem;
+    height: 1.5rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #087054;
+    color: #fffdf7;
+    font-size: 0.64rem;
+  }
+
+  .fragment-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    color: #707b77;
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .fragment-heading strong {
+    color: #087054;
+    font-weight: 500;
+  }
+
+  .presence-fragment {
+    position: absolute;
+    top: 4.5%;
+    right: 0;
+    z-index: 5;
+    width: 12.5rem;
+    padding: 0.75rem;
+    border-radius: 0.75rem;
+    animation: satellite-drift-one 11s ease-in-out infinite;
+  }
+
+  .presence-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    margin-top: 0.75rem;
+  }
+
+  .presence-row__avatars {
+    display: flex;
+  }
+
+  .presence-row__avatars .avatar {
+    width: 1.55rem;
+    height: 1.55rem;
+    margin-right: -0.35rem;
+    border: 2px solid #fffdf7;
+    font-size: 0.49rem;
+  }
+
+  .presence-row > span:last-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    color: #61706a;
+    font-size: 0.53rem;
+  }
+
+  .presence-row > span:last-child b {
+    width: 0.38rem;
+    height: 0.38rem;
+    border-radius: 50%;
+    background: #14906c;
+  }
+
+  .api-fragment {
+    position: absolute;
+    bottom: 2.5%;
+    left: 0;
+    z-index: 5;
+    width: 15.6rem;
+    padding: 0.8rem;
+    border-radius: 0.78rem;
+    animation: satellite-drift-two 13s ease-in-out infinite;
+  }
+
+  .api-fragment code {
+    display: block;
+    margin-top: 0.8rem;
+    color: #26322e;
+    font-family: var(--font-mono);
+    font-size: 0.61rem;
+  }
+
+  .api-fragment code span {
+    margin-right: 0.45rem;
+    color: #087054;
+    font-weight: 600;
+  }
+
+  .api-fragment__meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.55rem;
+    color: #87908d;
+    font-family: var(--font-mono);
+    font-size: 0.49rem;
+  }
+
+  .delivery-fragment {
+    position: absolute;
+    top: 54%;
+    right: 0;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 0.58rem;
+    min-width: 10.2rem;
+    padding: 0.62rem 0.72rem;
+    border: 1px solid rgb(8 112 84 / 17%);
+    border-radius: 999px;
+    background: rgb(239 247 241 / 94%);
+    box-shadow: 0 0.7rem 2rem rgb(35 50 44 / 8%);
+    animation: satellite-drift-one 12s -5s ease-in-out infinite;
+  }
+
+  .delivery-fragment__mark {
+    display: grid;
+    width: 1.55rem;
+    height: 1.55rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #087054;
+    color: #fffdf7;
+    font-size: 0.62rem;
+  }
+
+  .delivery-fragment > span:last-child {
+    display: grid;
+  }
+
+  .delivery-fragment strong {
+    color: #23302c;
+    font-size: 0.59rem;
+    font-weight: 500;
+  }
+
+  .delivery-fragment small {
+    color: #71807a;
+    font-family: var(--font-mono);
+    font-size: 0.47rem;
+  }
+
+  .terminal-fragment {
+    position: absolute;
+    right: 1.5%;
+    bottom: 1.5%;
+    z-index: 5;
+    width: 18rem;
+    overflow: hidden;
+    border: 1px solid rgb(23 33 31 / 18%);
+    border-radius: 0.8rem;
+    background: #17211f;
+    box-shadow: 0 1.4rem 3.5rem rgb(23 33 31 / 14%);
+    color: #dce7e1;
+    animation: satellite-drift-three 15s -3s ease-in-out infinite;
+  }
+
+  .terminal-fragment__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid rgb(255 255 255 / 9%);
+    color: #8ea099;
+    font-family: var(--font-mono);
+    font-size: 0.48rem;
+  }
+
+  .terminal-fragment__bar > span:first-child {
+    display: flex;
+    gap: 0.28rem;
+  }
+
+  .terminal-fragment__bar i {
+    width: 0.32rem;
+    height: 0.32rem;
+    border-radius: 50%;
+    background: #56625d;
+  }
+
+  .terminal-fragment > code {
+    display: block;
+    padding: 0.65rem 0.75rem 0;
+    color: #b9c7c1;
+    font-family: var(--font-mono);
     font-size: 0.55rem;
-    line-height: 1.35;
   }
 
-  .signal-sphere__message--one {
-    top: 28%;
-    left: max(3vw, calc(50% - 31rem));
+  .terminal-fragment > code:last-child {
+    padding-top: 0.28rem;
+    padding-bottom: 0.78rem;
+    color: #92a39c;
   }
 
-  .signal-sphere__message--two {
-    right: max(3vw, calc(50% - 30rem));
-    bottom: 24%;
+  .terminal-fragment code span,
+  .terminal-fragment code b {
+    margin-right: 0.42rem;
+    color: #7de0b8;
+    font-weight: 500;
   }
 
-  .signal-sphere__message--three {
-    bottom: 14%;
-    left: max(8vw, calc(50% - 22rem));
+  .connection {
+    position: absolute;
+    z-index: 2;
+    display: block;
+    height: 1px;
+    transform-origin: left center;
+    background: linear-gradient(90deg, rgb(8 112 84 / 12%), rgb(8 112 84 / 46%));
   }
 
-  @media (max-width: 760px) {
-    .hero {
-      min-height: 52rem;
-      align-items: start;
-      padding-block: 5rem 9rem;
+  .connection::after {
+    position: absolute;
+    top: -0.2rem;
+    right: -0.05rem;
+    width: 0.38rem;
+    height: 0.38rem;
+    transform: rotate(45deg);
+    border-top: 1px solid rgb(8 112 84 / 55%);
+    border-right: 1px solid rgb(8 112 84 / 55%);
+    content: "";
+  }
+
+  .connection i {
+    position: absolute;
+    top: -0.16rem;
+    left: 0;
+    width: 0.32rem;
+    height: 0.32rem;
+    border-radius: 50%;
+    background: #087054;
+    box-shadow: 0 0 0 0.22rem rgb(8 112 84 / 10%);
+    animation: route-signal 5.5s linear infinite;
+  }
+
+  .connection b {
+    position: absolute;
+    top: 0.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #73807b;
+    font-family: var(--font-mono);
+    font-size: 0.46rem;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .connection--presence {
+    top: 23%;
+    left: 63%;
+    width: 8.7rem;
+    transform: rotate(-32deg);
+  }
+
+  .connection--event {
+    bottom: 22%;
+    left: 19%;
+    width: 9.5rem;
+    transform: rotate(-48deg);
+  }
+
+  .connection--sync {
+    right: 18%;
+    bottom: 27%;
+    width: 9.2rem;
+    transform: rotate(42deg);
+  }
+
+  .connection--event i {
+    animation-delay: -2.1s;
+  }
+
+  .connection--sync i {
+    animation-delay: -3.8s;
+  }
+
+  @keyframes primary-drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0, -0.3rem, 0);
+    }
+  }
+
+  @keyframes satellite-drift-one {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0.18rem, -0.32rem, 0);
+    }
+  }
+
+  @keyframes satellite-drift-two {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(-0.18rem, 0.26rem, 0);
+    }
+  }
+
+  @keyframes satellite-drift-three {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0.2rem, 0.3rem, 0);
+    }
+  }
+
+  @keyframes route-signal {
+    0% {
+      transform: translateX(0);
+      opacity: 0;
+    }
+    12%,
+    82% {
+      opacity: 0.78;
+    }
+    100% {
+      transform: translateX(var(--route-distance, 8.4rem));
+      opacity: 0;
+    }
+  }
+
+  .connection--presence {
+    --route-distance: 8.2rem;
+  }
+
+  .connection--event {
+    --route-distance: 9rem;
+  }
+
+  .connection--sync {
+    --route-distance: 8.7rem;
+  }
+
+  @media (max-width: 1060px) {
+    .hero__grid {
+      grid-template-columns: minmax(0, 0.9fr) minmax(29rem, 1.1fr);
+      gap: 2rem;
     }
 
     .hero :global(h1) {
-      font-size: clamp(3rem, 15vw, 4.75rem);
+      font-size: clamp(3.35rem, 6vw, 5rem);
     }
 
-    .signal-sphere {
-      background:
-        radial-gradient(
-          circle at 50% 66%,
-          rgb(55 191 151 / 15%),
-          transparent 38%
-        ),
-        radial-gradient(
-          circle at 50% 66%,
-          transparent 0 36%,
-          rgb(6 22 19 / 68%) 66%
-        ),
-        #07110f;
+    .constellation {
+      transform: scale(0.9);
+      transform-origin: center;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .hero {
+      padding-block: 4.5rem 5.5rem;
     }
 
-    .signal-sphere__halo {
-      top: 66%;
-      width: 38rem;
+    .hero__grid {
+      grid-template-columns: 1fr;
+      gap: 3.5rem;
     }
 
-    .signal-sphere__message {
-      transform: scale(0.84);
+    .hero :global(.hero__copy) {
+      max-width: 38rem;
     }
 
-    .signal-sphere__message--one {
-      top: auto;
-      bottom: 22%;
-      left: -1rem;
+    .hero :global(h1) {
+      max-width: 10.5ch;
+      font-size: clamp(3.5rem, 10vw, 5.6rem);
     }
 
-    .signal-sphere__message--two {
-      right: -1rem;
-      bottom: 9%;
+    .hero :global(.lede) {
+      max-width: 36rem;
     }
 
-    .signal-sphere__message--three {
+    .hero__visual {
+      width: min(100%, 43rem);
+      height: 39rem;
+      margin-inline: auto;
+    }
+
+    .constellation {
+      transform: none;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .hero {
+      padding-block: 3.5rem 4.5rem;
+    }
+
+    .hero :global(h1) {
+      max-width: 9.5ch;
+      font-size: clamp(3rem, 15vw, 4.4rem);
+    }
+
+    .hero :global(.hero__actions) {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .hero :global(.button) {
+      width: 100%;
+    }
+
+    .hero :global(.button--quiet) {
+      width: auto;
+      align-self: flex-start;
+    }
+
+    .hero__visual {
+      height: 36rem;
+      margin-inline: calc(var(--page-gutter) * -0.45);
+    }
+
+    .constellation {
+      min-width: 0;
+    }
+
+    .conversation-card {
+      top: 11%;
+      left: 2%;
+      width: 88%;
+      min-height: 25.3rem;
+    }
+
+    .presence-fragment {
+      top: 1%;
+      right: 0;
+      width: 10.5rem;
+    }
+
+    .delivery-fragment {
+      top: 56%;
+      right: 0;
+    }
+
+    .api-fragment {
+      bottom: 0;
+      left: 1%;
+      width: 13.6rem;
+    }
+
+    .terminal-fragment {
+      right: 0;
+      bottom: 1%;
+      width: 14.2rem;
+    }
+
+    .connection--presence {
+      top: 20%;
+      left: 66%;
+      width: 5.2rem;
+    }
+
+    .connection--event {
+      bottom: 20%;
+      left: 18%;
+      width: 7rem;
+    }
+
+    .connection--sync {
+      right: 14%;
+      bottom: 25%;
+      width: 6.7rem;
+    }
+
+    .connection b,
+    .constellation__index--side {
+      display: none;
+    }
+
+    .constellation__index--top {
+      left: 2%;
+    }
+  }
+
+  @media (max-width: 430px) {
+    .hero__visual {
+      height: 34rem;
+      margin-inline: -0.6rem;
+    }
+
+    .conversation-card {
+      width: 96%;
+    }
+
+    .presence-fragment {
+      right: -0.45rem;
+    }
+
+    .delivery-fragment {
+      right: -0.4rem;
+    }
+
+    .api-fragment {
+      width: 12.6rem;
+    }
+
+    .terminal-fragment {
+      width: 12.9rem;
+    }
+
+    .terminal-fragment > code {
+      font-size: 0.49rem;
+    }
+
+    .conversation-card__context span:last-child {
       display: none;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .signal-sphere__message {
+    .conversation-card,
+    .presence-fragment,
+    .api-fragment,
+    .delivery-fragment,
+    .terminal-fragment,
+    .connection i {
+      animation: none;
+    }
+
+    .surface-card,
+    .hero :global(.button--secondary) {
       backdrop-filter: none;
     }
   }
