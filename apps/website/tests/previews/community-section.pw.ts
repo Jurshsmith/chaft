@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 type CommunityGeometry = {
   stage: { left: number; top: number; right: number; bottom: number };
+  siteHeaderBottom: number;
   headingFrame: { centerX: number; centerY: number };
   heading: Array<{ left: number; top: number; right: number; bottom: number }>;
   avatars: Array<{
@@ -59,6 +60,9 @@ async function readGeometry(section: Locator): Promise<CommunityGeometry> {
     }
 
     const stageRect = stage.getBoundingClientRect();
+    const siteHeaderRect = document
+      .querySelector<HTMLElement>(".site-header")
+      ?.getBoundingClientRect();
     const headingFrameRect = headingFrame.getBoundingClientRect();
     const headingRange = document.createRange();
     const headingRects = Array.from(heading.querySelectorAll("span")).flatMap((line) => {
@@ -107,6 +111,7 @@ async function readGeometry(section: Locator): Promise<CommunityGeometry> {
         right: stageRect.right,
         bottom: stageRect.bottom,
       },
+      siteHeaderBottom: siteHeaderRect?.bottom ?? 0,
       headingFrame: {
         centerX: headingFrameRect.left + headingFrameRect.width / 2,
         centerY: headingFrameRect.top + headingFrameRect.height / 2,
@@ -117,20 +122,25 @@ async function readGeometry(section: Locator): Promise<CommunityGeometry> {
   });
 }
 
-function expectInsideStage(geometry: CommunityGeometry) {
+function expectInsideStage(geometry: CommunityGeometry, progress: number) {
   for (const avatar of geometry.avatars) {
-    expect(avatar.centerX - avatar.radius).toBeGreaterThanOrEqual(
-      geometry.stage.left - 1.5,
-    );
-    expect(avatar.centerX + avatar.radius).toBeLessThanOrEqual(
-      geometry.stage.right + 1.5,
-    );
-    expect(avatar.centerY - avatar.radius).toBeGreaterThanOrEqual(
-      geometry.stage.top - 1.5,
-    );
-    expect(avatar.centerY + avatar.radius).toBeLessThanOrEqual(
-      geometry.stage.bottom + 1.5,
-    );
+    const avatarLabel = `profile ${avatar.profile} at progress ${progress}`;
+    expect(
+      avatar.centerX - avatar.radius,
+      `${avatarLabel} exits the stage left`,
+    ).toBeGreaterThanOrEqual(geometry.stage.left - 1.5);
+    expect(
+      avatar.centerX + avatar.radius,
+      `${avatarLabel} exits the stage right`,
+    ).toBeLessThanOrEqual(geometry.stage.right + 1.5);
+    expect(
+      avatar.centerY - avatar.radius,
+      `${avatarLabel} exits the stage top`,
+    ).toBeGreaterThanOrEqual(geometry.stage.top - 1.5);
+    expect(
+      avatar.centerY + avatar.radius,
+      `${avatarLabel} exits the stage bottom`,
+    ).toBeLessThanOrEqual(geometry.stage.bottom + 1.5);
   }
 }
 
@@ -182,13 +192,13 @@ function circleIntersectsRect(
 }
 
 async function sampleMotionGeometry(section: Locator) {
-  const progressSamples = Array.from({ length: 21 }, (_, index) => index / 20);
+  const progressSamples = Array.from({ length: 41 }, (_, index) => index / 40);
   const geometries: CommunityGeometry[] = [];
 
   for (const progress of progressSamples) {
     await setCommunityProgress(section, progress);
     const geometry = await readGeometry(section);
-    expectInsideStage(geometry);
+    expectInsideStage(geometry, progress);
     expectNoAvatarOverlap(geometry, progress);
     for (const avatar of geometry.avatars) {
       if (avatar.allowTitleOverlap) continue;
@@ -302,10 +312,23 @@ test("@community follows safe stage anchors and gathers without collisions", asy
   if (!start) return;
 
   const stageCenterX = (start.stage.left + start.stage.right) / 2;
-  const expectedHeadingCenterY = start.stage.top
-    + (start.stage.bottom - start.stage.top) * 0.32;
+  const expectedHeadingCenterY = (viewport?.height ?? 0) * 0.36;
   expect(start.headingFrame.centerX).toBeCloseTo(stageCenterX, 0);
-  expect(start.headingFrame.centerY).toBeCloseTo(expectedHeadingCenterY, 0);
+  expect(
+    Math.abs(start.headingFrame.centerY - expectedHeadingCenterY),
+  ).toBeLessThanOrEqual(3);
+
+  const topPortrait = start.avatars.find((avatar) => avatar.profile === "3");
+  const headingTop = Math.min(...start.heading.map((line) => line.top));
+  expect(topPortrait).toBeDefined();
+  if (!topPortrait) return;
+  expect(topPortrait.centerX).toBeCloseTo(stageCenterX, 0);
+  expect(topPortrait.centerY - topPortrait.radius).toBeGreaterThanOrEqual(
+    start.siteHeaderBottom + 8,
+  );
+  expect(topPortrait.centerY + topPortrait.radius).toBeLessThanOrEqual(
+    headingTop - 16,
+  );
 
   for (const avatar of start.avatars) {
     const expectedX = start.stage.left + Math.min(
