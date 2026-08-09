@@ -16,19 +16,21 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
   </div>
 
   <div class="shell hero__grid">
-    <LandingHeroCopy {hasPublishedDownloads} />
+    <slot name="copy">
+      <LandingHeroCopy {hasPublishedDownloads} />
+    </slot>
 
     <div
       class="hero__visual"
       role="img"
-      aria-label="A Chaft conversation syncing through signed events to three directly connected devices"
+      aria-label="A Chaft conversation syncing through signed updates to three authorized devices"
     >
       <div class="constellation">
         <span class="constellation__index constellation__index--top" aria-hidden="true">
-          PRODUCT CONSTELLATION / 03
+          ON-DEVICE WORKSPACE / ACTIVE
         </span>
         <span class="constellation__index constellation__index--side" aria-hidden="true">
-          CONVERSATION-LED
+          AUTHORIZED DEVICES
         </span>
 
         <span class="connection connection--presence" aria-hidden="true">
@@ -37,7 +39,7 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
         </span>
         <span class="connection connection--event" aria-hidden="true">
           <i></i>
-          <b>signed event</b>
+          <b>signed update</b>
         </span>
         <span class="connection connection--sync" aria-hidden="true">
           <i></i>
@@ -50,7 +52,7 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
               <span class="channel-mark">#</span>
               <strong>product-launch</strong>
             </div>
-            <span class="online-count"><i></i> 4 online</span>
+            <span class="online-count"><i></i> 3 reachable</span>
           </div>
 
           <div class="conversation-card__context">
@@ -86,7 +88,7 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
             <span class="avatar avatar--devon">D</span>
             <div class="message__body">
               <p class="message__meta"><strong>Devon</strong><time>10:43</time></p>
-              <p>Received here. History is current on both devices.</p>
+              <p>Received here. History is current here.</p>
               <span class="reaction">✓ 2</span>
             </div>
           </div>
@@ -114,13 +116,13 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
 
         <div class="api-fragment surface-card">
           <div class="fragment-heading">
-            <span>Signed event</span>
-            <strong>202</strong>
+            <span>Signed update</span>
+            <strong>verified</strong>
           </div>
-          <code><span>POST</span> /v1/messages</code>
+          <code><span>ROOM</span> #product-launch</code>
           <div class="api-fragment__meta">
             <span>signature verified</span>
-            <span>24 ms</span>
+            <span>history current</span>
           </div>
         </div>
 
@@ -135,10 +137,10 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
         <div class="terminal-fragment">
           <div class="terminal-fragment__bar">
             <span><i></i><i></i><i></i></span>
-            <span>sync</span>
+            <span>sync state</span>
           </div>
-          <code><span>$</span> chaft sync --room launch</code>
-          <code><b>✓</b> 3 peers · history current</code>
+          <code><span>●</span> 3 authorized devices</code>
+          <code><b>✓</b> encrypted before sync · history current</code>
         </div>
       </div>
     </div>
@@ -147,6 +149,8 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
 
 <style>
   .hero {
+    --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+
     position: relative;
     display: grid;
     min-height: clamp(46rem, 82vh, 54rem);
@@ -300,7 +304,7 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
     max-width: 29rem;
     margin-top: 1.8rem;
     margin-bottom: 0;
-    color: #65716d;
+    color: #59645f;
     font-size: 0.78rem;
   }
 
@@ -955,6 +959,15 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
     --route-distance: 8.7rem;
   }
 
+  .hero[data-chaft-hero="baseline"] {
+    padding-block: clamp(3rem, 4.5vw, 4rem) clamp(4rem, 6vw, 5rem);
+  }
+
+  .hero[data-chaft-hero="baseline"] :global(h1) {
+    max-width: 10.5ch;
+    font-size: clamp(3.35rem, 5vw, 4.75rem);
+  }
+
   @media (max-width: 1060px) {
     .hero__grid {
       grid-template-columns: minmax(0, 0.9fr) minmax(29rem, 1.1fr);
@@ -1020,8 +1033,9 @@ const { hasPublishedDownloads, heroId = "baseline" } = Astro.props;
       flex-direction: column;
     }
 
-    .hero :global(.button) {
+    .hero :global(.hero__actions .button:not(.button--quiet)) {
       width: 100%;
+      flex: 0 0 auto;
     }
 
     .hero :global(.button--quiet) {
