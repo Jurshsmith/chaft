@@ -1,6 +1,6 @@
 <aside class="release-safety" role="note" data-release-warning>
   <strong>Preview safety</strong>
-  <p>Unsigned and unaudited. Use non-sensitive test data only; not for production communication.</p>
+  <p><span>Unsigned canary.</span> Unaudited. Do not use Chaft canary builds for sensitive or production communication.</p>
 </aside>
 
 <style>
@@ -25,6 +25,10 @@
     margin: 0;
     color: var(--warning-text);
     font-size: 0.9rem;
+  }
+
+  .release-safety p span {
+    font-weight: 600;
   }
 
   @media (max-width: 620px) {

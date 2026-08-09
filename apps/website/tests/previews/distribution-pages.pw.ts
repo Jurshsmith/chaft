@@ -18,7 +18,7 @@ const release = JSON.parse(
   readFileSync(new URL("../../src/data/release-manifest.json", import.meta.url), "utf8"),
 ) as ReleaseManifest;
 const safetyWarning =
-  "Unsigned and unaudited. Use non-sensitive test data only; not for production communication.";
+  "Do not use Chaft canary builds for sensitive or production communication.";
 
 test("groups the detailed download page into three operating-system choices", async ({
   page,
@@ -82,6 +82,8 @@ test("presents a current-first release history and preserves JSON records", asyn
   expect(response?.ok()).toBe(true);
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Releases");
+  await expect(page.locator("[data-release-warning]")).toHaveCount(1);
+  await expect(page.locator("[data-release-warning]")).toContainText(safetyWarning);
   const rows = page.locator("[data-release-row]");
   await expect(rows).toHaveCount(3);
   await expect(rows.first()).toHaveAttribute("data-current", "true");

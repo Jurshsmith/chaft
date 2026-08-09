@@ -8,7 +8,12 @@
       </p>
     </div>
 
-    <div class="moment-grid">
+    <div
+      class="moment-grid"
+      role="region"
+      aria-label="Chaft product examples"
+      tabindex="0"
+    >
       <article class="moment-card">
         <div class="moment-card__visual moment-card__visual--rooms" aria-hidden="true">
           <div class="room-rail">
@@ -93,6 +98,11 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1rem;
+  }
+
+  .moment-grid:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 4px;
   }
 
   .moment-card {

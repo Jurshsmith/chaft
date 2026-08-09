@@ -17,21 +17,24 @@ test.describe("shared footer contract", () => {
     const wordmark = footer.getByRole("link", { name: "Chaft home" });
     await expect(wordmark).toHaveText(/chaft/);
     await expect(wordmark).toHaveAttribute("href", "/");
+    await expect(footer.locator(".site-footer__lead > p")).toHaveText(
+      "Open-source desktop chat for small teams.",
+    );
 
-    await expect(
-      footer.getByRole("list", { name: "Chaft product principles" }).getByRole("listitem"),
-    ).toHaveCount(4);
-    await expect(
-      footer.getByRole("link", { name: "Download the current canary" }),
-    ).toHaveAttribute("href", "/download/");
-    await expect(
-      footer.getByText(
-        "Unaudited canary software. Not for sensitive or production communication.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    const navigation = footer.getByRole("navigation", { name: "Footer navigation" });
+    await expect(navigation.locator(".footer-nav__group")).toHaveCount(4);
+    await expect(navigation.locator(".footer-nav__group > p")).toHaveText([
+      "Product",
+      "Learn",
+      "Project",
+      "Legal",
+    ]);
+    await expect(footer.locator(".site-footer__status")).toHaveText(
+      "Canary · unsigned and unaudited",
+    );
 
     for (const [label, href] of [
+      ["Download", "/download/"],
       ["Documentation", "/docs/"],
       ["Releases", "/releases/"],
       ["Security", "/security/"],
@@ -49,14 +52,12 @@ test.describe("shared footer contract", () => {
 
     const [bodyFont, wordmarkFont, navigationFont] = await Promise.all([
       footer
-        .locator(".footer-pitch__copy")
+        .locator(".site-footer__lead > p")
         .evaluate((element) => getComputedStyle(element).fontFamily),
       wordmark.evaluate((element) => getComputedStyle(element).fontFamily),
-      footer
-        .locator(".footer-nav")
-        .evaluate((element) => getComputedStyle(element).fontFamily),
+      navigation.evaluate((element) => getComputedStyle(element).fontFamily),
     ]);
-    expect(bodyFont).toContain("Chillax");
+    expect(bodyFont).toContain("Space Grotesk");
     expect(wordmarkFont).toContain("Space Grotesk");
     expect(navigationFont).toContain("Space Grotesk");
   });

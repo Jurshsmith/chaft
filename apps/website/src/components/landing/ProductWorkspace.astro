@@ -48,7 +48,7 @@
             <div>
               <p class="message-meta"><strong>Maya</strong><time>10:42</time></p>
               <p>Can everyone review the launch checklist before our afternoon sync?</p>
-              <button class="reply-chip" type="button" tabindex="-1">↳ 2 replies · last reply 10:47</button>
+              <span class="reply-chip">↳ 2 replies · last reply 10:47</span>
             </div>
           </article>
 
@@ -94,7 +94,7 @@
           <div class="history-meter"><span></span></div>
           <small>Current on this device</small>
         </section>
-        <button type="button" tabindex="-1">Invite teammate</button>
+        <span class="context-action">Invite teammate</span>
       </aside>
     </div>
   </div>
@@ -368,7 +368,7 @@
     align-items: center;
     gap: 0.7rem;
     margin-block: 1rem 0.4rem;
-    color: #71827c;
+    color: #8fa19a;
     font-size: 0.75rem;
   }
 
@@ -428,6 +428,8 @@
   }
 
   .reply-chip {
+    display: inline-flex;
+    align-items: center;
     min-height: 2rem;
     margin-top: 0.5rem;
     padding: 0.25rem 0.55rem;
@@ -578,15 +580,16 @@
     background: #68d0a8;
   }
 
-  .context-panel button {
+  .context-action {
+    display: grid;
     width: 100%;
     min-height: 2.5rem;
     margin-top: 1rem;
+    place-items: center;
     border: 1px solid #4a665c;
     border-radius: 0.5rem;
     background: transparent;
     color: #dce5e1;
-    font: inherit;
     font-size: 0.75rem;
   }
 

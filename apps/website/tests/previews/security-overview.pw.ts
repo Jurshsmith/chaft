@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
 const warning =
-  "Unsigned and unaudited. Use non-sensitive test data only; not for production communication.";
+  "Unsigned and unaudited. Do not use Chaft canary builds for sensitive or production communication.";
 
 async function openSecurityPage(page: Page) {
   const response = await page.goto("/security/", { waitUntil: "domcontentloaded" });
