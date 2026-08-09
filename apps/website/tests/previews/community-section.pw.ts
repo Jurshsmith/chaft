@@ -423,7 +423,7 @@ test("@community remains complete without JavaScript", async ({ browser }) => {
     viewport: { width: 1440, height: 900 },
   });
   const page = await context.newPage();
-  const response = await page.goto("/", { waitUntil: "domcontentloaded" });
+  const response = await page.goto("/", { waitUntil: "load" });
   expect(response?.ok()).toBe(true);
 
   const section = page.locator("[data-community-story]");
