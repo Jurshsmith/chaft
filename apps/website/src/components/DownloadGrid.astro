@@ -3,83 +3,98 @@ import {
   currentRelease,
   formatBytes,
   formatSigningStatus,
-  unsignedCanaryWarning,
 } from "../data/releases";
+import { buildDownloadPlatforms } from "../lib/download-options";
+import { sitePath } from "../lib/site-path";
 
 interface Props {
   compact?: boolean;
 }
 
 const { compact = false } = Astro.props;
-const isUnsignedCanary =
-  currentRelease.channel === "canary" &&
-  currentRelease.status === "published";
-
-const platformCodes = {
-  windows: "win",
-  macos: "mac",
-  linux: "linux",
-} as const;
-
-const formatLabels: Record<string, string> = {
-  appimage: "AppImage",
-  dmg: "DMG",
-  exe: "EXE",
-  msi: "MSI",
-  tar: "TAR",
-  tgz: "TGZ",
-  zip: "ZIP",
-};
-
+const platforms = buildDownloadPlatforms(currentRelease);
 ---
 
-{isUnsignedCanary && (
-  <aside class="canary-warning" role="note">
-    <strong>Unsigned canary</strong>
-    <span>{unsignedCanaryWarning}</span>
-    <span class="mono">{currentRelease.tag}</span>
-  </aside>
-)}
-
-<div class:list={["download-grid", { "download-grid--compact": compact }]} data-download-grid>
-  {currentRelease.assets.map((asset) => (
-    <article class="download-card" id={asset.id} data-download-card data-os={asset.os}>
-      <div class="download-card__topline">
-        <span class="platform-code" aria-hidden="true">{platformCodes[asset.os]}</span>
-        <span class="recommended" data-recommended hidden>Your OS</span>
-      </div>
-      <div>
-        <h3>{asset.platformLabel}</h3>
-        <p class="asset-meta">
-          <span>{asset.arch}</span>
-          <span>{formatLabels[asset.format] ?? asset.format}</span>
-          <span>{formatBytes(asset.sizeBytes)}</span>
-          <span>{formatSigningStatus(asset.signingStatus)}</span>
-        </p>
-      </div>
-      <p class="availability">
-        {asset.available
-          ? `Chaft ${currentRelease.version}`
-          : "Canary package not published yet"}
-      </p>
-      {asset.available && asset.sha256 && (
-        <p class="checksum">
-          <span>SHA-256</span>
-          <code>{asset.sha256}</code>
-        </p>
-      )}
-      {asset.available ? (
-        <a
-          class="download-action"
-          href={asset.url}
-          aria-label={`Download Chaft ${currentRelease.version} for ${asset.platformLabel}`}
+<div
+  class:list={["download-grid", { "download-grid--compact": compact }]}
+  data-download-grid
+>
+  {platforms.map((platform) => (
+    <article
+      class="download-card"
+      id={`download-${platform.id}`}
+      data-download-card
+      data-os={platform.id}
+    >
+      <header class="download-card__header">
+        <div>
+          <span class="platform-code" aria-hidden="true">{platform.code}</span>
+          <h3>{platform.label}</h3>
+        </div>
+        <span
+          class="recommended"
+          data-recommended
+          aria-label="Recommended for this device"
+          hidden
         >
-          Download {formatLabels[asset.format] ?? asset.format}
-          <span aria-hidden="true">→</span>
-        </a>
-      ) : (
-        <span class="download-action download-action--pending">Package pending</span>
-      )}
+          Recommended
+        </span>
+      </header>
+
+      <div class="download-options">
+        {platform.options.map(({ asset, accessibleName, formatLabel, variantLabel }) => (
+          <div class="download-option" data-download-option={asset.id}>
+            <div class="download-option__summary">
+              <div>
+                <strong>{variantLabel}</strong>
+                <span>{formatLabel} · {formatBytes(asset.sizeBytes)}</span>
+              </div>
+              {asset.available ? (
+                <a
+                  class="download-action"
+                  href={asset.url}
+                  aria-label={accessibleName}
+                >
+                  Download
+                  <span aria-hidden="true">↓</span>
+                </a>
+              ) : (
+                <span class="download-action download-action--pending">
+                  Package pending
+                </span>
+              )}
+            </div>
+
+            {asset.available && (
+              <details class="package-evidence">
+                <summary>Verify this package</summary>
+                <dl>
+                  <div>
+                    <dt>File</dt>
+                    <dd>{asset.filename ?? "Not published"}</dd>
+                  </div>
+                  <div>
+                    <dt>Signing</dt>
+                    <dd>{formatSigningStatus(asset.signingStatus)}</dd>
+                  </div>
+                  <div class="package-evidence__digest">
+                    <dt>SHA-256</dt>
+                    <dd><code>{asset.sha256 ?? "Not published"}</code></dd>
+                  </div>
+                </dl>
+                <div class="package-evidence__links">
+                  {asset.evidence.checksums && (
+                    <a href={asset.evidence.checksums.url}>Checksums</a>
+                  )}
+                  <a href={sitePath(`/releases/${currentRelease.version}/#${asset.id}`)}>
+                    All evidence
+                  </a>
+                </div>
+              </details>
+            )}
+          </div>
+        ))}
+      </div>
     </article>
   ))}
 </div>
@@ -107,45 +122,19 @@ const formatLabels: Record<string, string> = {
 
   if (detectedPlatform) {
     document.querySelectorAll<HTMLElement>("[data-download-grid]").forEach((grid) => {
-      const cards = Array.from(
-        grid.querySelectorAll<HTMLElement>(
-          `[data-download-card][data-os="${detectedPlatform}"]`,
-        ),
+      const card = grid.querySelector<HTMLElement>(
+        `[data-download-card][data-os="${detectedPlatform}"]`,
       );
-      if (cards.length === 0) return;
+      if (!card) return;
 
-      cards.forEach((card) => {
-        card.dataset.platformMatch = "true";
-        const label = card.querySelector<HTMLElement>("[data-recommended]");
-        if (!label) return;
-        label.textContent = "Your OS";
-        label.removeAttribute("hidden");
-      });
+      card.dataset.platformMatch = "true";
+      const label = card.querySelector<HTMLElement>("[data-recommended]");
+      label?.removeAttribute("hidden");
     });
   }
 </script>
 
 <style>
-  .canary-warning {
-    display: grid;
-    gap: 0.35rem;
-    margin-bottom: 1rem;
-    padding: 1rem;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    background: var(--secure-surface);
-    color: var(--text-soft);
-  }
-
-  .canary-warning strong {
-    color: var(--accent);
-  }
-
-  .canary-warning .mono {
-    color: var(--text-faint);
-    font-size: 0.72rem;
-  }
-
   .download-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -154,134 +143,214 @@ const formatLabels: Record<string, string> = {
 
   .download-card {
     display: grid;
-    min-height: 21rem;
-    grid-template-rows: auto auto 1fr auto;
-    gap: 1.6rem;
-    padding: clamp(1.3rem, 3vw, 2rem);
+    min-width: 0;
+    align-content: start;
+    gap: 1.4rem;
+    padding: clamp(1.25rem, 2.8vw, 1.8rem);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--surface-raised);
     transition:
-      transform var(--motion-quick),
       border-color var(--motion-quick),
-      background-color var(--motion-quick);
-  }
-
-  .download-card:hover,
-  .download-card[data-platform-match="true"] {
-    border-color: var(--accent);
-    background: var(--secure-surface);
+      box-shadow var(--motion-quick),
+      transform var(--motion-quick);
   }
 
   .download-card:hover {
     transform: translateY(-2px);
+    border-color: var(--border-strong);
+    box-shadow: 0 12px 30px rgb(23 33 31 / 8%);
   }
 
-  .download-card__topline {
+  .download-card[data-platform-match="true"] {
+    border-color: var(--accent);
+    box-shadow: inset 0 3px 0 var(--accent);
+  }
+
+  .download-card__header {
     display: flex;
-    min-height: 1.8rem;
-    align-items: center;
+    min-height: 4rem;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
   .platform-code {
+    display: block;
+    margin-bottom: 0.35rem;
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
+  h3 {
+    margin: 0;
+    font-size: clamp(1.6rem, 3vw, 2rem);
+  }
+
   .recommended {
-    padding: 0.3rem 0.45rem;
-    border: 1px solid var(--accent);
+    max-width: 9rem;
+    padding: 0.35rem 0.5rem;
     border-radius: 999px;
+    background: var(--secure-surface);
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: 0.62rem;
-    line-height: 1;
+    font-size: 0.69rem;
+    line-height: 1.25;
+    text-align: center;
   }
 
-  h3 {
-    margin-bottom: 0.8rem;
-    font-size: clamp(1.7rem, 4vw, 2.3rem);
-  }
-
-  .asset-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin: 0;
-  }
-
-  .asset-meta span {
-    padding: 0.25rem 0.4rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.64rem;
-  }
-
-  .availability {
-    align-self: end;
-    margin: 0;
-    color: var(--text-faint);
-    font-size: 0.86rem;
-  }
-
-  .checksum {
+  .download-options {
     display: grid;
-    gap: 0.35rem;
-    margin: 0;
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: 0.64rem;
+    gap: 0.75rem;
   }
 
-  .checksum code {
-    color: var(--text-soft);
-    overflow-wrap: anywhere;
+  .download-option {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-base);
+  }
+
+  .download-option__summary {
+    display: flex;
+    min-height: 5rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .download-option__summary > div {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .download-option__summary strong {
+    color: var(--text-strong);
+    font-size: 0.94rem;
+    font-weight: 500;
+  }
+
+  .download-option__summary > div > span {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
   }
 
   .download-action {
-    display: flex;
+    display: inline-flex;
+    min-height: 2.75rem;
+    flex: 0 0 auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border-subtle);
-    color: var(--accent);
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.84rem;
     font-weight: 500;
+    line-height: 1;
     text-decoration: none;
   }
 
-  .download-action span {
-    transition: transform var(--motion-quick);
-  }
-
-  .download-action:hover span {
-    transform: translateX(3px);
+  .download-action:hover {
+    background: #09654f;
   }
 
   .download-action--pending {
+    border: 1px solid var(--border-subtle);
+    background: transparent;
     color: var(--text-faint);
-    font-weight: 400;
+  }
+
+  .package-evidence {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .package-evidence summary {
+    min-height: 2.75rem;
+    padding: 0.75rem 0.9rem;
+    color: var(--text-soft);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+
+  .package-evidence summary:hover {
+    color: var(--accent);
+  }
+
+  .package-evidence dl {
+    display: grid;
+    gap: 0.7rem;
+    margin: 0;
+    padding: 0 0.9rem 0.9rem;
+  }
+
+  .package-evidence dl div {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .package-evidence dt {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+  }
+
+  .package-evidence dd {
+    margin: 0;
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    overflow-wrap: anywhere;
+  }
+
+  .package-evidence__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    padding: 0.75rem 0.9rem;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 0.78rem;
+  }
+
+  .package-evidence__links a {
+    color: var(--accent);
+    font-weight: 500;
   }
 
   .download-grid--compact .download-card {
-    min-height: 18rem;
+    padding: 1.25rem;
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 980px) {
     .download-grid {
       grid-template-columns: 1fr;
     }
 
-    .download-card {
+    .download-card__header {
       min-height: auto;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .download-option__summary {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .download-action {
+      width: 100%;
     }
   }
 </style>

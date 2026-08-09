@@ -1,193 +1,341 @@
 ---
-import PageHero from "../../components/PageHero.astro";
-import {
-  allReleases,
-  currentRelease,
-  unsignedCanaryWarning,
-} from "../../data/releases";
+import { allReleases, currentRelease } from "../../data/releases";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { sitePath } from "../../lib/site-path";
 
-const description = "Chaft canary and desktop release status, artifacts, and integrity metadata.";
-const isUnsignedCanary =
-  currentRelease.channel === "canary" &&
-  currentRelease.status === "published";
+const description =
+  "Current and past Chaft desktop releases, with platform packages, checksums, and build evidence.";
 
 function channelLabel(channel: string): string {
   return channel === "canary" ? "Canary" : "Stable";
 }
+
+function publishedLabel(publishedAt: string | null): string {
+  if (!publishedAt) return "Pending";
+  return new Intl.DateTimeFormat("en", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(publishedAt));
+}
+
+function packageLabel(assetCount: number): string {
+  return `${assetCount} ${assetCount === 1 ? "package" : "packages"}`;
+}
 ---
 
 <BaseLayout title="Releases" description={description}>
-  <PageHero
-    eyebrow="Release history"
-    title="Know exactly what you are downloading."
-    lede="Every public Chaft package is tied to an immutable GitHub Release and shows its checksum, source revision, build evidence, and signing state."
-  />
-
-  {isUnsignedCanary && (
-    <section class="section section--compact">
-      <div class="shell">
-        <aside class="canary-warning" role="note">
-          <strong>Unsigned canary</strong>
-          <p>{unsignedCanaryWarning}</p>
-          <span class="mono">{currentRelease.tag}</span>
-        </aside>
+  <section class="releases-hero" aria-labelledby="releases-title">
+    <div class="shell releases-hero__layout">
+      <div>
+        <p class="eyebrow">Desktop release history</p>
+        <h1 id="releases-title">Releases</h1>
+        <p class="lede">
+          Current and past desktop previews, with package status and integrity
+          records kept together.
+        </p>
       </div>
-    </section>
-  )}
 
-  <section class="section">
+      <a
+        class="current-release-link"
+        href={sitePath(`/releases/${currentRelease.version}/`)}
+        aria-label={`View current release ${currentRelease.version}`}
+      >
+        <span>Current release</span>
+        <strong>v{currentRelease.version}</strong>
+        <small>
+          {channelLabel(currentRelease.channel)} · {publishedLabel(currentRelease.publishedAt)}
+        </small>
+        <span class="current-release-link__action">
+          View details <span aria-hidden="true">→</span>
+        </span>
+      </a>
+    </div>
+  </section>
+
+  <section class="release-history" aria-labelledby="history-title">
     <div class="shell">
-      <div class="release-list">
-        {allReleases.map((release) => {
-          const isCurrent = release.version === currentRelease.version;
-          return (
-            <article class="release-card">
-              <div class="release-card__heading">
-                <span class="status">
-                  {isCurrent
-                    ? release.status === "published" ? "Current release" : "Packages pending"
-                    : "Archived release"}
-                </span>
-                <span class="mono">{channelLabel(release.channel)}</span>
-              </div>
-              <div>
-                <p class="release-card__version">
-                  {release.status === "published" ? "Version" : "Source version"} · v{release.version}
-                </p>
-                <h2>
-                  {isCurrent && release.status !== "published"
-                    ? "No public canary yet"
-                    : `Chaft ${release.version}`}
-                </h2>
-                <p>
-                  Windows, macOS, and Linux packages
-                  {release.status === "published" ? " are available." : " are still being validated."}
-                </p>
-              </div>
-              <div class="release-card__links">
-                <a class="button" href={sitePath(`/releases/${release.version}/`)}>View release details</a>
-                <a class="button button--secondary" href={sitePath(`/releases/${release.version}.json`)}>
-                  Version JSON
-                </a>
-              </div>
-            </article>
-          );
-        })}
+      <div class="history-heading">
+        <div>
+          <p class="eyebrow">All releases</p>
+          <h2 id="history-title">Desktop packages</h2>
+        </div>
+        <p>Newest first. Open a release to inspect each artifact and its evidence.</p>
+      </div>
+
+      <div class="release-table-wrap">
+        <table class="release-table">
+          <thead>
+            <tr>
+              <th scope="col">Release</th>
+              <th scope="col">Published</th>
+              <th scope="col">Availability</th>
+              <th scope="col"><span class="visually-hidden">Links</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {allReleases.map((release) => {
+              const isCurrent = release.version === currentRelease.version;
+              const availableAssets = release.assets.filter((asset) => asset.available);
+              return (
+                <tr data-release-row data-current={isCurrent ? "true" : undefined}>
+                  <th scope="row">
+                    <a href={sitePath(`/releases/${release.version}/`)}>
+                      v{release.version}
+                    </a>
+                    <span>{channelLabel(release.channel)}</span>
+                    {isCurrent && <strong>Current</strong>}
+                  </th>
+                  <td>
+                    <time datetime={release.publishedAt ?? undefined}>
+                      {publishedLabel(release.publishedAt)}
+                    </time>
+                  </td>
+                  <td>
+                    <span>{packageLabel(availableAssets.length)}</span>
+                    <small>Windows · macOS · Linux</small>
+                  </td>
+                  <td>
+                    <div class="release-actions">
+                      <a href={sitePath(`/releases/${release.version}/`)}>Details</a>
+                      <a href={sitePath(`/releases/${release.version}.json`)}>JSON</a>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   </section>
 
-  <section class="section section--deep">
-    <div class="shell pipeline">
+  <section class="records-note section--deep" aria-labelledby="records-title">
+    <div class="shell records-note__layout">
       <div>
-        <p class="eyebrow">Publication standard</p>
-        <h2>What accompanies a public release.</h2>
+        <p class="eyebrow">Release records</p>
+        <h2 id="records-title">Evidence stays with the package.</h2>
       </div>
-      <ol>
-        <li><span>01</span>Native builds and packaged-app smoke tests for every platform.</li>
-        <li><span>02</span>Final filenames, byte sizes, and SHA-256 digests.</li>
-        <li><span>03</span>SBOMs, provenance, smoke receipts, inventory, and corresponding-source evidence.</li>
-        <li><span>04</span>An explicit unsigned-canary state, or enforced signing and notarization for stable releases.</li>
-        <li><span>05</span>Immutable GitHub Release assets reflected by the website manifest.</li>
-      </ol>
+      <div>
+        <p>
+          Each published record names the source revision, package size,
+          SHA-256 checksum, signing state, SBOM, provenance, and native
+          verification receipt. The page reports the state as published; it
+          does not imply a stronger one.
+        </p>
+        <a href={sitePath("/download/")}>Download the current preview →</a>
+      </div>
     </div>
   </section>
 </BaseLayout>
 
 <style>
-  .canary-warning {
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .releases-hero {
+    padding-block: clamp(3.5rem, 7vw, 6rem);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .releases-hero__layout {
     display: grid;
-    gap: 0.35rem;
-    padding: 1rem;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.5fr);
+    gap: clamp(2.5rem, 8vw, 7rem);
+    align-items: end;
+  }
+
+  .releases-hero h1 {
+    margin-bottom: 1rem;
+    font-size: clamp(3rem, 7vw, 5.6rem);
+  }
+
+  .current-release-link {
+    display: grid;
+    gap: 0.25rem;
+    padding: 1.25rem;
     border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--secure-surface);
+    color: var(--text-strong);
+    text-decoration: none;
+    transition:
+      box-shadow var(--motion-quick),
+      transform var(--motion-quick);
   }
 
-  .canary-warning strong {
+  .current-release-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 30px rgb(23 33 31 / 10%);
+  }
+
+  .current-release-link > span:first-child {
     color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
   }
 
-  .canary-warning p {
+  .current-release-link strong {
+    font-size: 1.35rem;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .current-release-link small {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .current-release-link__action {
+    margin-top: 0.8rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--accent);
+    font-size: 0.84rem;
+    text-transform: none;
+  }
+
+  .release-history {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .history-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.55fr);
+    gap: 2rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+  }
+
+  .history-heading h2 {
+    margin: 0;
+    font-size: clamp(2.2rem, 5vw, 3.5rem);
+  }
+
+  .history-heading > p {
     margin: 0;
   }
 
-  .canary-warning .mono {
-    color: var(--text-faint);
-    font-size: 0.72rem;
-  }
-
-  .release-card {
-    display: grid;
-    gap: 2.5rem;
-    padding: clamp(1.5rem, 5vw, 3.5rem);
+  .release-table-wrap {
+    overflow-x: auto;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--surface-raised);
   }
 
-  .release-list {
-    display: grid;
-    gap: 1rem;
+  .release-table {
+    width: 100%;
+    min-width: 43rem;
+    border-collapse: collapse;
   }
 
-  .release-card__heading,
-  .release-card__links {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  .release-card__version {
-    margin: 0 0 0.5rem;
-    color: var(--accent);
-    font-family: var(--font-mono);
-  }
-
-  .release-card h2 {
-    margin-bottom: 0.8rem;
-  }
-
-  .pipeline {
-    display: grid;
-    grid-template-columns: minmax(0, 0.9fr) minmax(20rem, 1fr);
-    gap: clamp(3rem, 9vw, 8rem);
-  }
-
-  .pipeline ol {
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--border-subtle);
-    list-style: none;
-  }
-
-  .pipeline li {
-    display: grid;
-    grid-template-columns: 3rem 1fr;
-    gap: 1rem;
-    padding-block: 1rem;
+  .release-table th,
+  .release-table td {
+    padding: 1rem;
     border-bottom: 1px solid var(--border-subtle);
-    color: var(--text-soft);
+    text-align: left;
+    vertical-align: middle;
   }
 
-  .pipeline li span {
-    color: var(--accent);
+  .release-table thead th {
+    color: var(--text-faint);
     font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  .release-table tbody tr:last-child > * {
+    border-bottom: 0;
+  }
+
+  .release-table tbody tr[data-current="true"] {
+    box-shadow: inset 3px 0 0 var(--accent);
+    background: var(--secure-surface);
+  }
+
+  .release-table tbody th {
+    min-width: 13rem;
+    font-weight: 400;
+  }
+
+  .release-table tbody th > a {
+    display: block;
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .release-table tbody th > span,
+  .release-table td small {
+    display: block;
+    color: var(--text-faint);
     font-size: 0.72rem;
   }
 
-  @media (max-width: 760px) {
-    .pipeline {
-      grid-template-columns: 1fr;
-    }
+  .release-table tbody th > strong {
+    display: inline-block;
+    margin-top: 0.35rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+  }
 
-    .release-card__links {
-      align-items: stretch;
-      flex-direction: column;
+  .release-table td {
+    color: var(--text-soft);
+    font-size: 0.84rem;
+  }
+
+  .release-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+  }
+
+  .release-actions a {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .records-note {
+    padding-block: clamp(3.5rem, 8vw, 6rem);
+  }
+
+  .records-note__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(20rem, 0.65fr);
+    gap: clamp(2.5rem, 8vw, 7rem);
+    align-items: start;
+  }
+
+  .records-note h2 {
+    margin: 0;
+    font-size: clamp(2.2rem, 5vw, 3.5rem);
+  }
+
+  .records-note__layout > div:last-child a {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  @media (max-width: 760px) {
+    .releases-hero__layout,
+    .history-heading,
+    .records-note__layout {
+      grid-template-columns: 1fr;
     }
   }
 </style>

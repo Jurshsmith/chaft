@@ -1,13 +1,13 @@
 ---
-import PageHero from "../../components/PageHero.astro";
+import ReleaseSafetyNotice from "../../components/ReleaseSafetyNotice.astro";
 import {
   allReleases,
   formatBytes,
   formatSigningStatus,
   type ReleaseManifest,
-  unsignedCanaryWarning,
 } from "../../data/releases";
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import { buildDownloadPlatforms } from "../../lib/download-options";
 import { sitePath } from "../../lib/site-path";
 
 export function getStaticPaths() {
@@ -23,312 +23,524 @@ interface Props {
 
 const { release } = Astro.props;
 const isPublished = release.status === "published";
-const isUnsignedCanary =
-  release.channel === "canary" && release.status === "published";
+const isUnsignedCanary = release.channel === "canary" && isPublished;
+const platforms = buildDownloadPlatforms(release);
+const publicChannel = release.channel === "canary" ? "Canary" : "Stable";
+const publicStatus = isPublished ? "Published" : "Packages pending";
+const publishedDate = release.publishedAt
+  ? new Intl.DateTimeFormat("en", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(release.publishedAt))
+  : "Not published";
+const description = `Chaft ${release.version} ${publicChannel.toLowerCase()} packages, checksums, signing state, and build evidence.`;
 const releaseEvidenceLinks = release.releaseEvidence === null
   ? []
   : [
-      { label: "Qt corresponding source", file: release.releaseEvidence.qtSource },
+      { label: "Qt source", file: release.releaseEvidence.qtSource },
       { label: "Qt source checksum", file: release.releaseEvidence.qtSourceChecksums },
       { label: "Release inventory", file: release.releaseEvidence.inventory },
       { label: "Aggregate checksums", file: release.releaseEvidence.aggregateChecksums },
     ];
-const publicChannel = release.channel === "canary" ? "Canary" : "Stable";
-const publicStatus = isPublished ? "Published" : "Packages pending";
-const description = `Chaft ${release.version} ${publicChannel.toLowerCase()} package status, integrity evidence, and signing information.`;
-const formatLabels: Record<string, string> = {
-  appimage: "AppImage",
-  dmg: "DMG",
-  exe: "EXE",
-  msi: "MSI",
-  tar: "TAR",
-  tgz: "TGZ",
-  zip: "ZIP",
-};
 ---
 
 <BaseLayout title={`Release ${release.version}`} description={description}>
-  <PageHero
-    eyebrow={`${publicChannel} · ${publicStatus}`}
-    title={isPublished ? `Chaft v${release.version}` : "Canary package status"}
-    lede={isPublished
-      ? "Review each platform package, checksum, build evidence, and signing state before downloading."
-      : `No package is published for source version v${release.version}. Windows, macOS, and Linux builds remain unavailable until their release evidence passes validation.`}
-  >
-    <div class="button-row">
-      <a class="button" href={sitePath("/download/")}>
-        {isPublished ? "Open downloads" : "Download status"}
-      </a>
-      <a class="button button--secondary" href={release.releaseUrl}>GitHub Releases</a>
-    </div>
-  </PageHero>
-
-  {isUnsignedCanary && (
-    <section class="section section--compact">
-      <div class="shell">
-        <aside class="canary-warning" role="note">
-          <strong>Unsigned canary</strong>
-          <p>{unsignedCanaryWarning}</p>
-          <span class="mono">{release.tag}</span>
-        </aside>
-      </div>
-    </section>
-  )}
-
-  <section class="section">
-    <div class="shell release-layout">
-      <aside class="release-facts">
-        <div><span>Status</span><strong>{publicStatus}</strong></div>
-        <div><span>Channel</span><strong>{publicChannel}</strong></div>
-        <div><span>Source version</span><strong class="mono">v{release.version}</strong></div>
-        <div><span>Git tag</span><strong class="mono">{release.tag ?? "Not assigned"}</strong></div>
-        <div><span>Published</span><strong>{release.publishedAt ?? "Not published"}</strong></div>
-        <div><span>Commit</span><strong class="mono">{release.commit ?? "Not assigned"}</strong></div>
-      </aside>
-
+  <section class="release-hero" aria-labelledby="release-title">
+    <div class="shell release-hero__layout">
       <div>
-        {releaseEvidenceLinks.length > 0 && (
-          <nav class="release-evidence" aria-label="Release-level evidence">
-            <strong>Release evidence</strong>
+        <p class="eyebrow">{publicChannel} · {publicStatus}</p>
+        <h1 id="release-title">Chaft v{release.version}</h1>
+        <p class="lede">
+          {isPublished
+            ? "Desktop packages and the integrity records published with them."
+            : "Desktop packages will appear after their release evidence passes validation."}
+        </p>
+      </div>
+      <div class="button-row release-hero__actions">
+        <a class="button" href={sitePath("/download/")}>
+          {isPublished ? "Open downloads" : "Download status"}
+        </a>
+        <a class="button button--secondary" href={release.releaseUrl}>GitHub release</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="summary-section" aria-label="Release summary">
+    <div class="shell">
+      <dl class="release-summary">
+        <div><dt>Status</dt><dd>{publicStatus}</dd></div>
+        <div><dt>Channel</dt><dd>{publicChannel}</dd></div>
+        <div><dt>Published</dt><dd>{publishedDate}</dd></div>
+        <div><dt>Git tag</dt><dd><code>{release.tag ?? "Not assigned"}</code></dd></div>
+        <div>
+          <dt>Source revision</dt>
+          <dd>
+            <code title={release.commit ?? undefined}>
+              {release.commit ? release.commit.slice(0, 12) : "Not assigned"}
+            </code>
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="platform-section" aria-labelledby="packages-title">
+    <div class="shell">
+      <div class="platform-heading">
+        <div>
+          <p class="eyebrow">Desktop packages</p>
+          <h2 id="packages-title">Choose your system.</h2>
+        </div>
+        <p>
+          Architecture and format are visible before download. Open evidence
+          only when you need to verify the artifact.
+        </p>
+      </div>
+
+      {isUnsignedCanary && <ReleaseSafetyNotice />}
+
+      <div class="platform-list">
+        {platforms.map((platform) => (
+          <article class="platform-release" data-release-platform={platform.id}>
+            <header>
+              <div>
+                <span class="platform-code" aria-hidden="true">{platform.code}</span>
+                <h3>{platform.label}</h3>
+              </div>
+              <span>
+                {platform.options.length} {platform.options.length === 1 ? "package" : "packages"}
+              </span>
+            </header>
+
+            <div class="artifact-list">
+              {platform.options.map(({ asset, accessibleName, formatLabel, variantLabel }) => {
+                const evidenceLinks = [
+                  { label: "Checksums", file: asset.evidence.checksums },
+                  { label: "SBOM", file: asset.evidence.sbom },
+                  { label: "Provenance", file: asset.evidence.provenance },
+                  { label: "Detached signature", file: asset.evidence.signature },
+                  { label: "Native verification", file: asset.evidence.verification },
+                ].filter((entry) => entry.file !== null);
+
+                return (
+                  <div class="artifact-row" id={asset.id} data-release-artifact={asset.id}>
+                    <div class="artifact-row__primary">
+                      <div>
+                        <strong>{variantLabel}</strong>
+                        <span>
+                          {formatLabel} · {formatBytes(asset.sizeBytes)} · {formatSigningStatus(asset.signingStatus)}
+                        </span>
+                      </div>
+                      {asset.available ? (
+                        <a class="artifact-download" href={asset.url} aria-label={accessibleName}>
+                          Download <span aria-hidden="true">↓</span>
+                        </a>
+                      ) : (
+                        <span class="artifact-pending">Package pending</span>
+                      )}
+                    </div>
+
+                    {asset.available ? (
+                      <details class="artifact-evidence">
+                        <summary>Checksums and build evidence</summary>
+                        <dl>
+                          <div><dt>File</dt><dd>{asset.filename ?? "Not published"}</dd></div>
+                          <div><dt>Size</dt><dd>{formatBytes(asset.sizeBytes)}</dd></div>
+                          <div><dt>Signing</dt><dd>{formatSigningStatus(asset.signingStatus)}</dd></div>
+                          <div class="artifact-evidence__digest">
+                            <dt>SHA-256</dt>
+                            <dd><code>{asset.sha256 ?? "Not published"}</code></dd>
+                          </div>
+                        </dl>
+                        <nav aria-label={`Evidence for ${platform.label} ${variantLabel}`}>
+                          {evidenceLinks.map(({ label, file }) => (
+                            <a href={file!.url}>{label}</a>
+                          ))}
+                        </nav>
+                      </details>
+                    ) : (
+                      <p class="artifact-pending-copy">
+                        Package and verification evidence have not been published.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {releaseEvidenceLinks.length > 0 && (
+        <details class="release-evidence">
+          <summary>Release-wide evidence</summary>
+          <p>Evidence shared by every platform package in this release.</p>
+          <nav aria-label="Release-wide evidence files">
             {releaseEvidenceLinks.map(({ label, file }) => (
               <a href={file.url}>{label}</a>
             ))}
           </nav>
-        )}
-        <p class="eyebrow">Platform artifacts</p>
-        <div class="asset-list">
-          {release.assets.map((asset) => {
-            const evidenceLinks = [
-              { label: "Checksums", file: asset.evidence.checksums },
-              { label: "SBOM", file: asset.evidence.sbom },
-              { label: "Provenance", file: asset.evidence.provenance },
-              { label: "Detached signature", file: asset.evidence.signature },
-              { label: "Native verification", file: asset.evidence.verification },
-            ].filter((entry) => entry.file !== null);
-
-            return (
-              <article>
-                <div>
-                  <h2>{asset.platformLabel}</h2>
-                  <p class="mono">{asset.arch} · {formatLabels[asset.format] ?? asset.format}</p>
-                </div>
-                {asset.available ? (
-                  <>
-                    <dl>
-                      <div><dt>File</dt><dd>{asset.filename ?? "Pending"}</dd></div>
-                      <div><dt>Size</dt><dd>{formatBytes(asset.sizeBytes)}</dd></div>
-                      <div class="digest">
-                        <dt>SHA-256</dt>
-                        <dd>{asset.sha256 ?? "Pending"}</dd>
-                      </div>
-                      <div><dt>Signing</dt><dd>{formatSigningStatus(asset.signingStatus)}</dd></div>
-                    </dl>
-                    <nav class="evidence-links" aria-label={`Verification evidence for ${asset.platformLabel} ${asset.arch}`}>
-                      <span>Evidence</span>
-                      {evidenceLinks.map(({ label, file }) => (
-                        <a href={file!.url}>{label}</a>
-                      ))}
-                    </nav>
-                    <a href={asset.url}>Download package →</a>
-                  </>
-                ) : (
-                  <p class="asset-pending">
-                    Package, checksum, signing state, and verification evidence are not published.
-                  </p>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      </div>
+        </details>
+      )}
     </div>
   </section>
 </BaseLayout>
 
 <style>
-  .canary-warning {
-    display: grid;
-    gap: 0.35rem;
-    padding: 1rem;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    background: var(--secure-surface);
-  }
-
-  .canary-warning strong {
-    color: var(--accent);
-  }
-
-  .canary-warning p {
-    margin: 0;
-  }
-
-  .canary-warning .mono {
-    color: var(--text-faint);
-    font-size: 0.72rem;
-  }
-
-  .release-layout {
-    display: grid;
-    grid-template-columns: minmax(14rem, 0.35fr) minmax(0, 1fr);
-    gap: clamp(3rem, 8vw, 7rem);
-    align-items: start;
-  }
-
-  .release-facts {
-    position: sticky;
-    top: 2rem;
-    border-top: 1px solid var(--border-subtle);
-  }
-
-  .release-facts div {
-    display: grid;
-    gap: 0.2rem;
-    padding-block: 1rem;
+  .release-hero {
+    padding-block: clamp(3.5rem, 7vw, 6rem);
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  .release-facts span,
-  dt {
+  .release-hero__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2rem;
+    align-items: end;
+  }
+
+  .release-hero h1 {
+    max-width: 18ch;
+    margin-bottom: 1rem;
+    font-size: clamp(2.8rem, 6.5vw, 5.2rem);
+    overflow-wrap: anywhere;
+  }
+
+  .release-hero__actions {
+    justify-content: flex-end;
+  }
+
+  .summary-section {
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+  }
+
+  .release-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin: 0;
+  }
+
+  .release-summary > div {
+    display: grid;
+    min-width: 0;
+    gap: 0.2rem;
+    padding: 0.55rem 1rem;
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .release-summary > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .release-summary dt,
+  .artifact-evidence dt {
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: 0.66rem;
     text-transform: uppercase;
   }
 
-  .release-facts strong {
+  .release-summary dd {
+    margin: 0;
     color: var(--text-soft);
-    font-size: 0.88rem;
-    font-weight: 500;
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
   }
 
-  .asset-list {
+  .release-summary code {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+  }
+
+  .platform-section {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .platform-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.55fr);
+    gap: 2rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+  }
+
+  .platform-heading h2 {
+    margin: 0;
+    font-size: clamp(2.2rem, 5vw, 3.5rem);
+  }
+
+  .platform-heading > p {
+    margin: 0;
+  }
+
+  :global(.release-safety) {
+    margin-bottom: 1rem;
+  }
+
+  .platform-list {
     display: grid;
     gap: 1rem;
   }
 
-  .release-evidence {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.55rem 1rem;
-    align-items: center;
-    margin-bottom: 2rem;
-    padding: 1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-  }
-
-  .release-evidence strong {
-    color: var(--text-soft);
-  }
-
-  .release-evidence a {
-    color: var(--accent);
-  }
-
-  .asset-list article {
+  .platform-release {
     display: grid;
-    gap: 1.5rem;
-    padding: clamp(1.4rem, 4vw, 2.2rem);
+    grid-template-columns: minmax(12rem, 0.32fr) minmax(0, 1fr);
+    overflow: hidden;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--surface-raised);
   }
 
-  .asset-list h2 {
-    margin-bottom: 0.25rem;
-    font-size: 2rem;
-  }
-
-  .asset-list p {
-    margin: 0;
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+  .platform-release > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: 1rem;
-    margin: 0;
+    padding: 1.4rem;
+    border-right: 1px solid var(--border-subtle);
   }
 
-  dl div {
-    display: grid;
-    gap: 0.3rem;
-  }
-
-  dd {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 0.86rem;
-    overflow-wrap: anywhere;
-  }
-
-  .digest {
-    grid-column: 1 / -1;
-  }
-
-  .digest dd {
+  .platform-code {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--accent);
     font-family: var(--font-mono);
     font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
   }
 
-  .asset-list a {
-    padding-top: 1rem;
+  .platform-release h3 {
+    margin: 0;
+    font-size: 1.65rem;
+  }
+
+  .platform-release > header > span {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+  }
+
+  .artifact-list {
+    min-width: 0;
+  }
+
+  .artifact-row + .artifact-row {
     border-top: 1px solid var(--border-subtle);
-    color: var(--accent);
+  }
+
+  .artifact-row__primary {
+    display: flex;
+    min-height: 5.5rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.2rem;
+  }
+
+  .artifact-row__primary > div {
+    display: grid;
+    min-width: 0;
+    gap: 0.2rem;
+  }
+
+  .artifact-row__primary strong {
+    color: var(--text-strong);
+    font-size: 0.94rem;
     font-weight: 500;
+  }
+
+  .artifact-row__primary > div > span {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+  }
+
+  .artifact-download {
+    display: inline-flex;
+    min-height: 2.75rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.65rem 0.8rem;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.84rem;
+    font-weight: 500;
+    line-height: 1;
     text-decoration: none;
   }
 
-  .asset-pending {
-    margin: 0;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border-subtle);
-    color: var(--text-faint);
-    font-size: 0.86rem;
+  .artifact-download:hover {
+    background: #09654f;
   }
 
-  .evidence-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.55rem 1rem;
-    align-items: center;
-    color: var(--text-faint);
+  .artifact-evidence {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .artifact-evidence summary,
+  .release-evidence summary {
+    min-height: 2.75rem;
+    padding: 0.75rem 1.2rem;
+    color: var(--text-soft);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .artifact-evidence summary:hover,
+  .release-evidence summary:hover {
+    color: var(--accent);
+  }
+
+  .artifact-evidence dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin: 0;
+    padding: 0 1.2rem 1rem;
+  }
+
+  .artifact-evidence dl div {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .artifact-evidence dd {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+
+  .artifact-evidence__digest {
+    grid-column: 1 / -1;
+  }
+
+  .artifact-evidence code {
     font-family: var(--font-mono);
     font-size: 0.7rem;
   }
 
-  .evidence-links > span:first-child {
-    color: var(--text-soft);
-    text-transform: uppercase;
+  .artifact-evidence nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 1rem;
+    padding: 0.75rem 1.2rem;
+    border-top: 1px solid var(--border-subtle);
   }
 
-  .evidence-links a {
-    padding: 0;
-    border: 0;
+  .artifact-evidence nav a,
+  .release-evidence nav a {
     color: var(--accent);
-    font-weight: 400;
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
+    font-size: 0.78rem;
+    font-weight: 500;
   }
 
-  .evidence-links__pending {
+  .artifact-pending,
+  .artifact-pending-copy {
     color: var(--text-faint);
+    font-size: 0.8rem;
   }
 
-  @media (max-width: 760px) {
-    .release-layout {
+  .artifact-pending-copy {
+    margin: 0;
+    padding: 0 1.2rem 1rem;
+  }
+
+  .release-evidence {
+    margin-top: 1rem;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+  }
+
+  .release-evidence p {
+    margin: 0;
+    padding: 0 1.2rem 0.75rem;
+    font-size: 0.84rem;
+  }
+
+  .release-evidence nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 1rem;
+    padding: 0.8rem 1.2rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  @media (max-width: 900px) {
+    .release-summary {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .release-summary > div:nth-child(4) {
+      padding-left: 0;
+      border-left: 0;
+    }
+
+    .platform-release {
       grid-template-columns: 1fr;
     }
 
-    .release-facts {
-      position: static;
+    .platform-release > header {
+      border-right: 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+  }
+
+  @media (max-width: 680px) {
+    .release-hero__layout,
+    .platform-heading {
+      grid-template-columns: 1fr;
+      align-items: start;
     }
 
-    dl {
+    .release-hero__actions {
+      justify-content: flex-start;
+    }
+
+    .release-summary {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .release-summary > div,
+    .release-summary > div:first-child,
+    .release-summary > div:nth-child(4) {
+      padding: 0.65rem;
+      border: 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .release-summary > div:nth-child(odd) {
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    .artifact-row__primary {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .artifact-download {
+      width: 100%;
+    }
+
+    .artifact-evidence dl {
       grid-template-columns: 1fr;
+    }
+
+    .artifact-evidence__digest {
+      grid-column: auto;
     }
   }
 </style>

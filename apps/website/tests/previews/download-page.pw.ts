@@ -202,9 +202,9 @@ test("keeps the selector on the landing page and restores the detailed download 
   await expect(page.locator("[data-download-experience]")).toHaveCount(0);
   await expect(page.locator("#platforms [data-download-grid]")).toHaveCount(1);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Choose an unsigned Chaft canary.",
+    "Download Chaft.",
   );
-  await expect(page.locator("[data-download-card]")).toHaveCount(expectedAssets.length);
+  await expect(page.locator("[data-download-card]")).toHaveCount(3);
 });
 
 test("supports the tab keyboard pattern and explicit macOS architecture choice", async ({

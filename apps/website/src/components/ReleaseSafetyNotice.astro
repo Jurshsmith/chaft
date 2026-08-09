@@ -1,0 +1,35 @@
+<aside class="release-safety" role="note" data-release-warning>
+  <strong>Preview safety</strong>
+  <p>Unsigned and unaudited. Use non-sensitive test data only; not for production communication.</p>
+</aside>
+
+<style>
+  .release-safety {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.45rem 1rem;
+    align-items: baseline;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-sm);
+    background: var(--warning-surface);
+  }
+
+  .release-safety strong {
+    color: var(--warning-text);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .release-safety p {
+    margin: 0;
+    color: var(--warning-text);
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 620px) {
+    .release-safety {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
