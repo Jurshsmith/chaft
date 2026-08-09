@@ -26,7 +26,7 @@ const siteName = "Chaft";
 const fullTitle = title === siteName ? title : `${title} · ${siteName}`;
 const socialTitle =
   title === siteName
-    ? "Chaft — Open-source team chat that runs on your devices."
+    ? "Chaft — Team chat without a required central server."
     : fullTitle;
 const deployment = resolveWebsiteDeployment({
   deploymentMode: process.env.CHAFT_DEPLOYMENT_MODE,
@@ -39,10 +39,8 @@ const canonicalBase = deployment.isPreview
 const canonical = new URL(Astro.url.pathname, canonicalBase);
 const socialImage = new URL(sitePath("/og-chaft-v3.png"), canonicalBase);
 const socialImageAlt =
-  "Chaft logo beside a peer network and the message: Team chat that runs on your devices.";
+  "Chaft, open-source desktop chat for small teams.";
 const favicon = await getImage({ src: mark, width: 64, height: 64, format: "png" });
-const chillaxStylesheet =
-  "https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&display=swap";
 const robotsPolicy = deployment.isPreview
   ? PREVIEW_ROBOTS_POLICY
   : noindex
@@ -61,10 +59,6 @@ const robotsPolicy = deployment.isPreview
     {robotsPolicy && <meta name="robots" content={robotsPolicy} />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/png" href={favicon.src} sizes="64x64" />
-    <link rel="preconnect" href="https://api.fontshare.com" />
-    <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin="anonymous" />
-    <link rel="stylesheet" href={chillaxStylesheet} />
-
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={siteName} />
     <meta property="og:title" content={socialTitle} />

@@ -1,0 +1,101 @@
+---
+import { sitePath } from "../lib/site-path";
+---
+
+<aside class="canary-notice" aria-labelledby="canary-notice-title">
+  <div>
+    <p class="canary-notice__label">Current desktop preview</p>
+    <h2 id="canary-notice-title">Try the early build with a test workspace.</h2>
+  </div>
+  <div class="canary-notice__details">
+    <p class="canary-notice__warning">
+      <span aria-hidden="true">!</span>
+      Unsigned and unaudited. Do not use Chaft canary builds for sensitive or production communication.
+    </p>
+    <div class="button-row">
+      <a class="button" href={sitePath("/download/")}>Download the early build</a>
+      <a class="button button--secondary" href={sitePath("/releases/")}>Release notes</a>
+    </div>
+    <p class="canary-notice__reporting">
+      Found a product bug? <a href="https://github.com/Jurshsmith/chaft/issues">Open a public issue</a>.
+      Found a vulnerability? <a href="https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md">Use the private reporting process</a>.
+    </p>
+  </div>
+</aside>
+
+<style>
+  .canary-notice {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(22rem, 1.15fr);
+    gap: clamp(2rem, 7vw, 7rem);
+    padding: clamp(2rem, 5vw, 3.5rem);
+    border: 1px solid #bc684f;
+    border-radius: var(--radius-md);
+    background: #f7e2d9;
+    color: #321c17;
+  }
+
+  .canary-notice__label {
+    margin-bottom: 1rem;
+    color: #8a3f2d;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  h2 {
+    margin: 0;
+    color: #321c17;
+    font-size: clamp(2rem, 4vw, 3.35rem);
+  }
+
+  .canary-notice__details {
+    align-self: end;
+  }
+
+  .canary-notice__warning {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    margin-bottom: 1.4rem;
+    color: #713829;
+  }
+
+  .canary-notice__warning span {
+    display: grid;
+    width: 1.45rem;
+    height: 1.45rem;
+    flex: 0 0 1.45rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #b94a33;
+    color: #fffdf7;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+
+  .canary-notice :global(.button) {
+    --accent: #713829;
+    --on-accent: #fffdf7;
+  }
+
+  .canary-notice :global(.button--secondary) {
+    --border-strong: #a85c47;
+    --surface-active: #f1cfc2;
+    --text-strong: #492820;
+  }
+
+  .canary-notice__reporting {
+    margin: 1.2rem 0 0;
+    color: #713829;
+    font-size: 0.84rem;
+  }
+
+  .canary-notice__reporting a {
+    color: #492820;
+    font-weight: 500;
+  }
+
+  @media (max-width: 760px) {
+    .canary-notice { grid-template-columns: 1fr; }
+  }
+</style>

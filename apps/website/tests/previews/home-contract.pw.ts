@@ -9,6 +9,11 @@ import {
 } from "./support";
 
 test.describe("landing-page Preview contract", () => {
+  test.skip(
+    expectedPreviewHero === undefined,
+    "Preview hero invariants require an exact preview/landing-hero-N branch",
+  );
+
   test.beforeEach(async ({ page }) => {
     await openLandingPage(page);
   });
@@ -16,7 +21,7 @@ test.describe("landing-page Preview contract", () => {
   test("keeps shared product copy and actions invariant", async ({ page }) => {
     await expect(page.locator(".hero")).toHaveAttribute(
       "data-chaft-hero",
-      expectedPreviewHero,
+      expectedPreviewHero ?? "preview-contract-disabled",
     );
     await expect(page.locator(".hero h1")).toHaveText(previewInvariants.headline);
     const bodyCopy = (await page.locator(".hero .lede").innerText())

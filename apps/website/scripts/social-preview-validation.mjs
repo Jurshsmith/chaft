@@ -10,7 +10,7 @@ export const SOCIAL_IMAGE_FILENAME = "og-chaft-v3.png";
 export const SOCIAL_IMAGE_WIDTH = 1200;
 export const SOCIAL_IMAGE_HEIGHT = 630;
 export const HOME_SOCIAL_TITLE =
-  "Chaft — Open-source team chat that runs on your devices.";
+  "Chaft — Team chat without a required central server.";
 
 function fail(message) {
   throw new Error(`social preview validation failed: ${message}`);

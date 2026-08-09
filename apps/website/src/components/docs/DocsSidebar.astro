@@ -10,9 +10,10 @@ import { sitePath } from "../../lib/site-path";
 interface Props {
   entries: DocNavigationEntry[];
   currentId?: string;
+  overview?: boolean;
 }
 
-const { entries, currentId } = Astro.props;
+const { entries, currentId, overview = false } = Astro.props;
 const groupedEntries = new Map(
   groupDocsBySection(entries).map((group) => [group.section, group] as const),
 );
@@ -28,17 +29,16 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     href={sitePath("/docs/")}
     aria-current={currentId === "index" ? "page" : undefined}
   >
-    Chaft field manual
+    Documentation
   </a>
   <nav aria-label="Documentation navigation">
-    {groups.map((group, index) => (
+    {groups.map((group) => (
       <div
         class="docs-sidebar__group"
         role="group"
         aria-labelledby={`docs-section-${group.section}`}
       >
         <p class="docs-sidebar__section-title" id={`docs-section-${group.section}`}>
-          <span>{String(index + 1).padStart(2, "0")}</span>
           {group.label}
         </p>
         <ul>
@@ -58,45 +58,46 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
   </nav>
 </aside>
 
-<details class="docs-sidebar docs-sidebar--mobile">
-  <summary>Browse documentation</summary>
-  <nav aria-label="Documentation navigation">
-    <a
-      class="docs-sidebar__overview"
-      href={sitePath("/docs/")}
-      aria-current={currentId === "index" ? "page" : undefined}
-    >
-      Documentation overview
-    </a>
-    {groups.map((group, index) => (
-      <div
-        class="docs-sidebar__group"
-        role="group"
-        aria-labelledby={`mobile-docs-section-${group.section}`}
+{!overview && (
+  <details class="docs-sidebar docs-sidebar--mobile">
+    <summary>Browse documentation</summary>
+    <nav aria-label="Documentation navigation">
+      <a
+        class="docs-sidebar__overview"
+        href={sitePath("/docs/")}
+        aria-current={currentId === "index" ? "page" : undefined}
       >
-        <p
-          class="docs-sidebar__section-title"
-          id={`mobile-docs-section-${group.section}`}
+        Documentation overview
+      </a>
+      {groups.map((group) => (
+        <div
+          class="docs-sidebar__group"
+          role="group"
+          aria-labelledby={`mobile-docs-section-${group.section}`}
         >
-          <span>{String(index + 1).padStart(2, "0")}</span>
-          {group.label}
-        </p>
-        <ul>
-          {group.entries.map((entry) => (
-            <li>
-              <a
-                href={sitePath(docRoutePath(entry.id))}
-                aria-current={entry.id === currentId ? "page" : undefined}
-              >
-                {entry.data.navTitle ?? entry.data.title}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </div>
-    ))}
-  </nav>
-</details>
+          <p
+            class="docs-sidebar__section-title"
+            id={`mobile-docs-section-${group.section}`}
+          >
+            {group.label}
+          </p>
+          <ul>
+            {group.entries.map((entry) => (
+              <li>
+                <a
+                  href={sitePath(docRoutePath(entry.id))}
+                  aria-current={entry.id === currentId ? "page" : undefined}
+                >
+                  {entry.data.navTitle ?? entry.data.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  </details>
+)}
 
 <style>
   .docs-sidebar {
@@ -116,9 +117,7 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     display: block;
     margin-bottom: 1.4rem;
     color: var(--text-strong);
-    font-family: var(--font-editorial);
-    font-size: 1.18rem;
-    font-style: italic;
+    font-size: 1rem;
     font-weight: 500;
     text-decoration: none;
   }
@@ -137,8 +136,6 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
   }
 
   .docs-sidebar__section-title {
-    display: flex;
-    gap: 0.55rem;
     max-width: none;
     margin-bottom: 0.55rem;
     color: var(--text-faint);
@@ -148,10 +145,6 @@ const groups = DOC_SECTION_ORDER.flatMap((section) => {
     letter-spacing: 0.08em;
     line-height: 1.4;
     text-transform: uppercase;
-  }
-
-  .docs-sidebar__section-title span {
-    color: var(--warning);
   }
 
   .docs-sidebar ul {

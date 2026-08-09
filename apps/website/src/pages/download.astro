@@ -1,240 +1,269 @@
 ---
 import DownloadGrid from "../components/DownloadGrid.astro";
-import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
-import PageHero from "../components/PageHero.astro";
+import ReleaseSafetyNotice from "../components/ReleaseSafetyNotice.astro";
 import { currentRelease } from "../data/releases";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Chaft canary downloads for Windows, macOS, and Linux, with package availability, checksums, evidence, and signing status.";
+  "Download the Chaft desktop preview for Windows, macOS, or Linux, with checksums and release evidence.";
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
+const publishedDate = currentRelease.publishedAt
+  ? new Intl.DateTimeFormat("en", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(currentRelease.publishedAt))
+  : "Not published";
 ---
 
 <BaseLayout title="Download" description={description}>
-  <PageHero
-    eyebrow={hasPublishedDownloads
-      ? `Canary · v${currentRelease.version}`
-      : "Canary · Packages pending"}
-    title={hasPublishedDownloads
-      ? "Choose an unsigned Chaft canary."
-      : "Canary packages are being prepared."}
-    lede={hasPublishedDownloads
-      ? "Each native package passed its packaged-app smoke check and includes exact integrity evidence. These canaries are deliberately unsigned and are not production-ready."
-      : "Windows, macOS, and Linux are supported targets. Build the current source today; verified public packages will appear here only after their release evidence is complete."}
-  >
-    <div class="button-row">
-      <a
-        class="button"
-        href={hasPublishedDownloads
-          ? "#platforms"
-          : sitePath("/docs/getting-started/build-desktop/")}
-      >
-        {hasPublishedDownloads ? "Choose a platform" : "Build from source"}
-      </a>
-      <a class="button button--secondary" href={currentRelease.releaseUrl}>
-        {hasPublishedDownloads ? "View GitHub release" : "Watch GitHub releases"}
-      </a>
-    </div>
-  </PageHero>
+  <section class="download-hero" aria-labelledby="download-title">
+    <div class="shell download-hero__layout">
+      <div>
+        <p class="eyebrow">Desktop preview</p>
+        <h1 id="download-title">Download Chaft.</h1>
+        <p class="lede">
+          Choose a package for Windows, macOS, or Linux. Architecture,
+          checksum, and build evidence stay attached to every download.
+        </p>
+      </div>
 
-  <section class="section" id="platforms">
-    <div class="shell">
-      <div class="release-strip">
+      <aside class="current-release" aria-label="Current release">
         <span class="status">
-          {currentRelease.status === "published" ? "Unsigned canary published" : "Canary packages pending"}
+          {hasPublishedDownloads ? "Available" : "Packages pending"}
         </span>
         <div>
-          <strong>{currentRelease.status === "published" ? "Current canary" : "Current canary candidate"}</strong>
-          <span class="mono">v{currentRelease.version}</span>
+          <span>Current canary</span>
+          <strong>v{currentRelease.version}</strong>
         </div>
-        <a href={sitePath(`/releases/${currentRelease.version}/`)}>View details →</a>
+        <dl>
+          <div><dt>Published</dt><dd>{publishedDate}</dd></div>
+          <div><dt>Platforms</dt><dd>Windows · macOS · Linux</dd></div>
+        </dl>
+        <a href={sitePath(`/releases/${currentRelease.version}/`)}>
+          View release details <span aria-hidden="true">→</span>
+        </a>
+      </aside>
+    </div>
+  </section>
+
+  <section class="download-platforms" id="platforms" aria-labelledby="platforms-title">
+    <div class="shell">
+      <div class="platforms-heading">
+        <div>
+          <p class="eyebrow">Early build</p>
+          <h2 id="platforms-title">Choose your system.</h2>
+        </div>
+        <p>
+          Device detection highlights one likely match. You still choose the
+          package and architecture.
+        </p>
       </div>
+
+      <ReleaseSafetyNotice />
       <DownloadGrid />
     </div>
   </section>
 
-  <section class="section section--deep">
-    <div class="shell">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Release evidence</p>
-          <h2>Know exactly what you are downloading.</h2>
-        </div>
-        <p>
-          Every published package identifies its exact bytes, source revision, integrity
-          evidence, and platform signing state.
-        </p>
-      </div>
-
-      <div class="delivery-grid">
-        <article>
-          <span class="mono">01</span>
-          <h3>Exact package</h3>
-          <p>The version, architecture, filename, format, and byte size are shown before download.</p>
-        </article>
-        <article>
-          <span class="mono">02</span>
-          <h3>Integrity evidence</h3>
-          <p>Checksums, an SBOM, source and build provenance, and native verification receipts accompany the package.</p>
-        </article>
-        <article>
-          <span class="mono">03</span>
-          <h3>Signing state</h3>
-          <p>The page states whether each package is an unsigned canary, signed, or notarized. It never implies a stronger state.</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="section">
-    <div class="shell verification">
+  <section class="verify-section section--deep" aria-labelledby="verify-title">
+    <div class="shell verify-layout">
       <div>
-        <p class="eyebrow">Verify before opening</p>
-        <h2>Compare the package checksum.</h2>
-      </div>
-      <div class="prose">
+        <p class="eyebrow">Integrity check</p>
+        <h2 id="verify-title">Verify the file before opening it.</h2>
         <p>
-          Every published package includes a SHA-256 digest and a platform-qualified
-          <strong>SHA256SUMS</strong> file, plus a CycloneDX SBOM, source and build
-          provenance, and a native packaged-app smoke receipt. Calculate the digest
-          locally, then compare it with the value shown on the download card and in
-          the release evidence.
+          Compare the SHA-256 digest of your download with the value on its
+          package card. Release details include the full evidence set.
         </p>
-        <div class="verification-commands">
-          <div>
-            <strong>Linux</strong>
-            <pre><code>sha256sum &lt;package-file&gt;</code></pre>
-          </div>
-          <div>
-            <strong>macOS</strong>
-            <pre><code>shasum -a 256 &lt;package-file&gt;</code></pre>
-          </div>
-          <div>
-            <strong>Windows PowerShell</strong>
-            <pre><code>Get-FileHash &lt;package-file&gt; -Algorithm SHA256</code></pre>
-          </div>
+        <div class="button-row">
+          <a class="button" href={sitePath(`/releases/${currentRelease.version}/`)}>
+            Review release evidence
+          </a>
+          <a class="button button--secondary" href={sitePath("/releases/")}>
+            Release history
+          </a>
         </div>
-        <p>
-          The canary receipt explicitly records that signing and notarization were not
-          performed; it is not signature evidence. Stable publication remains blocked
-          until its platform-specific signing and notarization policy is satisfied.
-        </p>
       </div>
-    </div>
-  </section>
 
-  <section class="section section--compact section--deep">
-    <div class="shell">
-      <EarlyAccessCallout />
+      <details class="checksum-help">
+        <summary>Checksum commands</summary>
+        <div>
+          <span>Linux</span>
+          <code>sha256sum &lt;package-file&gt;</code>
+        </div>
+        <div>
+          <span>macOS</span>
+          <code>shasum -a 256 &lt;package-file&gt;</code>
+        </div>
+        <div>
+          <span>Windows PowerShell</span>
+          <code>Get-FileHash &lt;package-file&gt; -Algorithm SHA256</code>
+        </div>
+      </details>
     </div>
   </section>
 </BaseLayout>
 
 <style>
-  .release-strip {
+  .download-hero {
+    padding-block: clamp(3.5rem, 7vw, 6rem);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .download-hero__layout {
     display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 1.5rem;
-    align-items: center;
+    grid-template-columns: minmax(0, 1.2fr) minmax(17rem, 0.55fr);
+    gap: clamp(2.5rem, 8vw, 7rem);
+    align-items: end;
+  }
+
+  .download-hero h1 {
     margin-bottom: 1rem;
-    padding: 1rem;
+    font-size: clamp(3rem, 7vw, 5.6rem);
+  }
+
+  .current-release {
+    display: grid;
+    gap: 1.15rem;
+    padding: 1.25rem;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    background: var(--surface-deep);
+    background: var(--surface-raised);
   }
 
-  .release-strip div {
+  .current-release > div {
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  .current-release > div span,
+  .current-release dt {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.69rem;
+    text-transform: uppercase;
+  }
+
+  .current-release > div strong {
+    color: var(--text-strong);
+    font-size: 1.35rem;
+    font-weight: 500;
+  }
+
+  .current-release dl {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0;
+  }
+
+  .current-release dl div {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1rem;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border-subtle);
   }
 
-  .release-strip a {
+  .current-release dd {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 0.76rem;
+    text-align: right;
+  }
+
+  .current-release > a {
     color: var(--accent);
     font-size: 0.86rem;
+    font-weight: 500;
     text-decoration: none;
   }
 
-  .delivery-grid {
+  .download-platforms {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .platforms-heading {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.55fr);
+    gap: 2rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+  }
+
+  .platforms-heading h2 {
+    margin: 0;
+    font-size: clamp(2.3rem, 5vw, 3.6rem);
+  }
+
+  .platforms-heading > p {
+    max-width: 31rem;
+    margin: 0;
+  }
+
+  :global(.release-safety) {
+    margin-bottom: 1rem;
+  }
+
+  .verify-section {
+    padding-block: clamp(3.5rem, 8vw, 6rem);
+  }
+
+  .verify-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(20rem, 0.75fr);
+    gap: clamp(2.5rem, 8vw, 7rem);
+    align-items: start;
+  }
+
+  .verify-layout h2 {
+    font-size: clamp(2.2rem, 5vw, 3.5rem);
+  }
+
+  .checksum-help {
     overflow: hidden;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    background: var(--border-subtle);
+    background: var(--surface-raised);
   }
 
-  .delivery-grid article {
-    min-height: 17rem;
-    padding: 2rem;
-    background: var(--surface-base);
+  .checksum-help summary {
+    padding: 1rem 1.15rem;
+    color: var(--text-strong);
+    cursor: pointer;
+    font-weight: 500;
   }
 
-  .delivery-grid .mono {
-    display: block;
-    margin-bottom: 3.5rem;
-    color: var(--accent);
-  }
-
-  .delivery-grid p {
-    margin-bottom: 0;
-  }
-
-  .verification {
+  .checksum-help > div {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.75fr);
-    gap: clamp(3rem, 8vw, 7rem);
+    min-width: 0;
+    gap: 0.3rem;
+    padding: 0.85rem 1.15rem;
+    border-top: 1px solid var(--border-subtle);
   }
 
-  pre {
-    overflow-x: auto;
-    max-width: 100%;
-    margin: 0;
-    padding: 1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--surface-deep);
-    color: var(--secure);
+  .checksum-help span {
+    color: var(--text-faint);
     font-family: var(--font-mono);
-    font-size: 0.75rem;
-    white-space: pre-wrap;
+    font-size: 0.68rem;
+  }
+
+  .checksum-help code {
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
     overflow-wrap: anywhere;
   }
 
-  .verification-commands {
-    display: grid;
-    gap: 1rem;
-    margin-block: 1.5rem;
-  }
-
-  .verification-commands > div {
-    display: grid;
-    gap: 0.45rem;
-    min-width: 0;
-  }
-
-  .verification-commands strong {
-    font-size: 0.84rem;
-  }
-
   @media (max-width: 800px) {
-    .release-strip {
+    .download-hero__layout,
+    .platforms-heading,
+    .verify-layout {
       grid-template-columns: 1fr;
     }
 
-    .delivery-grid,
-    .verification {
-      grid-template-columns: 1fr;
-    }
-
-    .delivery-grid article {
-      min-height: auto;
-    }
-
-    .delivery-grid .mono {
-      margin-bottom: 2rem;
+    .download-hero__layout {
+      align-items: start;
     }
   }
 </style>

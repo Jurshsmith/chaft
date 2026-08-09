@@ -1,0 +1,524 @@
+---
+import { sitePath } from "../../lib/site-path";
+
+const canaryWarning =
+  "Unsigned and unaudited. Do not use Chaft canary builds for sensitive or production communication.";
+
+const boundaries = [
+  { label: "Content", value: "Encrypted before sync" },
+  { label: "Metadata", value: "Visible" },
+  { label: "Audit", value: "Not completed" },
+  { label: "Use", value: "Non-sensitive testing" },
+] as const;
+---
+
+<section
+  class="security-trust-hero section--deep"
+  aria-labelledby="security-page-title"
+  data-security-trust-hero
+>
+  <div class="shell security-trust-hero__inner">
+    <div class="security-trust-hero__grid">
+      <div class="security-trust-hero__copy" data-security-trust-copy>
+        <p class="security-trust-hero__kicker">Security · Canary</p>
+        <h1 id="security-page-title">What Chaft protects today.</h1>
+        <p class="body-copy security-trust-hero__lede">
+          Chaft encrypts message and attachment content before sync, signs events on the
+          sending device, and verifies received events locally. Peers and optional replicas
+          carry data; they do not become authoritative.
+        </p>
+
+        <aside class="security-trust-hero__warning" aria-label="Canary warning">
+          <p>{canaryWarning}</p>
+        </aside>
+
+        <div class="security-trust-hero__actions">
+          <a class="button" href={sitePath("/docs/concepts/security-model/")}>
+            Read the security model
+          </a>
+          <a class="security-trust-hero__text-link" href="#canary-limits">
+            Review current limits <span aria-hidden="true">↓</span>
+          </a>
+        </div>
+      </div>
+
+      <figure class="trust-path" aria-labelledby="trust-path-caption" data-security-trust-path>
+        <div class="trust-path__head" aria-hidden="true">
+          <span>One signed event</span>
+          <span>Verified on-device</span>
+        </div>
+
+        <div class="trust-path__map" aria-hidden="true">
+          <div class="trust-path__node trust-path__node--device trust-path__node--author">
+            <span class="trust-path__device-mark"><i></i></span>
+            <strong>Device A</strong>
+            <span>Signs event</span>
+          </div>
+
+          <div class="trust-path__event">
+            <span class="trust-path__event-label">Signed event</span>
+            <strong>Encrypted content</strong>
+            <span>Message · attachment details</span>
+            <small>Visible metadata: author · time · size</small>
+          </div>
+
+          <div class="trust-path__node trust-path__node--device trust-path__node--reader">
+            <span class="trust-path__device-mark"><i></i></span>
+            <strong>Device B</strong>
+            <span>Verifies event</span>
+          </div>
+
+          <div class="trust-path__node trust-path__node--replica">
+            <span class="trust-path__replica-mark"><i></i><i></i><i></i></span>
+            <strong>Optional replica</strong>
+            <span>Signed history + ciphertext</span>
+          </div>
+        </div>
+
+        <figcaption id="trust-path-caption">
+          The receiving device verifies the signed event. The peer or replica that carried it
+          is never authoritative.
+        </figcaption>
+      </figure>
+    </div>
+
+    <dl class="security-boundary-rail" aria-label="Current security boundary">
+      {boundaries.map((boundary) => (
+        <div>
+          <dt>{boundary.label}</dt>
+          <dd>{boundary.value}</dd>
+        </div>
+      ))}
+    </dl>
+  </div>
+</section>
+
+<style>
+  .security-trust-hero {
+    position: relative;
+    overflow: clip;
+    padding-block: clamp(3.75rem, 8vw, 6.5rem) 0;
+    border-bottom: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 78% 38%, rgb(75 195 162 / 9%), transparent 28rem),
+      var(--surface-ink);
+  }
+
+  .security-trust-hero::before {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(rgb(255 253 247 / 2.5%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 253 247 / 2.5%) 1px, transparent 1px);
+    background-size: 32px 32px;
+    content: "";
+    mask-image: linear-gradient(90deg, transparent 12%, #000 72%, transparent);
+    pointer-events: none;
+  }
+
+  .security-trust-hero__inner,
+  .security-trust-hero__grid {
+    position: relative;
+  }
+
+  .security-trust-hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(24rem, 1.1fr);
+    gap: clamp(2.5rem, 6vw, 5.5rem);
+    align-items: center;
+  }
+
+  .security-trust-hero__copy {
+    max-width: 35rem;
+  }
+
+  .security-trust-hero__kicker {
+    margin-block-end: 1rem;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .security-trust-hero h1 {
+    max-width: 12ch;
+    margin-block-end: 1.4rem;
+    font-size: clamp(2.75rem, 5vw, 4.5rem);
+    text-wrap: balance;
+  }
+
+  .security-trust-hero__lede {
+    max-width: 34rem;
+    margin-block-end: 0;
+    color: var(--text-soft);
+    font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+    line-height: 1.62;
+  }
+
+  .security-trust-hero__warning {
+    margin-block: 1.75rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--warning) 72%, var(--border-subtle));
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--warning) 9%, transparent);
+  }
+
+  .security-trust-hero__warning p {
+    margin: 0;
+    color: var(--text-soft);
+    font-family: var(--font-body);
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .security-trust-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem 1.15rem;
+    align-items: center;
+  }
+
+  .security-trust-hero__text-link {
+    display: inline-flex;
+    min-height: 2.85rem;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-soft);
+    font-weight: 500;
+    text-underline-offset: 0.3em;
+  }
+
+  .security-trust-hero__text-link:hover {
+    color: var(--accent);
+  }
+
+  .trust-path {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid #5b6b65;
+    border-radius: clamp(0.8rem, 2vw, 1.2rem);
+    background: #f4f1e8;
+    color: #17211f;
+    box-shadow:
+      0 1.6rem 4rem rgb(0 0 0 / 22%),
+      0 0 0 0.45rem rgb(255 253 247 / 3%);
+  }
+
+  .trust-path__head,
+  .trust-path figcaption {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0.9rem;
+  }
+
+  .trust-path__head {
+    border-bottom: 1px solid #d4d0c4;
+    color: #59645f;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .trust-path__head span:last-child {
+    color: #077054;
+    font-weight: 600;
+  }
+
+  .trust-path__map {
+    position: relative;
+    display: grid;
+    grid-template-areas:
+      "author event reader"
+      ". replica .";
+    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.25fr) minmax(0, 0.82fr);
+    gap: clamp(0.65rem, 2.2vw, 1.45rem);
+    align-items: center;
+    min-height: clamp(17rem, 30vw, 21rem);
+    padding: clamp(1rem, 3vw, 2rem);
+    background:
+      linear-gradient(rgb(23 33 31 / 4%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(23 33 31 / 4%) 1px, transparent 1px),
+      #eee9de;
+    background-size: 24px 24px;
+  }
+
+  .trust-path__map::before,
+  .trust-path__map::after {
+    position: absolute;
+    border-color: #9fa69f;
+    pointer-events: none;
+    content: "";
+  }
+
+  .trust-path__map::before {
+    top: 35%;
+    right: 13%;
+    left: 13%;
+    border-top: 1px dashed #9fa69f;
+  }
+
+  .trust-path__map::after {
+    top: 35%;
+    bottom: 22%;
+    left: 50%;
+    border-left: 1px dashed #9fa69f;
+  }
+
+  .trust-path__node,
+  .trust-path__event {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .trust-path__node {
+    gap: 0.28rem;
+    padding: clamp(0.65rem, 1.8vw, 0.9rem) 0.45rem;
+    border: 1px solid #c5c1b6;
+    border-radius: 0.65rem;
+    background: #fffdf7;
+  }
+
+  .trust-path__node--author {
+    grid-area: author;
+  }
+
+  .trust-path__node--reader {
+    grid-area: reader;
+  }
+
+  .trust-path__node--replica {
+    grid-area: replica;
+  }
+
+  .trust-path__node strong,
+  .trust-path__event strong {
+    color: #17211f;
+    font-size: clamp(0.72rem, 1.2vw, 0.86rem);
+    line-height: 1.2;
+  }
+
+  .trust-path__node > span:last-child,
+  .trust-path__event > span {
+    color: #59645f;
+    font-family: var(--font-body);
+    font-size: clamp(0.62rem, 1vw, 0.72rem);
+    line-height: 1.35;
+  }
+
+  .trust-path__device-mark {
+    position: relative;
+    display: block;
+    width: 1.5rem;
+    height: 1.05rem;
+    margin-block-end: 0.2rem;
+    border: 1px solid #077054;
+    border-radius: 0.2rem;
+    background: #dcece3;
+  }
+
+  .trust-path__device-mark::after {
+    position: absolute;
+    right: 0.35rem;
+    bottom: -0.28rem;
+    left: 0.35rem;
+    border-bottom: 1px solid #077054;
+    content: "";
+  }
+
+  .trust-path__device-mark i {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0.3rem;
+    height: 0.3rem;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: #077054;
+  }
+
+  .trust-path__replica-mark {
+    display: grid;
+    gap: 0.13rem;
+    width: 1.55rem;
+    margin-block-end: 0.15rem;
+  }
+
+  .trust-path__replica-mark i {
+    height: 0.28rem;
+    border: 1px solid #31564f;
+    border-radius: 999px;
+    background: #e3ebe3;
+  }
+
+  .trust-path__event {
+    grid-area: event;
+    gap: 0.38rem;
+    padding: clamp(0.85rem, 2vw, 1.15rem) 0.65rem;
+    border: 1px solid #077054;
+    border-radius: 0.75rem;
+    background: #dcece3;
+    box-shadow: 0 0 0 0.35rem rgb(7 112 84 / 8%);
+  }
+
+  .trust-path__event-label {
+    color: #077054 !important;
+    font-family: var(--font-mono) !important;
+    font-size: clamp(0.58rem, 0.9vw, 0.67rem) !important;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .trust-path__event small {
+    margin-top: 0.25rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid rgb(7 112 84 / 24%);
+    color: #5e6965;
+    font-family: var(--font-mono);
+    font-size: clamp(0.54rem, 0.85vw, 0.63rem);
+    line-height: 1.4;
+  }
+
+  .trust-path figcaption {
+    border-top: 1px solid #d4d0c4;
+    color: #34403c;
+    font-family: var(--font-body);
+    font-size: 0.76rem;
+    line-height: 1.45;
+  }
+
+  .security-boundary-rail {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .security-boundary-rail > div {
+    display: grid;
+    gap: 0.28rem;
+    padding: 1.1rem clamp(0.75rem, 2vw, 1.2rem) 1.25rem;
+    border-inline-start: 1px solid var(--border-subtle);
+  }
+
+  .security-boundary-rail > div:last-child {
+    border-inline-end: 1px solid var(--border-subtle);
+  }
+
+  .security-boundary-rail dt {
+    color: var(--text-faint);
+    font-family: var(--font-ui);
+    font-size: 0.74rem;
+    font-weight: 500;
+  }
+
+  .security-boundary-rail dd {
+    margin: 0;
+    color: var(--text-strong);
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    line-height: 1.35;
+  }
+
+  @media (max-width: 840px) {
+    .security-trust-hero__grid {
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+    }
+
+    .security-trust-hero__copy {
+      max-width: 42rem;
+    }
+
+    .trust-path {
+      width: min(100%, 42rem);
+      justify-self: center;
+    }
+
+    .security-boundary-rail {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .security-boundary-rail > div:nth-child(n + 3) {
+      border-top: 1px solid var(--border-subtle);
+    }
+  }
+
+  @media (max-width: 520px) {
+    .security-trust-hero {
+      padding-top: 3.5rem;
+    }
+
+    .security-trust-hero h1 {
+      font-size: clamp(2.3rem, 11vw, 3.2rem);
+    }
+
+    .security-trust-hero__actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .security-trust-hero__actions .button,
+    .security-trust-hero__text-link {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .trust-path__head {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .trust-path__map {
+      min-height: 16rem;
+      padding: 0.8rem;
+    }
+
+    .trust-path figcaption {
+      padding: 0.75rem 0.8rem;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .trust-path__map {
+      grid-template-areas:
+        "author reader"
+        "event event"
+        "replica replica";
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.7rem;
+      min-height: auto;
+    }
+
+    .trust-path__map::before,
+    .trust-path__map::after {
+      display: none;
+    }
+
+    .trust-path__event,
+    .trust-path__node--replica {
+      width: min(100%, 14rem);
+      justify-self: center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .security-trust-hero *,
+    .security-trust-hero *::before,
+    .security-trust-hero *::after {
+      animation: none !important;
+      scroll-behavior: auto !important;
+      transition: none !important;
+    }
+  }
+</style>

@@ -1,0 +1,371 @@
+<section class="product-moments section" id="product" aria-labelledby="product-title">
+  <div class="shell">
+    <div class="product-moments__heading">
+      <p>Inside Chaft</p>
+      <h2 id="product-title">The everyday parts of team chat, kept together.</h2>
+      <p class="body-copy">
+        The desktop preview covers rooms, replies, files, local search, and access.
+      </p>
+    </div>
+
+    <div
+      class="moment-grid"
+      role="region"
+      aria-label="Chaft product examples"
+      tabindex="0"
+    >
+      <article class="moment-card">
+        <div class="moment-card__visual moment-card__visual--rooms" aria-hidden="true">
+          <div class="room-rail">
+            <span># general</span><span class="active"># launch</span><span># design</span>
+          </div>
+          <div class="reply-view">
+            <p><b>Maya</b><small>10:42</small></p>
+            <span>Can we review the launch note?</span>
+            <i>↳ 2 replies</i>
+          </div>
+        </div>
+        <div class="moment-card__copy">
+          <h3>Rooms and replies</h3>
+          <p class="body-copy">Keep work organized by room and reply without losing context.</p>
+        </div>
+      </article>
+
+      <article class="moment-card">
+        <div class="moment-card__visual moment-card__visual--files" aria-hidden="true">
+          <div class="search-field">⌕ <span>Search “launch kit”</span></div>
+          <div class="search-result">
+            <span class="file-icon">↗</span>
+            <span><b>launch-kit.zip</b><small>in #launch · Nia</small></span>
+            <i>18 MB</i>
+          </div>
+          <div class="search-hit"><span></span><span></span><span></span></div>
+        </div>
+        <div class="moment-card__copy">
+          <h3>Files and local search</h3>
+          <p class="body-copy">Share attachments and search the history stored on your device.</p>
+        </div>
+      </article>
+
+      <article class="moment-card">
+        <div class="moment-card__visual moment-card__visual--access" aria-hidden="true">
+          <div class="invite-head"><span>People &amp; access</span><b>Invite</b></div>
+          <div class="access-person"><i class="person-a">M</i><span><b>Maya</b><small>Authorized · Current</small></span></div>
+          <div class="access-person"><i class="person-b">N</i><span><b>Nia</b><small>Authorized · Current</small></span></div>
+          <div class="access-status"><i></i> Workspace history is current</div>
+        </div>
+        <div class="moment-card__copy">
+          <h3>Invitations and access</h3>
+          <p class="body-copy">Invite teammates, review devices, and check when history is current.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<style>
+  .product-moments {
+    background: var(--surface-raised);
+  }
+
+  .product-moments__heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.62fr);
+    gap: 0 clamp(3rem, 8vw, 8rem);
+    align-items: end;
+    margin-bottom: clamp(2.5rem, 6vw, 4.5rem);
+  }
+
+  .product-moments__heading > p:first-child {
+    grid-column: 1 / -1;
+    margin-bottom: 1rem;
+    color: var(--accent);
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+
+  .product-moments__heading h2 {
+    max-width: 17ch;
+    margin: 0;
+  }
+
+  .product-moments__heading .body-copy {
+    max-width: 34rem;
+    margin: 0;
+  }
+
+  .moment-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .moment-grid:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 4px;
+  }
+
+  .moment-card {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--surface-base);
+  }
+
+  .moment-card__visual {
+    min-height: 17rem;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    background: #17211f;
+    color: #eef4f1;
+    font-size: 0.75rem;
+  }
+
+  .moment-card__copy {
+    padding: 1.35rem;
+  }
+
+  .moment-card__copy h3 {
+    margin-bottom: 0.55rem;
+  }
+
+  .moment-card__copy p {
+    margin: 0;
+    font-size: 0.94rem;
+  }
+
+  .moment-card__visual--rooms {
+    display: grid;
+    grid-template-columns: 6.4rem minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .room-rail {
+    display: grid;
+    align-content: start;
+    gap: 0.3rem;
+    padding: 0.55rem;
+    border-radius: 0.55rem;
+    background: #111a18;
+  }
+
+  .room-rail span {
+    padding: 0.48rem;
+    border-radius: 0.38rem;
+    color: #9fb0aa;
+  }
+
+  .room-rail .active {
+    background: #294139;
+    color: #fff;
+  }
+
+  .reply-view {
+    align-self: center;
+    padding: 0.9rem;
+    border: 1px solid #385048;
+    border-radius: 0.65rem;
+    background: #1c2a26;
+  }
+
+  .reply-view p {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.35rem;
+    color: #fff;
+  }
+
+  .reply-view small { color: #82938d; }
+
+  .reply-view > span {
+    display: block;
+    color: #d8e2de;
+    line-height: 1.45;
+  }
+
+  .reply-view i {
+    display: inline-flex;
+    margin-top: 0.8rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #416d5d;
+    border-radius: 99px;
+    color: #75d5b3;
+    font-style: normal;
+  }
+
+  .moment-card__visual--files {
+    display: grid;
+    align-content: center;
+    gap: 0.8rem;
+  }
+
+  .search-field {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid #3b4d47;
+    border-radius: 0.55rem;
+    background: #111a18;
+    color: #8fa19a;
+  }
+
+  .search-result {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.65rem;
+    align-items: center;
+    padding: 0.8rem;
+    border: 1px solid #3c594f;
+    border-radius: 0.6rem;
+    background: #1e302a;
+  }
+
+  .search-result > span:nth-child(2) {
+    display: grid;
+  }
+
+  .search-result b { font-weight: 500; }
+  .search-result small, .search-result i { color: #91a39c; }
+  .search-result i { font-style: normal; }
+
+  .file-icon {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 0.45rem;
+    background: #31564f;
+    color: #80ddbb;
+  }
+
+  .search-hit {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.3rem 0.8rem;
+  }
+
+  .search-hit span {
+    display: block;
+    width: 88%;
+    height: 0.42rem;
+    border-radius: 99px;
+    background: #354640;
+  }
+
+  .search-hit span:nth-child(2) { width: 65%; }
+  .search-hit span:nth-child(3) { width: 74%; }
+
+  .moment-card__visual--access {
+    display: grid;
+    align-content: center;
+    gap: 0.6rem;
+  }
+
+  .invite-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.35rem;
+  }
+
+  .invite-head b {
+    padding: 0.35rem 0.55rem;
+    border-radius: 0.4rem;
+    background: #087054;
+    font-weight: 500;
+  }
+
+  .access-person {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.65rem;
+    border: 1px solid #344b44;
+    border-radius: 0.55rem;
+    background: #1c2a26;
+  }
+
+  .access-person > i {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 0.5rem;
+    background: #9a624f;
+    font-style: normal;
+  }
+
+  .access-person .person-b { background: #526f7b; }
+
+  .access-person > span {
+    display: grid;
+  }
+
+  .access-person b { font-weight: 500; }
+  .access-person small { color: #91a39c; }
+
+  .access-status {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.25rem;
+    color: #9fb0aa;
+  }
+
+  .access-status i {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #68d0a8;
+  }
+
+  @media (max-width: 960px) {
+    .moment-grid { grid-template-columns: 1fr; }
+
+    .moment-card {
+      display: grid;
+      grid-template-columns: minmax(18rem, 1.1fr) minmax(15rem, 0.9fr);
+    }
+
+    .moment-card__visual {
+      border-right: 1px solid var(--border-subtle);
+      border-bottom: 0;
+    }
+
+    .moment-card__copy { align-self: center; }
+  }
+
+  @media (max-width: 680px) {
+    .product-moments__heading {
+      grid-template-columns: 1fr;
+    }
+
+    .product-moments__heading .body-copy { margin-top: 1rem; }
+
+    .moment-grid {
+      display: flex;
+      gap: 0.8rem;
+      margin-inline: calc(-1 * var(--page-gutter));
+      padding: 0 var(--page-gutter) 0.7rem;
+      overflow-x: auto;
+      scroll-padding-inline: var(--page-gutter);
+      scroll-snap-type: x mandatory;
+      scrollbar-color: var(--border-strong) transparent;
+    }
+
+    .moment-card {
+      display: block;
+      width: min(84vw, 21rem);
+      flex: 0 0 min(84vw, 21rem);
+      scroll-snap-align: start;
+    }
+
+    .moment-card__visual {
+      min-height: 14rem;
+      border-right: 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+  }
+</style>

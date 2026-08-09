@@ -14,10 +14,10 @@ interface HeaderLink {
 const currentPath = Astro.url.pathname;
 const isDocs = currentPath.startsWith(sitePath("/docs/"));
 const links: HeaderLink[] = [
-  { href: sitePath("/#why-chaft"), label: "Why Chaft" },
-  { href: sitePath("/docs/"), label: "Docs", matchPrefix: true },
+  { href: sitePath("/#product"), label: "Product" },
+  { href: sitePath("/#how-it-works"), label: "How it works" },
   { href: sitePath("/security/"), label: "Security" },
-  { href: "https://github.com/Jurshsmith/chaft", label: "Source", external: true },
+  { href: sitePath("/docs/"), label: "Documentation", matchPrefix: true },
 ];
 
 const downloadHref = sitePath("/download/");
@@ -27,6 +27,11 @@ function isCurrentLink(link: HeaderLink): boolean {
   if (link.external) return false;
   if (link.matchPrefix) return currentPath.startsWith(link.href);
   return currentPath === link.href;
+}
+
+
+function isFragmentLink(link: HeaderLink): boolean {
+  return link.href.includes("#");
 }
 ---
 
@@ -54,6 +59,7 @@ function isCurrentLink(link: HeaderLink): boolean {
           <li>
             <a
               href={link.href}
+              data-header-fragment={isFragmentLink(link) ? link.href.split("#")[1] : undefined}
               aria-current={isCurrentLink(link) ? "page" : undefined}
               target={link.external ? "_blank" : undefined}
               rel={link.external ? "noreferrer" : undefined}
@@ -76,6 +82,7 @@ function isCurrentLink(link: HeaderLink): boolean {
         {links.map((link) => (
           <a
             href={link.href}
+            data-header-fragment={isFragmentLink(link) ? link.href.split("#")[1] : undefined}
             aria-current={isCurrentLink(link) ? "page" : undefined}
             target={link.external ? "_blank" : undefined}
             rel={link.external ? "noreferrer" : undefined}
@@ -93,6 +100,24 @@ function isCurrentLink(link: HeaderLink): boolean {
 </header>
 
 <script is:inline>
+  const updateFragmentState = () => {
+    const activeFragment = window.location.pathname === "/"
+      ? window.location.hash.slice(1)
+      : "";
+
+    document.querySelectorAll("[data-header-fragment]").forEach((link) => {
+      if (!(link instanceof HTMLAnchorElement)) return;
+      if (link.dataset.headerFragment === activeFragment) {
+        link.setAttribute("aria-current", "location");
+      } else if (link.getAttribute("aria-current") === "location") {
+        link.removeAttribute("aria-current");
+      }
+    });
+  };
+
+  window.addEventListener("hashchange", updateFragmentState);
+  updateFragmentState();
+
   document.querySelectorAll(".mobile-nav").forEach((menu) => {
     menu.addEventListener("click", (event) => {
       if (event.target instanceof Element && event.target.closest("a")) {
@@ -182,11 +207,11 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   .desktop-nav a:hover,
-  .desktop-nav a[aria-current="page"] {
+  .desktop-nav a[aria-current] {
     color: var(--text-strong);
   }
 
-  .desktop-nav a[aria-current="page"]::after {
+  .desktop-nav a[aria-current]::after {
     position: absolute;
     right: 0;
     bottom: 0.2rem;
@@ -273,7 +298,7 @@ function isCurrentLink(link: HeaderLink): boolean {
   }
 
   .mobile-nav nav a:hover,
-  .mobile-nav nav a[aria-current="page"] {
+  .mobile-nav nav a[aria-current] {
     background: var(--secure-surface);
     color: var(--text-strong);
   }

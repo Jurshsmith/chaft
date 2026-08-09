@@ -3,22 +3,25 @@ interface Props {
   eyebrow: string;
   title: string;
   lede: string;
+  variant?: "default" | "compact" | "split";
 }
 
-const { eyebrow, title, lede } = Astro.props;
+const { eyebrow, title, lede, variant = "default" } = Astro.props;
 const hasActions = Astro.slots.has("default");
+const hasVisual = Astro.slots.has("visual");
+const hasMeta = Astro.slots.has("meta");
 ---
 
-<section class="page-hero">
-  <div class="shell page-hero__inner">
-    <p class="eyebrow">{eyebrow}</p>
-    <h1>{title}</h1>
-    <p class="lede">{lede}</p>
-    {hasActions && (
-      <div class="page-hero__actions">
-        <slot />
-      </div>
-    )}
+<section class:list={["page-hero", `page-hero--${variant}`]}>
+  <div class="shell page-hero__grid">
+    <div class="page-hero__copy">
+      <p class="eyebrow">{eyebrow}</p>
+      <h1>{title}</h1>
+      <p class="lede">{lede}</p>
+      {hasActions && <div class="page-hero__actions"><slot /></div>}
+      {hasMeta && <div class="page-hero__meta"><slot name="meta" /></div>}
+    </div>
+    {hasVisual && <div class="page-hero__visual"><slot name="visual" /></div>}
   </div>
 </section>
 
@@ -26,71 +29,64 @@ const hasActions = Astro.slots.has("default");
   .page-hero {
     position: relative;
     overflow: hidden;
-    padding-block: clamp(3.5rem, 7vw, 5.5rem);
+    padding-block: clamp(3.5rem, 7vw, 6rem);
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-base);
+    background:
+      radial-gradient(circle at 86% 22%, rgb(7 112 84 / 8%), transparent 24rem),
+      var(--surface-base);
   }
 
-  .page-hero::before,
-  .page-hero::after {
-    position: absolute;
-    content: "";
+  .page-hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: center;
   }
 
-  .page-hero::before {
-    top: 42%;
-    right: max(4rem, calc((100vw - var(--content-width)) / 2 + 3rem));
-    width: 0.62rem;
-    height: 0.62rem;
-    border-radius: 50%;
-    background: var(--brand-coral);
-    box-shadow:
-      6.5rem -4.5rem 0 var(--accent),
-      11.5rem 3.8rem 0 var(--brand-violet);
+  .page-hero--split .page-hero__grid {
+    grid-template-columns: minmax(0, 0.92fr) minmax(24rem, 1.08fr);
   }
 
-  .page-hero::after {
-    top: 50%;
-    right: max(-4rem, calc((100vw - var(--content-width)) / 2 - 2rem));
-    width: clamp(15rem, 27vw, 23rem);
-    height: clamp(15rem, 27vw, 23rem);
-    transform: translateY(-50%);
-    border: 1px solid var(--border-strong);
-    border-radius: 50%;
-    background: transparent;
-    box-shadow:
-      inset 0 0 0 clamp(3rem, 6vw, 5rem) rgb(8 118 91 / 4%),
-      0 0 0 clamp(2rem, 4vw, 3.5rem) color-mix(in srgb, var(--brand-coral) 4%, transparent);
-    opacity: 0.78;
+  .page-hero--compact {
+    padding-block: clamp(2.75rem, 5vw, 4.5rem);
   }
 
-  .page-hero__inner {
+  .page-hero__copy {
     position: relative;
     z-index: 1;
+    max-width: 50rem;
   }
 
   h1 {
-    max-width: 11ch;
-    font-family: var(--font-editorial);
-    font-size: clamp(2.9rem, 6vw, 4.9rem);
-    font-style: italic;
-    font-weight: 400;
-    letter-spacing: -0.045em;
+    max-width: 13ch;
+    font-size: clamp(2.8rem, 6vw, 5.15rem);
+    text-wrap: balance;
+  }
+
+  .page-hero--compact h1 {
+    font-size: clamp(2.65rem, 5vw, 4.4rem);
+  }
+
+  .lede {
+    max-width: 42rem;
+    margin-bottom: 0;
   }
 
   .page-hero__actions {
     margin-top: 2rem;
   }
 
-  @media (max-width: 760px) {
-    .page-hero::before {
-      right: 0;
-      opacity: 0.38;
-    }
+  .page-hero__meta {
+    margin-top: 1.5rem;
+  }
 
-    .page-hero::after {
-      right: -8rem;
-      opacity: 0.32;
+  .page-hero__visual {
+    min-width: 0;
+  }
+
+  @media (max-width: 860px) {
+    .page-hero--split .page-hero__grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
