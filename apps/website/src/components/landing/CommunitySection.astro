@@ -1,0 +1,486 @@
+---
+const contributors = [
+  { x: -24, y: -26, rotation: -13, scale: 0.82, opacity: 0.72, arc: -6, delay: 0.00 },
+  { x: -15, y: 24, rotation: 9, scale: 0.91, opacity: 0.82, arc: 5, delay: 0.04 },
+  { x: -5, y: -31, rotation: -7, scale: 0.76, opacity: 0.68, arc: 7, delay: 0.08 },
+  { x: 17, y: -25, rotation: 12, scale: 0.88, opacity: 0.78, arc: -5, delay: 0.12 },
+  { x: 25, y: -9, rotation: -10, scale: 0.8, opacity: 0.7, arc: 6, delay: 0.15 },
+  { x: -26, y: 11, rotation: 8, scale: 0.86, opacity: 0.75, arc: -7, delay: 0.14 },
+  { x: -18, y: -14, rotation: -11, scale: 0.79, opacity: 0.7, arc: 5, delay: 0.1 },
+  { x: 5, y: 29, rotation: 7, scale: 0.9, opacity: 0.8, arc: -6, delay: 0.07 },
+  { x: 18, y: 23, rotation: -8, scale: 0.83, opacity: 0.74, arc: 7, delay: 0.03 },
+  { x: 26, y: 8, rotation: 11, scale: 0.77, opacity: 0.69, arc: -5, delay: 0.06 },
+];
+---
+
+<section
+  class="community-story"
+  id="community"
+  aria-labelledby="community-story-title"
+  data-community-story
+  data-community-motion="static"
+>
+  <div class="community-story__sticky">
+    <div class="shell community-story__content">
+      <header class="community-story__heading">
+        <h2 id="community-story-title">
+          <span>Built for the community.</span>
+          <span>Strengthened by every contribution.</span>
+        </h2>
+        <p class="community-story__summary">
+          Independent contributors come together around one open, shared workspace.
+        </p>
+      </header>
+
+      <div class="community-story__stage" aria-hidden="true">
+        <div class="community-story__grid">
+          {contributors.map((contributor, index) => (
+            <div
+              class="community-avatar"
+              data-community-avatar
+              data-profile={index + 1}
+              data-scatter-x={contributor.x}
+              data-scatter-y={contributor.y}
+              data-scatter-rotation={contributor.rotation}
+              data-scatter-scale={contributor.scale}
+              data-scatter-opacity={contributor.opacity}
+              data-scatter-arc={contributor.arc}
+              data-scatter-delay={contributor.delay}
+            >
+              <span class="community-avatar__portrait">
+                <span class="community-avatar__hair"></span>
+                <span class="community-avatar__detail"></span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const clampCommunityProgress = (value: number) => Math.min(Math.max(value, 0), 1);
+  const easeCommunityProgress = (value: number) => value * value * (3 - 2 * value);
+
+  document.querySelectorAll<HTMLElement>("[data-community-story]").forEach((section) => {
+    const avatars = Array.from(
+      section.querySelectorAll<HTMLElement>("[data-community-avatar]"),
+    ).map((avatar) => ({
+      avatar,
+      x: Number(avatar.dataset.scatterX ?? 0),
+      y: Number(avatar.dataset.scatterY ?? 0),
+      rotation: Number(avatar.dataset.scatterRotation ?? 0),
+      scale: Number(avatar.dataset.scatterScale ?? 1),
+      opacity: Number(avatar.dataset.scatterOpacity ?? 1),
+      arc: Number(avatar.dataset.scatterArc ?? 0),
+      delay: Number(avatar.dataset.scatterDelay ?? 0),
+    }));
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const compactViewport = window.matchMedia("(max-width: 760px)");
+    const shortViewport = window.matchMedia("(max-height: 700px)");
+
+    let animationFrame = 0;
+    let isActive = false;
+    let isScrollDriven = false;
+
+    const resetAvatars = () => {
+      avatars.forEach(({ avatar }) => {
+        avatar.style.removeProperty("--community-x");
+        avatar.style.removeProperty("--community-y");
+        avatar.style.removeProperty("--community-rotation");
+        avatar.style.removeProperty("--community-scale");
+        avatar.style.removeProperty("--community-opacity");
+      });
+    };
+
+    const update = () => {
+      animationFrame = 0;
+      if (!isScrollDriven) return;
+
+      const rect = section.getBoundingClientRect();
+      const scrollRange = Math.max(section.offsetHeight - window.innerHeight, 1);
+      const progress = clampCommunityProgress(-rect.top / scrollRange);
+      const gatheringProgress = clampCommunityProgress((progress - 0.08) / 0.84);
+
+      avatars.forEach(({ avatar, x, y, rotation, scale, opacity, arc, delay }) => {
+        const localProgress = clampCommunityProgress(
+          (gatheringProgress - delay) / Math.max(1 - delay, 0.01),
+        );
+        const easedProgress = easeCommunityProgress(localProgress);
+        const remaining = 1 - easedProgress;
+        const curvedOffset = Math.sin(Math.PI * easedProgress) * arc;
+        const verticalOffset = y * remaining + curvedOffset;
+        const normalizedVerticalOffset = Math.abs(verticalOffset) < 0.0005
+          ? 0
+          : verticalOffset;
+
+        avatar.style.setProperty("--community-x", `${(x * remaining).toFixed(3)}vw`);
+        avatar.style.setProperty(
+          "--community-y",
+          `${normalizedVerticalOffset.toFixed(3)}svh`,
+        );
+        avatar.style.setProperty(
+          "--community-rotation",
+          `${(rotation * remaining).toFixed(3)}deg`,
+        );
+        avatar.style.setProperty(
+          "--community-scale",
+          (scale + (1 - scale) * easedProgress).toFixed(4),
+        );
+        avatar.style.setProperty(
+          "--community-opacity",
+          (opacity + (1 - opacity) * easedProgress).toFixed(4),
+        );
+      });
+
+      section.dataset.communityProgress = progress.toFixed(3);
+    };
+
+    const scheduleUpdate = (force = false) => {
+      if (!isScrollDriven || animationFrame || (!isActive && !force)) return;
+      animationFrame = window.requestAnimationFrame(update);
+    };
+
+    const configureMotion = () => {
+      isScrollDriven = !reducedMotion.matches
+        && !compactViewport.matches
+        && !shortViewport.matches
+        && CSS.supports("position", "sticky");
+
+      if (!isScrollDriven) {
+        section.removeAttribute("data-community-ready");
+        section.dataset.communityMotion = reducedMotion.matches ? "reduced" : "simplified";
+        section.dataset.communityProgress = "1.000";
+        resetAvatars();
+        return;
+      }
+
+      section.setAttribute("data-community-ready", "");
+      section.dataset.communityMotion = "scroll";
+      scheduleUpdate(true);
+    };
+
+    window.addEventListener("scroll", () => scheduleUpdate(), { passive: true });
+    window.addEventListener("resize", () => scheduleUpdate(true), { passive: true });
+    reducedMotion.addEventListener("change", configureMotion);
+    compactViewport.addEventListener("change", configureMotion);
+    shortViewport.addEventListener("change", configureMotion);
+
+    new ResizeObserver(() => scheduleUpdate(true)).observe(section);
+    new IntersectionObserver(
+      ([entry]) => {
+        isActive = Boolean(entry?.isIntersecting);
+        section.toggleAttribute("data-community-active", isActive);
+        if (isActive) scheduleUpdate(true);
+      },
+      { rootMargin: "25% 0px" },
+    ).observe(section);
+
+    configureMotion();
+  });
+</script>
+
+<style>
+  .community-story {
+    position: relative;
+    isolation: isolate;
+    border-block: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 50% 48%, rgb(75 195 162 / 8%), transparent 34rem),
+      var(--surface-raised);
+    scroll-margin-top: 5.5rem;
+  }
+
+  .community-story__sticky {
+    display: grid;
+    min-height: 100svh;
+    align-items: stretch;
+    padding-block: clamp(6.5rem, 13svh, 8.5rem) clamp(4rem, 8svh, 6rem);
+  }
+
+  .community-story__content {
+    display: grid;
+    grid-template-rows: auto minmax(18rem, 1fr);
+    gap: clamp(2.75rem, 8svh, 6.25rem);
+    width: 100%;
+  }
+
+  .community-story__heading {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .community-story__heading h2 {
+    max-width: 20ch;
+    margin: 0;
+    font-size: clamp(2.25rem, 5.2vw, 4.7rem);
+    text-wrap: balance;
+  }
+
+  .community-story__heading h2 span {
+    display: block;
+  }
+
+  .community-story__summary {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .community-story__stage {
+    display: grid;
+    min-height: 18rem;
+    place-items: center;
+    perspective: 60rem;
+  }
+
+  .community-story__grid {
+    display: grid;
+    grid-template-columns: repeat(5, auto);
+    gap: clamp(1.35rem, 3vw, 2.8rem) clamp(1.1rem, 2.5vw, 2.35rem);
+    align-items: center;
+    justify-content: center;
+  }
+
+  .community-avatar {
+    --community-opacity: 1;
+    --community-rotation: 0deg;
+    --community-scale: 1;
+    --community-x: 0vw;
+    --community-y: 0svh;
+    position: relative;
+    width: clamp(4.25rem, 7vw, 6.2rem);
+    aspect-ratio: 1;
+    transform-origin: center;
+  }
+
+  .community-story[data-community-ready] .community-avatar {
+    transform: translate3d(var(--community-x), var(--community-y), 0)
+      rotate(var(--community-rotation)) scale(var(--community-scale));
+    opacity: var(--community-opacity);
+  }
+
+  .community-avatar__portrait {
+    --portrait-bg: #dfe5df;
+    --portrait-hair: #243934;
+    --portrait-shirt: #d8563f;
+    --portrait-skin: #bc7657;
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border: 1px solid rgb(23 33 31 / 24%);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 32% 24%, rgb(255 255 255 / 82%), transparent 36%),
+      var(--portrait-bg);
+    box-shadow:
+      0 0.6rem 1.6rem rgb(23 33 31 / 10%),
+      inset 0 0 0 0.2rem rgb(255 255 255 / 35%);
+  }
+
+  .community-avatar__portrait::before {
+    position: absolute;
+    top: 27%;
+    left: 35%;
+    z-index: 2;
+    width: 31%;
+    height: 35%;
+    transform: rotate(var(--portrait-head-tilt, 0deg));
+    border-radius: 48% 52% 45% 47%;
+    background: var(--portrait-skin);
+    box-shadow: inset -0.18rem -0.08rem 0 rgb(23 33 31 / 8%);
+    content: "";
+  }
+
+  .community-avatar__portrait::after {
+    position: absolute;
+    right: 12%;
+    bottom: -20%;
+    left: 12%;
+    z-index: 1;
+    height: 61%;
+    border-radius: 48% 48% 16% 16%;
+    background: var(--portrait-shirt);
+    box-shadow: inset 0.5rem 0.25rem 0 rgb(255 255 255 / 10%);
+    content: "";
+  }
+
+  .community-avatar__hair {
+    position: absolute;
+    top: 20%;
+    left: 32%;
+    z-index: 3;
+    width: 38%;
+    height: 26%;
+    transform: rotate(var(--portrait-head-tilt, 0deg));
+    border-radius: var(--portrait-hair-radius, 58% 54% 34% 28%);
+    background: var(--portrait-hair);
+  }
+
+  .community-avatar__hair::before {
+    position: absolute;
+    top: var(--portrait-bun-top, -20%);
+    left: var(--portrait-bun-left, 4%);
+    width: 40%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: inherit;
+    content: "";
+  }
+
+  .community-avatar__detail {
+    position: absolute;
+    top: 43%;
+    left: 58%;
+    z-index: 4;
+    width: 5%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: rgb(23 33 31 / 58%);
+  }
+
+  .community-avatar:nth-child(2) .community-avatar__portrait {
+    --portrait-bg: #e6ddc7;
+    --portrait-hair: #633d2d;
+    --portrait-shirt: #31564f;
+    --portrait-skin: #d49b78;
+    --portrait-head-tilt: -4deg;
+  }
+
+  .community-avatar:nth-child(3) .community-avatar__portrait {
+    --portrait-bg: #d8e3e5;
+    --portrait-hair: #17211f;
+    --portrait-shirt: #6a5fa3;
+    --portrait-skin: #8f543f;
+    --portrait-bun-left: 55%;
+  }
+
+  .community-avatar:nth-child(4) .community-avatar__portrait {
+    --portrait-bg: #eadbd2;
+    --portrait-hair: #75422e;
+    --portrait-shirt: #077054;
+    --portrait-skin: #e0aa83;
+    --portrait-head-tilt: 4deg;
+    --portrait-hair-radius: 50% 60% 28% 42%;
+  }
+
+  .community-avatar:nth-child(5) .community-avatar__portrait {
+    --portrait-bg: #dce7d8;
+    --portrait-hair: #262139;
+    --portrait-shirt: #d29b35;
+    --portrait-skin: #a9684d;
+    --portrait-bun-left: 58%;
+  }
+
+  .community-avatar:nth-child(6) .community-avatar__portrait {
+    --portrait-bg: #e7e0dc;
+    --portrait-hair: #17211f;
+    --portrait-shirt: #31564f;
+    --portrait-skin: #6f4437;
+    --portrait-head-tilt: -5deg;
+  }
+
+  .community-avatar:nth-child(7) .community-avatar__portrait {
+    --portrait-bg: #d9e1da;
+    --portrait-hair: #a86b3e;
+    --portrait-shirt: #d8563f;
+    --portrait-skin: #d69871;
+    --portrait-bun-top: -26%;
+    --portrait-bun-left: 31%;
+  }
+
+  .community-avatar:nth-child(8) .community-avatar__portrait {
+    --portrait-bg: #e8dfc8;
+    --portrait-hair: #4e2d2a;
+    --portrait-shirt: #6a5fa3;
+    --portrait-skin: #b77355;
+    --portrait-head-tilt: 5deg;
+    --portrait-hair-radius: 62% 42% 38% 24%;
+  }
+
+  .community-avatar:nth-child(9) .community-avatar__portrait {
+    --portrait-bg: #d7e5e2;
+    --portrait-hair: #d18b45;
+    --portrait-shirt: #077054;
+    --portrait-skin: #e5b08a;
+    --portrait-bun-left: 54%;
+  }
+
+  .community-avatar:nth-child(10) .community-avatar__portrait {
+    --portrait-bg: #e5dbdf;
+    --portrait-hair: #242830;
+    --portrait-shirt: #d29b35;
+    --portrait-skin: #89513d;
+    --portrait-head-tilt: -3deg;
+  }
+
+  .community-story[data-community-ready] {
+    min-height: 230svh;
+  }
+
+  .community-story[data-community-ready] .community-story__sticky {
+    position: sticky;
+    top: 0;
+    height: 100svh;
+    min-height: 0;
+    overflow: clip;
+  }
+
+  .community-story[data-community-ready][data-community-active] .community-avatar {
+    will-change: transform, opacity;
+  }
+
+  @media (max-width: 760px), (max-height: 700px) {
+    .community-story__sticky {
+      min-height: auto;
+      padding-block: clamp(5rem, 16vw, 7rem);
+    }
+
+    .community-story__content {
+      grid-template-rows: auto auto;
+      gap: clamp(3rem, 12vw, 5rem);
+    }
+
+    .community-story__heading h2 {
+      max-width: 17ch;
+      font-size: clamp(2rem, 9vw, 3.2rem);
+    }
+
+    .community-story__stage {
+      min-height: auto;
+    }
+
+    .community-story__grid {
+      gap: clamp(0.85rem, 4vw, 1.35rem) clamp(0.45rem, 2.2vw, 0.9rem);
+    }
+
+    .community-avatar {
+      width: clamp(2.9rem, 14vw, 4.5rem);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .community-avatar {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .community-avatar__portrait {
+      border: 2px solid CanvasText;
+      box-shadow: none;
+    }
+  }
+</style>
