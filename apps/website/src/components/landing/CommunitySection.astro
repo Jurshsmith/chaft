@@ -1,15 +1,120 @@
 ---
+import { sitePath } from "../../lib/site-path";
+
+const avatarSprite = sitePath("/assets/community-avatars.svg");
+
 const contributors = [
-  { x: -24, y: -26, rotation: -13, scale: 0.82, opacity: 0.72, arc: -6, delay: 0.00 },
-  { x: -15, y: 24, rotation: 9, scale: 0.91, opacity: 0.82, arc: 5, delay: 0.04 },
-  { x: -5, y: -31, rotation: -7, scale: 0.76, opacity: 0.68, arc: 7, delay: 0.08 },
-  { x: 17, y: -25, rotation: 12, scale: 0.88, opacity: 0.78, arc: -5, delay: 0.12 },
-  { x: 25, y: -9, rotation: -10, scale: 0.8, opacity: 0.7, arc: 6, delay: 0.15 },
-  { x: -26, y: 11, rotation: 8, scale: 0.86, opacity: 0.75, arc: -7, delay: 0.14 },
-  { x: -18, y: -14, rotation: -11, scale: 0.79, opacity: 0.7, arc: 5, delay: 0.1 },
-  { x: 5, y: 29, rotation: 7, scale: 0.9, opacity: 0.8, arc: -6, delay: 0.07 },
-  { x: 18, y: 23, rotation: -8, scale: 0.83, opacity: 0.74, arc: 7, delay: 0.03 },
-  { x: 26, y: 8, rotation: 11, scale: 0.77, opacity: 0.69, arc: -5, delay: 0.06 },
+  {
+    assetId: "community-avatar-01",
+    anchorX: 0.075,
+    anchorY: 0.27,
+    bendX: -18,
+    bendY: 62,
+    rotation: -4,
+    scale: 0.94,
+    opacity: 0.94,
+    delay: 0,
+  },
+  {
+    assetId: "community-avatar-02",
+    anchorX: 0.245,
+    anchorY: 0.56,
+    bendX: -12,
+    bendY: 20,
+    rotation: 3,
+    scale: 0.88,
+    opacity: 0.92,
+    delay: 0.035,
+  },
+  {
+    assetId: "community-avatar-05",
+    anchorX: 0.5,
+    anchorY: 0.23,
+    bendX: 0,
+    bendY: 90,
+    rotation: -2,
+    scale: 0.86,
+    opacity: 0.9,
+    delay: 0.1,
+    overlapTitle: true,
+  },
+  {
+    assetId: "community-avatar-06",
+    anchorX: 0.885,
+    anchorY: 0.25,
+    bendX: 47,
+    bendY: 130,
+    rotation: 3,
+    scale: 0.98,
+    opacity: 0.97,
+    delay: 0,
+  },
+  {
+    assetId: "community-avatar-07",
+    anchorX: 0.94,
+    anchorY: 0.49,
+    bendX: 20,
+    bendY: 14,
+    rotation: -4,
+    scale: 0.88,
+    opacity: 0.92,
+    delay: 0.065,
+  },
+  {
+    assetId: "community-avatar-03",
+    anchorX: 0.07,
+    anchorY: 0.82,
+    bendX: -16,
+    bendY: 12,
+    rotation: -3,
+    scale: 0.98,
+    opacity: 0.96,
+    delay: 0.07,
+  },
+  {
+    assetId: "community-avatar-04",
+    anchorX: 0.285,
+    anchorY: 0.88,
+    bendX: -20,
+    bendY: -8,
+    rotation: 4,
+    scale: 1.02,
+    opacity: 0.98,
+    delay: 0.045,
+  },
+  {
+    assetId: "community-avatar-10",
+    anchorX: 0.51,
+    anchorY: 0.94,
+    bendX: 0,
+    bendY: -18,
+    rotation: 2,
+    scale: 0.96,
+    opacity: 0.96,
+    delay: 0.105,
+  },
+  {
+    assetId: "community-avatar-09",
+    anchorX: 0.79,
+    anchorY: 0.91,
+    bendX: 20,
+    bendY: -12,
+    rotation: -3,
+    scale: 0.86,
+    opacity: 0.92,
+    delay: 0.125,
+  },
+  {
+    assetId: "community-avatar-08",
+    anchorX: 0.93,
+    anchorY: 0.76,
+    bendX: 18,
+    bendY: 16,
+    rotation: 3,
+    scale: 0.92,
+    opacity: 0.95,
+    delay: 0.09,
+  },
 ];
 ---
 
@@ -21,7 +126,7 @@ const contributors = [
   data-community-motion="static"
 >
   <div class="community-story__sticky">
-    <div class="shell community-story__content">
+    <div class="community-story__content">
       <header class="community-story__heading">
         <h2 id="community-story-title">
           <span>Built for the community.</span>
@@ -32,26 +137,46 @@ const contributors = [
         </p>
       </header>
 
-      <div class="community-story__stage" aria-hidden="true">
-        <div class="community-story__grid">
+      <div class="community-story__stage" data-community-stage aria-hidden="true">
+        <div class="community-story__grid" data-community-grid>
           {contributors.map((contributor, index) => (
-            <div
-              class="community-avatar"
-              data-community-avatar
-              data-profile={index + 1}
-              data-scatter-x={contributor.x}
-              data-scatter-y={contributor.y}
-              data-scatter-rotation={contributor.rotation}
-              data-scatter-scale={contributor.scale}
-              data-scatter-opacity={contributor.opacity}
-              data-scatter-arc={contributor.arc}
-              data-scatter-delay={contributor.delay}
+            <span
+              class="community-avatar__slot"
+              data-community-slot
+              data-anchor-x={contributor.anchorX}
+              data-anchor-y={contributor.anchorY}
+              data-title-overlap={contributor.overlapTitle ? "true" : undefined}
             >
-              <span class="community-avatar__portrait">
-                <span class="community-avatar__hair"></span>
-                <span class="community-avatar__detail"></span>
+              <span
+                class="community-avatar"
+                data-community-avatar
+                data-profile={index + 1}
+                data-bend-x={contributor.bendX}
+                data-bend-y={contributor.bendY}
+                data-scatter-rotation={contributor.rotation}
+                data-scatter-scale={contributor.scale}
+                data-scatter-opacity={contributor.opacity}
+                data-scatter-delay={contributor.delay}
+              >
+                <span class="community-avatar__portrait">
+                  <svg
+                    class="community-avatar__art"
+                    viewBox="0 0 1 1"
+                    preserveAspectRatio="xMidYMid meet"
+                    focusable="false"
+                    aria-hidden="true"
+                  >
+                    <use
+                      href={avatarSprite + "#" + contributor.assetId}
+                      x="0"
+                      y="0"
+                      width="1"
+                      height="1"
+                    />
+                  </svg>
+                </span>
               </span>
-            </div>
+            </span>
           ))}
         </div>
       </div>
@@ -61,120 +186,196 @@ const contributors = [
 
 <script>
   const clampCommunityProgress = (value: number) => Math.min(Math.max(value, 0), 1);
-  const easeCommunityProgress = (value: number) => value * value * (3 - 2 * value);
+  const smootherCommunityProgress = (value: number) => (
+    value * value * value * (value * (value * 6 - 15) + 10)
+  );
 
   document.querySelectorAll<HTMLElement>("[data-community-story]").forEach((section) => {
+    if (section.hasAttribute("data-community-initialized")) return;
+    section.setAttribute("data-community-initialized", "");
+
+    const stage = section.querySelector<HTMLElement>("[data-community-stage]");
+    if (!stage) return;
+
     const avatars = Array.from(
       section.querySelectorAll<HTMLElement>("[data-community-avatar]"),
-    ).map((avatar) => ({
-      avatar,
-      x: Number(avatar.dataset.scatterX ?? 0),
-      y: Number(avatar.dataset.scatterY ?? 0),
-      rotation: Number(avatar.dataset.scatterRotation ?? 0),
-      scale: Number(avatar.dataset.scatterScale ?? 1),
-      opacity: Number(avatar.dataset.scatterOpacity ?? 1),
-      arc: Number(avatar.dataset.scatterArc ?? 0),
-      delay: Number(avatar.dataset.scatterDelay ?? 0),
-    }));
+    ).map((avatar) => {
+      const slot = avatar.closest<HTMLElement>("[data-community-slot]");
+      return {
+        avatar,
+        slot,
+        anchorX: Number(slot?.dataset.anchorX ?? 0.5),
+        anchorY: Number(slot?.dataset.anchorY ?? 0.5),
+        bendX: Number(avatar.dataset.bendX ?? 0),
+        bendY: Number(avatar.dataset.bendY ?? 0),
+        rotation: Number(avatar.dataset.scatterRotation ?? 0),
+        scale: Number(avatar.dataset.scatterScale ?? 1),
+        opacity: Number(avatar.dataset.scatterOpacity ?? 1),
+        delay: Number(avatar.dataset.scatterDelay ?? 0),
+        offsetX: 0,
+        offsetY: 0,
+      };
+    });
+
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const compactViewport = window.matchMedia("(max-width: 760px)");
-    const shortViewport = window.matchMedia("(max-height: 700px)");
+    const compactViewport = window.matchMedia("(max-width: 1279px)");
+    const shortViewport = window.matchMedia("(max-height: 767px)");
 
     let animationFrame = 0;
     let isActive = false;
     let isScrollDriven = false;
+    let shouldMeasure = true;
+    let lastProgress = "";
 
     const resetAvatars = () => {
       avatars.forEach(({ avatar }) => {
-        avatar.style.removeProperty("--community-x");
-        avatar.style.removeProperty("--community-y");
-        avatar.style.removeProperty("--community-rotation");
-        avatar.style.removeProperty("--community-scale");
+        avatar.style.removeProperty("--community-transform");
         avatar.style.removeProperty("--community-opacity");
       });
+      lastProgress = "";
+    };
+
+    const readProgress = () => {
+      const rect = section.getBoundingClientRect();
+      const scrollRange = Math.max(section.offsetHeight - window.innerHeight, 1);
+      return clampCommunityProgress(-rect.top / scrollRange);
+    };
+
+    const measureAvatars = () => {
+      const stageRect = stage.getBoundingClientRect();
+
+      avatars.forEach((motion) => {
+        if (!motion.slot) return;
+
+        const slotRect = motion.slot.getBoundingClientRect();
+        const radius = Math.max(slotRect.width, slotRect.height) / 2
+          * Math.max(motion.scale, 1);
+        const safeInset = radius + 10;
+        const anchorX = Math.min(
+          Math.max(stageRect.width * motion.anchorX, safeInset),
+          stageRect.width - safeInset,
+        );
+        const anchorY = Math.min(
+          Math.max(stageRect.height * motion.anchorY, safeInset),
+          stageRect.height - safeInset,
+        );
+        const finalCenterX = slotRect.left - stageRect.left + slotRect.width / 2;
+        const finalCenterY = slotRect.top - stageRect.top + slotRect.height / 2;
+
+        motion.offsetX = anchorX - finalCenterX;
+        motion.offsetY = anchorY - finalCenterY;
+      });
+
+      shouldMeasure = false;
+    };
+
+    const render = (progress: number) => {
+      const gatheringProgress = clampCommunityProgress((progress - 0.055) / 0.865);
+
+      avatars.forEach((motion) => {
+        const localProgress = clampCommunityProgress(
+          (gatheringProgress - motion.delay) / Math.max(1 - motion.delay, 0.01),
+        );
+        const easedProgress = smootherCommunityProgress(localProgress);
+        const remaining = 1 - easedProgress;
+        const curve = 4 * easedProgress * remaining;
+        const x = motion.offsetX * remaining + motion.bendX * curve;
+        const y = motion.offsetY * remaining + motion.bendY * curve;
+        const rotation = motion.rotation * remaining;
+        const scale = motion.scale
+          + (1 - motion.scale) * easedProgress
+          + Math.sin(Math.PI * easedProgress) * 0.018;
+        const opacity = motion.opacity + (1 - motion.opacity) * easedProgress;
+        const normalizedX = Math.abs(x) < 0.005 ? 0 : x;
+        const normalizedY = Math.abs(y) < 0.005 ? 0 : y;
+        const normalizedRotation = Math.abs(rotation) < 0.005 ? 0 : rotation;
+
+        motion.avatar.style.setProperty(
+          "--community-transform",
+          "translate3d("
+            + normalizedX.toFixed(2)
+            + "px, "
+            + normalizedY.toFixed(2)
+            + "px, 0) rotate("
+            + normalizedRotation.toFixed(2)
+            + "deg) scale("
+            + scale.toFixed(4)
+            + ")",
+        );
+        motion.avatar.style.setProperty(
+          "--community-opacity",
+          opacity.toFixed(4),
+        );
+      });
+
+      const nextProgress = progress.toFixed(3);
+      if (nextProgress !== lastProgress) {
+        section.dataset.communityProgress = nextProgress;
+        lastProgress = nextProgress;
+      }
     };
 
     const update = () => {
       animationFrame = 0;
       if (!isScrollDriven) return;
-
-      const rect = section.getBoundingClientRect();
-      const scrollRange = Math.max(section.offsetHeight - window.innerHeight, 1);
-      const progress = clampCommunityProgress(-rect.top / scrollRange);
-      const gatheringProgress = clampCommunityProgress((progress - 0.08) / 0.84);
-
-      avatars.forEach(({ avatar, x, y, rotation, scale, opacity, arc, delay }) => {
-        const localProgress = clampCommunityProgress(
-          (gatheringProgress - delay) / Math.max(1 - delay, 0.01),
-        );
-        const easedProgress = easeCommunityProgress(localProgress);
-        const remaining = 1 - easedProgress;
-        const curvedOffset = Math.sin(Math.PI * easedProgress) * arc;
-        const verticalOffset = y * remaining + curvedOffset;
-        const normalizedVerticalOffset = Math.abs(verticalOffset) < 0.0005
-          ? 0
-          : verticalOffset;
-
-        avatar.style.setProperty("--community-x", `${(x * remaining).toFixed(3)}vw`);
-        avatar.style.setProperty(
-          "--community-y",
-          `${normalizedVerticalOffset.toFixed(3)}svh`,
-        );
-        avatar.style.setProperty(
-          "--community-rotation",
-          `${(rotation * remaining).toFixed(3)}deg`,
-        );
-        avatar.style.setProperty(
-          "--community-scale",
-          (scale + (1 - scale) * easedProgress).toFixed(4),
-        );
-        avatar.style.setProperty(
-          "--community-opacity",
-          (opacity + (1 - opacity) * easedProgress).toFixed(4),
-        );
-      });
-
-      section.dataset.communityProgress = progress.toFixed(3);
+      if (shouldMeasure) measureAvatars();
+      render(readProgress());
     };
 
-    const scheduleUpdate = (force = false) => {
+    const scheduleUpdate = (force = false, measure = false) => {
+      shouldMeasure ||= measure;
       if (!isScrollDriven || animationFrame || (!isActive && !force)) return;
       animationFrame = window.requestAnimationFrame(update);
     };
 
     const configureMotion = () => {
-      isScrollDriven = !reducedMotion.matches
+      const nextScrollDriven = !reducedMotion.matches
         && !compactViewport.matches
         && !shortViewport.matches
         && CSS.supports("position", "sticky");
 
-      if (!isScrollDriven) {
+      if (!nextScrollDriven) {
+        isScrollDriven = false;
+        if (animationFrame) {
+          window.cancelAnimationFrame(animationFrame);
+          animationFrame = 0;
+        }
         section.removeAttribute("data-community-ready");
+        section.removeAttribute("data-community-layout");
         section.dataset.communityMotion = reducedMotion.matches ? "reduced" : "simplified";
         section.dataset.communityProgress = "1.000";
         resetAvatars();
         return;
       }
 
-      section.setAttribute("data-community-ready", "");
+      isScrollDriven = true;
       section.dataset.communityMotion = "scroll";
+      section.setAttribute("data-community-layout", "");
+      shouldMeasure = true;
+      measureAvatars();
+      render(readProgress());
+      section.setAttribute("data-community-ready", "");
       scheduleUpdate(true);
     };
 
     window.addEventListener("scroll", () => scheduleUpdate(), { passive: true });
-    window.addEventListener("resize", () => scheduleUpdate(true), { passive: true });
+    window.addEventListener(
+      "resize",
+      () => scheduleUpdate(true, true),
+      { passive: true },
+    );
     reducedMotion.addEventListener("change", configureMotion);
     compactViewport.addEventListener("change", configureMotion);
     shortViewport.addEventListener("change", configureMotion);
 
-    new ResizeObserver(() => scheduleUpdate(true)).observe(section);
+    new ResizeObserver(() => scheduleUpdate(true, true)).observe(stage);
     new IntersectionObserver(
       ([entry]) => {
         isActive = Boolean(entry?.isIntersecting);
         section.toggleAttribute("data-community-active", isActive);
         if (isActive) scheduleUpdate(true);
       },
-      { rootMargin: "25% 0px" },
+      { rootMargin: "30% 0px" },
     ).observe(section);
 
     configureMotion();
@@ -187,7 +388,8 @@ const contributors = [
     isolation: isolate;
     border-block: 1px solid var(--border-subtle);
     background:
-      radial-gradient(circle at 50% 48%, rgb(75 195 162 / 8%), transparent 34rem),
+      radial-gradient(circle at 50% 44%, rgb(75 195 162 / 10%), transparent 31rem),
+      linear-gradient(180deg, rgb(255 253 248 / 68%), transparent 44%),
       var(--surface-raised);
     scroll-margin-top: 5.5rem;
   }
@@ -195,21 +397,25 @@ const contributors = [
   .community-story__sticky {
     display: grid;
     min-height: 100svh;
-    align-items: stretch;
-    padding-block: clamp(6.5rem, 13svh, 8.5rem) clamp(4rem, 8svh, 6rem);
+    align-items: center;
+    padding-block: clamp(6rem, 12svh, 8rem) clamp(4.5rem, 9svh, 6rem);
   }
 
   .community-story__content {
     display: grid;
-    grid-template-rows: auto minmax(18rem, 1fr);
-    gap: clamp(2.75rem, 8svh, 6.25rem);
     width: 100%;
+    gap: clamp(3rem, 8svh, 5.5rem);
+    align-content: center;
   }
 
   .community-story__heading {
     position: relative;
-    z-index: 2;
+    z-index: 3;
     display: grid;
+    box-sizing: border-box;
+    width: min(100%, 84rem);
+    margin-inline: auto;
+    padding-inline: var(--page-gutter);
     justify-items: center;
     text-align: center;
   }
@@ -217,7 +423,9 @@ const contributors = [
   .community-story__heading h2 {
     max-width: 20ch;
     margin: 0;
-    font-size: clamp(2.25rem, 5.2vw, 4.7rem);
+    font-size: clamp(2.5rem, 6.15vw, 5.8rem);
+    line-height: 0.98;
+    letter-spacing: -0.052em;
     text-wrap: balance;
   }
 
@@ -239,241 +447,204 @@ const contributors = [
   }
 
   .community-story__stage {
+    position: relative;
     display: grid;
-    min-height: 18rem;
+    min-height: 15rem;
     place-items: center;
-    perspective: 60rem;
+    pointer-events: none;
   }
 
   .community-story__grid {
     display: grid;
     grid-template-columns: repeat(5, auto);
-    gap: clamp(1.35rem, 3vw, 2.8rem) clamp(1.1rem, 2.5vw, 2.35rem);
+    gap: clamp(1rem, 2.2vw, 2rem) clamp(0.75rem, 1.8vw, 1.6rem);
     align-items: center;
     justify-content: center;
   }
 
+  .community-avatar__slot {
+    position: relative;
+    display: block;
+    width: clamp(4.1rem, 6.25vw, 5.75rem);
+    aspect-ratio: 1;
+  }
+
   .community-avatar {
     --community-opacity: 1;
-    --community-rotation: 0deg;
-    --community-scale: 1;
-    --community-x: 0vw;
-    --community-y: 0svh;
-    position: relative;
-    width: clamp(4.25rem, 7vw, 6.2rem);
-    aspect-ratio: 1;
+    --community-transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    position: absolute;
+    inset: 0;
+    display: block;
     transform-origin: center;
   }
 
   .community-story[data-community-ready] .community-avatar {
-    transform: translate3d(var(--community-x), var(--community-y), 0)
-      rotate(var(--community-rotation)) scale(var(--community-scale));
+    transform: var(--community-transform);
     opacity: var(--community-opacity);
   }
 
   .community-avatar__portrait {
-    --portrait-bg: #dfe5df;
-    --portrait-hair: #243934;
-    --portrait-shirt: #d8563f;
-    --portrait-skin: #bc7657;
+    --avatar-background: #e9eee8;
     position: absolute;
     inset: 0;
+    display: grid;
     overflow: hidden;
-    border: 1px solid rgb(23 33 31 / 24%);
+    border: 1px solid rgb(23 33 31 / 20%);
     border-radius: 50%;
+    place-items: end center;
     background:
-      radial-gradient(circle at 32% 24%, rgb(255 255 255 / 82%), transparent 36%),
-      var(--portrait-bg);
+      radial-gradient(circle at 32% 22%, rgb(255 255 255 / 92%), transparent 43%),
+      var(--avatar-background);
     box-shadow:
-      0 0.6rem 1.6rem rgb(23 33 31 / 10%),
-      inset 0 0 0 0.2rem rgb(255 255 255 / 35%);
-  }
-
-  .community-avatar__portrait::before {
-    position: absolute;
-    top: 27%;
-    left: 35%;
-    z-index: 2;
-    width: 31%;
-    height: 35%;
-    transform: rotate(var(--portrait-head-tilt, 0deg));
-    border-radius: 48% 52% 45% 47%;
-    background: var(--portrait-skin);
-    box-shadow: inset -0.18rem -0.08rem 0 rgb(23 33 31 / 8%);
-    content: "";
+      0 0.85rem 2rem rgb(23 33 31 / 12%),
+      inset 0 0 0 0.2rem rgb(255 255 255 / 42%);
   }
 
   .community-avatar__portrait::after {
     position: absolute;
-    right: 12%;
-    bottom: -20%;
-    left: 12%;
-    z-index: 1;
-    height: 61%;
-    border-radius: 48% 48% 16% 16%;
-    background: var(--portrait-shirt);
-    box-shadow: inset 0.5rem 0.25rem 0 rgb(255 255 255 / 10%);
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 -0.5rem 1.2rem rgb(23 33 31 / 5%);
     content: "";
   }
 
-  .community-avatar__hair {
-    position: absolute;
-    top: 20%;
-    left: 32%;
-    z-index: 3;
-    width: 38%;
-    height: 26%;
-    transform: rotate(var(--portrait-head-tilt, 0deg));
-    border-radius: var(--portrait-hair-radius, 58% 54% 34% 28%);
-    background: var(--portrait-hair);
+  .community-avatar__art {
+    width: 94%;
+    height: 94%;
+    transform: translateY(4%);
+    overflow: visible;
   }
 
-  .community-avatar__hair::before {
-    position: absolute;
-    top: var(--portrait-bun-top, -20%);
-    left: var(--portrait-bun-left, 4%);
-    width: 40%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: inherit;
-    content: "";
+  .community-avatar__slot:nth-child(2) .community-avatar__portrait {
+    --avatar-background: #ece8dc;
   }
 
-  .community-avatar__detail {
-    position: absolute;
-    top: 43%;
-    left: 58%;
-    z-index: 4;
-    width: 5%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: rgb(23 33 31 / 58%);
+  .community-avatar__slot:nth-child(3) .community-avatar__portrait {
+    --avatar-background: #e4edf0;
   }
 
-  .community-avatar:nth-child(2) .community-avatar__portrait {
-    --portrait-bg: #e6ddc7;
-    --portrait-hair: #633d2d;
-    --portrait-shirt: #31564f;
-    --portrait-skin: #d49b78;
-    --portrait-head-tilt: -4deg;
+  .community-avatar__slot:nth-child(4) .community-avatar__portrait {
+    --avatar-background: #eee5e0;
   }
 
-  .community-avatar:nth-child(3) .community-avatar__portrait {
-    --portrait-bg: #d8e3e5;
-    --portrait-hair: #17211f;
-    --portrait-shirt: #6a5fa3;
-    --portrait-skin: #8f543f;
-    --portrait-bun-left: 55%;
+  .community-avatar__slot:nth-child(5) .community-avatar__portrait {
+    --avatar-background: #e5ede2;
   }
 
-  .community-avatar:nth-child(4) .community-avatar__portrait {
-    --portrait-bg: #eadbd2;
-    --portrait-hair: #75422e;
-    --portrait-shirt: #077054;
-    --portrait-skin: #e0aa83;
-    --portrait-head-tilt: 4deg;
-    --portrait-hair-radius: 50% 60% 28% 42%;
+  .community-avatar__slot:nth-child(6) .community-avatar__portrait {
+    --avatar-background: #e8e6ef;
   }
 
-  .community-avatar:nth-child(5) .community-avatar__portrait {
-    --portrait-bg: #dce7d8;
-    --portrait-hair: #262139;
-    --portrait-shirt: #d29b35;
-    --portrait-skin: #a9684d;
-    --portrait-bun-left: 58%;
+  .community-avatar__slot:nth-child(7) .community-avatar__portrait {
+    --avatar-background: #eee9d9;
   }
 
-  .community-avatar:nth-child(6) .community-avatar__portrait {
-    --portrait-bg: #e7e0dc;
-    --portrait-hair: #17211f;
-    --portrait-shirt: #31564f;
-    --portrait-skin: #6f4437;
-    --portrait-head-tilt: -5deg;
+  .community-avatar__slot:nth-child(8) .community-avatar__portrait {
+    --avatar-background: #e2ece9;
   }
 
-  .community-avatar:nth-child(7) .community-avatar__portrait {
-    --portrait-bg: #d9e1da;
-    --portrait-hair: #a86b3e;
-    --portrait-shirt: #d8563f;
-    --portrait-skin: #d69871;
-    --portrait-bun-top: -26%;
-    --portrait-bun-left: 31%;
+  .community-avatar__slot:nth-child(9) .community-avatar__portrait {
+    --avatar-background: #efe3df;
   }
 
-  .community-avatar:nth-child(8) .community-avatar__portrait {
-    --portrait-bg: #e8dfc8;
-    --portrait-hair: #4e2d2a;
-    --portrait-shirt: #6a5fa3;
-    --portrait-skin: #b77355;
-    --portrait-head-tilt: 5deg;
-    --portrait-hair-radius: 62% 42% 38% 24%;
+  .community-avatar__slot:nth-child(10) .community-avatar__portrait {
+    --avatar-background: #e5e9ef;
   }
 
-  .community-avatar:nth-child(9) .community-avatar__portrait {
-    --portrait-bg: #d7e5e2;
-    --portrait-hair: #d18b45;
-    --portrait-shirt: #077054;
-    --portrait-skin: #e5b08a;
-    --portrait-bun-left: 54%;
+  .community-story[data-community-layout] {
+    min-height: 245svh;
   }
 
-  .community-avatar:nth-child(10) .community-avatar__portrait {
-    --portrait-bg: #e5dbdf;
-    --portrait-hair: #242830;
-    --portrait-shirt: #d29b35;
-    --portrait-skin: #89513d;
-    --portrait-head-tilt: -3deg;
-  }
-
-  .community-story[data-community-ready] {
-    min-height: 230svh;
-  }
-
-  .community-story[data-community-ready] .community-story__sticky {
+  .community-story[data-community-layout] .community-story__sticky {
     position: sticky;
     top: 0;
     height: 100svh;
     min-height: 0;
     overflow: clip;
+    padding: 0;
+  }
+
+  .community-story[data-community-layout] .community-story__content {
+    position: relative;
+    display: block;
+    height: 100%;
+  }
+
+  .community-story[data-community-layout] .community-story__heading {
+    position: absolute;
+    top: 32%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .community-story[data-community-layout] .community-story__stage {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: block;
+    min-height: 0;
+  }
+
+  .community-story[data-community-layout] .community-story__grid {
+    position: absolute;
+    top: 59%;
+    left: 50%;
+    transform: translateX(-50%);
   }
 
   .community-story[data-community-ready][data-community-active] .community-avatar {
     will-change: transform, opacity;
   }
 
-  @media (max-width: 760px), (max-height: 700px) {
+  @media (max-width: 1279px), (max-height: 767px) {
     .community-story__sticky {
       min-height: auto;
       padding-block: clamp(5rem, 16vw, 7rem);
     }
 
     .community-story__content {
-      grid-template-rows: auto auto;
+      display: grid;
+      height: auto;
       gap: clamp(3rem, 12vw, 5rem);
+    }
+
+    .community-story__heading {
+      position: relative;
+      top: auto;
+      left: auto;
+      width: min(100%, 84rem);
+      transform: none;
     }
 
     .community-story__heading h2 {
       max-width: 17ch;
       font-size: clamp(2rem, 9vw, 3.2rem);
+      line-height: 1.02;
     }
 
     .community-story__stage {
+      position: relative;
+      inset: auto;
       min-height: auto;
     }
 
     .community-story__grid {
+      position: relative;
+      top: auto;
+      left: auto;
+      transform: none;
       gap: clamp(0.85rem, 4vw, 1.35rem) clamp(0.45rem, 2.2vw, 0.9rem);
     }
 
-    .community-avatar {
+    .community-avatar__slot {
       width: clamp(2.9rem, 14vw, 4.5rem);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .community-avatar {
-      transform: none;
-      opacity: 1;
+      transform: none !important;
+      opacity: 1 !important;
     }
   }
 
