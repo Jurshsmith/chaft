@@ -2,87 +2,63 @@
 import {
   currentRelease,
   formatBytes,
-  formatSigningStatus,
   unsignedCanaryWarning,
-} from "../data/releases";
-import { buildDownloadPlatforms } from "../lib/download-options";
-import { sitePath } from "../lib/site-path";
+} from "../../data/releases";
+import { buildDownloadPlatforms } from "../../lib/download-options";
+import { sitePath } from "../../lib/site-path";
 
 const platforms = buildDownloadPlatforms(currentRelease);
 const defaultPlatform = platforms[0]?.id ?? "windows";
 const hasPublishedDownloads = currentRelease.assets.some(
   (asset) => asset.available,
 );
-const publishedDate = currentRelease.publishedAt
-  ? new Intl.DateTimeFormat("en", {
-      day: "numeric",
-      month: "long",
-      timeZone: "UTC",
-      year: "numeric",
-    }).format(new Date(currentRelease.publishedAt))
-  : "Publication pending";
 const platformDescriptions = {
-  windows: "A portable package for 64-bit Windows systems.",
-  macos: "Choose the build that matches your Mac processor.",
-  linux: "A portable AppImage for 64-bit Linux systems.",
+  windows: "Portable package for 64-bit Windows.",
+  macos: "Choose the build that matches your Mac.",
+  linux: "Portable AppImage for 64-bit Linux.",
 } as const;
 ---
 
 <section
-  class="download-experience"
-  id="platforms"
+  class="section landing-download"
+  id="downloads"
   data-download-experience
   data-download-platform={defaultPlatform}
   data-default-platform={defaultPlatform}
 >
-  <div class="shell download-experience__grid">
-    <div class="download-experience__copy" data-download-copy>
-      <p class="eyebrow">
+  <div class="shell landing-download__grid">
+    <div class="landing-download__copy" data-download-copy>
+      <p class="eyebrow">Desktop canary</p>
+      <h2>
         {hasPublishedDownloads
-          ? `Canary · v${currentRelease.version}`
-          : "Desktop canary · Packages pending"}
-      </p>
-      <h1>
-        {hasPublishedDownloads
-          ? "Download Chaft for desktop."
+          ? "Download Chaft."
           : "Desktop packages are being prepared."}
-      </h1>
-      <p class="lede">
+      </h2>
+      <p class="body-copy">
         {hasPublishedDownloads
-          ? "Choose your platform. Current canary builds are unsigned and not for sensitive or production communication."
-          : "Windows, macOS, and Linux are supported targets. Verified packages will appear after their release evidence is complete."}
+          ? "Choose your platform. Full checksums and release evidence are on the download page."
+          : "Windows, macOS, and Linux packages will appear after their release evidence is complete."}
       </p>
 
-      <dl class="release-summary" aria-label="Current release summary">
-        <div>
-          <dt>Release</dt>
-          <dd>v{currentRelease.version}</dd>
-        </div>
-        <div>
-          <dt>Published</dt>
-          <dd>{publishedDate}</dd>
-        </div>
-        <div>
-          <dt>Status</dt>
-          <dd>{hasPublishedDownloads ? "Unsigned canary" : "Packages pending"}</dd>
-        </div>
-      </dl>
+      <div class="landing-download__status" aria-label="Current desktop release">
+        <span class="status">
+          {hasPublishedDownloads ? "Unsigned canary" : "Packages pending"}
+        </span>
+        <span class="mono">v{currentRelease.version}</span>
+      </div>
 
-      <a
-        class="release-link"
-        href={sitePath(`/releases/${currentRelease.version}/`)}
-      >
-        View complete release evidence <span aria-hidden="true">→</span>
+      <a class="landing-download__details" href={sitePath("/download/")}>
+        Details and checksums <span aria-hidden="true">→</span>
       </a>
     </div>
 
-    <div class="download-experience__selector-wrap" data-download-selector>
-      <div class="download-experience__glow" aria-hidden="true"></div>
+    <div class="landing-download__selector-wrap" data-download-selector>
+      <div class="landing-download__glow" aria-hidden="true"></div>
       <div class="download-selector">
         <div class="download-selector__header">
           <div>
             <p class="download-selector__kicker">Desktop packages</p>
-            <p class="download-selector__title">Choose your platform</p>
+            <p class="download-selector__title">Choose a platform</p>
           </div>
           <span class="detected-platform" data-detected-platform hidden>
             Detected platform
@@ -166,37 +142,7 @@ const platformDescriptions = {
                         <dt>Size</dt>
                         <dd>{formatBytes(option.asset.sizeBytes)}</dd>
                       </div>
-                      <div>
-                        <dt>Signing</dt>
-                        <dd>{formatSigningStatus(option.asset.signingStatus)}</dd>
-                      </div>
                     </dl>
-
-                    <div class="artifact-identity">
-                      <div>
-                        <span>Package</span>
-                        <code>{option.asset.filename ?? "Filename pending"}</code>
-                      </div>
-                      <div class="checksum-row">
-                        <span>SHA-256</span>
-                        <code>{option.asset.sha256 ?? "Checksum pending"}</code>
-                        {option.asset.sha256 && (
-                          <button
-                            type="button"
-                            class="copy-checksum"
-                            data-copy-checksum={option.asset.sha256}
-                            aria-label={`Copy SHA-256 checksum for ${option.asset.platformLabel}`}
-                          >
-                            Copy
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <p class="canary-note">
-                      <span aria-hidden="true">●</span>
-                      {unsignedCanaryWarning}
-                    </p>
 
                     {option.asset.available ? (
                       <a
@@ -220,17 +166,17 @@ const platformDescriptions = {
           ))}
         </div>
 
-        <p class="selector-footnote">
-          Need build receipts, SBOMs, or provenance? <a href={currentRelease.releaseUrl}>Open the release record</a>.
+        <p class="canary-note">
+          <span aria-hidden="true">●</span>
+          <span>{unsignedCanaryWarning}</span>
         </p>
-        <p class="sr-only" aria-live="polite" data-copy-status></p>
       </div>
     </div>
   </div>
 </section>
 
 <script>
-  import { detectDesktopOperatingSystem } from "../lib/platform-detection";
+  import { detectDesktopOperatingSystem } from "../../lib/platform-detection";
 
   type NavigatorWithUAData = Navigator & {
     userAgentData?: { mobile?: boolean; platform?: string };
@@ -294,8 +240,7 @@ const platformDescriptions = {
     const updateDetectedLabel = (platform: string) => {
       const label = root.querySelector<HTMLElement>("[data-detected-platform]");
       if (!label) return;
-      const activePlatformIsDetected = detectedPlatform === platform;
-      label.toggleAttribute("hidden", !activePlatformIsDetected);
+      label.toggleAttribute("hidden", detectedPlatform !== platform);
     };
 
     const selectPlatform = (
@@ -392,26 +337,6 @@ const platformDescriptions = {
       });
     });
 
-    root.querySelectorAll<HTMLButtonElement>("[data-copy-checksum]").forEach(
-      (button) => {
-        button.addEventListener("click", async () => {
-          const checksum = button.dataset.copyChecksum;
-          const status = root.querySelector<HTMLElement>("[data-copy-status]");
-          if (!checksum) return;
-          try {
-            await navigator.clipboard.writeText(checksum);
-            button.textContent = "Copied";
-            if (status) status.textContent = "Checksum copied to clipboard.";
-            window.setTimeout(() => {
-              button.textContent = "Copy";
-            }, 1600);
-          } catch {
-            if (status) status.textContent = "Copy failed. Select the checksum text instead.";
-          }
-        });
-      },
-    );
-
     if (initialPlatform) selectPlatform(initialPlatform);
     root.dataset.enhanced = "";
     if (detectedPlatform) root.dataset.detectedPlatform = detectedPlatform;
@@ -419,97 +344,68 @@ const platformDescriptions = {
 </script>
 
 <style>
-  .download-experience {
+  .landing-download {
     position: relative;
     overflow: hidden;
-    padding-block: clamp(3.5rem, 8vw, 6.5rem);
-    border-bottom: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border-subtle);
     background: var(--surface-base);
   }
 
-  .download-experience__grid {
+  .landing-download__grid {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(32rem, 3fr);
     gap: clamp(3rem, 7vw, 7rem);
-    align-items: start;
+    align-items: center;
   }
 
-  .download-experience__copy {
-    padding-top: clamp(1rem, 4vw, 3rem);
-  }
-
-  h1 {
-    max-width: 9ch;
-    font-family: var(--font-editorial);
-    font-size: clamp(3.15rem, 6vw, 5.5rem);
-    font-style: italic;
-    font-weight: 400;
-    letter-spacing: -0.05em;
-  }
-
-  .lede {
+  .landing-download__copy {
     max-width: 31rem;
   }
 
-  .release-summary {
-    display: grid;
-    gap: 0.75rem;
-    margin: 2.25rem 0 0;
-    padding: 1.15rem 0;
-    border-block: 1px solid var(--border-subtle);
+  h2 {
+    max-width: 10ch;
+    margin-bottom: 1.25rem;
+    font-size: clamp(2.75rem, 5vw, 4.75rem);
   }
 
-  .release-summary div {
-    display: grid;
-    grid-template-columns: 5.5rem minmax(0, 1fr);
-    gap: 1rem;
+  .landing-download__status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem 1rem;
+    align-items: center;
+    margin-top: 1.65rem;
   }
 
-  .release-summary dt,
-  .release-summary dd {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    line-height: 1.45;
-  }
-
-  .release-summary dt {
+  .landing-download__status .mono {
     color: var(--text-faint);
+    font-size: 0.72rem;
   }
 
-  .release-summary dd {
-    color: var(--text-soft);
-    overflow-wrap: anywhere;
-  }
-
-  .release-link {
+  .landing-download__details {
     display: inline-flex;
     gap: 0.5rem;
     align-items: center;
-    margin-top: 1.35rem;
+    margin-top: 1.25rem;
     color: var(--text-soft);
     font-size: 0.86rem;
     text-decoration: none;
   }
 
-  .release-link:hover {
+  .landing-download__details:hover {
     color: var(--accent);
   }
 
-  .download-experience__selector-wrap {
+  .landing-download__selector-wrap {
     position: relative;
     min-width: 0;
   }
 
-  .download-experience__glow {
+  .landing-download__glow {
     position: absolute;
-    top: 8%;
-    right: -8%;
-    bottom: 6%;
-    left: 8%;
+    inset: 12% -6% 8% 10%;
     border-radius: 42%;
-    background: rgb(75 195 162 / 9%);
-    filter: blur(54px);
+    background: rgb(75 195 162 / 8%);
+    filter: blur(48px);
     pointer-events: none;
   }
 
@@ -525,11 +421,11 @@ const platformDescriptions = {
 
   .download-selector__header {
     display: flex;
-    min-height: 5.25rem;
+    min-height: 4.75rem;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 1.15rem clamp(1.15rem, 3vw, 1.75rem);
+    padding: 1rem clamp(1rem, 3vw, 1.5rem);
     border-bottom: 1px solid var(--border-subtle);
   }
 
@@ -548,14 +444,14 @@ const platformDescriptions = {
 
   .download-selector__title {
     color: var(--text-strong);
-    font-size: 1.15rem;
+    font-size: 1.08rem;
     font-weight: 500;
   }
 
   .detected-platform {
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.7rem;
     line-height: 1.35;
     text-align: right;
   }
@@ -570,11 +466,11 @@ const platformDescriptions = {
   .platform-tab {
     display: flex;
     min-width: 0;
-    min-height: 3.75rem;
+    min-height: 3.5rem;
     align-items: center;
     justify-content: center;
-    gap: 0.65rem;
-    padding: 0.8rem;
+    gap: 0.6rem;
+    padding: 0.75rem;
     border-right: 1px solid var(--border-subtle);
     color: var(--text-soft);
     font-size: 0.82rem;
@@ -595,20 +491,20 @@ const platformDescriptions = {
   .platform-tab__mark {
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: 0.62rem;
+    font-size: 0.64rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
-  .download-panels {
-    min-height: 36rem;
+  .download-panels,
+  .download-panel {
+    min-height: 21.5rem;
   }
 
   .download-panel {
     display: grid;
-    min-height: 36rem;
     align-content: start;
-    padding: clamp(1.25rem, 3vw, 1.8rem);
+    padding: clamp(1.15rem, 3vw, 1.55rem);
   }
 
   @media (scripting: enabled) {
@@ -634,11 +530,7 @@ const platformDescriptions = {
   }
 
   .download-panel__heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1.15rem;
+    margin-bottom: 1rem;
   }
 
   .download-panel__heading p {
@@ -649,24 +541,16 @@ const platformDescriptions = {
   .download-panel__platform {
     color: var(--text-strong);
     font-family: var(--font-ui);
-    font-size: 1.35rem !important;
+    font-size: 1.25rem !important;
     font-weight: 500;
-  }
-
-  .availability-state {
-    margin: 0 0 0.4rem;
-    color: var(--secure);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    text-align: right;
   }
 
   .variant-selector {
     display: none;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.5rem;
-    margin-bottom: 1.15rem;
-    padding: 0.35rem;
+    gap: 0.45rem;
+    margin-bottom: 1rem;
+    padding: 0.3rem;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: var(--surface-deep);
@@ -676,21 +560,16 @@ const platformDescriptions = {
     display: grid;
   }
 
-  .variant-selector button,
-  .copy-checksum {
-    border: 0;
-    font: inherit;
-    cursor: pointer;
-  }
-
   .variant-selector button {
     min-height: 2.75rem;
     padding: 0.6rem 0.75rem;
+    border: 0;
     border-radius: calc(var(--radius-sm) - 2px);
     background: transparent;
     color: var(--text-soft);
     font-family: var(--font-mono);
     font-size: 0.75rem;
+    cursor: pointer;
   }
 
   .variant-selector button[aria-pressed="true"] {
@@ -700,8 +579,8 @@ const platformDescriptions = {
   }
 
   .download-artifact + .download-artifact {
-    margin-top: 1.25rem;
-    padding-top: 1.25rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
     border-top: 1px solid var(--border-subtle);
   }
 
@@ -711,16 +590,23 @@ const platformDescriptions = {
     border-top: 0;
   }
 
+  .availability-state {
+    margin: 0 0 0.45rem;
+    color: var(--secure);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
   .artifact-meta {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    margin: 0 0 1.15rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0 0 1.1rem;
     border-block: 1px solid var(--border-subtle);
   }
 
   .artifact-meta div {
     min-width: 0;
-    padding: 0.8rem 0.65rem 0.8rem 0;
+    padding: 0.75rem 0.55rem 0.75rem 0;
   }
 
   .artifact-meta dt,
@@ -742,87 +628,14 @@ const platformDescriptions = {
     overflow-wrap: anywhere;
   }
 
-  .artifact-identity {
-    display: grid;
-    gap: 0.85rem;
-  }
-
-  .artifact-identity > div {
-    display: grid;
-    min-width: 0;
-    gap: 0.3rem;
-  }
-
-  .artifact-identity span,
-  .artifact-identity code {
-    font-family: var(--font-mono);
-    line-height: 1.45;
-  }
-
-  .artifact-identity span {
-    color: var(--text-faint);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-  }
-
-  .artifact-identity code {
-    color: var(--text-soft);
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
-  }
-
-  .checksum-row {
-    position: relative;
-  }
-
-  [data-enhanced] .checksum-row {
-    padding-right: 4.2rem;
-  }
-
-  .copy-checksum {
-    position: absolute;
-    display: none;
-    right: 0;
-    bottom: 0;
-    min-width: 3.4rem;
-    min-height: 2.75rem;
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    background: var(--surface-deep);
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-  }
-
-  [data-enhanced] .copy-checksum {
-    display: block;
-  }
-
-  .canary-note {
-    display: flex;
-    gap: 0.6rem;
-    align-items: flex-start;
-    margin: 1.15rem 0;
-    color: var(--warning-text);
-    font-family: var(--font-body);
-    font-size: 0.78rem;
-    line-height: 1.45;
-  }
-
-  .canary-note span {
-    color: var(--brand-coral);
-    font-size: 0.65rem;
-  }
-
   .download-primary {
     display: flex;
-    min-height: 3.25rem;
+    min-height: 3.2rem;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
     width: 100%;
-    padding: 0.85rem 1rem;
+    padding: 0.8rem 1rem;
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     background: var(--accent);
@@ -842,16 +655,21 @@ const platformDescriptions = {
     color: var(--text-faint);
   }
 
-  .selector-footnote {
+  .canary-note {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
     margin: 0;
-    padding: 0.85rem clamp(1.25rem, 3vw, 1.8rem);
+    padding: 0.85rem clamp(1.15rem, 3vw, 1.55rem);
     border-top: 1px solid var(--border-subtle);
-    color: var(--text-faint);
-    font-size: 0.72rem;
+    color: var(--warning-text);
+    font-size: 0.76rem;
+    line-height: 1.45;
   }
 
-  .selector-footnote a {
-    color: var(--text-soft);
+  .canary-note > span:first-child {
+    color: var(--brand-coral);
+    font-size: 0.65rem;
   }
 
   [data-entering] {
@@ -869,36 +687,23 @@ const platformDescriptions = {
     }
   }
 
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   @media (max-width: 960px) {
-    .download-experience__grid {
+    .landing-download__grid {
       grid-template-columns: 1fr;
-      gap: 3rem;
+      gap: 2.75rem;
     }
 
-    .download-experience__copy {
+    .landing-download__copy {
       max-width: 42rem;
-      padding-top: 0;
     }
 
-    h1 {
-      max-width: 11ch;
+    h2 {
+      max-width: 12ch;
     }
   }
 
   @media (max-width: 560px) {
-    .download-selector__header,
-    .download-panel__heading {
+    .download-selector__header {
       display: grid;
     }
 
@@ -907,8 +712,8 @@ const platformDescriptions = {
     }
 
     .platform-tab {
-      gap: 0.35rem;
-      padding-inline: 0.35rem;
+      gap: 0.3rem;
+      padding-inline: 0.3rem;
       font-size: 0.74rem;
     }
 
@@ -918,27 +723,15 @@ const platformDescriptions = {
 
     .download-panels,
     .download-panel {
-      min-height: 39rem;
-    }
-
-    .artifact-meta {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      min-height: 23rem;
     }
 
     .variant-selector {
       grid-template-columns: 1fr;
     }
 
-    [data-enhanced] .checksum-row {
-      padding-right: 0;
-      padding-bottom: 2.75rem;
-    }
-
-    .copy-checksum {
-      right: auto;
-      bottom: 0;
-      left: 0;
-      min-height: 2.75rem;
+    .artifact-meta {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 

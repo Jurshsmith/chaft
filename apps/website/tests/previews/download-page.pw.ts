@@ -6,9 +6,7 @@ import { type Locator, type Page, expect, test } from "@playwright/test";
 interface PublishedAsset {
   arch: string;
   available: boolean;
-  filename: string | null;
   os: string;
-  sha256: string | null;
   url: string;
 }
 
@@ -25,8 +23,8 @@ function expectedAsset(os: string, arch?: string) {
   return asset;
 }
 
-async function openDownloadPage(page: Page) {
-  const response = await page.goto("/download/", { waitUntil: "domcontentloaded" });
+async function openLandingDownloadExperience(page: Page) {
+  const response = await page.goto("/", { waitUntil: "domcontentloaded" });
   expect(response?.ok()).toBe(true);
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -81,19 +79,18 @@ async function expectOnlyArtifactVisible(panel: Locator, activeAssetId: string) 
   }
 }
 
-test("keeps the selector canonical to /download/ and uses only published assets", async ({
+test("keeps the selector on the landing page and restores the detailed download route", async ({
   page,
 }) => {
-  const homeResponse = await page.goto("/", { waitUntil: "domcontentloaded" });
-  expect(homeResponse?.ok()).toBe(true);
-  await expect(page.locator("[data-download-experience]")).toHaveCount(0);
-
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
   expect(expectedAssets).toHaveLength(4);
-  await expect(experience.getByRole("heading", { level: 1 })).toHaveCount(1);
-  await expect(experience.getByRole("heading", { level: 1 })).toHaveText(
-    "Download Chaft for desktop.",
+  await expect(page.locator("#downloads[data-download-experience]")).toHaveCount(1);
+  await expect(page.locator("h1")).toHaveCount(1);
+  await expect(experience.getByRole("heading", { level: 2 })).toHaveText(
+    "Download Chaft.",
   );
+  await expect(experience.locator("[data-download-grid]")).toHaveCount(0);
+  await expect(experience).not.toContainText(/SHA-256|checksum pending/i);
 
   const tablist = experience.getByRole("tablist", { name: /operating system|platform/i });
   await expect(tablist).toBeVisible();
@@ -112,18 +109,27 @@ test("keeps the selector canonical to /download/ and uses only published assets"
     const panel = await controlledPanel(page, tab);
     const asset = expectedAsset(os, arch);
     await expect(panel).toBeVisible();
-    await expect(panel).toContainText(asset.filename ?? "");
-    await expect(panel).toContainText(asset.sha256 ?? "");
     await expect(panel.locator(`a[href="${asset.url}"]`)).toBeVisible();
   }
 
   await expect(experience).not.toContainText(/\.msi|\.exe|\.deb|\.rpm/i);
+
+  const downloadResponse = await page.goto("/download/", {
+    waitUntil: "domcontentloaded",
+  });
+  expect(downloadResponse?.ok()).toBe(true);
+  await expect(page.locator("[data-download-experience]")).toHaveCount(0);
+  await expect(page.locator("#platforms [data-download-grid]")).toHaveCount(1);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Choose an unsigned Chaft canary.",
+  );
+  await expect(page.locator("[data-download-card]")).toHaveCount(expectedAssets.length);
 });
 
 test("supports the tab keyboard pattern and explicit macOS architecture choice", async ({
   page,
 }) => {
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
   const windows = platformTab(experience, "Windows");
   const macos = platformTab(experience, "macOS");
   const linux = platformTab(experience, "Linux");
@@ -162,8 +168,6 @@ test("supports the tab keyboard pattern and explicit macOS architecture choice",
   await expect(intel).toHaveAttribute("aria-pressed", "true");
   await expect(appleSilicon).toHaveAttribute("aria-pressed", "false");
   await expectOnlyArtifactVisible(macPanel, "macos-x86_64-dmg");
-  await expect(macPanel).toContainText(intelAsset.filename ?? "");
-  await expect(macPanel).toContainText(intelAsset.sha256 ?? "");
   await expect(macPanel.locator(`a[href="${intelAsset.url}"]`)).toBeVisible();
 });
 
@@ -186,7 +190,7 @@ test("uses desktop OS detection only for factual platform labeling", async ({
     });
   });
 
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
   await expectOnlyPlatformVisible(experience, "macos");
   const macos = platformTab(experience, "macOS");
   await expect(macos).toHaveAttribute("aria-selected", "true");
@@ -205,7 +209,7 @@ test("removes selector motion for reduced-motion users and never overflows", asy
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
 
   const linux = platformTab(experience, "Linux");
   await linux.click();
@@ -234,7 +238,7 @@ test("removes selector motion for reduced-motion users and never overflows", asy
 test("keeps the editorial layout relationship across responsive widths", async ({
   page,
 }) => {
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
   const copy = experience.locator("[data-download-copy]");
   const selector = experience.locator("[data-download-selector]");
   const [copyBox, selectorBox] = await Promise.all([
@@ -260,40 +264,29 @@ test("keeps the editorial layout relationship across responsive widths", async (
   }
 });
 
-test("keeps the progressive-enhancement handoff layout-stable", async ({
+test("keeps platform and variant swaps height-stable", async ({
   page,
 }, testInfo) => {
   test.skip(
     testInfo.project.name !== "chromium-1440",
-    "One desktop engine is sufficient for the layout-shift regression contract",
+    "One desktop engine is sufficient for the component geometry contract",
   );
 
-  await page.addInitScript(() => {
-    const measuredWindow = window as Window & { __downloadLayoutShift?: number };
-    measuredWindow.__downloadLayoutShift = 0;
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        const layoutShift = entry as PerformanceEntry & {
-          hadRecentInput?: boolean;
-          value?: number;
-        };
-        if (!layoutShift.hadRecentInput) {
-          measuredWindow.__downloadLayoutShift =
-            (measuredWindow.__downloadLayoutShift ?? 0) +
-            (layoutShift.value ?? 0);
-        }
-      }
-    }).observe({ buffered: true, type: "layout-shift" });
-  });
+  const experience = await openLandingDownloadExperience(page);
+  const selector = experience.locator("[data-download-selector]");
+  const initialHeight = (await selector.boundingBox())?.height ?? 0;
 
-  await openDownloadPage(page);
-  await page.waitForTimeout(500);
-  const cumulativeLayoutShift = await page.evaluate(
-    () =>
-      (window as Window & { __downloadLayoutShift?: number })
-        .__downloadLayoutShift ?? 0,
-  );
-  expect(cumulativeLayoutShift).toBeLessThan(0.1);
+  for (const name of ["macOS", "Linux", "Windows"] as const) {
+    await platformTab(experience, name).click();
+    const currentHeight = (await selector.boundingBox())?.height ?? 0;
+    expect(Math.abs(currentHeight - initialHeight)).toBeLessThanOrEqual(8);
+  }
+
+  await platformTab(experience, "macOS").click();
+  const macosPanel = experience.locator('[data-platform-panel="macos"]');
+  await macosPanel.getByRole("button", { name: /Intel · x86_64/i }).click();
+  const variantHeight = (await selector.boundingBox())?.height ?? 0;
+  expect(Math.abs(variantHeight - initialHeight)).toBeLessThanOrEqual(8);
 });
 
 test("uses a short opacity-and-transform transition and settles cleanly", async ({
@@ -305,7 +298,7 @@ test("uses a short opacity-and-transform transition and settles cleanly", async 
   );
 
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
   const linux = platformTab(experience, "Linux");
   const panel = await controlledPanel(page, linux);
 
@@ -383,7 +376,7 @@ test("keeps all published packages visible without JavaScript", async ({
     viewport: { height: 900, width: 1440 },
   });
   const page = await context.newPage();
-  const experience = await openDownloadPage(page);
+  const experience = await openLandingDownloadExperience(page);
 
   await expect(experience.locator("[data-platform-panel]:visible")).toHaveCount(3);
   await expect(experience.locator("[data-download-artifact-panel]:visible")).toHaveCount(4);
@@ -410,17 +403,17 @@ test("keeps all published packages visible without JavaScript", async ({
   await context.close();
 });
 
-test("@accessibility has no serious or critical download-page findings", async ({
+test("@accessibility has no serious or critical landing-selector findings", async ({
   page,
 }, testInfo) => {
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-  await openDownloadPage(page);
+  await openLandingDownloadExperience(page);
 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
 
-  await testInfo.attach("download-page-axe-results.json", {
+  await testInfo.attach("landing-download-axe-results.json", {
     body: Buffer.from(JSON.stringify(results, null, 2)),
     contentType: "application/json",
   });
