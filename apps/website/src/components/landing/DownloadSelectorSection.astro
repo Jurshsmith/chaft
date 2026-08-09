@@ -6,6 +6,7 @@ import {
 } from "../../data/releases";
 import { buildDownloadPlatforms } from "../../lib/download-options";
 import { sitePath } from "../../lib/site-path";
+import PlatformIcon from "./PlatformIcon.astro";
 
 const platforms = buildDownloadPlatforms(currentRelease);
 const defaultPlatform = platforms[0]?.id ?? "windows";
@@ -56,18 +57,14 @@ const platformDescriptions = {
       <div class="landing-download__glow" aria-hidden="true"></div>
       <div class="download-selector">
         <div class="download-selector__header">
-          <div>
-            <p class="download-selector__kicker">Desktop packages</p>
-            <p class="download-selector__title">Choose a platform</p>
-          </div>
-          <span class="detected-platform" data-detected-platform hidden>
-            Detected platform
-          </span>
+          <p class="download-selector__title" id="download-platform-label">
+            Choose a platform
+          </p>
         </div>
 
         <nav
           class="platform-tabs"
-          aria-label="Desktop operating systems"
+          aria-labelledby="download-platform-label"
           data-platform-tabs
         >
           {platforms.map((platform) => (
@@ -77,8 +74,19 @@ const platformDescriptions = {
               href={`#download-panel-${platform.id}`}
               data-platform-tab={platform.id}
             >
-              <span class="platform-tab__mark" aria-hidden="true">{platform.code}</span>
-              <span>{platform.label}</span>
+              <span class="platform-tab__identity">
+                <PlatformIcon platform={platform.id} />
+                <span class="platform-tab__label">{platform.label}</span>
+              </span>
+              <span
+                class="platform-tab__detected"
+                data-detected-platform={platform.id}
+                aria-hidden="true"
+                hidden
+              >
+                Detected
+              </span>
+              <span class="platform-tab__selected-cue" aria-hidden="true">✓</span>
             </a>
           ))}
         </nav>
@@ -237,10 +245,16 @@ const platformDescriptions = {
       window.setTimeout(finish, 320);
     };
 
-    const updateDetectedLabel = (platform: string) => {
-      const label = root.querySelector<HTMLElement>("[data-detected-platform]");
-      if (!label) return;
-      label.toggleAttribute("hidden", detectedPlatform !== platform);
+    const updateDetectedBadges = (platform: string) => {
+      root.querySelectorAll<HTMLElement>("[data-detected-platform]").forEach(
+        (badge) => {
+          badge.toggleAttribute(
+            "hidden",
+            detectedPlatform !== platform ||
+              badge.dataset.detectedPlatform !== detectedPlatform,
+          );
+        },
+      );
     };
 
     const selectPlatform = (
@@ -264,7 +278,7 @@ const platformDescriptions = {
       panels.forEach((panel) => {
         panel.toggleAttribute("hidden", panel !== activePanel);
       });
-      updateDetectedLabel(platform);
+      updateDetectedBadges(platform);
       if (options.animate) animateElement(activePanel);
     };
 
@@ -421,25 +435,13 @@ const platformDescriptions = {
 
   .download-selector__header {
     display: flex;
-    min-height: 4.75rem;
+    min-height: 3.75rem;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1rem clamp(1rem, 3vw, 1.5rem);
-    border-bottom: 1px solid var(--border-subtle);
+    padding: 1rem clamp(1rem, 3vw, 1.5rem) 0.7rem;
   }
 
-  .download-selector__kicker,
   .download-selector__title {
     margin: 0;
-  }
-
-  .download-selector__kicker {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
   }
 
   .download-selector__title {
@@ -448,52 +450,98 @@ const platformDescriptions = {
     font-weight: 500;
   }
 
-  .detected-platform {
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    line-height: 1.35;
-    text-align: right;
-  }
-
   .platform-tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(0.4rem, 1.2vw, 0.7rem);
+    padding: 0 clamp(1rem, 3vw, 1.5rem) 1rem;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-deep);
   }
 
   .platform-tab {
-    display: flex;
+    position: relative;
+    display: grid;
     min-width: 0;
-    min-height: 3.5rem;
-    align-items: center;
-    justify-content: center;
-    gap: 0.6rem;
-    padding: 0.75rem;
-    border-right: 1px solid var(--border-subtle);
+    min-height: 4.5rem;
+    align-content: center;
+    justify-items: center;
+    gap: 0.22rem;
+    padding: 0.65rem 0.55rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    box-shadow: 0 2px 0 var(--border-subtle);
     color: var(--text-soft);
     font-size: 0.82rem;
     font-weight: 500;
     text-decoration: none;
+    transition:
+      background-color var(--motion-quick),
+      border-color var(--motion-quick),
+      box-shadow var(--motion-quick),
+      color var(--motion-quick),
+      transform var(--motion-quick);
   }
 
-  .platform-tab:last-child {
-    border-right: 0;
+  .platform-tab__identity {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
   }
 
   .platform-tab[aria-selected="true"] {
-    background: var(--surface-active);
-    box-shadow: inset 0 -2px 0 var(--accent);
-    color: var(--text-strong);
+    border-color: var(--accent);
+    background: var(--accent);
+    box-shadow:
+      inset 0 0 0 1px var(--on-accent),
+      0 2px 0 var(--border-strong);
+    color: var(--on-accent);
   }
 
-  .platform-tab__mark {
-    color: var(--accent);
+  .platform-tab__detected {
+    padding: 0.08rem 0.3rem;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-xs);
     font-family: var(--font-mono);
-    font-size: 0.64rem;
-    letter-spacing: 0.06em;
+    font-size: 0.58rem;
+    letter-spacing: 0.04em;
+    line-height: 1.25;
     text-transform: uppercase;
+  }
+
+  .platform-tab__selected-cue {
+    position: absolute;
+    top: 0.38rem;
+    right: 0.45rem;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    line-height: 1;
+    opacity: 0;
+    transform: scale(0.75);
+    transition:
+      opacity var(--motion-quick),
+      transform var(--motion-quick);
+  }
+
+  .platform-tab[aria-selected="true"] .platform-tab__selected-cue {
+    opacity: 1;
+    transform: none;
+  }
+
+  .platform-tab:focus-visible {
+    z-index: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: -3px;
+    box-shadow: 0 2px 0 var(--border-subtle);
+  }
+
+  .platform-tab[aria-selected="true"]:focus-visible {
+    outline-color: var(--on-accent);
+    box-shadow:
+      inset 0 0 0 1px var(--on-accent),
+      0 2px 0 var(--border-strong);
   }
 
   .download-panels,
@@ -505,6 +553,25 @@ const platformDescriptions = {
     display: grid;
     align-content: start;
     padding: clamp(1.15rem, 3vw, 1.55rem);
+  }
+
+  [data-enhanced] .download-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  [data-enhanced] .download-artifacts,
+  [data-enhanced] .download-artifact {
+    flex: 1;
+  }
+
+  [data-enhanced] .download-artifact {
+    display: grid;
+    grid-template-rows: auto auto minmax(3.2rem, 1fr);
+  }
+
+  [data-enhanced] .download-primary {
+    align-self: end;
   }
 
   @media (scripting: enabled) {
@@ -570,12 +637,21 @@ const platformDescriptions = {
     font-family: var(--font-mono);
     font-size: 0.75rem;
     cursor: pointer;
+    transition:
+      background-color var(--motion-quick),
+      box-shadow var(--motion-quick),
+      color var(--motion-quick);
   }
 
   .variant-selector button[aria-pressed="true"] {
     background: var(--surface-raised);
     box-shadow: 0 1px 4px rgb(23 33 31 / 9%);
     color: var(--text-strong);
+  }
+
+  .variant-selector button:focus-visible {
+    outline: 0;
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   .download-artifact + .download-artifact {
@@ -687,6 +763,35 @@ const platformDescriptions = {
     }
   }
 
+  @media (hover: hover) {
+    .platform-tab:hover {
+      border-color: var(--border-strong);
+      background: var(--surface-active);
+      box-shadow: 0 5px 0 var(--border-subtle);
+      color: var(--text-strong);
+      transform: translateY(-2px);
+    }
+
+    .platform-tab[aria-selected="true"]:hover {
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow:
+        inset 0 0 0 1px var(--on-accent),
+        0 4px 0 var(--border-strong);
+      color: var(--on-accent);
+      transform: translateY(-1px);
+    }
+
+    .variant-selector button:hover {
+      background: var(--surface-active);
+      color: var(--text-strong);
+    }
+
+    .variant-selector button[aria-pressed="true"]:hover {
+      background: var(--surface-raised);
+    }
+  }
+
   @media (max-width: 960px) {
     .landing-download__grid {
       grid-template-columns: 1fr;
@@ -703,22 +808,16 @@ const platformDescriptions = {
   }
 
   @media (max-width: 560px) {
-    .download-selector__header {
-      display: grid;
-    }
-
-    .detected-platform {
-      text-align: left;
-    }
-
     .platform-tab {
-      gap: 0.3rem;
-      padding-inline: 0.3rem;
+      min-height: 5rem;
+      gap: 0.18rem;
+      padding: 0.55rem 0.25rem;
       font-size: 0.74rem;
     }
 
-    .platform-tab__mark {
-      font-size: 0.56rem;
+    .platform-tab__identity {
+      flex-direction: column;
+      gap: 0.25rem;
     }
 
     .download-panels,
@@ -742,8 +841,15 @@ const platformDescriptions = {
       opacity: 1;
     }
 
-    .download-primary {
+    .download-primary,
+    .platform-tab,
+    .platform-tab__selected-cue,
+    .variant-selector button {
       transition: none;
+    }
+
+    .platform-tab:hover {
+      transform: none;
     }
   }
 </style>
