@@ -1,84 +1,127 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
+const warning =
+  "Unsigned and unaudited. Use non-sensitive test data only; not for production communication.";
+
 async function openSecurityPage(page: Page) {
   const response = await page.goto("/security/", { waitUntil: "domcontentloaded" });
   expect(response?.ok()).toBe(true);
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  await expect(page.locator("main")).toBeVisible();
 }
 
-test("keeps the security design on its canonical page and static with reduced motion", async ({
+test("presents the current trust boundary, limits, and private reporting path", async ({
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+
   const homeResponse = await page.goto("/", { waitUntil: "domcontentloaded" });
   expect(homeResponse?.ok()).toBe(true);
-  await expect(page.locator("[data-security-page-hero]")).toHaveCount(0);
+  await expect(page.locator("[data-security-trust-hero]")).toHaveCount(0);
+
   await openSecurityPage(page);
 
-  const section = page.locator("[data-security-page-hero]");
-  const copy = page.locator("[data-security-copy]");
-  const visual = page.locator("[data-security-visual]");
-  const image = visual.locator("img");
+  const hero = page.locator("[data-security-trust-hero]");
+  const copy = page.locator("[data-security-trust-copy]");
+  const visual = page.locator("[data-security-trust-path]");
+  const rail = hero.locator(".security-boundary-rail");
 
-  await section.scrollIntoViewIfNeeded();
-  await expect(section).toBeVisible();
-  await expect(section).toHaveAttribute("data-security-motion", "reduced");
-  await expect(section).toHaveAttribute("data-security-visible", "");
-  await expect(section.getByRole("heading", { level: 1 })).toHaveText(
-    "Encrypted content. Signed, verifiable history.",
+  await expect(hero).toBeVisible();
+  await expect(hero.getByRole("heading", { level: 1 })).toHaveText(
+    "What Chaft protects today.",
   );
-  await expect(section).toContainText(
-    "Chaft encrypts message and attachment content before replication",
+  await expect(hero).toContainText("encrypts message and attachment content before sync");
+  await expect(hero).toContainText("verifies received events locally");
+  await expect(hero.getByLabel("Canary warning")).toHaveText(warning);
+
+  const warningOccurrences = await page.locator("body").evaluate(
+    (body, exactWarning) => (body as HTMLElement).innerText.split(exactWarning).length - 1,
+    warning,
   );
-  await expect(section).toContainText("treats peers and optional replicas as untrusted");
-  await expect(section).toContainText(
-    "No central server is authoritative for workspace history.",
-  );
-  await expect(section).toContainText("Metadata is not fully hidden");
-  await expect(page.locator(".security-summary")).toContainText("Independent audit");
-  await expect(page.locator(".security-summary")).toContainText("Not completed");
-  await expect(section.getByRole("link", { name: "Report privately" })).toHaveAttribute(
+  expect(warningOccurrences).toBe(1);
+
+  await expect(hero.getByRole("link", { name: "Read the security model" })).toHaveAttribute(
     "href",
-    "https://github.com/Jurshsmith/chaft/security/advisories/new",
+    "/docs/concepts/security-model/",
   );
-  await expect(
-    section.getByRole("link", { name: "Read the security model" }),
-  ).toHaveAttribute("href", "/docs/concepts/security-model/");
-  await expect(
-    section.getByRole("link", { name: "Read the full policy" }),
-  ).toHaveAttribute("href", "https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md");
-  await expect(section.locator("figcaption")).toContainText(
-    "Shielded tile: encrypted message and attachment content.",
+  await expect(hero.getByRole("link", { name: /Review current limits/ })).toHaveAttribute(
+    "href",
+    "#canary-limits",
   );
-  await expect(section.locator("figcaption")).toContainText(
-    "Outer nodes: participating devices.",
-  );
-  await expect(image).toBeVisible();
-  await expect
-    .poll(async () =>
-      image.evaluate((element) => (element as HTMLImageElement).naturalWidth),
-    )
-    .toBeGreaterThan(0);
+  await expect(hero.getByRole("link", { name: /private security advisory/i })).toHaveCount(0);
 
-  const imageGeometry = await image.evaluate((element) => {
-    const imageElement = element as HTMLImageElement;
-    return {
-      height: imageElement.naturalHeight,
-      width: imageElement.naturalWidth,
-    };
-  });
-  expect(Math.abs(imageGeometry.width / imageGeometry.height - 4 / 3)).toBeLessThan(0.02);
+  for (const [label, value] of [
+    ["Content", "Encrypted before sync"],
+    ["Metadata", "Visible"],
+    ["Audit", "Not completed"],
+    ["Use", "Non-sensitive testing"],
+  ] as const) {
+    await expect(rail.locator("div").filter({ hasText: label })).toContainText(value);
+  }
 
-  const [copyBox, visualBox] = await Promise.all([copy.boundingBox(), visual.boundingBox()]);
-  expect(copyBox).not.toBeNull();
-  expect(visualBox).not.toBeNull();
+  await expect(visual).toBeVisible();
+  await expect(visual.locator("img")).toHaveCount(0);
+  await expect(visual).toContainText("Device A");
+  await expect(visual).toContainText("Signed event");
+  await expect(visual).toContainText("Device B");
+  await expect(visual).toContainText("Optional replica");
+  await expect(visual.locator("figcaption")).toContainText(
+    "The peer or replica that carried it is never authoritative.",
+  );
+
+  const properties = page.locator("[data-security-properties]");
+  await expect(
+    properties.getByRole("heading", { name: "Current security properties" }),
+  ).toBeVisible();
+  await expect(properties.locator("li")).toHaveCount(5);
+  for (const title of [
+    "Verified locally",
+    "Signed by devices",
+    "Authorization fails closed",
+    "Content encrypted before sync",
+    "Untrusted input is bounded",
+  ]) {
+    await expect(properties.getByRole("heading", { name: title })).toBeVisible();
+  }
+  await expect(properties).not.toContainText(/\b0[1-5]\b/);
+
+  const limits = page.locator("[data-security-limits]");
+  await expect(
+    limits.getByRole("heading", { name: "Why the canary is not production ready" }),
+  ).toBeVisible();
+  await expect(limits.locator("article")).toHaveCount(6);
+  for (const title of [
+    "Independent review",
+    "Local device exposure",
+    "Visible metadata",
+    "Unsigned distribution",
+    "Availability",
+    "Recovery and revocation",
+  ]) {
+    await expect(limits.getByRole("heading", { name: title })).toBeVisible();
+  }
+
+  const report = page.locator("[data-security-report]");
+  await expect(
+    report.getByRole("heading", { name: "Report a vulnerability privately" }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("link", { name: "Open a private security advisory" }),
+  ).toHaveAttribute("href", "https://github.com/Jurshsmith/chaft/security/advisories/new");
+  await expect(report.getByRole("link", { name: "Read the security policy" })).toHaveAttribute(
+    "href",
+    "https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md",
+  );
 
   const viewport = page.viewportSize();
   expect(viewport).not.toBeNull();
-  if ((viewport?.width ?? 0) <= 820) {
+  const [copyBox, visualBox] = await Promise.all([copy.boundingBox(), visual.boundingBox()]);
+  expect(copyBox).not.toBeNull();
+  expect(visualBox).not.toBeNull();
+  if ((viewport?.width ?? 0) <= 840) {
     expect((copyBox?.y ?? 0) + (copyBox?.height ?? 0)).toBeLessThanOrEqual(
       (visualBox?.y ?? 0) + 1,
     );
@@ -88,27 +131,34 @@ test("keeps the security design on its canonical page and static with reduced mo
     );
   }
 
-  const styles = await Promise.all(
-    [copy, visual].map((locator) =>
-      locator.evaluate((element) => ({
-        opacity: getComputedStyle(element).opacity,
-        transform: getComputedStyle(element).transform,
-      })),
-    ),
-  );
-  for (const style of styles) {
-    expect(style.opacity).toBe("1");
-    expect(style.transform).toBe("none");
-  }
-
   const dimensions = await page.evaluate(() => ({
     documentWidth: document.documentElement.scrollWidth,
     viewportWidth: document.documentElement.clientWidth,
   }));
   expect(dimensions.documentWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
+
+  for (const link of [
+    hero.getByRole("link", { name: "Read the security model" }),
+    hero.getByRole("link", { name: /Review current limits/ }),
+    report.getByRole("link", { name: "Open a private security advisory" }),
+    report.getByRole("link", { name: "Read the security policy" }),
+  ]) {
+    const box = await link.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+
+  const visualMotion = await visual.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      animationName: styles.animationName,
+      transitionDuration: styles.transitionDuration,
+    };
+  });
+  expect(visualMotion).toEqual({ animationName: "none", transitionDuration: "0s" });
 });
 
-test("@accessibility keeps the security page free of serious WCAG findings", async ({
+test("@accessibility keeps the complete security route free of serious WCAG findings", async ({
   page,
 }, testInfo) => {
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
@@ -137,40 +187,7 @@ test("@accessibility keeps the security page free of serious WCAG findings", asy
   ).toEqual([]);
 });
 
-test("reveals only the security visual once without persistent motion", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
-  await openSecurityPage(page);
-
-  const section = page.locator("[data-security-page-hero]");
-  const visual = page.locator("[data-security-visual]");
-  await expect(section).toHaveAttribute("data-security-motion", "entrance");
-  await section.scrollIntoViewIfNeeded();
-  await expect(section).toHaveAttribute("data-security-visible", "");
-
-  await expect
-    .poll(async () =>
-      visual.evaluate((element) => ({
-        opacity: getComputedStyle(element).opacity,
-        transform: getComputedStyle(element).transform,
-      })),
-    )
-    .toEqual({ opacity: "1", transform: "none" });
-
-  const motion = await visual.evaluate((element) => {
-    const styles = getComputedStyle(element);
-    return {
-      animationName: styles.animationName,
-      transitionDuration: styles.transitionDuration,
-    };
-  });
-  expect(motion.animationName).toBe("none");
-  expect(motion.transitionDuration).toBe("0.52s, 0.62s");
-
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(section).toHaveAttribute("data-security-visible", "");
-});
-
-test("keeps the complete security overview visible without JavaScript", async ({
+test("keeps the complete security route usable without JavaScript", async ({
   baseURL,
   browser,
 }, testInfo) => {
@@ -191,26 +208,12 @@ test("keeps the complete security overview visible without JavaScript", async ({
   const response = await page.goto("/security/", { waitUntil: "domcontentloaded" });
   expect(response?.ok()).toBe(true);
 
-  const section = page.locator("[data-security-page-hero]");
-  const copy = page.locator("[data-security-copy]");
-  const visual = page.locator("[data-security-visual]");
-  await section.scrollIntoViewIfNeeded();
-  await expect(section).toHaveAttribute("data-security-motion", "static");
-  await expect(section).not.toHaveAttribute("data-security-visible", "");
-  await expect(copy).toBeVisible();
-  await expect(visual).toBeVisible();
-
-  const styles = await Promise.all(
-    [copy, visual].map((locator) =>
-      locator.evaluate((element) => ({
-        opacity: getComputedStyle(element).opacity,
-        transform: getComputedStyle(element).transform,
-      })),
-    ),
-  );
-  for (const style of styles) {
-    expect(style).toEqual({ opacity: "1", transform: "none" });
-  }
+  await expect(page.locator("[data-security-trust-hero]")).toBeVisible();
+  await expect(page.locator("[data-security-trust-path]")).toBeVisible();
+  await expect(page.locator("[data-security-properties]")).toBeVisible();
+  await expect(page.locator("[data-security-limits]")).toBeVisible();
+  await expect(page.locator("[data-security-report]")).toBeVisible();
+  await expect(page.getByText(warning, { exact: true })).toBeVisible();
 
   await context.close();
 });

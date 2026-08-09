@@ -1,180 +1,384 @@
 ---
-import SecurityOverviewSection from "../components/landing/SecurityOverviewSection.astro";
+import SecurityTrustHero from "../components/security/SecurityTrustHero.astro";
 import BaseLayout from "../layouts/BaseLayout.astro";
 
 const description =
-  "Chaft's current security model, known canary-stage limits, and private vulnerability reporting process.";
+  "Chaft's current security boundaries, known canary limits, and private vulnerability reporting process.";
+
+const securityProperties = [
+  {
+    title: "Verified locally",
+    body:
+      "Each device builds workspace state from signed history. No central server, peer, or replica is authoritative.",
+  },
+  {
+    title: "Signed by devices",
+    body:
+      "Persistent device identities sign events, and receiving devices verify those signatures before using the events.",
+  },
+  {
+    title: "Authorization fails closed",
+    body:
+      "Membership and administrative changes are checked against causal history. Missing authorization context is rejected and shown as a history gap.",
+  },
+  {
+    title: "Content encrypted before sync",
+    body:
+      "Message and attachment content is encrypted before replication. Routing and activity metadata remains visible.",
+  },
+  {
+    title: "Untrusted input is bounded",
+    body:
+      "Received frames, identifiers, lists, strings, events, and blobs have explicit size or count limits before normal use.",
+  },
+] as const;
+
+const canaryLimits = [
+  {
+    title: "Independent review",
+    body: "No independent security audit has been completed.",
+  },
+  {
+    title: "Local device exposure",
+    body:
+      "Production OS-backed keychain or user-unlocked vault integration is incomplete. The event database and local search index are not a full-disk encrypted vault.",
+  },
+  {
+    title: "Visible metadata",
+    body:
+      "Encryption does not hide identifiers, authorship, timing, endpoints, membership, sizes, or causal relationships.",
+  },
+  {
+    title: "Unsigned distribution",
+    body:
+      "Canary packages include checksums and release evidence, but they are deliberately unsigned. macOS builds are not notarized, and trusted updates are not available.",
+  },
+  {
+    title: "Availability",
+    body:
+      "Public relay and discovery are default-deny. Delivery depends on reachable devices or replicas and is not guaranteed.",
+  },
+  {
+    title: "Recovery and revocation",
+    body:
+      "Recovery bundles do not restore a complete account or workspace. Removing a member cannot erase plaintext or keys already copied to a device.",
+  },
+] as const;
+
+const advisoryUrl = "https://github.com/Jurshsmith/chaft/security/advisories/new";
+const securityPolicyUrl = "https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md";
 ---
 
 <BaseLayout title="Security" description={description}>
-  <SecurityOverviewSection />
+  <SecurityTrustHero />
 
-  <section class="security-summary" aria-label="Current security status">
-    <dl class="shell security-summary__inner">
-      <div><dt>Stage</dt><dd>Canary</dd></div>
-      <div><dt>Independent audit</dt><dd>Not completed</dd></div>
-      <div><dt>Sensitive use</dt><dd>Not recommended</dd></div>
-      <div><dt>Reporting</dt><dd>Private advisories</dd></div>
-    </dl>
-  </section>
-
-  <section class="section">
-    <div class="shell security-grid">
-      <div>
-        <p class="eyebrow">Implemented today</p>
-        <h2>Current security properties.</h2>
+  <section
+    class="security-properties"
+    id="current-security-properties"
+    aria-labelledby="current-security-properties-title"
+    data-security-properties
+  >
+    <div class="shell">
+      <div class="security-section-intro">
+        <h2 id="current-security-properties-title">Current security properties</h2>
+        <p>
+          These properties are implemented in the current code. They do not guarantee
+          complete secrecy, complete history, or availability.
+        </p>
       </div>
-      <ul class="invariant-list">
-        <li><span>01</span><p>No central server is authoritative for workspace history.</p></li>
-        <li><span>02</span><p>Local devices sign events with persistent device identities.</p></li>
-        <li><span>03</span><p>Peers and optional replica nodes are treated as untrusted.</p></li>
-        <li><span>04</span><p>Missing authorization context is rejected and reported as a history gap.</p></li>
-        <li><span>05</span><p>Peer inputs, paths, frames, strings, and item counts remain bounded.</p></li>
+
+      <ul class="security-property-list">
+        {securityProperties.map((property) => (
+          <li>
+            <h3>{property.title}</h3>
+            <p>{property.body}</p>
+          </li>
+        ))}
       </ul>
     </div>
   </section>
 
-  <section class="section section--deep">
-    <div class="shell limits">
-      <div>
-        <span class="status">Not protected yet</span>
-        <h2>Why the canary is not production-ready.</h2>
+  <section
+    class="security-limits section--deep"
+    id="canary-limits"
+    aria-labelledby="canary-limits-title"
+    data-security-limits
+  >
+    <div class="shell">
+      <div class="security-limits__intro">
+        <h2 id="canary-limits-title">Why the canary is not production ready</h2>
+        <p>
+          Cryptographic building blocks are present, but production safety also depends on
+          the device, release channel, network, recovery path, and independent review.
+        </p>
       </div>
-      <div class="prose">
-        <p>
-          Chaft has not completed an independent security audit. OS-backed keychain or
-          user-unlocked vault integration for local identity and secrets is also incomplete.
-        </p>
-        <p>
-          Public relay and discovery remain default-deny. Production packaging, platform
-          signing, notarization, and trusted update delivery remain release gates.
-        </p>
-        <p>
-          Security fixes currently target the main branch until a supported public release
-          channel exists.
-        </p>
+
+      <div class="security-limit-grid">
+        {canaryLimits.map((limit) => (
+          <article>
+            <h3>{limit.title}</h3>
+            <p>{limit.body}</p>
+          </article>
+        ))}
       </div>
     </div>
   </section>
 
-  <section class="section report">
-    <div class="shell report__inner">
+  <section
+    class="security-report"
+    aria-labelledby="security-report-title"
+    data-security-report
+  >
+    <div class="shell security-report__inner">
       <div>
-        <p class="eyebrow">Responsible disclosure</p>
-        <h2>Share sensitive findings through a private channel.</h2>
+        <p class="security-report__label">Private disclosure</p>
+        <h2 id="security-report-title">Report a vulnerability privately</h2>
       </div>
-      <div>
+
+      <div class="security-report__body">
         <p>
-          Use GitHub Security Advisories for plaintext leakage, key exposure, signature or
-          authorization bypasses, malformed peer acceptance, replica plaintext access, or
-          denial-of-service through unbounded work.
+          Use a private security advisory for suspected plaintext or key exposure, signature
+          or authorization bypasses, malformed peer acceptance, replica plaintext access, or
+          denial of service through unbounded work.
         </p>
-        <p>Do not open a public issue containing sensitive reproduction details.</p>
-        <a class="button" href="https://github.com/Jurshsmith/chaft/security/advisories/new">Open a private advisory</a>
+        <p>
+          Do not put sensitive reproduction details in a public issue. If private advisories
+          are unavailable, share only minimal details until a private channel is agreed.
+        </p>
+        <div class="security-report__actions">
+          <a class="button" href={advisoryUrl}>Open a private security advisory</a>
+          <a class="security-report__policy" href={securityPolicyUrl}>
+            Read the security policy
+          </a>
+        </div>
       </div>
     </div>
   </section>
 </BaseLayout>
 
 <style>
-  .security-summary {
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-raised);
+  .security-properties,
+  .security-limits,
+  .security-report {
+    padding-block: clamp(4.5rem, 9vw, 7rem);
   }
 
-  .security-summary__inner {
+  .security-section-intro,
+  .security-limits__intro,
+  .security-report__inner {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    margin-block: 0;
+    grid-template-columns: minmax(0, 0.82fr) minmax(20rem, 1.18fr);
+    gap: clamp(2rem, 7vw, 6rem);
   }
 
-  .security-summary__inner div {
-    display: grid;
-    gap: 0.35rem;
-    padding: 1.2rem clamp(0.8rem, 2vw, 1.5rem);
-    border-inline-start: 1px solid var(--border-subtle);
+  .security-section-intro,
+  .security-limits__intro {
+    align-items: end;
+    margin-block-end: clamp(2.5rem, 5vw, 4rem);
   }
 
-  .security-summary__inner div:last-child {
-    border-inline-end: 1px solid var(--border-subtle);
-  }
-
-  .security-summary dt {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    text-transform: uppercase;
-  }
-
-  .security-summary dd {
+  .security-section-intro h2,
+  .security-limits h2,
+  .security-report h2 {
+    max-width: 15ch;
     margin: 0;
-    color: var(--text-strong);
-    font-size: 0.88rem;
+    font-size: clamp(2.25rem, 4.4vw, 3.75rem);
+    text-wrap: balance;
   }
 
-  .security-grid,
-  .limits,
-  .report__inner {
-    display: grid;
-    grid-template-columns: minmax(0, 0.85fr) minmax(22rem, 1fr);
-    gap: clamp(3rem, 9vw, 8rem);
+  .security-section-intro > p,
+  .security-limits__intro > p {
+    max-width: 40rem;
+    margin: 0;
+    color: var(--text-soft);
+    font-family: var(--font-body);
+    font-size: 1.04rem;
+    line-height: 1.65;
   }
 
-  .invariant-list {
+  .security-property-list {
     margin: 0;
     padding: 0;
-    border-top: 1px solid var(--border-subtle);
+    border-block: 1px solid var(--border-subtle);
     list-style: none;
   }
 
-  .invariant-list li {
+  .security-property-list li {
     display: grid;
-    grid-template-columns: 3rem 1fr;
-    gap: 1rem;
-    padding-block: 1.25rem;
-    border-bottom: 1px solid var(--border-subtle);
+    grid-template-columns: minmax(12rem, 0.82fr) minmax(0, 1.18fr);
+    gap: clamp(1.5rem, 5vw, 4.5rem);
+    align-items: baseline;
+    padding-block: clamp(1.3rem, 3vw, 1.8rem);
   }
 
-  .invariant-list span {
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
+  .security-property-list li + li {
+    border-top: 1px solid var(--border-subtle);
   }
 
-  .invariant-list p {
+  .security-property-list h3 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: clamp(1.08rem, 1.8vw, 1.28rem);
+  }
+
+  .security-property-list p {
+    max-width: 45rem;
     margin: 0;
     color: var(--text-soft);
+    font-family: var(--font-body);
+    line-height: 1.65;
   }
 
-  .limits h2 {
-    margin-top: 1.4rem;
+  .security-limits {
+    background:
+      radial-gradient(circle at 18% 18%, rgb(216 86 63 / 7%), transparent 24rem),
+      var(--surface-ink);
   }
 
-  .report {
-    border-top: 3px solid var(--warning);
+  .security-limit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-block: 1px solid var(--border-subtle);
   }
 
-  .report p {
-    max-width: 36rem;
+  .security-limit-grid article {
+    min-height: 12.5rem;
+    padding: clamp(1.4rem, 3vw, 2rem);
   }
 
-  .report .button {
-    margin-top: 1rem;
+  .security-limit-grid article:nth-child(even) {
+    border-inline-start: 1px solid var(--border-subtle);
+  }
+
+  .security-limit-grid article:nth-child(n + 3) {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .security-limit-grid h3 {
+    margin-block-end: 0.8rem;
+    color: var(--text-strong);
+    font-size: clamp(1.08rem, 1.8vw, 1.28rem);
+  }
+
+  .security-limit-grid p {
+    max-width: 35rem;
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    line-height: 1.62;
+  }
+
+  .security-report {
+    border-top: 2px solid var(--brand-coral);
+    background: var(--surface-raised);
+  }
+
+  .security-report__inner {
+    align-items: start;
+  }
+
+  .security-report__label {
+    margin-block-end: 1rem;
+    color: var(--warning);
+    font-family: var(--font-ui);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .security-report__body {
+    max-width: 42rem;
+  }
+
+  .security-report__body p {
+    margin-block-end: 1rem;
+    color: var(--text-soft);
+    font-family: var(--font-body);
+    line-height: 1.65;
+  }
+
+  .security-report__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem 1.2rem;
+    align-items: center;
+    margin-top: 1.6rem;
+  }
+
+  .security-report__policy {
+    display: inline-flex;
+    min-height: 2.85rem;
+    align-items: center;
+    color: var(--text-soft);
+    font-weight: 500;
+    text-underline-offset: 0.3em;
+  }
+
+  .security-report__policy:hover {
+    color: var(--accent);
   }
 
   @media (max-width: 800px) {
-    .security-summary__inner {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .security-section-intro,
+    .security-limits__intro,
+    .security-report__inner {
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
     }
 
-    .security-summary__inner div:nth-child(n + 3) {
+    .security-property-list li {
+      grid-template-columns: minmax(10rem, 0.7fr) minmax(0, 1.3fr);
+      gap: 1.5rem;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .security-properties,
+    .security-limits,
+    .security-report {
+      padding-block: 3.75rem;
+    }
+
+    .security-property-list li {
+      grid-template-columns: 1fr;
+      gap: 0.45rem;
+    }
+
+    .security-limit-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .security-limit-grid article {
+      min-height: auto;
+    }
+
+    .security-limit-grid article:nth-child(even) {
+      border-inline-start: 0;
+    }
+
+    .security-limit-grid article:nth-child(n + 2) {
       border-top: 1px solid var(--border-subtle);
     }
 
-    .security-grid,
-    .limits,
-    .report__inner {
-      grid-template-columns: 1fr;
+    .security-report__actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .security-report__actions .button,
+    .security-report__policy {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .security-properties *,
+    .security-limits *,
+    .security-report * {
+      animation: none !important;
+      transition: none !important;
     }
   }
 </style>
