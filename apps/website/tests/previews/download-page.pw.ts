@@ -10,6 +10,19 @@ interface PublishedAsset {
   url: string;
 }
 
+type PlatformId = "windows" | "macos" | "linux";
+type PlatformName = "Windows" | "macOS" | "Linux";
+
+const platformCases = [
+  { arch: "x86_64", id: "windows", name: "Windows" },
+  { arch: "arm64", id: "macos", name: "macOS" },
+  { arch: "x86_64", id: "linux", name: "Linux" },
+] as const satisfies readonly {
+  arch: string;
+  id: PlatformId;
+  name: PlatformName;
+}[];
+
 const releaseManifest = JSON.parse(
   readFileSync(new URL("../../src/data/release-manifest.json", import.meta.url), "utf8"),
 ) as { assets: PublishedAsset[] };
@@ -34,8 +47,62 @@ async function openLandingDownloadExperience(page: Page) {
   return experience;
 }
 
-function platformTab(experience: Locator, name: "Windows" | "macOS" | "Linux") {
+function platformTab(experience: Locator, name: PlatformName) {
   return experience.getByRole("tab", { name: new RegExp(`^${name}\\b`, "i") });
+}
+
+async function expectPlatformIcon(tab: Locator, platform: PlatformId) {
+  const icon = tab.locator(`svg[data-platform-icon="${platform}"]`);
+  await expect(icon).toHaveCount(1);
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute("aria-hidden", "true");
+  await expect(icon).toHaveAttribute("focusable", "false");
+  return icon;
+}
+
+async function expectSelectedNonColorCue(tab: Locator) {
+  const cue = await tab.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      borderBottomStyle: styles.borderBottomStyle,
+      borderBottomWidth: Number.parseFloat(styles.borderBottomWidth),
+      boxShadow: styles.boxShadow,
+    };
+  });
+  const hasBorderCue =
+    cue.borderBottomStyle !== "none" && cue.borderBottomWidth >= 2;
+  const hasInsetShadowCue =
+    cue.boxShadow !== "none" && cue.boxShadow.includes("inset");
+  expect(
+    hasBorderCue || hasInsetShadowCue,
+    "The selected platform needs a non-color visual cue",
+  ).toBe(true);
+}
+
+async function expectInsetKeyboardFocusRing(tab: Locator) {
+  const ring = await tab.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    const insetSpread = Array.from(
+      styles.boxShadow.matchAll(
+        /0px\s+0px\s+0px\s+([\d.]+)px[^,]*\binset\b/g,
+      ),
+      (match) => Number.parseFloat(match[1] ?? "0"),
+    ).reduce((largest, width) => Math.max(largest, width), 0);
+    return {
+      insetSpread,
+      outlineOffset: Number.parseFloat(styles.outlineOffset),
+      outlineStyle: styles.outlineStyle,
+      outlineWidth: Number.parseFloat(styles.outlineWidth),
+    };
+  });
+  const hasInsetOutline =
+    ring.outlineStyle !== "none" &&
+    ring.outlineWidth >= 2 &&
+    ring.outlineOffset <= -ring.outlineWidth;
+  expect(
+    hasInsetOutline || ring.insetSpread >= 2,
+    "Keyboard focus needs a component-owned inset ring of at least 2px",
+  ).toBe(true);
 }
 
 async function controlledPanel(page: Page, tab: Locator) {
@@ -46,7 +113,7 @@ async function controlledPanel(page: Page, tab: Locator) {
 
 async function expectOnlyPlatformVisible(
   experience: Locator,
-  activePlatform: "windows" | "macos" | "linux",
+  activePlatform: PlatformId,
 ) {
   const panels = experience.locator("[data-platform-panel]");
   await expect(panels).toHaveCount(3);
@@ -95,15 +162,29 @@ test("keeps the selector on the landing page and restores the detailed download 
   const tablist = experience.getByRole("tablist", { name: /operating system|platform/i });
   await expect(tablist).toBeVisible();
   await expect(tablist.getByRole("tab")).toHaveCount(3);
+  await expect(experience.locator("svg[data-platform-icon]")).toHaveCount(3);
 
-  for (const [name, os, arch] of [
-    ["Windows", "windows", "x86_64"],
-    ["macOS", "macos", "arm64"],
-    ["Linux", "linux", "x86_64"],
-  ] as const) {
+  const renderedHtml = await page.content();
+  const attributionNotices =
+    renderedHtml.match(/<!--!\s*Font Awesome Free 7\.3\.1[\s\S]*?-->/g) ?? [];
+  expect(attributionNotices).toHaveLength(platformCases.length);
+  for (const notice of attributionNotices) {
+    expect(notice).toContain(
+      "https://github.com/FortAwesome/Font-Awesome/tree/14c65a3747d0f3b751f15831fc719236aea8729d",
+    );
+    expect(notice).toContain(
+      "CC BY 4.0 https://creativecommons.org/licenses/by/4.0/",
+    );
+    expect(notice).toContain("path data are unmodified");
+  }
+
+  for (const { arch, id: os, name } of platformCases) {
     const tab = platformTab(experience, name);
+    await expect(tab).toHaveAccessibleName(name);
+    await expectPlatformIcon(tab, os);
     await tab.click();
     await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expectSelectedNonColorCue(tab);
     await expectOnlyPlatformVisible(experience, os);
 
     const panel = await controlledPanel(page, tab);
@@ -193,8 +274,11 @@ test("uses desktop OS detection only for factual platform labeling", async ({
   const experience = await openLandingDownloadExperience(page);
   await expectOnlyPlatformVisible(experience, "macos");
   const macos = platformTab(experience, "macOS");
+  const windows = platformTab(experience, "Windows");
   await expect(macos).toHaveAttribute("aria-selected", "true");
-  await expect(experience.getByText("Detected platform", { exact: true })).toHaveCount(1);
+  await expect(macos).toHaveAccessibleName("macOS");
+  await expect(macos.locator("[data-detected-platform]")).toBeVisible();
+  await expect(experience.locator("[data-detected-platform]:visible")).toHaveCount(1);
   await expect(page.locator("body")).not.toContainText(/recommended/i);
 
   const macPanel = await controlledPanel(page, macos);
@@ -203,6 +287,78 @@ test("uses desktop OS detection only for factual platform labeling", async ({
   for (const button of await variants.getByRole("button").all()) {
     await expect(button).not.toHaveAccessibleName(/detected|recommended/i);
   }
+
+  await windows.click();
+  await expectOnlyPlatformVisible(experience, "windows");
+  await expect(experience.locator("[data-detected-platform]:visible")).toHaveCount(0);
+
+  await macos.click();
+  await expectOnlyPlatformVisible(experience, "macos");
+  await expect(macos.locator("[data-detected-platform]")).toBeVisible();
+  await expect(experience.locator("[data-detected-platform]:visible")).toHaveCount(1);
+  await expect(macos).toHaveAccessibleName("macOS");
+});
+
+test("keeps hover semantic-neutral and exposes an unclipped keyboard focus ring", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium-1440",
+    "One hover-capable desktop engine is sufficient for interaction-state styling",
+  );
+
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  const experience = await openLandingDownloadExperience(page);
+  const windows = platformTab(experience, "Windows");
+  const macos = platformTab(experience, "macOS");
+  const linux = platformTab(experience, "Linux");
+
+  await windows.click();
+  await expectOnlyPlatformVisible(experience, "windows");
+  await page.mouse.move(0, 0);
+  const inactiveStyle = await linux.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      backgroundColor: styles.backgroundColor,
+      boxShadow: styles.boxShadow,
+      color: styles.color,
+      transform: styles.transform,
+    };
+  });
+
+  await linux.hover();
+  const hoverStyle = await linux.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return {
+      backgroundColor: styles.backgroundColor,
+      boxShadow: styles.boxShadow,
+      color: styles.color,
+      transform: styles.transform,
+    };
+  });
+  expect(hoverStyle).not.toEqual(inactiveStyle);
+  await expect(linux).toHaveAttribute("aria-selected", "false");
+  await expect(windows).toHaveAttribute("aria-selected", "true");
+  await expectOnlyPlatformVisible(experience, "windows");
+
+  const detailsLink = experience.getByRole("link", { name: /Details and checksums/i });
+  await detailsLink.focus();
+  await page.keyboard.press("Tab");
+  await expect(windows).toBeFocused();
+  await expectInsetKeyboardFocusRing(windows);
+  await expectSelectedNonColorCue(windows);
+
+  await page.keyboard.press("ArrowRight");
+  await expect(macos).toBeFocused();
+  await expectInsetKeyboardFocusRing(macos);
+  await expectSelectedNonColorCue(macos);
+  await expectOnlyPlatformVisible(experience, "macos");
+
+  await page.keyboard.press("End");
+  await expect(linux).toBeFocused();
+  await expectInsetKeyboardFocusRing(linux);
+  await expectSelectedNonColorCue(linux);
+  await expectOnlyPlatformVisible(experience, "linux");
 });
 
 test("removes selector motion for reduced-motion users and never overflows", async ({
@@ -250,6 +406,30 @@ test("keeps the editorial layout relationship across responsive widths", async (
 
   const viewport = page.viewportSize();
   expect(viewport).not.toBeNull();
+  if ((viewport?.width ?? 0) <= 560) {
+    for (const { id, name } of platformCases) {
+      const tab = platformTab(experience, name);
+      const icon = await expectPlatformIcon(tab, id);
+      const label = tab.getByText(name, { exact: true });
+      const [tabBox, iconBox] = await Promise.all([
+        tab.boundingBox(),
+        icon.boundingBox(),
+      ]);
+      await expect(label).toBeVisible();
+      expect(tabBox).not.toBeNull();
+      expect(iconBox).not.toBeNull();
+      expect(tabBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+      expect(tabBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+      expect(iconBox?.width ?? 0).toBeGreaterThanOrEqual(14);
+      expect(iconBox?.width ?? 0).toBeLessThanOrEqual(22);
+      expect(iconBox?.height ?? 0).toBeGreaterThanOrEqual(14);
+      expect(iconBox?.height ?? 0).toBeLessThanOrEqual(22);
+      expect(iconBox?.x ?? 0).toBeGreaterThanOrEqual((tabBox?.x ?? 0) - 0.5);
+      expect((iconBox?.x ?? 0) + (iconBox?.width ?? 0)).toBeLessThanOrEqual(
+        (tabBox?.x ?? 0) + (tabBox?.width ?? 0) + 0.5,
+      );
+    }
+  }
   if ((viewport?.width ?? 0) > 960) {
     expect((copyBox?.x ?? 0) + (copyBox?.width ?? 0)).toBeLessThanOrEqual(
       (selectorBox?.x ?? 0) + 1,
@@ -382,12 +562,20 @@ test("keeps all published packages visible without JavaScript", async ({
   await expect(experience.locator("[data-download-artifact-panel]:visible")).toHaveCount(4);
   const platformLinks = experience.locator("[data-platform-tab]");
   await expect(platformLinks).toHaveCount(3);
-  for (const link of await platformLinks.all()) {
+  await expect(experience.locator("svg[data-platform-icon]")).toHaveCount(3);
+  for (const [index, { id, name }] of platformCases.entries()) {
+    const link = platformLinks.nth(index);
     await expect(link).not.toHaveAttribute("role", "tab");
     await expect(link).not.toHaveAttribute("tabindex", /.+/);
-    await link.focus();
-    await expect(link).toBeFocused();
+    await expect(link).toHaveAccessibleName(name);
+    await expectPlatformIcon(link, id);
   }
+  await platformLinks.first().focus();
+  await expect(platformLinks.first()).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(platformLinks.nth(1)).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(platformLinks.nth(2)).toBeFocused();
   await expect(experience.locator("[data-copy-checksum]:visible")).toHaveCount(0);
   const visibleAssetLinks = experience.locator("[data-download-asset]:visible");
   const visibleHrefs = await visibleAssetLinks.evaluateAll((links) =>
