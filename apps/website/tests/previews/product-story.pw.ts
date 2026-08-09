@@ -31,13 +31,33 @@ test.describe("production landing-page product story", () => {
       "href",
       "#how-it-works",
     );
-
-    const workspace = hero.getByRole("img", {
-      name: /Chaft desktop workspace showing rooms, threaded replies, an attachment, member access, search, and current synchronization status/i,
+    const constellation = hero.getByRole("img", {
+      name: /A Chaft conversation syncing through signed updates to three authorized devices/i,
     });
-    await expect(workspace).toBeVisible();
-    await expect(hero.locator(".workspace-figure figcaption")).toHaveText(
-      "Representative view of the current desktop preview.",
+    await expect(constellation).toBeVisible();
+    await expect(constellation.locator(".conversation-card")).toContainText(
+      "release-note.md",
+    );
+    await expect(constellation.locator(".presence-fragment")).toContainText(
+      "reachable now",
+    );
+    await expect(constellation.locator(".api-fragment")).toContainText(
+      "signature verified",
+    );
+    await expect(constellation.locator(".api-fragment")).not.toContainText(
+      "POST /v1/messages",
+    );
+    await expect(constellation.locator(".delivery-fragment")).toContainText(
+      "Delivered",
+    );
+    await expect(constellation.locator(".terminal-fragment")).toContainText(
+      "3 authorized devices",
+    );
+    await expect(constellation.locator(".terminal-fragment")).toContainText(
+      "encrypted before sync · history current",
+    );
+    await expect(constellation.locator(".terminal-fragment")).not.toContainText(
+      "chaft sync --room",
     );
 
     const product = page.locator("#product");
@@ -87,6 +107,13 @@ test.describe("production landing-page product story", () => {
 
     const viewport = page.viewportSize();
     if (viewport && viewport.width <= 680) {
+      const heroButtonHeights = await page
+        .locator(".hero__actions .button")
+        .evaluateAll((buttons) =>
+          buttons.map((button) => button.getBoundingClientRect().height),
+        );
+      expect(Math.max(...heroButtonHeights)).toBeLessThanOrEqual(64);
+
       const carousel = page.locator("#product .moment-grid");
       const carouselDimensions = await carousel.evaluate((element) => ({
         clientWidth: element.clientWidth,
