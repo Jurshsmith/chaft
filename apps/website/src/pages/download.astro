@@ -1,58 +1,14 @@
 ---
-import DownloadGrid from "../components/DownloadGrid.astro";
+import DownloadExperience from "../components/DownloadExperience.astro";
 import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
-import PageHero from "../components/PageHero.astro";
-import { currentRelease } from "../data/releases";
 import BaseLayout from "../layouts/BaseLayout.astro";
-import { sitePath } from "../lib/site-path";
 
 const description =
   "Chaft canary downloads for Windows, macOS, and Linux, with package availability, checksums, evidence, and signing status.";
-const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
 ---
 
 <BaseLayout title="Download" description={description}>
-  <PageHero
-    eyebrow={hasPublishedDownloads
-      ? `Canary · v${currentRelease.version}`
-      : "Canary · Packages pending"}
-    title={hasPublishedDownloads
-      ? "Choose an unsigned Chaft canary."
-      : "Canary packages are being prepared."}
-    lede={hasPublishedDownloads
-      ? "Each native package passed its packaged-app smoke check and includes exact integrity evidence. These canaries are deliberately unsigned and are not production-ready."
-      : "Windows, macOS, and Linux are supported targets. Build the current source today; verified public packages will appear here only after their release evidence is complete."}
-  >
-    <div class="button-row">
-      <a
-        class="button"
-        href={hasPublishedDownloads
-          ? "#platforms"
-          : sitePath("/docs/getting-started/build-desktop/")}
-      >
-        {hasPublishedDownloads ? "Choose a platform" : "Build from source"}
-      </a>
-      <a class="button button--secondary" href={currentRelease.releaseUrl}>
-        {hasPublishedDownloads ? "View GitHub release" : "Watch GitHub releases"}
-      </a>
-    </div>
-  </PageHero>
-
-  <section class="section" id="platforms">
-    <div class="shell">
-      <div class="release-strip">
-        <span class="status">
-          {currentRelease.status === "published" ? "Unsigned canary published" : "Canary packages pending"}
-        </span>
-        <div>
-          <strong>{currentRelease.status === "published" ? "Current canary" : "Current canary candidate"}</strong>
-          <span class="mono">v{currentRelease.version}</span>
-        </div>
-        <a href={sitePath(`/releases/${currentRelease.version}/`)}>View details →</a>
-      </div>
-      <DownloadGrid />
-    </div>
-  </section>
+  <DownloadExperience />
 
   <section class="section section--deep">
     <div class="shell">
@@ -132,30 +88,6 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
 </BaseLayout>
 
 <style>
-  .release-strip {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 1.5rem;
-    align-items: center;
-    margin-bottom: 1rem;
-    padding: 1rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--surface-deep);
-  }
-
-  .release-strip div {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1rem;
-  }
-
-  .release-strip a {
-    color: var(--accent);
-    font-size: 0.86rem;
-    text-decoration: none;
-  }
-
   .delivery-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -196,7 +128,7 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: var(--surface-deep);
-    color: var(--secure);
+    color: var(--text-strong);
     font-family: var(--font-mono);
     font-size: 0.75rem;
     white-space: pre-wrap;
@@ -220,10 +152,6 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
   }
 
   @media (max-width: 800px) {
-    .release-strip {
-      grid-template-columns: 1fr;
-    }
-
     .delivery-grid,
     .verification {
       grid-template-columns: 1fr;
