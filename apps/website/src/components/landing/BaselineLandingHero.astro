@@ -1,5 +1,6 @@
 ---
-import ProductConstellationLandingHero from "./ProductConstellationLandingHero.astro";
+import ProductWorkspace from "./ProductWorkspace.astro";
+import { sitePath } from "../../lib/site-path";
 
 interface Props {
   hasPublishedDownloads: boolean;
@@ -8,4 +9,136 @@ interface Props {
 const { hasPublishedDownloads } = Astro.props;
 ---
 
-<ProductConstellationLandingHero {hasPublishedDownloads} heroId="baseline" />
+<section class="hero" data-chaft-hero="baseline">
+  <div class="shell hero__copy">
+    <p class="eyebrow">Open-source desktop chat</p>
+    <h1>Team chat without a required central server.</h1>
+    <p class="lede">
+      Chaft keeps workspace history on each teammate's device and syncs new activity
+      between authorized devices when they connect. Create rooms, reply, share files,
+      and search locally—without a subscription or required hosted workspace.
+    </p>
+    <div class="button-row hero__actions">
+      <a class="button" href={sitePath("/download/")}>
+        {hasPublishedDownloads ? "Download the early build" : "View the early build"}
+        <span aria-hidden="true">→</span>
+      </a>
+      <a class="button button--secondary" href="#how-it-works">See how it works</a>
+    </div>
+    <p class="hero__meta">Current preview · Windows, macOS, and Linux</p>
+  </div>
+
+  <div class="shell hero__product">
+    <ProductWorkspace />
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(3.5rem, 6vw, 5.25rem) clamp(3rem, 7vw, 6rem);
+    border-bottom: 1px solid var(--border-subtle);
+    background:
+      radial-gradient(circle at 84% 14%, rgb(75 195 162 / 13%), transparent 26rem),
+      linear-gradient(180deg, #f7f3e9 0%, var(--surface-base) 72%);
+  }
+
+  .hero::before {
+    position: absolute;
+    top: 8rem;
+    right: -8rem;
+    width: 31rem;
+    height: 31rem;
+    border: 1px solid rgb(7 112 84 / 8%);
+    border-radius: 50%;
+    box-shadow: 0 0 0 5rem rgb(7 112 84 / 2.5%);
+    content: "";
+    pointer-events: none;
+  }
+
+  .hero__copy {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(22rem, 0.65fr);
+    gap: 0 clamp(3rem, 8vw, 8rem);
+    align-items: end;
+  }
+
+  .hero__copy .eyebrow,
+  .hero__copy h1 {
+    grid-column: 1;
+  }
+
+  h1 {
+    max-width: 11ch;
+    margin-bottom: 0;
+    font-size: clamp(3.35rem, 5.5vw, 5.3rem);
+    letter-spacing: -0.055em;
+    text-wrap: balance;
+  }
+
+  .lede {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    max-width: 34rem;
+    margin-bottom: 0.25rem;
+    font-size: clamp(1.05rem, 1.65vw, 1.25rem);
+  }
+
+  .hero__actions,
+  .hero__meta {
+    grid-column: 2;
+  }
+
+  .hero__actions {
+    margin-top: 1.65rem;
+  }
+
+  .hero__meta {
+    margin: 1rem 0 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+  }
+
+  .hero__product {
+    position: relative;
+    z-index: 2;
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  @media (max-width: 880px) {
+    .hero__copy {
+      grid-template-columns: 1fr;
+    }
+
+    .hero__copy .eyebrow,
+    .hero__copy h1,
+    .lede,
+    .hero__actions,
+    .hero__meta {
+      grid-column: 1;
+      grid-row: auto;
+    }
+
+    .lede {
+      max-width: 44rem;
+      margin-top: 1.5rem;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .hero {
+      padding-top: 3.5rem;
+    }
+
+    h1 {
+      font-size: clamp(3rem, 15vw, 4.4rem);
+    }
+
+    .hero__actions :global(.button) {
+      width: 100%;
+    }
+  }
+</style>

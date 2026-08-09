@@ -9,25 +9,22 @@ function read(pathname) {
 }
 
 describe("website typography contract", () => {
-  it("loads the supported Chillax weights from Fontshare", () => {
+  it("does not depend on a remote font stylesheet", () => {
     const layout = read("src/layouts/BaseLayout.astro");
 
-    expect(layout).toContain(
-      "https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&display=swap",
-    );
-    expect(layout).toContain('href="https://api.fontshare.com"');
-    expect(layout).toContain('href="https://cdn.fontshare.com"');
+    expect(layout).not.toContain("fontshare.com");
+    expect(layout).not.toMatch(/<link[^>]+rel=["']stylesheet["']/);
   });
 
-  it("uses Chillax only for body copy and keeps Space Grotesk for UI text", () => {
+  it("uses bundled Space Grotesk across UI and body copy", () => {
     const stylesheet = read("src/styles/global.css");
 
     expect(stylesheet).toContain(
       '--font-ui: "Space Grotesk", "Avenir Next", Avenir, Inter, system-ui, sans-serif;',
     );
-    expect(stylesheet).toContain(
-      '--font-body: "Chillax", var(--font-ui);',
-    );
+    expect(stylesheet).toContain("--font-body: var(--font-ui);");
+    expect(stylesheet).toContain("--font-editorial: var(--font-ui);");
+    expect(stylesheet).not.toContain("Chillax");
     expect(stylesheet).toMatch(/body\s*\{[\s\S]*?font-family:\s*var\(--font-ui\);/);
     expect(stylesheet).toMatch(
       /h1,\s*h2,\s*h3\s*\{[\s\S]*?font-family:\s*var\(--font-ui\);/,

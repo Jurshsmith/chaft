@@ -44,15 +44,15 @@
   --warning-surface: #f7e2d9;
   --warning-text: #713829;
   --font-ui: "Space Grotesk", "Avenir Next", Avenir, Inter, system-ui, sans-serif;
-  --font-body: "Chillax", var(--font-ui);
-  --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  --font-body: var(--font-ui);
+  --font-editorial: var(--font-ui);
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --radius-xs: 3px;
   --radius-sm: 7px;
   --radius-md: 12px;
   --shadow-lift: 7px 8px 0 rgb(23 33 31 / 12%);
   --page-gutter: clamp(1.25rem, 4vw, 4rem);
-  --section-space: clamp(4.5rem, 10vw, 8rem);
+  --section-space: clamp(4rem, 8vw, 7rem);
   --content-width: 1180px;
   --motion-quick: 160ms ease-out;
 }
@@ -111,8 +111,8 @@ a {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline: 3px solid var(--brand-coral);
+  outline-offset: 3px;
 }
 
 ::selection {
@@ -140,7 +140,7 @@ h3 {
 h1 {
   max-width: 12ch;
   margin-block-end: 1.5rem;
-  font-size: clamp(3.15rem, 7.7vw, 6.5rem);
+  font-size: clamp(3rem, 7vw, 6rem);
 }
 
 h2 {
@@ -224,7 +224,7 @@ p {
   margin-block-end: 1.2rem;
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 0.77rem;
+  font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   line-height: 1.4;
@@ -321,7 +321,7 @@ p {
   border-radius: var(--radius-xs);
   color: var(--text-soft);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1;
 }
 
@@ -374,7 +374,11 @@ p {
   margin-block-end: 4.5rem;
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.75rem;
+}
+
+[id] {
+  scroll-margin-top: 6.5rem;
 }
 
 .feature-card p {

@@ -1,15 +1,13 @@
 ---
-import EarlyAccessCallout from "../components/EarlyAccessCallout.astro";
+import CanaryNotice from "../components/CanaryNotice.astro";
 import LandingHero from "../components/LandingHero.astro";
-import CommunitySection from "../components/landing/CommunitySection.astro";
-import DownloadSelectorSection from "../components/landing/DownloadSelectorSection.astro";
-import ProductRevealSection from "../components/landing/ProductRevealSection.astro";
+import ProductMoments from "../components/landing/ProductMoments.astro";
 import { currentRelease } from "../data/releases";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { sitePath } from "../lib/site-path";
 
 const description =
-  "Open-source team chat for small teams. Chaft stores history on participating devices, encrypts content, and syncs directly between trusted peers.";
+  "Open-source desktop chat for small teams. Chaft keeps message history on each teammate's device and syncs new activity between authorized devices when they connect.";
 
 const structuredData = {
   "@context": "https://schema.org",
@@ -26,347 +24,461 @@ const structuredData = {
 
 const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.available);
 
-const features = [
+const differences = [
   {
-    title: "On-device by default",
-    copy: "Messages, search, and history remain useful on each participating device—even when no central service is available.",
+    title: "History lives on your devices",
+    copy: "Each authorized device keeps a useful copy of workspace history, so earlier conversations remain available locally.",
   },
   {
-    title: "Direct when reachable",
-    copy: "Trusted devices exchange signed history directly. Optional encrypted replicas can improve availability without reading message content.",
+    title: "New activity syncs when devices connect",
+    copy: "Chaft exchanges signed updates directly between authorized devices instead of relying on a required central chat server.",
   },
   {
-    title: "Content protection",
-    copy: "Message and attachment content is encrypted before replication. The current canary does not hide all metadata.",
-  },
-  {
-    title: "Public boundaries",
-    copy: "The AGPL source, product limits, and current security gaps are documented instead of hidden behind a service promise.",
+    title: "Content is encrypted before sync",
+    copy: "Message and attachment content is protected before it leaves a device. Some metadata remains visible in the current preview.",
   },
 ];
 
 const steps = [
-  { number: "01", title: "Create", copy: "Name a private workspace on your device." },
-  { number: "02", title: "Invite", copy: "Share a one-use or bounded group invite with teammates." },
-  { number: "03", title: "Sync", copy: "Keep Chaft open while trusted devices exchange new history." },
+  { title: "Create", copy: "Start a workspace on your device and add the rooms your team needs." },
+  { title: "Invite", copy: "Share an invitation and review the people and devices allowed to enter." },
+  { title: "Sync", copy: "When authorized devices connect, they exchange and verify new workspace activity." },
 ];
 ---
 
 <BaseLayout title="Chaft" description={description} structuredData={structuredData}>
   <LandingHero {hasPublishedDownloads} />
 
-  <div class="trust-rail">
-    <dl class="shell trust-rail__inner" aria-label="Chaft attributes">
-      <div>
-        <dt>On-device history</dt>
-        <dd>Useful without a central service</dd>
-      </div>
-      <div>
-        <dt>Direct sync</dt>
-        <dd>When teammates are reachable</dd>
-      </div>
-      <div>
-        <dt>Encrypted content</dt>
-        <dd>Metadata is not fully hidden</dd>
-      </div>
-      <div>
-        <dt>Open source</dt>
-        <dd>AGPL-3.0-or-later</dd>
-      </div>
-    </dl>
-  </div>
+  <ProductMoments />
 
-  <ProductRevealSection />
-
-  <section class="section" id="why-chaft">
-    <div class="shell">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Lower infrastructure, clear tradeoffs</p>
-          <h2>Built without a permanent SaaS bill.</h2>
-        </div>
+  <section class="section difference" aria-labelledby="difference-title">
+    <div class="shell difference__grid">
+      <div class="difference__intro">
+        <p class="section-kicker">Why Chaft is different</p>
+        <h2 id="difference-title">Your workspace stays with your team.</h2>
         <p class="body-copy">
-          Participating devices provide the storage, compute, and most synchronization.
-          That lowers recurring infrastructure, but makes reachability and backups your
-          team's responsibility.
+          Chaft moves the source of truth closer to the people using it. That removes
+          the required hosted workspace, while keeping the tradeoffs visible.
         </p>
+        <a href={sitePath("/docs/concepts/architecture/")}>Read the architecture overview <span aria-hidden="true">→</span></a>
       </div>
 
-      <div class="card-grid">
-        {features.map((feature, index) => (
-          <article class="feature-card">
-            <span class="feature-card__index">{String(index + 1).padStart(2, "0")}</span>
-            <h3>{feature.title}</h3>
-            <p class="body-copy">{feature.copy}</p>
-          </article>
+      <dl class="difference-list">
+        {differences.map((item) => (
+          <div>
+            <dt>{item.title}</dt>
+            <dd>{item.copy}</dd>
+          </div>
         ))}
-      </div>
+      </dl>
     </div>
   </section>
 
-  <section class="section section--deep" id="how-it-works">
+  <section class="section sync-story" id="how-it-works" aria-labelledby="sync-title">
     <div class="shell">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">How it works</p>
-          <h2>Create a workspace. Invite your team. Sync directly.</h2>
-        </div>
+      <div class="sync-story__heading">
+        <p class="section-kicker">How it works</p>
+        <h2 id="sync-title">Create, invite, then sync.</h2>
         <p class="body-copy">
-          Each device keeps its own identity and verified history. Chaft exchanges
-          updates when trusted peers are reachable.
+          Every device has its own identity and copy of verified history. New activity
+          moves when teammates' devices can reach one another.
         </p>
       </div>
 
-      <ol class="steps">
-        {steps.map((step) => (
+      <ol class="sync-steps">
+        {steps.map((step, index) => (
           <li>
-            <span>{step.number}</span>
-            <div>
-              <h3>{step.title}</h3>
-              <p class="body-copy">{step.copy}</p>
+            <span class="sync-steps__number">{index + 1}</span>
+            <div class="sync-steps__icon" aria-hidden="true">
+              {index === 0 && <><i></i><b>#</b></>}
+              {index === 1 && <><i></i><i></i><b>＋</b></>}
+              {index === 2 && <><i></i><i></i><b>↔</b></>}
             </div>
+            <h3>{step.title}</h3>
+            <p class="body-copy">{step.copy}</p>
           </li>
         ))}
       </ol>
     </div>
   </section>
 
-  <section class="section section--compact docs-entry">
+  <section class="section responsibilities" aria-labelledby="responsibilities-title">
     <div class="shell">
-      <div class="docs-entry__inner">
-        <div>
-          <p class="eyebrow">Documentation</p>
-          <h2>Start with what you need.</h2>
-        </div>
-        <div class="docs-entry__copy">
-          <p class="body-copy">
-            Try the current workflow, review the security boundaries, or understand
-            the architecture. Contributor guides cover builds, tests, and releases.
-          </p>
-          <a class="button button--secondary" href={sitePath("/docs/")}>
-            Browse all documentation <span aria-hidden="true">→</span>
-          </a>
-        </div>
+      <div class="responsibilities__heading">
+        <p class="section-kicker">A clearer exchange</p>
+        <h2 id="responsibilities-title">What Chaft provides—and what your team manages.</h2>
       </div>
-      <nav class="docs-entry__links" aria-label="Documentation highlights">
-        <a href={sitePath("/docs/getting-started/workspace-lifecycle/")}>
-          <span>Getting started</span>
-          <strong>Create and join a workspace</strong>
-        </a>
-        <a href={sitePath("/docs/concepts/architecture/")}>
-          <span>Architecture</span>
-          <strong>See how the pieces fit</strong>
-        </a>
-        <a href={sitePath("/docs/concepts/security-model/")}>
-          <span>Security model</span>
-          <strong>Know the canary boundaries</strong>
-        </a>
-        <a href={sitePath("/docs/development/testing/")}>
-          <span>Build and contribute</span>
-          <strong>Run the right project checks</strong>
-        </a>
-      </nav>
+
+      <div class="responsibility-grid">
+        <section aria-labelledby="provided-title">
+          <p class="responsibility-grid__label">Chaft provides</p>
+          <h3 id="provided-title">A useful local workspace</h3>
+          <ul>
+            <li>Local message history and search</li>
+            <li>Signed updates between authorized devices</li>
+            <li>Encrypted message and attachment content</li>
+            <li>Open-source code and documented boundaries</li>
+          </ul>
+        </section>
+        <section aria-labelledby="managed-title">
+          <p class="responsibility-grid__label">Your team manages</p>
+          <h3 id="managed-title">The operational tradeoffs</h3>
+          <ul>
+            <li>Device security and credential care</li>
+            <li>Backups and workspace recovery</li>
+            <li>Device reachability for timely sync</li>
+            <li>The preview's current metadata limits</li>
+          </ul>
+        </section>
+      </div>
     </div>
   </section>
 
-  <CommunitySection />
-
-  <DownloadSelectorSection />
-
-  <section class="section section--compact section--deep">
-    <div class="shell">
-      <EarlyAccessCallout />
-    </div>
+  <section class="section section--compact evaluation">
+    <div class="shell"><CanaryNotice /></div>
   </section>
 
+  <nav class="resource-strip" aria-label="Learn more about Chaft">
+    <div class="shell resource-strip__inner">
+      <a href={sitePath("/docs/concepts/architecture/")}><span>Architecture</span><b>How devices and history fit together</b></a>
+      <a href={sitePath("/security/")}><span>Security</span><b>Properties, limits, and reporting</b></a>
+      <a href={sitePath("/docs/")}><span>Documentation</span><b>Install, evaluate, and contribute</b></a>
+      <a href="https://github.com/Jurshsmith/chaft"><span>Source</span><b>Read and contribute under AGPL</b></a>
+    </div>
+  </nav>
 </BaseLayout>
 
 <style>
-  .trust-rail {
-    background: var(--surface-raised);
-  }
-
-  .trust-rail__inner {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    margin-block: 0;
-    padding-block: 0;
-  }
-
-  .trust-rail__inner > div {
-    display: grid;
-    gap: 0.28rem;
-    padding: 1.25rem clamp(0.8rem, 2vw, 1.5rem);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .trust-rail__inner > div:first-child {
-    border-left: 1px solid var(--border-subtle);
-  }
-
-  .trust-rail__inner > div {
-    border-right: 1px solid var(--border-subtle);
-  }
-
-  .trust-rail dt {
-    color: var(--text-strong);
-    font-size: 0.85rem;
+  .section-kicker {
+    margin-bottom: 1rem;
+    color: var(--accent);
+    font-size: 0.82rem;
     font-weight: 500;
   }
 
-  .trust-rail dd {
-    margin: 0;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.63rem;
+  .difference {
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-base);
   }
 
-  .steps {
+  .difference__grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: minmax(0, 0.82fr) minmax(24rem, 1.18fr);
+    gap: clamp(3rem, 9vw, 9rem);
+  }
+
+  .difference__intro {
+    align-self: start;
+    position: sticky;
+    top: 7rem;
+  }
+
+  .difference__intro h2 {
+    max-width: 12ch;
+  }
+
+  .difference__intro > .body-copy {
+    max-width: 31rem;
+  }
+
+  .difference__intro > a {
+    display: inline-flex;
+    gap: 0.55rem;
+    align-items: center;
+    margin-top: 1rem;
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .difference-list {
+    margin: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .difference-list > div {
+    padding-block: clamp(1.8rem, 4vw, 2.75rem);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .difference-list dt {
+    color: var(--text-strong);
+    font-size: clamp(1.25rem, 2vw, 1.65rem);
+    font-weight: 500;
+    letter-spacing: -0.025em;
+  }
+
+  .difference-list dd {
+    max-width: 38rem;
+    margin: 0.7rem 0 0;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+  }
+
+  .sync-story {
+    --accent: #72dbba;
+    --border-subtle: #34423e;
+    --text-muted: #b5c0bc;
+    --text-strong: #fffdf7;
+    background: #17211f;
+    color: var(--text-strong);
+  }
+
+  .sync-story__heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.62fr);
+    gap: 0 clamp(3rem, 8vw, 8rem);
+    align-items: end;
+    margin-bottom: clamp(3rem, 6vw, 5rem);
+  }
+
+  .sync-story__heading .section-kicker {
+    grid-column: 1 / -1;
+  }
+
+  .sync-story__heading h2,
+  .sync-story__heading p {
+    color: var(--text-strong);
+  }
+
+  .sync-story__heading h2 { margin: 0; }
+
+  .sync-story__heading .body-copy {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .sync-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     margin: 0;
     padding: 0;
     border-block: 1px solid var(--border-subtle);
     list-style: none;
   }
 
-  .steps li {
-    min-height: 18rem;
-    padding: 1.6rem;
+  .sync-steps li {
+    position: relative;
+    min-width: 0;
+    padding: clamp(1.5rem, 4vw, 2.5rem);
   }
 
-  .steps li + li {
-    border-left: 1px solid var(--border-subtle);
+  .sync-steps li + li { border-left: 1px solid var(--border-subtle); }
+
+  .sync-steps__number {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 1px solid #5b6b65;
+    border-radius: 50%;
+    color: #72dbba;
+    font-size: 0.78rem;
   }
 
-  .steps li > span {
-    display: block;
-    margin-bottom: 6rem;
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
+  .sync-steps__icon {
+    position: relative;
+    display: grid;
+    width: 100%;
+    height: 8rem;
+    place-items: center;
+    margin-block: 1.5rem;
+    border-radius: var(--radius-sm);
+    background: #111a17;
   }
 
-  .steps p {
-    max-width: 17rem;
-    margin-bottom: 0;
+  .sync-steps__icon i {
+    position: absolute;
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 1px solid #557169;
+    border-radius: 0.55rem;
+    background: #22312c;
   }
 
-  .docs-entry {
-    border-block: 1px solid var(--border-subtle);
+  .sync-steps__icon i:first-child { transform: translateX(-1.25rem); }
+  .sync-steps__icon i:nth-child(2) { transform: translateX(1.25rem); }
+
+  .sync-steps__icon b {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #087054;
+    color: #fff;
+    font-weight: 500;
+  }
+
+  .sync-steps h3 { color: var(--text-strong); }
+
+  .sync-steps p {
+    max-width: 21rem;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.94rem;
+  }
+
+  .responsibilities {
     background: var(--surface-raised);
   }
 
-  .docs-entry__inner {
+  .responsibilities__heading {
+    max-width: 48rem;
+    margin-bottom: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  .responsibility-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.75fr);
-    gap: clamp(2rem, 7vw, 6rem);
-    align-items: end;
-  }
-
-  .docs-entry h2 {
-    max-width: 17ch;
-    margin-bottom: 0;
-    font-size: clamp(2rem, 4.4vw, 3.5rem);
-  }
-
-  .docs-entry__copy {
-    display: grid;
-    gap: 1.25rem;
-    justify-items: start;
-  }
-
-  .docs-entry__copy p {
-    max-width: 36rem;
-    margin: 0;
-  }
-
-  .docs-entry__links {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    margin-top: clamp(2rem, 5vw, 3.25rem);
-    overflow: hidden;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    background: var(--border-subtle);
   }
 
-  .docs-entry__links a {
+  .responsibility-grid > section {
+    padding: clamp(1.75rem, 4vw, 3rem);
+  }
+
+  .responsibility-grid > section + section {
+    border-left: 1px solid var(--border-subtle);
+    background: var(--surface-base);
+  }
+
+  .responsibility-grid__label {
+    margin-bottom: 0.7rem;
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .responsibility-grid h3 {
+    font-size: clamp(1.45rem, 2.5vw, 2rem);
+  }
+
+  .responsibility-grid ul {
     display: grid;
-    gap: 0.45rem;
+    gap: 0.75rem;
+    margin: 1.4rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .responsibility-grid li {
+    display: flex;
+    gap: 0.65rem;
+    color: var(--text-muted);
+  }
+
+  .responsibility-grid li::before {
+    color: var(--accent);
+    content: "—";
+  }
+
+  .evaluation {
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-base);
+  }
+
+  .resource-strip {
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+  }
+
+  .resource-strip__inner {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .resource-strip a {
+    display: grid;
+    gap: 0.3rem;
     min-width: 0;
     min-height: 7rem;
     align-content: center;
     padding: 1rem;
-    background: var(--surface-deep);
     text-decoration: none;
-    transition: background-color var(--motion-quick);
   }
 
-  .docs-entry__links a:hover {
-    background: var(--surface-active);
-  }
+  .resource-strip a + a { border-left: 1px solid var(--border-subtle); }
 
-  .docs-entry__links span {
+  .resource-strip span {
     color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .docs-entry__links strong {
-    color: var(--text-soft);
-    font-size: 0.9rem;
+    font-size: 0.78rem;
     font-weight: 500;
-    line-height: 1.35;
   }
 
-  @media (max-width: 940px) {
-    .docs-entry__links {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .resource-strip b {
+    color: var(--text-soft);
+    font-size: 0.86rem;
+    font-weight: 400;
+    line-height: 1.4;
   }
 
-  @media (max-width: 680px) {
-    .docs-entry__inner {
-      grid-template-columns: 1fr;
-      align-items: start;
-    }
+  .resource-strip a:hover { background: var(--surface-active); }
 
-    .trust-rail__inner {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .docs-entry__links {
+  @media (max-width: 820px) {
+    .difference__grid,
+    .sync-story__heading {
       grid-template-columns: 1fr;
     }
 
-    .steps {
-      grid-template-columns: 1fr;
+    .difference__intro { position: static; }
+    .difference-list { margin-top: 1rem; }
+    .sync-story__heading .body-copy { margin-top: 1rem; }
+
+    .sync-steps { grid-template-columns: 1fr; }
+
+    .sync-steps li {
+      display: grid;
+      grid-template-columns: 2rem minmax(0, 1fr);
+      gap: 0.3rem 1rem;
+      min-height: 0;
+      padding-block: 1.4rem;
     }
 
-    .steps li {
-      min-height: auto;
+    .sync-steps li + li { border-top: 1px solid var(--border-subtle); border-left: 0; }
+
+    .sync-steps__number {
+      grid-row: 1 / span 2;
     }
 
-    .steps li + li {
-      border-top: 1px solid var(--border-subtle);
-      border-left: 0;
+    .sync-steps__icon { display: none; }
+    .sync-steps h3 { margin: 0; }
+    .sync-steps p { grid-column: 2; }
+
+    .responsibility-grid { grid-template-columns: 1fr; }
+    .responsibility-grid > section + section { border-top: 1px solid var(--border-subtle); border-left: 0; }
+
+    .resource-strip__inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .resource-strip a:nth-child(3) { border-left: 0; }
+    .resource-strip a:nth-child(n + 3) { border-top: 1px solid var(--border-subtle); }
+  }
+
+  @media (max-width: 480px) {
+    .difference,
+    .responsibilities,
+    .sync-story {
+      padding-block: 3rem;
     }
 
-    .steps li > span {
-      margin-bottom: 2rem;
+    .difference-list > div {
+      padding-block: 1.1rem;
     }
 
-    :global(.feature-card) {
-      min-height: auto;
+    .responsibility-grid > section {
+      padding: 1.35rem;
     }
 
-    :global(.feature-card__index) {
-      margin-block-end: 2rem;
+    .responsibility-grid ul {
+      gap: 0.55rem;
+      margin-top: 1rem;
     }
 
+    .resource-strip a {
+      padding-inline: 0.8rem;
+    }
   }
 </style>
