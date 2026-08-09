@@ -27,22 +27,22 @@ const hasPublishedDownloads = currentRelease.assets.some((asset) => asset.availa
 const differences = [
   {
     title: "History lives on your devices",
-    copy: "Each authorized device keeps a useful copy of workspace history, so earlier conversations remain available locally.",
+    copy: "Authorized devices keep a useful local copy of workspace history.",
   },
   {
     title: "New activity syncs when devices connect",
-    copy: "Chaft exchanges signed updates directly between authorized devices instead of relying on a required central chat server.",
+    copy: "Authorized devices exchange signed updates directly when they connect.",
   },
   {
     title: "Content is encrypted before sync",
-    copy: "Message and attachment content is protected before it leaves a device. Some metadata remains visible in the current preview.",
+    copy: "Messages and attachments are encrypted before sync; some metadata remains visible.",
   },
 ];
 
 const steps = [
-  { title: "Create", copy: "Start a workspace on your device and add the rooms your team needs." },
-  { title: "Invite", copy: "Share an invitation and review the people and devices allowed to enter." },
-  { title: "Sync", copy: "When authorized devices connect, they exchange and verify new workspace activity." },
+  { title: "Create", copy: "Start a workspace and add the rooms your team needs." },
+  { title: "Invite", copy: "Share an invitation and review who can enter." },
+  { title: "Sync", copy: "Connected devices exchange and verify new activity." },
 ];
 ---
 
@@ -57,8 +57,8 @@ const steps = [
         <p class="section-kicker">Why Chaft is different</p>
         <h2 id="difference-title">Your workspace stays with your team.</h2>
         <p class="body-copy">
-          Chaft moves the source of truth closer to the people using it. That removes
-          the required hosted workspace, while keeping the tradeoffs visible.
+          Each device keeps workspace history. That removes the required hosted
+          workspace—and makes the tradeoffs yours to manage.
         </p>
         <a href={sitePath("/docs/concepts/architecture/")}>Read the architecture overview <span aria-hidden="true">→</span></a>
       </div>
@@ -80,8 +80,8 @@ const steps = [
         <p class="section-kicker">How it works</p>
         <h2 id="sync-title">Create, invite, then sync.</h2>
         <p class="body-copy">
-          Every device has its own identity and copy of verified history. New activity
-          moves when teammates' devices can reach one another.
+          Each device has its own identity and verified history. New activity moves
+          when teammates connect.
         </p>
       </div>
 
@@ -117,7 +117,6 @@ const steps = [
             <li>Local message history and search</li>
             <li>Signed updates between authorized devices</li>
             <li>Encrypted message and attachment content</li>
-            <li>Open-source code and documented boundaries</li>
           </ul>
         </section>
         <section aria-labelledby="managed-title">
@@ -126,8 +125,7 @@ const steps = [
           <ul>
             <li>Device security and credential care</li>
             <li>Backups and workspace recovery</li>
-            <li>Device reachability for timely sync</li>
-            <li>The preview's current metadata limits</li>
+            <li>Device reachability and metadata limits</li>
           </ul>
         </section>
       </div>
