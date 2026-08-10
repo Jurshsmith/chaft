@@ -81,6 +81,13 @@ test.describe("production landing-page product story", () => {
       "Invite",
       "Sync",
     ]);
+
+    const community = page.locator("[data-community-story]");
+    await expect(community).toHaveCount(1);
+    await expect(community.getByRole("heading", { level: 2 })).toHaveText(
+      /Built for the community\.\s*Strengthened by every contribution\./,
+    );
+    await expect(community.locator("[data-community-avatar]")).toHaveCount(10);
   });
 
   test("states the early-build limitation once and keeps product proof responsive", async ({

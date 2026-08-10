@@ -1,6 +1,7 @@
 ---
 import CanaryNotice from "../components/CanaryNotice.astro";
 import LandingHero from "../components/LandingHero.astro";
+import CommunitySection from "../components/landing/CommunitySection.astro";
 import ProductMoments from "../components/landing/ProductMoments.astro";
 import { currentRelease } from "../data/releases";
 import BaseLayout from "../layouts/BaseLayout.astro";
@@ -131,6 +132,8 @@ const steps = [
       </div>
     </div>
   </section>
+
+  <CommunitySection />
 
   <section class="section section--compact evaluation">
     <div class="shell"><CanaryNotice /></div>
