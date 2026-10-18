@@ -1242,6 +1242,32 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("jq -s '{check_runs: [.[].check_runs[]]}'", preflight)
         self.assertIn('.event == "push"', preflight)
 
+    def test_release_sdk_transfer_commands_use_bash_on_windows(self) -> None:
+        for workflow in (self.release_inputs, self.canary_publish):
+            build = job_block(workflow, "build")
+            self.assertIn("target: windows-x86_64", build)
+            steps = re.findall(
+                r"^      - .*?(?=^      - |\Z)",
+                build,
+                re.MULTILINE | re.DOTALL,
+            )
+            covered = set()
+            for step in steps:
+                command = re.search(
+                    r"python3 tools/ci/qt-sdk-artifact\.py (lookup|restore|describe)\b",
+                    step,
+                )
+                if command is None:
+                    continue
+                covered.add(command.group(1))
+                self.assertRegex(
+                    step,
+                    r"(?m)^        shell: bash$",
+                    "SDK transfer uses Bash continuations and variables; "
+                    "Windows otherwise defaults to PowerShell",
+                )
+            self.assertEqual(covered, {"lookup", "restore", "describe"})
+
     def test_release_input_provenance_and_security_invariants_are_preserved(
         self,
     ) -> None:
