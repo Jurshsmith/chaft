@@ -1,0 +1,50 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <article class="policy shell">
+    <header>
+      <p class="eyebrow">Project policy</p>
+      <h1>{title}</h1>
+      <p>Updated 18 October 2026</p>
+    </header>
+    <div class="policy__body"><slot /></div>
+  </article>
+</BaseLayout>
+
+<style>
+  .policy {
+    max-width: 54rem;
+    padding-block: clamp(3rem, 7vw, 6rem);
+  }
+  h1 {
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+  }
+  header > p:last-child {
+    color: var(--text-muted);
+  }
+  .policy__body {
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+  .policy__body :global(h2) {
+    margin-block: 2.5rem 0.8rem;
+    color: var(--text-strong);
+    font-size: 1.55rem;
+  }
+  .policy__body :global(li + li) {
+    margin-top: 0.65rem;
+  }
+  .policy__body :global(a) {
+    text-underline-offset: 0.2em;
+  }
+</style>
