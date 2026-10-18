@@ -361,11 +361,26 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertEqual(
             concurrency_block,
             "  group: ci-${{ github.workflow }}-${{ github.event_name }}-"
-            "${{ github.ref }}\n"
+            "${{ github.ref }}-${{ inputs.scope || 'full' }}\n"
             "  cancel-in-progress: true\n",
         )
         self.assertIn("  contents: read\n", self.ci)
         self.assertIn("  pull-requests: read\n", self.ci)
+
+    def test_manual_ci_scopes_match_the_classifier(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "workflow_classifier", ROOT / "tools/ci/classify-changes.py"
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        classifier = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = classifier
+        spec.loader.exec_module(classifier)
+        trigger = self.ci.split("\npermissions:\n", 1)[0]
+        options = re.findall(r"^          - ([a-z-]+)$", trigger, re.MULTILINE)
+        self.assertEqual(options, list(classifier.MANUAL_SCOPES))
+        self.assertIn("        default: full\n", trigger)
+        self.assertNotIn("--scope ${{", job_block(self.ci, "classify"))
 
     def test_website_pr_validation_is_owned_by_ci(self) -> None:
         website_trigger = self.website.split("\npermissions:\n", 1)[0]

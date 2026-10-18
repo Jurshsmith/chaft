@@ -8,13 +8,27 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Select focused checks or the complete suite
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - website
+          - rust
+          - desktop
+          - release-contract
+          - package
+          - benchmarks
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.scope || 'full' }}
   cancel-in-progress: true
 
 env:
