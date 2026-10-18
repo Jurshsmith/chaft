@@ -60,6 +60,49 @@ cargo test -p chaft-runtime workspace_recovery_bundle_wrong_passphrase
 The smoke scripts create isolated temporary runtimes. They do not require a
 public relay or production service.
 
+## Choose GitHub Actions coverage
+
+Pull requests and main-branch pushes select checks from their changed paths.
+Website and public-documentation changes run website validation without native
+builds. Native desktop changes retain package checks on main, and Rust test
+changes retain benchmark compilation on main. Known website workflows run
+website checks; release publishers run release contracts and package checks;
+release-promotion workflows run website and release-contract checks.
+
+Changes to the CI orchestrator or classifier, unknown paths, and nightly runs
+still require the complete suite. Every CI run starts with the classifier and
+workflow contract tests. The required aggregate check rejects missing or
+unexpectedly skipped checks.
+
+The manual **CI** workflow offers these scopes:
+
+| Scope | Coverage |
+| --- | --- |
+| `full` | Complete suite, including artifact transfer contracts; the default |
+| `website` | Static website and public guides |
+| `rust` | Formatting, Clippy, Rust tests, and Rust smoke tests |
+| `desktop` | Desktop contracts, all native debug builds, and Mac local-install checks |
+| `release-contract` | Platform-independent release-tool regression checks |
+| `package` | Release contracts, all native packages, clean package smokes, and Mac local-install checks |
+| `benchmarks` | Benchmark lint and compilation |
+
+For example, run release-tool checks without provisioning Qt SDKs:
+
+```sh
+gh workflow run ci.yml --ref main -f scope=release-contract
+```
+
+Run the complete suite explicitly:
+
+```sh
+gh workflow run ci.yml --ref main -f scope=full
+```
+
+Different manual scopes on the same branch have separate cancellation groups.
+Scope selection applies only to manual runs; it cannot narrow pull-request,
+push, or nightly coverage. A successful focused manual run does not replace
+the successful main-push CI check required for canary publication.
+
 ## Test desktop changes
 
 Desktop development requires Rust 1.97.1 or newer, CMake 3.28 or newer, Ninja,

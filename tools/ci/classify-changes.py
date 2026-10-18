@@ -5,9 +5,10 @@ The classifier is deliberately fail closed:
 
 * unknown repository paths enable every scope;
 * malformed paths and unusable pull-request diff metadata are fatal;
-* scheduled and manually dispatched runs enable every scope;
-* main-branch pushes add benchmark and release-package coverage unless every
-  changed path belongs to the isolated Chaft Previews content allowlist.
+* scheduled runs and default manual runs enable every scope;
+* focused manual runs select an explicit, validated scope; and
+* main-branch pushes add benchmark and release-package coverage only for
+  changes that already affect Rust tests or native desktop builds.
 
 GitHub Actions usage can rely entirely on environment variables:
 
@@ -48,6 +49,39 @@ SCOPE_NAMES = (
 )
 RUNNABLE_SCOPES = SCOPE_NAMES[:-1]
 ALL_RUNNABLE_SCOPES = frozenset(RUNNABLE_SCOPES)
+MANUAL_SCOPES = {
+    "full": ALL_RUNNABLE_SCOPES,
+    "website": frozenset({"website"}),
+    "rust": frozenset({"rust", "rust_test", "rust_smoke"}),
+    "desktop": frozenset({"desktop_contract", "desktop"}),
+    "release-contract": frozenset({"release_contract"}),
+    "package": frozenset({"release_contract", "package"}),
+    "benchmarks": frozenset({"benchmark"}),
+}
+
+# Keep this inventory explicit: unknown workflows still require full coverage.
+WORKFLOW_SCOPES = {
+    ".github/workflows/website.yml": frozenset({"website"}),
+    ".github/workflows/website-preview.yml": frozenset({"website"}),
+    ".github/workflows/deploy-website.yml": frozenset({"website"}),
+    ".github/workflows/deploy-website-preview.yml": frozenset({"website"}),
+    ".github/workflows/reset-website-preview.yml": frozenset({"website"}),
+    ".github/workflows/rollback-website.yml": frozenset({"website"}),
+    ".github/workflows/build-desktop-release-inputs.yml": frozenset(
+        {"release_contract", "package"}
+    ),
+    ".github/workflows/publish-desktop-canary.yml": frozenset(
+        {"release_contract", "package"}
+    ),
+    ".github/workflows/promote-desktop-canary.yml": frozenset(
+        {"website", "release_contract"}
+    ),
+    ".github/workflows/promote-desktop-release.yml": frozenset(
+        {"website", "release_contract"}
+    ),
+    # Workflow syntax and cleanup contracts run in the classifier job itself.
+    ".github/workflows/cleanup-pull-request-caches.yml": frozenset(),
+}
 
 WEBSITE_ROOT_FILES = frozenset(
     {
@@ -57,12 +91,6 @@ WEBSITE_ROOT_FILES = frozenset(
         "README.md",
         "SECURITY.md",
     }
-)
-PREVIEW_ONLY_WEBSITE_PREFIXES = (
-    "apps/website/previews/",
-    "apps/website/public/previews/",
-    "apps/website/src/assets/previews/",
-    "apps/website/src/components/previews/",
 )
 RUST_WORKSPACE_PREFIXES = (
     "application/",
@@ -230,6 +258,8 @@ def classify_path(path: str) -> PathImpact:
 
     path = _validated_path(path)
 
+    if path in WORKFLOW_SCOPES:
+        return PathImpact(WORKFLOW_SCOPES[path])
     if path.startswith(".github/"):
         return PathImpact(ALL_RUNNABLE_SCOPES, force_full=True)
     if path.startswith("tools/ci/") and path != "tools/ci/rust-gates.sh":
@@ -373,6 +403,7 @@ def classify_paths(
     ref: str = "",
     force_full: bool = False,
     force_full_reason: str = "",
+    manual_scope: str = "full",
 ) -> Classification:
     """Classify a collection of paths and apply event-level coverage rules."""
 
@@ -382,13 +413,18 @@ def classify_paths(
     reasons: list[str] = []
     full = force_full
 
-    if event_name in {"schedule", "workflow_dispatch"}:
+    if manual_scope not in MANUAL_SCOPES:
+        raise ClassificationError(f"unknown manual scope: {manual_scope!r}")
+    if manual_scope != "full" and event_name != "workflow_dispatch":
+        raise ClassificationError("focused scopes require a workflow_dispatch event")
+
+    if event_name == "schedule":
         full = True
-        reasons.append(
-            "scheduled runs require full coverage"
-            if event_name == "schedule"
-            else "manually dispatched runs require full coverage"
-        )
+        reasons.append("scheduled runs require full coverage")
+    elif event_name == "workflow_dispatch":
+        enabled.update(MANUAL_SCOPES[manual_scope])
+        full = full or manual_scope == "full"
+        reasons.append(f"manual run selected scope: {manual_scope}")
     if force_full and force_full_reason:
         reasons.append(force_full_reason)
 
@@ -404,18 +440,15 @@ def classify_paths(
         reasons.append("unknown paths require full coverage")
 
     if event_name == "push" and ref == "refs/heads/main":
-        preview_only = bool(normalized_paths) and all(
-            _has_prefix(path, PREVIEW_ONLY_WEBSITE_PREFIXES)
-            for path in normalized_paths
-        )
-        if preview_only:
+        if "rust_test" in enabled:
+            enabled.add("benchmark")
             reasons.append(
-                "preview-only main pushes require website coverage only"
+                "main pushes with Rust test coverage require benchmark coverage"
             )
-        else:
-            enabled.update({"benchmark", "release_contract", "package"})
+        if "desktop" in enabled:
+            enabled.update({"release_contract", "package"})
             reasons.append(
-                "main pushes require benchmark and release-package coverage"
+                "main pushes with native desktop changes require release-package coverage"
             )
 
     if full:
@@ -541,8 +574,10 @@ def resolve_changes(
 ) -> tuple[tuple[str, ...], bool, str]:
     """Resolve event diff paths and any intentional full-run fallback."""
 
-    if event_name in {"schedule", "workflow_dispatch"}:
+    if event_name == "schedule":
         return (), True, ""
+    if event_name == "workflow_dispatch":
+        return (), False, ""
     if event_name == "pull_request":
         resolved_base = base or _nested_string(
             event, ("pull_request", "base", "sha"), "pull request base SHA"
@@ -657,6 +692,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base", default="", help="explicit diff base SHA")
     parser.add_argument("--head", default="", help="explicit diff head SHA")
     parser.add_argument(
+        "--scope",
+        choices=tuple(MANUAL_SCOPES),
+        default=None,
+        help="manual run scope (defaults to the dispatch input or full)",
+    )
+    parser.add_argument(
         "--repository",
         type=Path,
         default=Path.cwd(),
@@ -688,10 +729,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     force_full = False
     force_full_reason = ""
+    event = _load_event(args.event_path)
+    manual_scope = args.scope
+    if manual_scope is None and event_name == "workflow_dispatch":
+        inputs = event.get("inputs", {})
+        if not isinstance(inputs, dict):
+            raise ClassificationError("manual dispatch inputs must be a JSON object")
+        manual_scope = inputs.get("scope", "full")
+        if not isinstance(manual_scope, str):
+            raise ClassificationError("manual dispatch scope must be a string")
+    if manual_scope is None:
+        manual_scope = "full"
     if args.paths:
         paths = tuple(args.paths)
     else:
-        event = _load_event(args.event_path)
         paths, force_full, force_full_reason = resolve_changes(
             repository=args.repository,
             event_name=event_name,
@@ -706,6 +757,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ref=args.ref,
         force_full=force_full,
         force_full_reason=force_full_reason,
+        manual_scope=manual_scope,
     )
     summary = emit_results(
         classification,

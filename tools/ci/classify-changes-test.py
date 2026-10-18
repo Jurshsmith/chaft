@@ -327,7 +327,7 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertIn("unknown paths require full coverage", result.reasons)
 
-    def test_main_push_adds_benchmark_and_release_coverage(self) -> None:
+    def test_website_main_push_avoids_native_jobs(self) -> None:
         result = self.classify(
             "README.md",
             event_name="push",
@@ -335,7 +335,7 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(
             enabled(result),
-            {"website", "benchmark", "release_contract", "package"},
+            {"website"},
         )
         self.assertFalse(result.scopes["full"])
 
@@ -350,12 +350,8 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(enabled(result), {"website"})
         self.assertFalse(result.scopes["full"])
-        self.assertIn(
-            "preview-only main pushes require website coverage only",
-            result.reasons,
-        )
 
-    def test_mixed_preview_main_push_keeps_release_coverage(self) -> None:
+    def test_mixed_website_content_main_push_stays_website_only(self) -> None:
         result = self.classify(
             "apps/website/src/components/previews/hero-1/LandingHero.astro",
             "README.md",
@@ -364,7 +360,7 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(
             enabled(result),
-            {"website", "benchmark", "release_contract", "package"},
+            {"website"},
         )
         self.assertFalse(result.scopes["full"])
 
@@ -376,12 +372,107 @@ class PathClassificationTests(unittest.TestCase):
         )
         self.assertEqual(enabled(result), {"website"})
 
+    def test_website_main_pushes_avoid_native_jobs(self) -> None:
+        for path in (
+            "guides/public/development/testing.md",
+            "apps/website/src/pages/index.astro",
+            "apps/website/src/data/release-manifest.json",
+            ".github/workflows/deploy-website.yml",
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path, event_name="push", ref="refs/heads/main")
+                self.assertEqual(enabled(result), {"website"})
+                self.assertFalse(result.scopes["full"])
+
+    def test_main_native_push_retains_benchmark_and_release_coverage(self) -> None:
+        result = self.classify(
+            "runtime/src/runtime.rs", event_name="push", ref="refs/heads/main"
+        )
+        self.assertEqual(enabled(result), {
+            "rust", "rust_test", "rust_smoke", "desktop_contract", "desktop",
+            "benchmark", "release_contract", "package",
+        })
+        self.assertFalse(result.scopes["full"])
+
+    def test_non_native_main_push_does_not_add_release_packages(self) -> None:
+        for path, scopes in (
+            (".gitignore", set()),
+            ("runtime/tests/fixtures/example.json", {"rust", "rust_test", "benchmark"}),
+            ("apps/desktop-qt/tests/check_contract.py", {"desktop_contract"}),
+        ):
+            with self.subTest(path=path):
+                result = self.classify(path, event_name="push", ref="refs/heads/main")
+                self.assertEqual(enabled(result), scopes)
+
+    def test_known_workflows_run_only_their_affected_scopes(self) -> None:
+        expected = {
+            ".github/workflows/website.yml": {"website"},
+            ".github/workflows/website-preview.yml": {"website"},
+            ".github/workflows/deploy-website.yml": {"website"},
+            ".github/workflows/deploy-website-preview.yml": {"website"},
+            ".github/workflows/reset-website-preview.yml": {"website"},
+            ".github/workflows/rollback-website.yml": {"website"},
+            ".github/workflows/build-desktop-release-inputs.yml": {"release_contract", "package"},
+            ".github/workflows/publish-desktop-canary.yml": {"release_contract", "package"},
+            ".github/workflows/promote-desktop-canary.yml": {"website", "release_contract"},
+            ".github/workflows/promote-desktop-release.yml": {"website", "release_contract"},
+            ".github/workflows/cleanup-pull-request-caches.yml": set(),
+        }
+        for path, scopes in expected.items():
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(enabled(result), scopes)
+                self.assertFalse(result.scopes["full"])
+
+    def test_unknown_workflows_still_force_full_coverage(self) -> None:
+        result = self.classify(".github/workflows/new-native-check.yml")
+        self.assertEqual(enabled(result), set(classifier.RUNNABLE_SCOPES))
+        self.assertTrue(result.scopes["full"])
+
     def test_nightly_and_manual_events_force_every_scope(self) -> None:
         for event_name in ("schedule", "workflow_dispatch"):
             with self.subTest(event_name=event_name):
                 result = self.classify(event_name=event_name)
                 self.assertEqual(enabled(result), set(classifier.RUNNABLE_SCOPES))
                 self.assertTrue(result.scopes["full"])
+
+    def test_focused_manual_scopes_run_the_requested_checks(self) -> None:
+        expected = {
+            "website": {"website"},
+            "rust": {"rust", "rust_test", "rust_smoke"},
+            "desktop": {"desktop_contract", "desktop"},
+            "release-contract": {"release_contract"},
+            "package": {"release_contract", "package"},
+            "benchmarks": {"benchmark"},
+        }
+        for scope, scopes in expected.items():
+            with self.subTest(scope=scope):
+                result = classifier.classify_paths(
+                    (), event_name="workflow_dispatch", manual_scope=scope
+                )
+                self.assertEqual(enabled(result), scopes)
+                self.assertFalse(result.scopes["full"])
+                self.assertIn(f"manual run selected scope: {scope}", result.reasons)
+
+    def test_focused_scope_cannot_disable_automatic_coverage(self) -> None:
+        for event_name in ("pull_request", "push", "schedule"):
+            with self.subTest(event_name=event_name):
+                with self.assertRaises(classifier.ClassificationError):
+                    classifier.classify_paths(
+                        ("runtime/src/runtime.rs",),
+                        event_name=event_name, manual_scope="website",
+                    )
+
+    def test_focused_manual_scope_cannot_suppress_unknown_path_coverage(self) -> None:
+        result = classifier.classify_paths(
+            ("unknown/file",), event_name="workflow_dispatch", manual_scope="website"
+        )
+        self.assertTrue(result.scopes["full"])
+        self.assertEqual(enabled(result), set(classifier.RUNNABLE_SCOPES))
+
+    def test_unknown_manual_scope_fails_closed(self) -> None:
+        with self.assertRaises(classifier.ClassificationError):
+            classifier.classify_paths((), event_name="workflow_dispatch", manual_scope="typo")
 
     def test_invalid_paths_are_fatal_instead_of_becoming_false(self) -> None:
         for path in (
@@ -471,6 +562,34 @@ class GitDiffParsingTests(unittest.TestCase):
 
 
 class OutputAndInventoryTests(unittest.TestCase):
+    def test_manual_scope_is_loaded_from_the_event_without_a_git_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text(json.dumps({"inputs": {"scope": "release-contract"}}))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                status = classifier.main([
+                    "--event-name", "workflow_dispatch", "--event-path", str(event),
+                    "--repository", str(Path(directory) / "not-a-repository"),
+                ])
+            self.assertEqual(status, 0)
+            self.assertIn("| `release_contract` | `true` |", stdout.getvalue())
+            self.assertIn("| `package` | `false` |", stdout.getvalue())
+            self.assertIn("| `full` | `false` |", stdout.getvalue())
+
+    def test_invalid_manual_event_inputs_fail_before_outputs_are_written(self) -> None:
+        for inputs in ([], {"scope": True}, {"scope": "unknown"}):
+            with self.subTest(inputs=inputs), tempfile.TemporaryDirectory() as directory:
+                event = Path(directory) / "event.json"
+                output = Path(directory) / "output"
+                event.write_text(json.dumps({"inputs": inputs}))
+                with self.assertRaises(classifier.ClassificationError):
+                    classifier.main([
+                        "--event-name", "workflow_dispatch", "--event-path", str(event),
+                        "--github-output", str(output),
+                    ])
+                self.assertFalse(output.exists())
+
     def test_cli_writes_github_outputs_and_readable_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
