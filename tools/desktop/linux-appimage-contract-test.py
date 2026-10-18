@@ -635,7 +635,11 @@ for package in ("libegl1", "libopengl0"):
 appimage_runtime_install = (
     "tools/qt/install-linux-dependencies.sh install appimage-runtime"
 )
-for workflow_name in ("ci.yml", "build-desktop-release-inputs.yml"):
+for workflow_name in (
+    "ci-desktop-platform.yml",
+    "build-desktop-release-inputs.yml",
+    "publish-desktop-canary.yml",
+):
     workflow_path = ROOT / ".github" / "workflows" / workflow_name
     workflow = workflow_path.read_text(encoding="utf-8")
     if appimage_runtime_install not in workflow:

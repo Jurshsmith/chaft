@@ -197,7 +197,7 @@ class PathClassificationTests(unittest.TestCase):
         result = self.classify("apps/desktop-qt/CMakeLists.txt")
         self.assertEqual(
             enabled(result),
-            {"desktop_contract", "desktop", "release_contract", "package"},
+            {"desktop_contract", "desktop", "release_contract", "package", "local_install"},
         )
 
     def test_packaging_and_release_tools_avoid_rust_and_debug_desktop(self) -> None:
@@ -237,17 +237,19 @@ class PathClassificationTests(unittest.TestCase):
             {"desktop_contract", "desktop", "release_contract", "package"},
         )
 
-    def test_macos_local_tools_run_desktop_contracts_and_source_builds(self) -> None:
+    def test_macos_local_tools_run_only_the_developer_install_checks(self) -> None:
         for path in (
             "tools/macos/build-local-test.py",
             "tools/macos/build-local.sh",
             "tools/macos/verify-local-app.sh",
+            "packaging/homebrew/formula-contract-test.py",
+            "packaging/homebrew/chaft.rb",
         ):
             with self.subTest(path=path):
                 result = self.classify(path)
                 self.assertEqual(
                     enabled(result),
-                    {"desktop_contract", "desktop"},
+                    {"local_install"},
                 )
 
     def test_release_target_contract_reaches_release_consumers(self) -> None:
@@ -441,6 +443,7 @@ class PathClassificationTests(unittest.TestCase):
             "website": {"website"},
             "rust": {"rust", "rust_test", "rust_smoke"},
             "desktop": {"desktop_contract", "desktop"},
+            "local-install": {"local_install"},
             "release-contract": {"release_contract"},
             "package": {"release_contract", "package"},
             "benchmarks": {"benchmark"},

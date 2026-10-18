@@ -45,6 +45,7 @@ SCOPE_NAMES = (
     "desktop",
     "release_contract",
     "package",
+    "local_install",
     "full",
 )
 RUNNABLE_SCOPES = SCOPE_NAMES[:-1]
@@ -54,6 +55,7 @@ MANUAL_SCOPES = {
     "website": frozenset({"website"}),
     "rust": frozenset({"rust", "rust_test", "rust_smoke"}),
     "desktop": frozenset({"desktop_contract", "desktop"}),
+    "local-install": frozenset({"local_install"}),
     "release-contract": frozenset({"release_contract"}),
     "package": frozenset({"release_contract", "package"}),
     "benchmarks": frozenset({"benchmark"}),
@@ -320,6 +322,7 @@ def classify_path(path: str) -> PathImpact:
                     "desktop",
                     "release_contract",
                     "package",
+                    "local_install",
                 }
             )
         )
@@ -338,8 +341,11 @@ def classify_path(path: str) -> PathImpact:
         ):
             scopes.add("desktop_contract")
         if path == "apps/desktop-qt/CMakeLists.txt":
-            scopes.update({"release_contract", "package"})
+            scopes.update({"release_contract", "package", "local_install"})
         return PathImpact(frozenset(scopes))
+
+    if path.startswith("packaging/homebrew/"):
+        return PathImpact(frozenset({"local_install"}))
 
     if path.startswith("packaging/"):
         return PathImpact(frozenset({"release_contract", "package"}))
@@ -389,7 +395,7 @@ def classify_path(path: str) -> PathImpact:
             )
         )
     if path in MACOS_LOCAL_TOOLS:
-        return PathImpact(frozenset({"desktop_contract", "desktop"}))
+        return PathImpact(frozenset({"local_install"}))
     if path in RELEASE_TOOLS:
         return PathImpact(frozenset({"release_contract", "package"}))
 

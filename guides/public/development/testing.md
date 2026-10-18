@@ -68,6 +68,9 @@ builds. Native desktop changes retain package checks on main, and Rust test
 changes retain benchmark compilation on main. Known website workflows run
 website checks; release publishers run release contracts and package checks;
 release-promotion workflows run website and release-contract checks.
+Mac developer-install checks run for installer, Homebrew, and relevant CMake
+changes, plus nightly and full runs. Ordinary desktop and package changes use
+the official native SDK checks without repeating the developer-install builds.
 
 Changes to the CI orchestrator or classifier, unknown paths, and nightly runs
 still require the complete suite. Every CI run starts with the classifier and
@@ -81,9 +84,10 @@ The manual **CI** workflow offers these scopes:
 | `full` | Complete suite, including artifact transfer contracts; the default |
 | `website` | Static website and public guides |
 | `rust` | Formatting, Clippy, Rust tests, and Rust smoke tests |
-| `desktop` | Desktop contracts, all native debug builds, and Mac local-install checks |
+| `desktop` | Desktop contracts and all native debug builds |
+| `local-install` | Mac guided developer-install checks on Intel and Apple Silicon |
 | `release-contract` | Platform-independent release-tool regression checks |
-| `package` | Release contracts, all native packages, clean package smokes, and Mac local-install checks |
+| `package` | Release contracts, all native packages, and clean package smokes |
 | `benchmarks` | Benchmark lint and compilation |
 
 For example, run release-tool checks without provisioning Qt SDKs:
@@ -102,6 +106,34 @@ Different manual scopes on the same branch have separate cancellation groups.
 Scope selection applies only to manual runs; it cannot narrow pull-request,
 push, or nightly coverage. A successful focused manual run does not replace
 the successful main-push CI check required for canary publication.
+
+Native checks use a reusable workflow per platform. Each platform provisions
+its own verified SDK, then starts its selected contracts, debug checks, and
+package build independently of other platforms. A clean package smoke starts
+after that platform's package upload. A platform result succeeds only when
+every requested stage succeeds; missing results, failures, cancellations, and
+unexpected skips fail the required check. SDK compatibility, provenance, and
+strict artifact digest checks apply throughout this workflow.
+
+Verified SDK archives from successful main-push or nightly CI runs can be reused across
+branches. The lookup binds the exact SDK recipe and toolchain compatibility
+fingerprint, then downloads one immutable artifact ID. Archive checksums,
+embedded provenance, executable permissions, and native SDK probes are checked
+again. The original producer fingerprint is preserved when only the hosted
+runner image revision differs; compiler, tools, architecture, source, and build
+configuration changes still require a matching SDK.
+
+An SDK archive is uploaded when no trusted matching archive is available, or
+when a main-push or nightly run refreshes an archive within two days of expiry.
+Main-push and nightly archives are retained for 14 days; other runs retain their own SDK
+archives for one day. Other jobs in the same run consume that exact SDK artifact
+without relying on cache writes. A missing trusted archive falls back to the
+exact cache and then a verified source build. Each platform summary records
+whether an archive or cache was reused and whether a source build ran.
+Reruns use a fresh upload name when an earlier attempt already uploaded the
+canonical artifact; existing artifact IDs are preserved. Canary and stable
+release builds use the same trusted archive lookup, with a cache/source-build
+fallback for older tags that do not contain the SDK artifact helper.
 
 ## Test desktop changes
 

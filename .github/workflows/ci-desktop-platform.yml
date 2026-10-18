@@ -1,0 +1,724 @@
+name: Desktop platform CI
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      display-name:
+        required: true
+        type: string
+      package-platform:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+      smoke-timeout-ms:
+        type: string
+        default: ""
+      run-contracts:
+        type: boolean
+        default: false
+      run-desktop:
+        type: boolean
+        default: false
+      run-package:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CHAFT_QT_VERSION: 6.8.4
+  CHAFT_QT_TARGET: ${{ inputs.target }}
+  CHAFT_PLATFORM_NAME: ${{ inputs.display-name }}
+  CHAFT_PACKAGE_PLATFORM: ${{ inputs.package-platform }}
+  CHAFT_CLEAN_PACKAGE_DIR: build/clean-${{ inputs.target }}-package
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sdk:
+    name: Provision verified Qt SDK
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    outputs:
+      identity: ${{ steps.sdk-result.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.sdk-result.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.sdk-result.outputs.compatibility_fingerprint }}
+      artifact_id: ${{ steps.upload-sdk.outputs.artifact-id || steps.reuse.outputs.artifact_id }}
+      artifact_run_id: ${{ steps.upload-sdk.outputs.artifact-id && github.run_id || steps.reuse.outputs.run_id }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Install Qt build dependencies
+        if: runner.os == 'Linux'
+        run: tools/qt/install-linux-dependencies.sh install sdk-build
+
+      - name: Compute exact Qt SDK identity
+        id: qt-sdk
+        shell: bash
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --target "${CHAFT_QT_TARGET}" \
+            --output "${contract}"
+          fingerprint="$(
+            python3 tools/qt/build_qt.py toolchain-fingerprint \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-contract "${contract}"
+          )"
+          compatibility_fingerprint="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-contract "${contract}"
+          )"
+          identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-contract "${contract}"
+          )"
+          {
+            echo "identity=${identity}"
+            echo "toolchain_fingerprint=${fingerprint}"
+            echo "compatibility_fingerprint=${compatibility_fingerprint}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find a verified SDK artifact from successful main CI
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py lookup \
+            --target "${CHAFT_QT_TARGET}" --repository "${GH_REPO}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Download exact trusted SDK artifact
+        if: steps.reuse.outputs.found == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.reuse.outputs.artifact_id }}
+          run-id: ${{ steps.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Restore and validate archived producer identity and compatibility
+        if: steps.reuse.outputs.found == 'true'
+        id: restored-sdk
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Restore or reserve Qt SDK cache
+        if: steps.reuse.outputs.found != 'true'
+        id: qt-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/chaft-qt-sdk
+          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
+
+      - name: Build Qt SDK from verified sources
+        id: build-sdk
+        if: steps.reuse.outputs.found != 'true' && steps.qt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py build
+          --target "${CHAFT_QT_TARGET}"
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --work-dir "${RUNNER_TEMP}/chaft-qt-build"
+          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Bind the selected SDK to its original producer
+        id: sdk-result
+        env:
+          EXPECTED_TOOLCHAIN: ${{ steps.restored-sdk.outputs.toolchain_fingerprint || steps.qt-sdk.outputs.toolchain_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py describe \
+            --target "${CHAFT_QT_TARGET}" --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}"
+
+      - name: Verify Qt SDK
+        shell: bash
+        run: >-
+          python3 tools/qt/build_qt.py verify
+          --target "${CHAFT_QT_TARGET}"
+          --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
+          --toolchain-fingerprint "${{ steps.sdk-result.outputs.toolchain_fingerprint }}"
+
+
+      - name: Archive the verified SDK with full provenance
+        if: steps.reuse.outputs.found != 'true' || (steps.reuse.outputs.refresh == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule'))
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py create \
+            --target "${CHAFT_QT_TARGET}" --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-upload"
+
+      - name: Upload the SDK once for all consumers
+        if: steps.reuse.outputs.found != 'true' || (steps.reuse.outputs.refresh == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule'))
+        id: upload-sdk
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.reuse.outputs.upload_name }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-upload/*
+          if-no-files-found: error
+          compression-level: 0
+          archive: true
+          retention-days: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' && 14 || 1 }}
+
+      - name: Record SDK reuse and source-build results
+        if: always()
+        env:
+          ARCHIVE_HIT: ${{ steps.reuse.outputs.found || 'false' }}
+          CACHE_HIT: ${{ steps.qt-cache.outputs.cache-hit || 'false' }}
+          SOURCE_BUILD: ${{ steps.build-sdk.outcome || 'skipped' }}
+        run: |
+          {
+            echo "### Qt SDK ${CHAFT_QT_TARGET}"
+            echo "- Trusted main artifact reused: ${ARCHIVE_HIT}"
+            echo "- Exact cache hit: ${CACHE_HIT}"
+            echo "- Source build outcome: ${SOURCE_BUILD}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  contracts:
+    name: Contracts
+    needs: sdk
+    if: ${{ !cancelled() && inputs.run-contracts && needs.sdk.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Install Linux Qt SDK consumer dependencies
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
+
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          PROVISIONED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          PROVISIONED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          PROVISIONED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --target linux-x86_64 \
+            --output "${contract}"
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target linux-x86_64 \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${PROVISIONED_IDENTITY}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is missing; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${PROVISIONED_TOOLCHAIN}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Linux Qt SDK toolchain fingerprint is invalid; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${PROVISIONED_COMPATIBILITY}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Linux Qt SDK compatibility fingerprint is invalid; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target linux-x86_64 \
+              --toolchain-fingerprint "${PROVISIONED_TOOLCHAIN}"
+          )"
+          if [[ "${PROVISIONED_IDENTITY}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Linux Qt SDK identity is not bound to its full toolchain fingerprint; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${PROVISIONED_COMPATIBILITY}" ]]; then
+            echo "::error::Linux consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${PROVISIONED_COMPATIBILITY}; refusing the cache."
+            exit 1
+          fi
+          echo "identity=${PROVISIONED_IDENTITY}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${PROVISIONED_TOOLCHAIN}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+
+      - name: Activate and verify Linux Qt SDK
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --target linux-x86_64 \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
+
+      - name: Run platform-independent desktop contracts
+        run: tools/desktop/ci-gates.sh --stage contracts Linux
+
+  debug:
+    name: Debug
+    needs: sdk
+    if: ${{ !cancelled() && inputs.run-desktop && needs.sdk.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: "false"
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Linux Qt SDK consumer dependencies
+        if: runner.os == 'Linux'
+        run: tools/qt/install-linux-dependencies.sh install sdk-consumer
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          PROVISIONED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          PROVISIONED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          PROVISIONED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          identity="${PROVISIONED_IDENTITY}"
+          fingerprint="${PROVISIONED_TOOLCHAIN}"
+          compatibility="${PROVISIONED_COMPATIBILITY}"
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --target "${CHAFT_QT_TARGET}" \
+            --output "${contract}"
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK toolchain fingerprint is invalid for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${compatibility}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK compatibility fingerprint is invalid for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-fingerprint "${fingerprint}"
+          )"
+          if [[ "${identity}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is not bound to its full toolchain fingerprint for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
+            echo "::error::${CHAFT_PLATFORM_NAME} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the SDK."
+            exit 1
+          fi
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+
+      - name: Activate and verify Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --target "${CHAFT_QT_TARGET}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
+
+      - name: Run cross-platform desktop debug smoke
+        env:
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ inputs.smoke-timeout-ms }}
+        shell: bash
+        run: >-
+          tools/desktop/ci-gates.sh
+          --stage debug
+          "${CHAFT_PACKAGE_PLATFORM}"
+
+      - name: Upload Linux desktop screenshot
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaft-linux-desktop-screenshot
+          path: build/desktop-debug/smoke/*.png
+          if-no-files-found: warn
+          archive: true
+
+  package:
+    name: Package
+    needs: sdk
+    if: ${{ !cancelled() && inputs.run-package && needs.sdk.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: desktop
+          save-if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
+        with:
+          arch: x64
+
+      - name: Install Linux package dependencies
+        if: runner.os == 'Linux'
+        run: tools/desktop/install-linux-package-dependencies.sh install desktop-package
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        run: choco install ninja --no-progress -y
+
+      - name: Set up Python for deterministic Qt tooling
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Match consumer toolchain to provisioned Qt SDK
+        id: qt-sdk
+        shell: bash
+        env:
+          PROVISIONED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          PROVISIONED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          PROVISIONED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          identity="${PROVISIONED_IDENTITY}"
+          fingerprint="${PROVISIONED_TOOLCHAIN}"
+          compatibility="${PROVISIONED_COMPATIBILITY}"
+          contract="${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+          python3 tools/qt/build_qt.py toolchain-contract \
+            --target "${CHAFT_QT_TARGET}" \
+            --output "${contract}"
+          consumer_compatibility="$(
+            python3 tools/ci/qt-toolchain-compatibility.py fingerprint \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-contract "${contract}"
+          )"
+          if [[ -z "${identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is missing for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK toolchain fingerprint is invalid for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ ! "${compatibility}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Provisioned Qt SDK compatibility fingerprint is invalid for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          expected_identity="$(
+            python3 tools/qt/build_qt.py identity \
+              --target "${CHAFT_QT_TARGET}" \
+              --toolchain-fingerprint "${fingerprint}"
+          )"
+          if [[ "${identity}" != "${expected_identity}" ]]; then
+            echo "::error::Provisioned Qt SDK identity is not bound to its full toolchain fingerprint for ${CHAFT_QT_TARGET}; refusing the cache."
+            exit 1
+          fi
+          if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
+            echo "::error::${CHAFT_PLATFORM_NAME} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the SDK."
+            exit 1
+          fi
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+          echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
+
+      - name: Activate and verify Qt SDK
+        shell: bash
+        run: |
+          python3 tools/qt/build_qt.py activate \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --github-env "$GITHUB_ENV" \
+            --github-path "$GITHUB_PATH"
+          python3 tools/qt/build_qt.py verify \
+            --target "${CHAFT_QT_TARGET}" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-fingerprint \
+              "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}"
+
+      - name: Validate Linux desktop metadata
+        if: runner.os == 'Linux'
+        run: |
+          desktop-file-validate \
+            packaging/linux/io.github.jurshsmith.chaft.desktop
+          appstreamcli validate --no-net \
+            packaging/linux/io.github.jurshsmith.chaft.metainfo.xml
+
+      - name: Fetch pinned AppImage tools
+        if: runner.os == 'Linux'
+        run: |
+          tool_dir="${RUNNER_TEMP}/chaft-appimage-tools"
+          tools/desktop/fetch-appimage-tools.sh "$tool_dir"
+          {
+            echo "CHAFT_LINUXDEPLOY=$tool_dir/linuxdeploy"
+            echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=$tool_dir/linuxdeploy-plugin-qt"
+            echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=$tool_dir/linuxdeploy-plugin-appimage"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and verify release package
+        env:
+          CHAFT_DESKTOP_SKIP_CODESIGN: "0"
+          CHAFT_DESKTOP_SMOKE_TIMEOUT_MS: ${{ inputs.smoke-timeout-ms }}
+        shell: bash
+        run: >-
+          tools/desktop/ci-gates.sh
+          --stage package
+          "${CHAFT_PACKAGE_PLATFORM}"
+
+      - name: Verify macOS package has only the reviewed ad-hoc state
+        if: runner.os == 'macOS'
+        run: >-
+          tools/desktop/macos-unsigned-canary-smoke.sh
+          build/desktop-release/package
+
+      - name: Upload release package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/desktop-release/package/*
+          if-no-files-found: error
+          compression-level: 0
+          archive: true
+
+  smoke:
+    name: Smoke downloaded package
+    needs: package
+    if: ${{ !cancelled() && inputs.run-package && needs.package.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download release package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ env.CHAFT_CLEAN_PACKAGE_DIR }}
+          digest-mismatch: error
+
+      # AppImage intentionally leaves the host GL/EGL dispatch stack unbundled
+      # so it can match the user's graphics driver. GitHub's headless image
+      # omits both libraries even though normal desktop installs provide them.
+      - name: Install AppImage host graphics runtime
+        if: runner.os == 'Linux'
+        run: tools/qt/install-linux-dependencies.sh install appimage-runtime
+
+      - name: Run portable AppImage smoke
+        if: runner.os == 'Linux'
+        run: tools/desktop/appimage-smoke.sh "${CHAFT_CLEAN_PACKAGE_DIR}"
+
+      - name: Run portable DMG smoke
+        if: runner.os == 'macOS'
+        run: tools/desktop/macos-dmg-smoke.sh "${CHAFT_CLEAN_PACKAGE_DIR}"
+
+      - name: Verify clean macOS unsigned-canary state
+        if: runner.os == 'macOS'
+        run: >-
+          tools/desktop/macos-unsigned-canary-smoke.sh
+          "${CHAFT_CLEAN_PACKAGE_DIR}"
+
+      - name: Run clean ZIP smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = python tools/desktop/release-version.py --print-version
+          tools/desktop/windows-zip-smoke.ps1 `
+            -PackageDirectory "$env:CHAFT_CLEAN_PACKAGE_DIR" `
+            -ExpectedVersion $version
+
+  required:
+    name: Required platform stages
+    if: always()
+    needs:
+      - sdk
+      - contracts
+      - debug
+      - package
+      - smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Reject missing or unexpectedly skipped platform stages
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          PLATFORM_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: python3 tools/ci/required-platform-check.py
