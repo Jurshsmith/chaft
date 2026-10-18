@@ -872,8 +872,9 @@ class CiWorkflowContractTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, source)
-        self.assertIn("needs.classify.outputs.desktop", source)
-        self.assertIn("needs.classify.outputs.package", source)
+        self.assertIn("needs.classify.outputs.local_install", source)
+        self.assertNotIn("needs.classify.outputs.desktop", source)
+        self.assertNotIn("needs.classify.outputs.package", source)
         self.assertIn("fail-fast: false", source)
         self.assertNotIn("--skip-launch", source)
         self.assertLess(
@@ -923,7 +924,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                     self.assertIn("run-contracts: false", block)
         sdk = job_block(self.platform, "sdk")
         self.assertIn("timeout-minutes: 120", sdk)
-        self.assertIn("if: steps.qt-cache.outputs.cache-hit != 'true'", sdk)
+        self.assertIn("if: steps.reuse.outputs.found != 'true' && steps.qt-cache.outputs.cache-hit != 'true'", sdk)
         self.assertIn("tools/qt/build_qt.py toolchain-fingerprint", sdk)
         self.assertIn("compatibility_fingerprint:", sdk)
         self.assertIn("tools/qt/build_qt.py build", sdk)
@@ -936,22 +937,75 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn("needs.sdk.result == 'success'", block)
                 for output in ("identity", "toolchain_fingerprint", "compatibility_fingerprint"):
                     self.assertIn(f"needs.sdk.outputs.{output}", block)
-                self.assertEqual(action_inputs(block, QT_CACHE_RESTORE_ACTION), {"path": "${{ runner.temp }}/chaft-qt-sdk", "key": QT_CACHE_KEY, "fail-on-cache-miss": "true"})
+                downloader = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+                self.assertEqual(action_inputs(block, downloader), {
+                    "artifact-ids": "${{ needs.sdk.outputs.artifact_id }}",
+                    "run-id": "${{ needs.sdk.outputs.artifact_run_id }}",
+                    "github-token": "${{ github.token }}",
+                    "path": "${{ runner.temp }}/chaft-qt-sdk-transfer",
+                    "digest-mismatch": "error",
+                })
                 self.assertNotIn(f"uses: {QT_CACHE_ACTION}", block)
                 self.assertIn("not bound to its full toolchain fingerprint", block)
                 self.assertIn("consumer_compatibility", block)
-                self.assertLess(block.index(QT_COMPATIBILITY_TOOL), block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"))
-                self.assertLess(block.index("refusing the cache"), block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"))
+                self.assertLess(block.index(QT_COMPATIBILITY_TOOL), block.index(f"uses: {downloader}"))
+                self.assertLess(block.index("refusing the cache"), block.index(f"uses: {downloader}"))
+                self.assertIn("qt-sdk-artifact.py restore", block)
+                self.assertIn('--expected-identity "${EXPECTED_IDENTITY}"', block)
+                self.assertIn('--expected-fingerprint "${EXPECTED_TOOLCHAIN}"', block)
+                self.assertIn('--expected-compatibility "${EXPECTED_COMPATIBILITY}"', block)
                 verify = block.split("tools/qt/build_qt.py verify", 1)[1]
                 self.assertIn("--toolchain-fingerprint", verify)
                 self.assertNotIn("--toolchain-contract", verify)
         self.assertEqual(self.platform.count(f"uses: {QT_CACHE_ACTION}"), 1)
-        self.assertEqual(self.platform.count(f"uses: {QT_CACHE_RESTORE_ACTION}"), 3)
+        self.assertEqual(self.platform.count(f"uses: {QT_CACHE_RESTORE_ACTION}"), 0)
         self.assertNotIn("jurplel/install-qt-action", self.platform)
         self.assertNotIn("aqtinstall", self.platform)
         smoke = job_block(self.platform, "smoke")
         self.assertIn("needs: package", smoke)
         self.assertIn("needs.package.result == 'success'", smoke)
+
+    def test_sdk_artifact_reuse_is_read_only_verified_and_bound_to_producer(self) -> None:
+        sdk = job_block(self.platform, "sdk")
+        self.assertIn("  actions: read\n", self.ci)
+        self.assertIn("  actions: read\n", self.platform)
+        self.assertNotIn("actions: write", self.platform)
+        self.assertNotIn("contents: write", self.platform)
+        self.assertIn("qt-sdk-artifact-test.py", job_block(self.ci, "classify"))
+        self.assertIn("qt-sdk-artifact.py lookup", sdk)
+        self.assertIn("artifact-ids: ${{ steps.reuse.outputs.artifact_id }}", sdk)
+        self.assertIn("run-id: ${{ steps.reuse.outputs.run_id }}", sdk)
+        self.assertIn("digest-mismatch: error", sdk)
+        self.assertIn('--expected-fingerprint "${EXPECTED_TOOLCHAIN}"', sdk)
+        self.assertIn("steps.restored-sdk.outputs.toolchain_fingerprint || steps.qt-sdk.outputs.toolchain_fingerprint", sdk)
+        self.assertIn("identity: ${{ steps.sdk-result.outputs.identity }}", sdk)
+        self.assertIn("artifact_id: ${{ steps.upload-sdk.outputs.artifact-id || steps.reuse.outputs.artifact_id }}", sdk)
+        self.assertLess(sdk.index("Verify Qt SDK"), sdk.index("qt-sdk-artifact.py create"))
+        self.assertLess(sdk.index("qt-sdk-artifact.py create"), sdk.index("id: upload-sdk"))
+        self.assertIn("retention-days: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' && 14 || 1 }}", sdk)
+        self.assertIn("steps.reuse.outputs.refresh == 'true'", sdk)
+        self.assertIn("name: ${{ steps.reuse.outputs.upload_name }}", sdk)
+        self.assertNotIn("overwrite: true", sdk)
+
+    def test_trusted_sdk_lookup_matches_reusable_job_names(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "workflow_sdk_artifact", ROOT / "tools/ci/qt-sdk-artifact.py"
+        )
+        artifact = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(artifact)
+        sdk_name = re.search(
+            r"^    name: (.+)$", job_block(self.platform, "sdk"), re.MULTILINE
+        ).group(1)
+        observed = {}
+        for job in (
+            "desktop_linux", "desktop_macos_x86_64",
+            "desktop_macos_arm64", "desktop_windows",
+        ):
+            block = job_block(self.ci, job)
+            caller_name = re.search(r"^    name: (.+)$", block, re.MULTILINE).group(1)
+            target = re.search(r"^      target: (.+)$", block, re.MULTILINE).group(1)
+            observed[target] = f"{caller_name} / {sdk_name}"
+        self.assertEqual(observed, artifact.SDK_JOB_NAMES)
 
 
     def test_artifact_action_contract_is_full_only_and_digest_strict(self) -> None:
@@ -1089,7 +1143,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             },
         )
         self.assertIn(
-            "if: steps.qt-cache.outputs.cache-hit != 'true'",
+            "if: steps.reuse.outputs.found != 'true' && steps.qt-cache.outputs.cache-hit != 'true'",
             build,
         )
         self.assertIn("tools/qt/build_qt.py build", build)
@@ -1156,6 +1210,29 @@ class CiWorkflowContractTests(unittest.TestCase):
             ),
             clean.index("tools/desktop/appimage-smoke.sh"),
         )
+
+    def test_release_builds_reuse_only_verified_sdk_artifacts_and_keep_old_tag_support(self) -> None:
+        for workflow in (self.release_inputs, self.canary_publish):
+            build = job_block(workflow, "build")
+            self.assertIn("if: hashFiles('tools/ci/qt-sdk-artifact.py') != ''", build)
+            self.assertIn("qt-sdk-artifact.py lookup", build)
+            self.assertIn("qt-sdk-artifact.py restore", build)
+            self.assertIn("artifact-ids: ${{ steps.reuse.outputs.artifact_id }}", build)
+            self.assertIn("run-id: ${{ steps.reuse.outputs.run_id }}", build)
+            self.assertIn("digest-mismatch: error", build)
+            self.assertIn("if: steps.reuse.outputs.found != 'true' && steps.qt-cache.outputs.cache-hit != 'true'", build)
+            self.assertIn('verification_args=(--toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json")', build)
+            self.assertIn('verification_args=(--toolchain-fingerprint "${SDK_PRODUCER_TOOLCHAIN}")', build)
+            self.assertIn('"${verification_args[@]}"', build)
+            self.assertIn('--expected-fingerprint "${EXPECTED_TOOLCHAIN}"', build)
+            self.assertNotIn("qt-sdk-artifact.py create", build)
+            self.assertNotIn("uses: actions/cache@", build)
+            self.assertNotIn("secrets.CHAFT_LINUX_SIGNING_PRIVATE_KEY_BASE64", build)
+        preflight = job_block(self.canary_publish, "preflight")
+        self.assertIn("gh api --paginate", preflight)
+        self.assertIn("check-runs?filter=all&per_page=100", preflight)
+        self.assertIn("jq -s '{check_runs: [.[].check_runs[]]}'", preflight)
+        self.assertIn('.event == "push"', preflight)
 
     def test_release_input_provenance_and_security_invariants_are_preserved(
         self,

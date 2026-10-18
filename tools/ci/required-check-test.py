@@ -163,10 +163,10 @@ class RequiredTruthTableTests(unittest.TestCase):
                     self.assertTrue(any(job in error for error in evaluation.errors))
                     needs[job]["result"] = "success"
 
-    def test_macos_local_source_cancellation_fails_desktop_and_package(
+    def test_macos_local_source_cancellation_fails_install_checks(
         self,
     ) -> None:
-        for scope in ("desktop", "package"):
+        for scope in ("local_install",):
             for result in ("skipped", "failure", "cancelled"):
                 with self.subTest(scope=scope, result=result):
                     needs = needs_fixture({scope})
@@ -180,6 +180,17 @@ class RequiredTruthTableTests(unittest.TestCase):
                         )
                     )
 
+    def test_ordinary_desktop_and_package_checks_skip_developer_installs(self) -> None:
+        for scope in ("desktop", "package"):
+            needs = needs_fixture({scope})
+            self.assertEqual(needs["macos_local_source"]["result"], "skipped")
+            self.assertTrue(required.evaluate_needs(needs).passed)
+        needs = needs_fixture({"local_install"})
+        self.assertEqual(needs["macos_local_source"]["result"], "success")
+        for job in ("desktop_linux", "desktop_macos_x86_64", "desktop_macos_arm64", "desktop_windows"):
+            self.assertEqual(needs[job]["result"], "skipped")
+        self.assertTrue(required.evaluate_needs(needs).passed)
+
     def test_each_native_macos_lane_fails_closed_when_cancelled(self) -> None:
         macos_jobs = (
             "macos_local_source",
@@ -188,7 +199,7 @@ class RequiredTruthTableTests(unittest.TestCase):
         )
         for job in macos_jobs:
             with self.subTest(job=job):
-                needs = needs_fixture({"package"})
+                needs = needs_fixture({"local_install" if job == "macos_local_source" else "package"})
                 needs[job]["result"] = "cancelled"
                 evaluation = required.evaluate_needs(needs)
                 self.assertFalse(evaluation.passed)

@@ -33,11 +33,13 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
   CHAFT_QT_VERSION: 6.8.4
   CHAFT_QT_TARGET: ${{ inputs.target }}
+  CHAFT_PLATFORM_NAME: ${{ inputs.display-name }}
   CHAFT_PACKAGE_PLATFORM: ${{ inputs.package-platform }}
   CHAFT_CLEAN_PACKAGE_DIR: build/clean-${{ inputs.target }}-package
 
@@ -51,9 +53,11 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 120
     outputs:
-      identity: ${{ steps.qt-sdk.outputs.identity }}
-      toolchain_fingerprint: ${{ steps.qt-sdk.outputs.toolchain_fingerprint }}
-      compatibility_fingerprint: ${{ steps.qt-sdk.outputs.compatibility_fingerprint }}
+      identity: ${{ steps.sdk-result.outputs.identity }}
+      toolchain_fingerprint: ${{ steps.sdk-result.outputs.toolchain_fingerprint }}
+      compatibility_fingerprint: ${{ steps.sdk-result.outputs.compatibility_fingerprint }}
+      artifact_id: ${{ steps.upload-sdk.outputs.artifact-id || steps.reuse.outputs.artifact_id }}
+      artifact_run_id: ${{ steps.upload-sdk.outputs.artifact-id && github.run_id || steps.reuse.outputs.run_id }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,7 +117,38 @@ jobs:
             echo "compatibility_fingerprint=${compatibility_fingerprint}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Find a verified SDK artifact from successful main CI
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py lookup \
+            --target "${CHAFT_QT_TARGET}" --repository "${GH_REPO}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
+      - name: Download exact trusted SDK artifact
+        if: steps.reuse.outputs.found == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.reuse.outputs.artifact_id }}
+          run-id: ${{ steps.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Restore and validate archived producer identity and compatibility
+        if: steps.reuse.outputs.found == 'true'
+        id: restored-sdk
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+
       - name: Restore or reserve Qt SDK cache
+        if: steps.reuse.outputs.found != 'true'
         id: qt-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -121,7 +156,8 @@ jobs:
           key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
 
       - name: Build Qt SDK from verified sources
-        if: steps.qt-cache.outputs.cache-hit != 'true'
+        id: build-sdk
+        if: steps.reuse.outputs.found != 'true' && steps.qt-cache.outputs.cache-hit != 'true'
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py build
@@ -130,13 +166,57 @@ jobs:
           --work-dir "${RUNNER_TEMP}/chaft-qt-build"
           --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
 
+      - name: Bind the selected SDK to its original producer
+        id: sdk-result
+        env:
+          EXPECTED_TOOLCHAIN: ${{ steps.restored-sdk.outputs.toolchain_fingerprint || steps.qt-sdk.outputs.toolchain_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py describe \
+            --target "${CHAFT_QT_TARGET}" --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}"
+
       - name: Verify Qt SDK
         shell: bash
         run: >-
           python3 tools/qt/build_qt.py verify
           --target "${CHAFT_QT_TARGET}"
           --prefix "${RUNNER_TEMP}/chaft-qt-sdk"
-          --toolchain-contract "${RUNNER_TEMP}/chaft-qt-toolchain.json"
+          --toolchain-fingerprint "${{ steps.sdk-result.outputs.toolchain_fingerprint }}"
+
+
+      - name: Archive the verified SDK with full provenance
+        if: steps.reuse.outputs.found != 'true' || (steps.reuse.outputs.refresh == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule'))
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py create \
+            --target "${CHAFT_QT_TARGET}" --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-upload"
+
+      - name: Upload the SDK once for all consumers
+        if: steps.reuse.outputs.found != 'true' || (steps.reuse.outputs.refresh == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule'))
+        id: upload-sdk
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.reuse.outputs.upload_name }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-upload/*
+          if-no-files-found: error
+          compression-level: 0
+          archive: true
+          retention-days: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' && 14 || 1 }}
+
+      - name: Record SDK reuse and source-build results
+        if: always()
+        env:
+          ARCHIVE_HIT: ${{ steps.reuse.outputs.found || 'false' }}
+          CACHE_HIT: ${{ steps.qt-cache.outputs.cache-hit || 'false' }}
+          SOURCE_BUILD: ${{ steps.build-sdk.outcome || 'skipped' }}
+        run: |
+          {
+            echo "### Qt SDK ${CHAFT_QT_TARGET}"
+            echo "- Trusted main artifact reused: ${ARCHIVE_HIT}"
+            echo "- Exact cache hit: ${CACHE_HIT}"
+            echo "- Source build outcome: ${SOURCE_BUILD}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   contracts:
     name: Contracts
@@ -205,12 +285,29 @@ jobs:
           echo "toolchain_fingerprint=${PROVISIONED_TOOLCHAIN}" \
             >> "$GITHUB_OUTPUT"
 
-      - name: Restore provisioned Linux Qt SDK
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ${{ runner.temp }}/chaft-qt-sdk
-          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
-          fail-on-cache-miss: true
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Activate and verify Linux Qt SDK
         run: |
@@ -316,18 +413,35 @@ jobs:
             exit 1
           fi
           if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
-            echo "::error::${{ inputs.display-name }} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the cache."
+            echo "::error::${CHAFT_PLATFORM_NAME} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the SDK."
             exit 1
           fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
-      - name: Restore provisioned Qt SDK
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ${{ runner.temp }}/chaft-qt-sdk
-          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
-          fail-on-cache-miss: true
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Activate and verify Qt SDK
         shell: bash
@@ -449,18 +563,35 @@ jobs:
             exit 1
           fi
           if [[ "${consumer_compatibility}" != "${compatibility}" ]]; then
-            echo "::error::${{ inputs.display-name }} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the cache."
+            echo "::error::${CHAFT_PLATFORM_NAME} consumer compatibility ${consumer_compatibility} does not match provisioned Qt SDK compatibility ${compatibility}; refusing the SDK."
             exit 1
           fi
           echo "identity=${identity}" >> "$GITHUB_OUTPUT"
           echo "toolchain_fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
 
-      - name: Restore provisioned Qt SDK
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download the exact provisioned SDK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ${{ runner.temp }}/chaft-qt-sdk
-          key: chaft-qt-sdk-${{ steps.qt-sdk.outputs.identity }}
-          fail-on-cache-miss: true
+          artifact-ids: ${{ needs.sdk.outputs.artifact_id }}
+          run-id: ${{ needs.sdk.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/chaft-qt-sdk-transfer
+          digest-mismatch: error
+
+      - name: Verify SDK archive bytes and restore the bound producer
+        env:
+          EXPECTED_IDENTITY: ${{ needs.sdk.outputs.identity }}
+          EXPECTED_TOOLCHAIN: ${{ needs.sdk.outputs.toolchain_fingerprint }}
+          EXPECTED_COMPATIBILITY: ${{ needs.sdk.outputs.compatibility_fingerprint }}
+        run: |
+          python3 tools/ci/qt-sdk-artifact.py restore \
+            --target "${CHAFT_QT_TARGET}" \
+            --artifact-dir "${RUNNER_TEMP}/chaft-qt-sdk-transfer" \
+            --prefix "${RUNNER_TEMP}/chaft-qt-sdk" \
+            --expected-identity "${EXPECTED_IDENTITY}" \
+            --expected-fingerprint "${EXPECTED_TOOLCHAIN}" \
+            --expected-compatibility "${EXPECTED_COMPATIBILITY}" \
+            --toolchain-contract "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json"
 
       - name: Activate and verify Qt SDK
         shell: bash

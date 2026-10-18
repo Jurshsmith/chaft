@@ -19,12 +19,14 @@ on:
           - website
           - rust
           - desktop
+          - local-install
           - release-contract
           - package
           - benchmarks
 
 permissions:
   contents: read
+  actions: read
   pull-requests: read
 
 concurrency:
@@ -49,6 +51,7 @@ jobs:
       desktop: ${{ steps.classify.outputs.desktop }}
       release_contract: ${{ steps.classify.outputs.release_contract }}
       package: ${{ steps.classify.outputs.package }}
+      local_install: ${{ steps.classify.outputs.local_install }}
       full: ${{ steps.classify.outputs.full }}
     steps:
       - name: Checkout exact source with history
@@ -64,6 +67,7 @@ jobs:
           python3 tools/ci/qt-toolchain-compatibility-test.py
           python3 tools/ci/required-check-test.py
           python3 tools/ci/required-platform-check-test.py
+          python3 tools/ci/qt-sdk-artifact-test.py
           python3 tools/ci/workflow-contract-test.py
           python3 tools/macos/build-local-test.py
           python3 packaging/homebrew/formula-contract-test.py
@@ -379,9 +383,7 @@ jobs:
   macos_local_source:
     name: macOS local source ${{ matrix.name }}
     needs: classify
-    if: >-
-      needs.classify.outputs.desktop == 'true' ||
-      needs.classify.outputs.package == 'true'
+    if: needs.classify.outputs.local_install == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -441,7 +443,8 @@ jobs:
             prefix="$(brew --prefix "${formula}")"
             qt_prefixes="${prefix}${qt_prefixes:+:${qt_prefixes}}"
           done
-          export QT_ROOT_DIR="$(brew --prefix qtbase)"
+          qt_root_dir="$(brew --prefix qtbase)"
+          export QT_ROOT_DIR="${qt_root_dir}"
           export QTDIR="${QT_ROOT_DIR}"
           export CMAKE_PREFIX_PATH="${qt_prefixes}"
           export CHAFT_QT_POLICY=developer

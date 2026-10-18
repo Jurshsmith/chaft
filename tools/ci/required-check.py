@@ -34,6 +34,7 @@ SCOPE_NAMES = (
     "desktop",
     "release_contract",
     "package",
+    "local_install",
     "full",
 )
 RUNNABLE_SCOPES = SCOPE_NAMES[:-1]
@@ -50,7 +51,7 @@ JOB_SCOPES: Mapping[str, tuple[str, ...]] = {
     "rust_tests_workspace": ("rust_test",),
     "rust_smokes": ("rust_smoke",),
     "benchmark_compile": ("benchmark",),
-    "macos_local_source": ("desktop", "package"),
+    "macos_local_source": ("local_install",),
     "desktop_linux": ("desktop_contract", "desktop", "package"),
     "desktop_macos_x86_64": ("desktop", "package"),
     "desktop_macos_arm64": ("desktop", "package"),
