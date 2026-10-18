@@ -33,6 +33,8 @@ const groups = [
   {
     label: "Legal",
     links: [
+      { href: sitePath("/code-signing/"), label: "Code signing policy" },
+      { href: sitePath("/privacy/"), label: "Privacy disclosure" },
       { href: "https://github.com/Jurshsmith/chaft/blob/main/LICENSE", label: "AGPL-3.0-or-later" },
       { href: "https://github.com/Jurshsmith/chaft/blob/main/SECURITY.md", label: "Security policy" },
       { href: sitePath("/licenses/OFL-SpaceGrotesk.txt"), label: "Font license" },
@@ -66,7 +68,7 @@ const groups = [
 
     <div class="site-footer__bottom">
       <p>© {year} Chaft.</p>
-      <p class="site-footer__status"><span aria-hidden="true"></span> Canary · unsigned and unaudited</p>
+      <p class="site-footer__status"><span aria-hidden="true"></span> Canary · not independently audited</p>
     </div>
   </div>
 </footer>

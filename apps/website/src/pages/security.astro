@@ -49,9 +49,9 @@ const canaryLimits = [
       "Encryption does not hide identifiers, authorship, timing, endpoints, membership, sizes, or causal relationships.",
   },
   {
-    title: "Unsigned distribution",
+    title: "Release signing",
     body:
-      "Canary packages include checksums and release evidence, but they are deliberately unsigned. macOS builds are not notarized, and trusted updates are not available.",
+      "Linux canary.4 includes a detached OpenPGP signature. Windows and macOS canaries remain unsigned, macOS builds are not notarized, and trusted updates are not available. Check each package's release evidence.",
   },
   {
     title: "Availability",

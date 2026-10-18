@@ -1,0 +1,59 @@
+---
+import PolicyLayout from "../layouts/PolicyLayout.astro";
+import { sitePath } from "../lib/site-path";
+---
+
+<PolicyLayout title="Code signing policy" description="Chaft's release signing status, maintainer responsibilities, and planned SignPath approval process.">
+  <h2>Current signing status</h2>
+  <p>
+    Windows Authenticode signing through SignPath Foundation is planned. Chaft has
+    not yet been accepted into the program and does not currently publish
+    SignPath-signed releases. Windows canary packages remain unsigned. Linux
+    canary.4 includes a detached OpenPGP signature; macOS canaries are unsigned
+    and are not notarized. Check the signing status and evidence for each exact
+    package on the <a href={sitePath("/releases/")}>release pages</a>.
+  </p>
+
+  <h2>Planned SignPath attribution</h2>
+  <p>If accepted and once signing is enabled, the following attribution will apply:</p>
+  <p>
+    Free code signing provided by <a href="https://signpath.io/">SignPath.io</a>,
+    certificate by <a href="https://signpath.org/">SignPath Foundation</a>.
+  </p>
+  <p>
+    The Windows certificate would identify SignPath Foundation as its publisher.
+    A signature verifies the signing identity and file integrity; it does not
+    establish that Chaft has been independently audited or is production ready.
+  </p>
+
+  <h2>Maintainer responsibilities</h2>
+  <ul>
+    <li>Committer and reviewer: <a href="https://github.com/Jurshsmith">Jurshsmith</a>, the repository owner. Contributions from other authors require maintainer review before release.</li>
+    <li>Signing approver: <a href="https://github.com/Jurshsmith">Jurshsmith</a>. Each SignPath release signing request must receive manual approval.</li>
+    <li>Anyone with source or signing access must use multi-factor authentication on GitHub and, when provisioned, SignPath. This is an access requirement, not a claim that SignPath onboarding is complete.</li>
+  </ul>
+
+  <h2>Signing scope and release checks</h2>
+  <p>
+    The planned workflow will submit traceable GitHub Actions build artifacts
+    from the public <a href="https://github.com/Jurshsmith/chaft">Chaft repository</a>.
+    Approval must cover the source revision, build workflow, checks, and exact
+    artifact. Only Chaft-owned binaries are in scope for its SignPath signing
+    policy. Upstream libraries, including Qt DLLs, retain their upstream signing
+    state and must not be signed as Chaft-owned code.
+  </p>
+  <p>
+    Before publication, the release workflow must verify the signed files,
+    expected certificate identity, timestamps, package contents, and checksums.
+    Signing metadata must identify Chaft and the intended product version.
+    Signing failures must block publication of releases advertised as signed.
+  </p>
+
+  <h2>Privacy and reporting</h2>
+  <p>
+    Read the <a href={sitePath("/privacy/")}>privacy disclosure</a> for local
+    storage, network transfers, and third-party services. Report suspected
+    signing misuse or security issues through our
+    <a href={sitePath("/security/")}>private security reporting process</a>.
+  </p>
+</PolicyLayout>
