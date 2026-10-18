@@ -275,6 +275,7 @@ jobs:
       - name: Find a verified SDK artifact from successful main CI
         if: hashFiles('tools/ci/qt-sdk-artifact.py') != ''
         id: reuse
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -296,6 +297,7 @@ jobs:
       - name: Restore and validate archived producer identity and compatibility
         if: steps.reuse.outputs.found == 'true'
         id: restored-sdk
+        shell: bash
         run: |
           python3 tools/ci/qt-sdk-artifact.py restore \
             --target "${CHAFT_QT_TARGET}" \
@@ -324,6 +326,7 @@ jobs:
       - name: Bind the selected SDK to its original producer
         if: hashFiles('tools/ci/qt-sdk-artifact.py') != ''
         id: sdk-result
+        shell: bash
         env:
           EXPECTED_TOOLCHAIN: ${{ steps.restored-sdk.outputs.toolchain_fingerprint || steps.qt-sdk.outputs.toolchain_fingerprint }}
         run: |
