@@ -129,32 +129,32 @@ class RequiredTruthTableTests(unittest.TestCase):
         for scope in ("desktop_contract", "desktop"):
             with self.subTest(scope=scope):
                 needs = needs_fixture({scope})
-                needs["desktop_contracts"]["result"] = "skipped"
+                needs["desktop_linux"]["result"] = "skipped"
                 evaluation = required.evaluate_needs(needs)
                 self.assertFalse(evaluation.passed)
                 self.assertTrue(
-                    any("desktop_contracts" in error for error in evaluation.errors)
+                    any("desktop_linux" in error for error in evaluation.errors)
                 )
 
     def test_qt_sdk_provisioning_matches_platform_consumers(self) -> None:
         contracts = needs_fixture({"desktop_contract"})
-        self.assertEqual(contracts["qt_sdk_linux"]["result"], "success")
+        self.assertEqual(contracts["desktop_linux"]["result"], "success")
         self.assertEqual(
-            contracts["qt_sdk_macos_x86_64"]["result"], "skipped"
+            contracts["desktop_macos_x86_64"]["result"], "skipped"
         )
         self.assertEqual(
-            contracts["qt_sdk_macos_arm64"]["result"], "skipped"
+            contracts["desktop_macos_arm64"]["result"], "skipped"
         )
-        self.assertEqual(contracts["qt_sdk_windows"]["result"], "skipped")
+        self.assertEqual(contracts["desktop_windows"]["result"], "skipped")
 
         for scope in ("desktop", "package"):
             with self.subTest(scope=scope):
                 needs = needs_fixture({scope})
                 for job in (
-                    "qt_sdk_linux",
-                    "qt_sdk_macos_x86_64",
-                    "qt_sdk_macos_arm64",
-                    "qt_sdk_windows",
+                    "desktop_linux",
+                    "desktop_macos_x86_64",
+                    "desktop_macos_arm64",
+                    "desktop_windows",
                 ):
                     self.assertEqual(needs[job]["result"], "success")
                     needs[job]["result"] = "skipped"
@@ -183,10 +183,8 @@ class RequiredTruthTableTests(unittest.TestCase):
     def test_each_native_macos_lane_fails_closed_when_cancelled(self) -> None:
         macos_jobs = (
             "macos_local_source",
-            "qt_sdk_macos_x86_64",
-            "qt_sdk_macos_arm64",
-            "desktop_package",
-            "clean_package_smoke",
+            "desktop_macos_x86_64",
+            "desktop_macos_arm64",
         )
         for job in macos_jobs:
             with self.subTest(job=job):

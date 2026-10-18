@@ -103,6 +103,14 @@ Scope selection applies only to manual runs; it cannot narrow pull-request,
 push, or nightly coverage. A successful focused manual run does not replace
 the successful main-push CI check required for canary publication.
 
+Native checks use a reusable workflow per platform. Each platform provisions
+its own verified SDK, then starts its selected contracts, debug checks, and
+package build independently of other platforms. A clean package smoke starts
+after that platform's package upload. A platform result succeeds only when
+every requested stage succeeds; missing results, failures, cancellations, and
+unexpected skips fail the required check. SDK compatibility, provenance, and
+strict artifact digest checks apply throughout this workflow.
+
 ## Test desktop changes
 
 Desktop development requires Rust 1.97.1 or newer, CMake 3.28 or newer, Ninja,

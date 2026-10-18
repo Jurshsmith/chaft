@@ -51,15 +51,11 @@ JOB_SCOPES: Mapping[str, tuple[str, ...]] = {
     "rust_smokes": ("rust_smoke",),
     "benchmark_compile": ("benchmark",),
     "macos_local_source": ("desktop", "package"),
-    "qt_sdk_linux": ("desktop_contract", "desktop", "package"),
-    "qt_sdk_macos_x86_64": ("desktop", "package"),
-    "qt_sdk_macos_arm64": ("desktop", "package"),
-    "qt_sdk_windows": ("desktop", "package"),
-    "desktop_contracts": ("desktop_contract", "desktop"),
-    "desktop": ("desktop",),
+    "desktop_linux": ("desktop_contract", "desktop", "package"),
+    "desktop_macos_x86_64": ("desktop", "package"),
+    "desktop_macos_arm64": ("desktop", "package"),
+    "desktop_windows": ("desktop", "package"),
     "release_contracts": ("release_contract", "package"),
-    "desktop_package": ("package",),
-    "clean_package_smoke": ("package",),
 }
 KNOWN_RESULTS = frozenset({"success", "failure", "cancelled", "skipped"})
 

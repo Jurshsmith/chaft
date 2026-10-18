@@ -320,6 +320,7 @@ class CiWorkflowContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.ci = CI_PATH.read_text(encoding="utf-8")
+        cls.platform = (WORKFLOWS / "ci-desktop-platform.yml").read_text(encoding="utf-8")
         cls.website = WEBSITE_PATH.read_text(encoding="utf-8")
         cls.website_preview = WEBSITE_PREVIEW_PATH.read_text(encoding="utf-8")
         cls.deploy_website_preview = DEPLOY_WEBSITE_PREVIEW_PATH.read_text(
@@ -683,14 +684,6 @@ class CiWorkflowContractTests(unittest.TestCase):
                 "shared-key": "rust",
                 "save-if": '"false"',
             },
-            "desktop": {
-                "shared-key": "desktop",
-                "save-if": '"false"',
-            },
-            "desktop_package": {
-                "shared-key": "desktop",
-                "save-if": MAIN_CACHE_WRITER,
-            },
         }
         for job, expected in expected_ci.items():
             with self.subTest(workflow="ci", job=job):
@@ -715,7 +708,12 @@ class CiWorkflowContractTests(unittest.TestCase):
             for path in sorted(WORKFLOWS.glob("*.yml"))
         )
         self.assertEqual(all_workflows.count(f"uses: {RUST_CACHE_ACTION}"), 10)
-        self.assertEqual(self.ci.count(f"save-if: {MAIN_CACHE_WRITER}"), 2)
+        self.assertEqual(self.ci.count(f"save-if: {MAIN_CACHE_WRITER}"), 1)
+        self.assertEqual(self.platform.count(f"save-if: {MAIN_CACHE_WRITER}"), 1)
+        for job, save in (("debug", '\"false\"'), ("package", MAIN_CACHE_WRITER)):
+            self.assertEqual(action_inputs(job_block(self.platform, job), RUST_CACHE_ACTION), {
+                "shared-key": "desktop", "save-if": save,
+            })
         self.assertNotIn(f"save-if: {MAIN_CACHE_WRITER}", self.release_inputs)
 
         for job in (
@@ -813,115 +811,38 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
 
     def test_desktop_stages_and_platform_invariants_are_explicit(self) -> None:
-        contracts = job_block(self.ci, "desktop_contracts")
-        desktop = job_block(self.ci, "desktop")
-        package = job_block(self.ci, "desktop_package")
-        clean = job_block(self.ci, "clean_package_smoke")
-        release_contracts = job_block(self.ci, "release_contracts")
+        contracts = job_block(self.platform, "contracts")
+        desktop = job_block(self.platform, "debug")
+        package = job_block(self.platform, "package")
+        clean = job_block(self.platform, "smoke")
         self.assertIn("--stage contracts Linux", contracts)
         self.assertNotIn("rustup", contracts)
         self.assertIn("--stage debug", desktop)
-        self.assertIn('smoke-timeout-ms: "60000"', desktop)
         self.assertIn("--stage package", package)
-        self.assertIn("os: ubuntu-22.04", package)
         self.assertIn("compression-level: 0", package)
         self.assertIn("archive: true", package)
         self.assertIn("digest-mismatch: error", clean)
         self.assertIn("timeout-minutes: 15", clean)
-        self.assertIn("os: macos-15-intel", clean)
-        self.assertIn("os: macos-15", clean)
-        self.assertIn("qt-target: macos-x86_64", desktop)
-        self.assertIn("qt-target: macos-arm64", desktop)
-        self.assertIn("qt-target: macos-x86_64", package)
-        self.assertIn("qt-target: macos-arm64", package)
-        self.assertIn(
-            "artifact-name: chaft-macOS-x86_64-desktop-release",
-            clean,
-        )
-        self.assertIn(
-            "artifact-name: chaft-macOS-arm64-desktop-release",
-            clean,
-        )
-        self.assertIn(
-            "artifact-path: build/clean-macos-x86_64-package",
-            clean,
-        )
-        self.assertIn(
-            "artifact-path: build/clean-macos-arm64-package",
-            clean,
-        )
-        self.assertIn(
-            'tools/desktop/macos-dmg-smoke.sh '
-            '"${{ matrix.artifact-path }}"',
-            clean,
-        )
-        self.assertIn(
-            "tools/desktop/macos-unsigned-canary-smoke.sh\n"
-            '          "${{ matrix.artifact-path }}"',
-            clean,
-        )
-        self.assertLess(
-            clean.index("digest-mismatch: error"),
-            clean.index("tools/desktop/macos-dmg-smoke.sh"),
-        )
-        self.assertLess(
-            clean.index("tools/desktop/macos-dmg-smoke.sh"),
-            clean.index("tools/desktop/macos-unsigned-canary-smoke.sh"),
-        )
-        self.assertIn(
-            "python3 tools/desktop/macos-dmg-smoke-test.py",
-            release_contracts,
-        )
-        self.assertIn(
-            f"{LINUX_DEPENDENCIES} install sdk-consumer",
-            contracts,
-        )
-        self.assertIn(
-            f"{LINUX_DEPENDENCIES} install sdk-consumer",
-            desktop,
-        )
-        self.assertIn(
-            f"{LINUX_PACKAGE_DEPENDENCIES} install desktop-package",
-            package,
-        )
-        self.assertIn(
-            f"{LINUX_DEPENDENCIES} install appimage-runtime",
-            clean,
-        )
-        for block, installer, profile, later_step in (
-            (
-                contracts,
-                LINUX_DEPENDENCIES,
-                "sdk-consumer",
-                "Match consumer toolchain to provisioned Qt SDK",
-            ),
-            (
-                desktop,
-                LINUX_DEPENDENCIES,
-                "sdk-consumer",
-                "Match consumer toolchain to provisioned Qt SDK",
-            ),
-            (
-                package,
-                LINUX_PACKAGE_DEPENDENCIES,
-                "desktop-package",
-                "Match consumer toolchain to provisioned Qt SDK",
-            ),
-            (
-                clean,
-                LINUX_DEPENDENCIES,
-                "appimage-runtime",
-                "tools/desktop/appimage-smoke.sh",
-            ),
+        self.assertIn('tools/desktop/macos-dmg-smoke.sh "${CHAFT_CLEAN_PACKAGE_DIR}"', clean)
+        self.assertIn('-PackageDirectory "$env:CHAFT_CLEAN_PACKAGE_DIR"', clean)
+        self.assertIn("tools/desktop/macos-unsigned-canary-smoke.sh", clean)
+        self.assertLess(clean.index("digest-mismatch: error"), clean.index("tools/desktop/macos-dmg-smoke.sh"))
+        self.assertIn("python3 tools/desktop/macos-dmg-smoke-test.py", job_block(self.ci, "release_contracts"))
+        for block, installer, profile, later in (
+            (contracts, LINUX_DEPENDENCIES, "sdk-consumer", "Match consumer toolchain"),
+            (desktop, LINUX_DEPENDENCIES, "sdk-consumer", "Match consumer toolchain"),
+            (package, LINUX_PACKAGE_DEPENDENCIES, "desktop-package", "Match consumer toolchain"),
+            (clean, LINUX_DEPENDENCIES, "appimage-runtime", "tools/desktop/appimage-smoke.sh"),
         ):
-            with self.subTest(profile=profile):
-                self.assertLess(
-                    block.index(f"{installer} install {profile}"),
-                    block.index(later_step),
-                )
+            self.assertLess(block.index(f"{installer} install {profile}"), block.index(later))
+        self.assertNotIn("sudo apt-get", self.platform)
+        aggregate = job_block(self.platform, "required")
+        self.assertIn("if: always()", aggregate)
+        self.assertEqual(set(re.findall(r"^      - ([a-z_]+)$", aggregate, re.M)), {"sdk", "contracts", "debug", "package", "smoke"})
+        self.assertIn("PLATFORM_INPUTS_JSON: ${{ toJSON(inputs) }}", aggregate)
+        self.assertIn("required-platform-check.py", aggregate)
+        self.assertIn("required-platform-check-test.py", job_block(self.ci, "classify"))
 
-        self.assertNotIn("sudo apt-get", self.ci)
-        self.assertNotIn("sudo apt-get", self.release_inputs)
 
     def test_native_macos_homebrew_source_workflow_is_complete_and_isolated(
         self,
@@ -971,219 +892,67 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
 
     def test_windows_desktop_jobs_are_pinned_to_server_2022(self) -> None:
-        desktop_workflows = "\n".join(
-            (self.ci, self.release_inputs, self.promotion)
-        )
+        desktop_workflows = "\n".join((self.ci, self.platform, self.release_inputs, self.promotion))
         self.assertNotIn("windows-latest", desktop_workflows)
-        self.assertEqual(desktop_workflows.count("windows-2022"), 7)
+        self.assertIn("runner: windows-2022", job_block(self.ci, "desktop_windows"))
+        self.assertIn("runs-on: ${{ inputs.runner }}", self.platform)
 
-    def test_qt_sdk_is_built_once_per_needed_target_then_restored_only(
-        self,
-    ) -> None:
+
+    def test_qt_sdk_is_built_once_per_needed_target_then_restored_only(self) -> None:
         classify = job_block(self.ci, "classify")
-        self.assertIn(
-            "python3 tools/qt/build_qt_test.py",
-            classify,
-        )
-        self.assertIn(
-            "python3 tools/qt/source_bundle_test.py",
-            classify,
-        )
-        self.assertIn(
-            f"python3 {QT_COMPATIBILITY_TEST}",
-            classify,
-        )
-        self.assertIn("  CHAFT_QT_VERSION: 6.8.4\n", self.ci)
-        provisioning = {
-            "qt_sdk_linux": ("ubuntu-22.04", "linux-x86_64"),
-            "qt_sdk_macos_x86_64": (
-                "macos-15-intel",
-                "macos-x86_64",
-            ),
-            "qt_sdk_macos_arm64": ("macos-15", "macos-arm64"),
-            "qt_sdk_windows": ("windows-2022", "windows-x86_64"),
+        for tool in ("tools/qt/build_qt_test.py", "tools/qt/source_bundle_test.py", QT_COMPATIBILITY_TEST):
+            self.assertIn(f"python3 {tool}", classify)
+        expected = {
+            "desktop_linux": ("linux-x86_64", "ubuntu-22.04"),
+            "desktop_macos_x86_64": ("macos-x86_64", "macos-15-intel"),
+            "desktop_macos_arm64": ("macos-arm64", "macos-15"),
+            "desktop_windows": ("windows-x86_64", "windows-2022"),
         }
-        for job, (runner, target) in provisioning.items():
+        for job, (target, runner) in expected.items():
             with self.subTest(job=job):
                 block = job_block(self.ci, job)
-                self.assertIn(f"runs-on: {runner}", block)
-                self.assertIn("timeout-minutes: 120", block)
-                self.assertIn(
-                    "tools/qt/build_qt.py toolchain-contract",
-                    block,
-                )
-                self.assertIn("tools/qt/build_qt.py toolchain-fingerprint", block)
-                self.assertIn(QT_COMPATIBILITY_TOOL, block)
-                self.assertIn("tools/qt/build_qt.py identity", block)
-                self.assertIn("--toolchain-contract", block)
-                self.assertIn(
-                    "compatibility_fingerprint: "
-                    "${{ steps.qt-sdk.outputs.compatibility_fingerprint }}",
-                    block,
-                )
-                self.assertIn(
-                    "toolchain_fingerprint: "
-                    "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}",
-                    block,
-                )
-                self.assertIn(
-                    'echo "compatibility_fingerprint='
-                    '${compatibility_fingerprint}"',
-                    block,
-                )
-                self.assertIn(
-                    f"--target {target}",
-                    block,
-                )
-                self.assertIn(
-                    "if: steps.qt-cache.outputs.cache-hit != 'true'",
-                    block,
-                )
-                self.assertEqual(
-                    action_inputs(block, QT_CACHE_ACTION),
-                    {
-                        "path": "${{ runner.temp }}/chaft-qt-sdk",
-                        "key": QT_CACHE_KEY,
-                    },
-                )
-
-        linux = job_block(self.ci, "qt_sdk_linux")
-        self.assertIn("desktop_contract", linux)
-        self.assertIn("outputs.desktop", linux)
-        self.assertIn("outputs.package", linux)
-        self.assertIn(
-            f"{LINUX_DEPENDENCIES} install sdk-build",
-            linux,
-        )
-        self.assertLess(
-            linux.index(f"{LINUX_DEPENDENCIES} install sdk-build"),
-            linux.index("tools/qt/build_qt.py toolchain-contract"),
-        )
-        for job in (
-            "qt_sdk_macos_x86_64",
-            "qt_sdk_macos_arm64",
-            "qt_sdk_windows",
-        ):
-            block = job_block(self.ci, job)
-            self.assertNotIn("desktop_contract", block)
-            self.assertIn("outputs.desktop", block)
-            self.assertIn("outputs.package", block)
-
-        consumers = {
-            "desktop_contracts": ("qt_sdk_linux",),
-            "desktop": (
-                "qt_sdk_linux",
-                "qt_sdk_macos_x86_64",
-                "qt_sdk_macos_arm64",
-                "qt_sdk_windows",
-            ),
-            "desktop_package": (
-                "qt_sdk_linux",
-                "qt_sdk_macos_x86_64",
-                "qt_sdk_macos_arm64",
-                "qt_sdk_windows",
-            ),
-        }
-        for job, dependencies in consumers.items():
-            with self.subTest(consumer=job):
-                block = job_block(self.ci, job)
-                for dependency in dependencies:
-                    self.assertIn(f"      - {dependency}", block)
-                    self.assertIn(
-                        f"needs.{dependency}.result == 'success'",
-                        block,
-                    )
-                    self.assertIn(
-                        f"needs.{dependency}.outputs."
-                        "compatibility_fingerprint",
-                        block,
-                    )
-                    self.assertIn(
-                        f"needs.{dependency}.outputs."
-                        "toolchain_fingerprint",
-                        block,
-                    )
-                    self.assertIn(
-                        f"needs.{dependency}.outputs.identity",
-                        block,
-                    )
-                restore = action_inputs(block, QT_CACHE_RESTORE_ACTION)
-                self.assertEqual(
-                    restore,
-                    {
-                        "path": "${{ runner.temp }}/chaft-qt-sdk",
-                        "key": QT_CACHE_KEY,
-                        "fail-on-cache-miss": "true",
-                    },
-                )
+                self.assertIn("needs: classify", block)
+                self.assertIn("uses: ./.github/workflows/ci-desktop-platform.yml", block)
+                self.assertIn(f"target: {target}", block)
+                self.assertIn(f"runner: {runner}", block)
+                self.assertIn("needs.classify.outputs.desktop", block)
+                self.assertIn("needs.classify.outputs.package", block)
+                for other in expected:
+                    self.assertNotIn(f"needs.{other}", block)
+                if target != "linux-x86_64":
+                    self.assertIn("run-contracts: false", block)
+        sdk = job_block(self.platform, "sdk")
+        self.assertIn("timeout-minutes: 120", sdk)
+        self.assertIn("if: steps.qt-cache.outputs.cache-hit != 'true'", sdk)
+        self.assertIn("tools/qt/build_qt.py toolchain-fingerprint", sdk)
+        self.assertIn("compatibility_fingerprint:", sdk)
+        self.assertIn("tools/qt/build_qt.py build", sdk)
+        self.assertEqual(action_inputs(sdk, QT_CACHE_ACTION), {"path": "${{ runner.temp }}/chaft-qt-sdk", "key": QT_CACHE_KEY})
+        self.assertLess(sdk.index(f"{LINUX_DEPENDENCIES} install sdk-build"), sdk.index("tools/qt/build_qt.py toolchain-contract"))
+        for job in ("contracts", "debug", "package"):
+            with self.subTest(job=job):
+                block = job_block(self.platform, job)
+                self.assertIn("needs: sdk", block)
+                self.assertIn("needs.sdk.result == 'success'", block)
+                for output in ("identity", "toolchain_fingerprint", "compatibility_fingerprint"):
+                    self.assertIn(f"needs.sdk.outputs.{output}", block)
+                self.assertEqual(action_inputs(block, QT_CACHE_RESTORE_ACTION), {"path": "${{ runner.temp }}/chaft-qt-sdk", "key": QT_CACHE_KEY, "fail-on-cache-miss": "true"})
                 self.assertNotIn(f"uses: {QT_CACHE_ACTION}", block)
-                self.assertIn(
-                    "Match consumer toolchain to provisioned Qt SDK",
-                    block,
-                )
-                self.assertIn("toolchain_fingerprint", block)
-                self.assertIn(
-                    "tools/qt/build_qt.py toolchain-contract",
-                    block,
-                )
-                self.assertNotIn(
-                    "tools/qt/build_qt.py toolchain-fingerprint",
-                    block,
-                )
-                self.assertIn(QT_COMPATIBILITY_TOOL, block)
+                self.assertIn("not bound to its full toolchain fingerprint", block)
                 self.assertIn("consumer_compatibility", block)
-                self.assertIn("refusing the cache", block)
-                self.assertIn(
-                    "tools/qt/build_qt.py identity",
-                    block,
-                )
-                self.assertIn("expected_identity", block)
-                self.assertIn(
-                    "not bound to its full toolchain fingerprint",
-                    block,
-                )
-                self.assertIn(
-                    "${RUNNER_TEMP}/chaft-qt-consumer-toolchain.json",
-                    block,
-                )
-                self.assertIn("--toolchain-contract", block)
-                self.assertIn("--toolchain-fingerprint", block)
-                self.assertIn(
-                    "${{ steps.qt-sdk.outputs.toolchain_fingerprint }}",
-                    block,
-                )
-                verify = block.split(
-                    "tools/qt/build_qt.py verify",
-                    1,
-                )[1]
+                self.assertLess(block.index(QT_COMPATIBILITY_TOOL), block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"))
+                self.assertLess(block.index("refusing the cache"), block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"))
+                verify = block.split("tools/qt/build_qt.py verify", 1)[1]
                 self.assertIn("--toolchain-fingerprint", verify)
                 self.assertNotIn("--toolchain-contract", verify)
-                if job != "desktop_contracts":
-                    self.assertIn(
-                        '--target "${{ matrix.qt-target }}"',
-                        block,
-                    )
-                    self.assertNotIn("matrix.qt-platform", block)
-                self.assertLess(
-                    block.index(QT_COMPATIBILITY_TOOL),
-                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
-                )
-                self.assertLess(
-                    block.index("refusing the cache"),
-                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
-                )
-                self.assertLess(
-                    block.index(f"uses: {QT_CACHE_RESTORE_ACTION}"),
-                    block.index("tools/qt/build_qt.py verify"),
-                )
+        self.assertEqual(self.platform.count(f"uses: {QT_CACHE_ACTION}"), 1)
+        self.assertEqual(self.platform.count(f"uses: {QT_CACHE_RESTORE_ACTION}"), 3)
+        self.assertNotIn("jurplel/install-qt-action", self.platform)
+        self.assertNotIn("aqtinstall", self.platform)
+        smoke = job_block(self.platform, "smoke")
+        self.assertIn("needs: package", smoke)
+        self.assertIn("needs.package.result == 'success'", smoke)
 
-        self.assertNotIn("jurplel/install-qt-action", self.ci)
-        self.assertNotIn("aqtinstall", self.ci)
-        self.assertEqual(self.ci.count(f"uses: {QT_CACHE_ACTION}"), 4)
-        self.assertEqual(
-            self.ci.count(f"uses: {QT_CACHE_RESTORE_ACTION}"),
-            3,
-        )
 
     def test_artifact_action_contract_is_full_only_and_digest_strict(self) -> None:
         producer = job_block(self.ci, "artifact_v7_producer")
