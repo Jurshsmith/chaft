@@ -290,6 +290,18 @@ function verificationOptions(fixture, fetchImpl = fixture.fetchImpl) {
 }
 
 describe("public deployment verifier", () => {
+  it("verifies signed Linux signature and public key alongside unsigned native packages", async () => {
+    const fixture = releaseFixture((manifest, payloads) => {
+      const linux = manifest.assets.find((asset) => asset.os === "linux");
+      linux.signingStatus = "signed";
+      linux.evidence.signature = { ...trackedFile(payloads, `${linux.filename}.asc`, "Linux signature"), format: "asc" };
+      manifest.releaseEvidence.linuxSigningKey = trackedFile(payloads, "chaft-linux-release-signing-key.gpg", "public key");
+    });
+    const report = await verifyPublicDeployment(verificationOptions(fixture));
+    expect(report.releaseFilesVerified).toBe(26);
+    expect(report.releaseFilesVerified).toBe(fixture.payloads.size);
+  });
+
   it("proves the complete canary production HTTP and release-file contract", async () => {
     const fixture = releaseFixture();
     const report = await verifyPublicDeployment(

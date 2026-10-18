@@ -7,6 +7,7 @@ import {
   currentRelease,
   formatBytes,
   operatingSystems,
+  type ReleaseAsset,
   validateReleaseManifest,
 } from "./releases";
 
@@ -450,6 +451,26 @@ describe("release manifest", () => {
     expect(release.releaseEvidence?.inventory.filename).toBe(
       "chaft-desktop-release-inventory.json",
     );
+  });
+
+  it("accepts signed Linux alongside unsigned Windows and macOS canaries", () => {
+    const mixed = publishedCanaryRelease();
+    const linux = mixed.assets.find((asset: ReleaseAsset) => asset.os === "linux")!;
+    linux.signingStatus = "signed";
+    mixed.releaseEvidence.linuxSigningKey = { filename: "chaft-linux-release-signing-key.gpg", url: `${mixed.releaseUrl.replace("/tag/", "/download/")}/chaft-linux-release-signing-key.gpg`, sizeBytes: 512, sha256: "b".repeat(64) };
+    linux.evidence.signature = {
+      filename: `${linux.filename}.asc`,
+      url: `${linux.url}.asc`,
+      sizeBytes: 512,
+      sha256: "a".repeat(64),
+      format: "asc",
+    };
+    const release = validateReleaseManifest(mixed);
+    expect(release.assets.find((asset) => asset.os === "linux")?.signingStatus).toBe("signed");
+    expect(release.assets.filter((asset) => asset.os !== "linux").every((asset) => asset.signingStatus === "unsigned-canary")).toBe(true);
+
+    linux.evidence.signature = null;
+    expect(() => validateReleaseManifest(mixed)).toThrow(/signature is required for signed Linux/);
   });
 
   it("keeps unsigned-canary outside the stable channel", () => {

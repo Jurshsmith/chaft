@@ -1841,7 +1841,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("tools/qt/build_qt.py verify", build)
         self.assertIn("--toolchain-contract", build)
         self.assertIn(
-            "name: canary-${{ matrix.target }}-"
+            "name: ${{ matrix.target == 'linux-x86_64' && 'canary-unsigned' || 'canary' }}-${{ matrix.target }}-"
             "${{ needs.preflight.outputs.distribution_version }}-"
             "${{ needs.preflight.outputs.commit }}",
             build,
@@ -1937,7 +1937,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         )
 
         audit = job_block(self.canary_publish, "audit_base")
-        self.assertIn("name: Audit exact 18-file canary base", audit)
+        self.assertIn("name: Audit exact canary base", audit)
         previous = -1
         for target in release_targets.TARGETS:
             artifact = (
@@ -1952,7 +1952,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                 f"path: build/canary-inputs/{target.name}",
                 audit,
             )
-        self.assertIn(')" -eq 18', audit)
+        self.assertIn(')" -eq ${{ needs.preflight.outputs.base_asset_count }}', audit)
         self.assertIn("canary-release-assets.py verify-base", audit)
 
         create_draft = job_block(self.canary_publish, "create_draft")
@@ -1962,15 +1962,37 @@ class CiWorkflowContractTests(unittest.TestCase):
         verify_published = job_block(
             self.canary_publish, "verify_published"
         )
-        self.assertIn("-eq 18", create_draft)
-        self.assertIn("name: Finalize exact 24-file draft", finalize)
-        self.assertIn("-eq 18", finalize)
-        self.assertIn("-eq 22", finalize)
-        self.assertIn("-eq 24", finalize)
-        self.assertIn("-eq 24", verify_draft)
-        self.assertIn("-eq 24", publish)
-        self.assertIn("-eq 24", verify_published)
-        self.assertIn("Assets: 24 verified files", verify_published)
+        self.assertIn("-eq ${{ needs.preflight.outputs.base_asset_count }}", create_draft)
+        self.assertIn("name: Finalize exact canary draft", finalize)
+        self.assertIn("-eq ${{ needs.preflight.outputs.base_asset_count }}", finalize)
+        self.assertIn("-eq ${{ needs.preflight.outputs.prefinal_asset_count }}", finalize)
+        self.assertIn("-eq ${{ needs.preflight.outputs.complete_asset_count }}", finalize)
+        self.assertIn("-eq ${{ needs.preflight.outputs.complete_asset_count }}", verify_draft)
+        self.assertIn("-eq ${{ needs.preflight.outputs.complete_asset_count }}", publish)
+        self.assertIn("-eq ${{ needs.preflight.outputs.complete_asset_count }}", verify_published)
+        self.assertIn("Assets: ${{ needs.preflight.outputs.complete_asset_count }} verified files", verify_published)
+
+    def test_linux_canary_private_key_is_isolated_and_verification_is_independent(self) -> None:
+        signing = job_block(self.canary_publish, "sign_linux")
+        self.assertIn("environment: linux-release-signing", signing)
+        self.assertIn("permissions:\n      contents: read", signing)
+        self.assertNotIn("contents: write", signing)
+        self.assertNotIn("uses: actions/cache", signing)
+        self.assertNotIn("appimage-smoke.sh", signing)
+        self.assertIn("ref: ${{ needs.preflight.outputs.commit }}", signing)
+        for secret in ("CHAFT_LINUX_SIGNING_PRIVATE_KEY_BASE64", "CHAFT_LINUX_SIGNING_PASSPHRASE"):
+            self.assertEqual(self.canary_publish.count(f"secrets.{secret}"), 1)
+            self.assertIn(f"secrets.{secret}", signing)
+            self.assertNotIn(secret, self.canary_promotion)
+        self.assertLess(signing.index("Verify original build metadata"), signing.index("sign-linux-release.py"))
+        smoke = job_block(self.canary_publish, "release_smoke")
+        self.assertIn("generate-platform-verification-receipt.py", smoke)
+        self.assertIn("--trusted-fingerprint", smoke)
+        self.assertIn("cmp", smoke)
+        promotion = job_block(self.canary_promotion, "prepare")
+        self.assertIn("generate-platform-verification-receipt.py", promotion)
+        self.assertIn("--linux-x86_64-trusted-verification-receipt", promotion)
+        self.assertIn("--trusted-linux-signing-fingerprint", promotion)
 
     def test_canary_publisher_mutates_only_after_native_base_validation(
         self,
@@ -1980,6 +2002,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             "qt_source",
             "build",
             "actions_smoke",
+            "sign_linux",
             "audit_base",
             "create_draft",
             "release_smoke",
@@ -2087,7 +2110,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("canary-release-assets.py verify-complete", finalize)
         verify_draft = job_block(self.canary_publish, "verify_draft")
         self.assertIn("test \"$(jq '.assets | length'", verify_draft)
-        self.assertIn("-eq 24", verify_draft)
+        self.assertIn("-eq ${{ needs.preflight.outputs.complete_asset_count }}", verify_draft)
         self.assertIn("releases/assets/${asset_id}", verify_draft)
 
     def test_canary_promotion_is_read_only_until_bounded_branch_publication(
@@ -2108,8 +2131,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("contents: write", prepare)
         self.assertIn('"prerelease": True', prepare)
         self.assertIn('"immutable": True', prepare)
-        self.assertIn("exactly 24 assets", prepare)
-        self.assertIn("len(paths) != 24", prepare)
+        self.assertIn("exactly 24 unsigned or 26 Linux-signed assets", prepare)
+        self.assertIn("len(paths) != len(expected)", prepare)
         self.assertIn("releases/assets/${asset_id}", prepare)
         self.assertIn("gh release verify ", prepare)
         self.assertIn("gh release verify-asset", prepare)
@@ -2134,7 +2157,7 @@ class CiWorkflowContractTests(unittest.TestCase):
                 prepare,
             )
             self.assertIn(
-                f"--{target.name}-signing-state unsigned-canary",
+                ('--linux-x86_64-signing-state "${linux_signing_state}"' if target.platform == "linux" else f"--{target.name}-signing-state unsigned-canary"),
                 prepare,
             )
             self.assertIn(

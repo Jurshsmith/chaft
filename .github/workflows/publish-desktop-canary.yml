@@ -11,8 +11,13 @@ on:
         description: Exact reviewed main commit to build and tag
         required: true
         type: string
+      sign_linux:
+        description: Sign Linux AppImage with the protected OpenPGP release key
+        required: true
+        default: true
+        type: boolean
       confirm_unsigned_canary:
-        description: Confirm these artifacts are unsigned canary builds
+        description: Confirm Windows and macOS are unsigned and all packages are canary builds
         required: true
         default: false
         type: boolean
@@ -38,12 +43,16 @@ env:
 jobs:
   preflight:
     name: Validate unused canary identity
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-22.04
     outputs:
       commit: ${{ steps.release.outputs.commit }}
       distribution_version: ${{ steps.release.outputs.distribution_version }}
       source_version: ${{ steps.release.outputs.source_version }}
       tag: ${{ steps.release.outputs.tag }}
+      base_asset_count: ${{ inputs.sign_linux && '20' || '18' }}
+      prefinal_asset_count: ${{ inputs.sign_linux && '24' || '22' }}
+      complete_asset_count: ${{ inputs.sign_linux && '26' || '24' }}
     steps:
       - name: Checkout the current protected main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -358,11 +367,11 @@ jobs:
         run: |
           tool_dir="${RUNNER_TEMP}/chaft-appimage-tools"
           tools/desktop/fetch-appimage-tools.sh "${tool_dir}"
-          echo "CHAFT_LINUXDEPLOY=${tool_dir}/linuxdeploy" >> "${GITHUB_ENV}"
-          echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=${tool_dir}/linuxdeploy-plugin-qt" \
-            >> "${GITHUB_ENV}"
-          echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=${tool_dir}/linuxdeploy-plugin-appimage" \
-            >> "${GITHUB_ENV}"
+          {
+            echo "CHAFT_LINUXDEPLOY=${tool_dir}/linuxdeploy"
+            echo "CHAFT_LINUXDEPLOY_PLUGIN_QT=${tool_dir}/linuxdeploy-plugin-qt"
+            echo "CHAFT_LINUXDEPLOY_PLUGIN_APPIMAGE=${tool_dir}/linuxdeploy-plugin-appimage"
+          } >> "${GITHUB_ENV}"
 
       - name: Build, smoke, and verify canary package
         env:
@@ -390,8 +399,75 @@ jobs:
       - name: Upload non-publishing canary input
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: canary-${{ matrix.target }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          name: ${{ matrix.target == 'linux-x86_64' && 'canary-unsigned' || 'canary' }}-${{ matrix.target }}-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
           path: build/desktop-release/package/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          archive: true
+
+  sign_linux:
+    name: Prepare Linux release signing
+    needs:
+      - preflight
+      - build
+    runs-on: ubuntu-22.04
+    environment: linux-release-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout validated signing policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up Python for signing policy
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.3"
+
+      - name: Download unsigned Linux input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: canary-unsigned-linux-x86_64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/linux-signing
+          digest-mismatch: error
+
+      - name: Verify original build metadata
+        run: |
+          python3 tools/desktop/verify-release-metadata.py release \
+            --package-dir build/linux-signing --target linux-x86_64 \
+            --expected-commit "${{ needs.preflight.outputs.commit }}" \
+            --expected-source-version "${{ needs.preflight.outputs.source_version }}" \
+            --expected-distribution-version "${{ needs.preflight.outputs.distribution_version }}" \
+            --require-clean
+
+      - name: Sign Linux AppImage and verify final evidence
+        if: inputs.sign_linux
+        env:
+          CHAFT_LINUX_SIGNING_PRIVATE_KEY_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_PRIVATE_KEY_BASE64 }}
+          CHAFT_LINUX_SIGNING_PASSPHRASE: ${{ secrets.CHAFT_LINUX_SIGNING_PASSPHRASE }}
+          CHAFT_LINUX_SIGNING_KEYRING_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_KEYRING_BASE64 }}
+          CHAFT_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          python3 tools/desktop/sign-linux-release.py \
+            --package-dir build/linux-signing \
+            --public-key-output "${RUNNER_TEMP}/chaft-linux-release-signing-key.gpg"
+          python3 tools/desktop/verify-release-metadata.py release \
+            --package-dir build/linux-signing --target linux-x86_64 \
+            --expected-commit "${{ needs.preflight.outputs.commit }}" \
+            --expected-source-version "${{ needs.preflight.outputs.source_version }}" \
+            --expected-distribution-version "${{ needs.preflight.outputs.distribution_version }}" \
+            --require-clean
+          cp "${RUNNER_TEMP}/chaft-linux-release-signing-key.gpg" build/linux-signing/
+
+      - name: Upload final Linux release input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-linux-x86_64-${{ needs.preflight.outputs.distribution_version }}-${{ needs.preflight.outputs.commit }}
+          path: build/linux-signing/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -402,6 +478,7 @@ jobs:
     needs:
       - preflight
       - build
+      - sign_linux
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
@@ -467,7 +544,7 @@ jobs:
             -ExpectedDistributionVersion "${{ needs.preflight.outputs.distribution_version }}"
 
   audit_base:
-    name: Audit exact 18-file canary base
+    name: Audit exact canary base
     needs:
       - preflight
       - qt_source
@@ -532,7 +609,7 @@ jobs:
           )
           test "$(
             find build/canary-base -mindepth 1 -maxdepth 1 -type f | wc -l
-          )" -eq 18
+          )" -eq ${{ needs.preflight.outputs.base_asset_count }}
           python3 tools/desktop/canary-release-assets.py verify-base \
             --assets-dir build/canary-base \
             --version "${{ needs.preflight.outputs.distribution_version }}" \
@@ -613,18 +690,19 @@ jobs:
       - name: Create one no-clobber draft prerelease
         id: draft
         env:
+          SIGN_LINUX: ${{ inputs.sign_linux }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           TARGET_COMMIT: ${{ needs.preflight.outputs.commit }}
         run: |
           set -euo pipefail
           cat > "${RUNNER_TEMP}/canary-notes.md" <<'NOTES'
-          ## Unsigned Chaft canary
+          ## Chaft canary
 
           This is an early cross-platform canary for testing and feedback.
 
-          **The Windows, macOS, and Linux packages are unsigned canary builds.**
-          **Unsigned canary. Do not use Chaft canary builds for sensitive or production communication.**
+          **The Windows and macOS packages are unsigned canary builds.**
+          **Canary. Do not use Chaft canary builds for sensitive or production communication.**
 
           Windows may show an unknown-publisher warning; macOS may require an
           explicit user override. The macOS app bundle has only an ad-hoc
@@ -636,6 +714,22 @@ jobs:
 
           Stable-release signing and notarization requirements are unchanged.
           NOTES
+          if [[ "${SIGN_LINUX}" == "true" ]]; then
+            cat >> "${RUNNER_TEMP}/canary-notes.md" <<'NOTES'
+
+          Linux is OpenPGP signed. Download the AppImage, its `.asc` signature,
+          and `chaft-linux-release-signing-key.gpg` from this release. Check
+          the key fingerprint against the [project signing-key record](https://github.com/Jurshsmith/chaft/blob/main/guides/public/development/linux-release-signing.md#public-release-key),
+          then verify:
+
+          ```sh
+          gpg --show-keys --fingerprint chaft-linux-release-signing-key.gpg
+          gpg --no-default-keyring --keyring ./chaft-linux-release-signing-key.gpg --verify Chaft-*-Linux-x86_64.AppImage.asc Chaft-*-Linux-x86_64.AppImage
+          ```
+          NOTES
+          else
+            echo 'Linux is also an unsigned canary build.' >> "${RUNNER_TEMP}/canary-notes.md"
+          fi
           draft="$(
             gh api \
               -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -643,7 +737,7 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/releases" \
               -f tag_name="${RELEASE_TAG}" \
               -f target_commitish="${TARGET_COMMIT}" \
-              -f name="Chaft ${RELEASE_TAG#v} (unsigned canary)" \
+              -f name="Chaft ${RELEASE_TAG#v} (canary)" \
               -f body="$(cat "${RUNNER_TEMP}/canary-notes.md")" \
               -F draft=true \
               -F prerelease=true \
@@ -671,7 +765,7 @@ jobs:
           test "$(jq -r '.prerelease' <<<"${release}")" = true
           test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
           test "$(jq -r '.target_commitish' <<<"${release}")" = "${TARGET_COMMIT}"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 18
+          test "$(jq '.assets | length' <<<"${release}")" -eq ${{ needs.preflight.outputs.base_asset_count }}
           echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
 
   release_smoke:
@@ -795,11 +889,55 @@ jobs:
             -ExpectedSourceVersion "${{ needs.preflight.outputs.source_version }}" `
             -ExpectedDistributionVersion "${{ needs.preflight.outputs.distribution_version }}"
 
-      - name: Generate explicit unsigned-canary receipt
+      - name: Download Linux signature evidence from draft
+        if: runner.os == 'Linux' && inputs.sign_linux
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create_draft.outputs.release_id }}
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          for filename in "${PACKAGE_NAME}.asc" chaft-linux-release-signing-key.gpg; do
+            asset="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              --jq ".assets[] | select(.name == \"${filename}\")")"
+            asset_id="$(jq -er '.id' <<<"${asset}")"
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "build/release-download/${filename}"
+            test "$(wc -c < "build/release-download/${filename}" | tr -d '[:space:]')" = "$(jq -r '.size' <<<"${asset}")"
+            test "sha256:$(sha256sum "build/release-download/${filename}" | awk '{print $1}')" = "$(jq -r '.digest' <<<"${asset}")"
+          done
+
+      - name: Verify downloaded Linux signing identity
+        if: runner.os == 'Linux' && inputs.sign_linux
+        env:
+          CHAFT_LINUX_SIGNING_KEYRING_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_KEYRING_BASE64 }}
+          CHAFT_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          test -n "${CHAFT_LINUX_SIGNING_KEYRING_BASE64}"
+          test -n "${CHAFT_LINUX_SIGNING_FINGERPRINT}"
+          keyring="${RUNNER_TEMP}/chaft-linux-release-signing-key.gpg"
+          printf '%s' "${CHAFT_LINUX_SIGNING_KEYRING_BASE64}" | base64 --decode > "${keyring}"
+          cmp "${keyring}" build/release-download/chaft-linux-release-signing-key.gpg
+          python3 tools/desktop/generate-platform-verification-receipt.py \
+            --target linux-x86_64 --package-dir build/release-download \
+            --output "${RUNNER_TEMP}/chaft-desktop-linux-x86_64-verification.json" \
+            --version "${{ needs.preflight.outputs.distribution_version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --commit "${{ needs.preflight.outputs.commit }}" \
+            --trusted-keyring "${keyring}" \
+            --trusted-fingerprint "${CHAFT_LINUX_SIGNING_FINGERPRINT}"
+
+      - name: Generate canary smoke and signing receipt
         shell: bash
         run: |
           mkdir -p build/canary-receipt
-          python3 tools/desktop/generate-unsigned-canary-receipt.py \
+          signing_args=()
+          if [[ "${{ matrix.target }}" == "linux-x86_64" && "${{ inputs.sign_linux }}" == "true" ]]; then
+            signing_args+=(--linux-signing-receipt "${RUNNER_TEMP}/chaft-desktop-linux-x86_64-verification.json")
+          fi
+          python3 tools/desktop/generate-unsigned-canary-receipt.py "${signing_args[@]}" \
             --target "${{ matrix.target }}" \
             --package "build/release-download/${{ matrix.package }}" \
             --output "build/canary-receipt/chaft-desktop-${{ matrix.target }}-verification.json" \
@@ -825,7 +963,7 @@ jobs:
           retention-days: 14
 
   finalize_draft:
-    name: Finalize exact 24-file draft
+    name: Finalize exact canary draft
     needs:
       - preflight
       - create_draft
@@ -862,7 +1000,7 @@ jobs:
               -H "X-GitHub-Api-Version: 2026-03-10" \
               "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
           )"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 18
+          test "$(jq '.assets | length' <<<"${release}")" -eq ${{ needs.preflight.outputs.base_asset_count }}
           while IFS=$'\t' read -r asset_id name size digest; do
             if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
               "${name}" == */* || "${name}" == *\\* ]]; then
@@ -885,7 +1023,7 @@ jobs:
           cp -- build/canary-receipts/*.json "${assets}/"
           test "$(
             find "${assets}" -mindepth 1 -maxdepth 1 -type f | wc -l
-          )" -eq 22
+          )" -eq ${{ needs.preflight.outputs.prefinal_asset_count }}
           python3 tools/desktop/canary-release-assets.py finalize \
             --assets-dir "${assets}" \
             --version "${{ needs.preflight.outputs.distribution_version }}" \
@@ -902,7 +1040,7 @@ jobs:
             --release-id "${RELEASE_ID}"
           test "$(
             find "${assets}" -mindepth 1 -maxdepth 1 -type f | wc -l
-          )" -eq 24
+          )" -eq ${{ needs.preflight.outputs.complete_asset_count }}
 
           for receipt in "${assets}"/chaft-desktop-*-verification.json; do
             gh release upload "${RELEASE_TAG}" "${receipt}" \
@@ -945,7 +1083,7 @@ jobs:
           )"
           test "$(jq -r '.draft' <<<"${release}")" = true
           test "$(jq -r '.prerelease' <<<"${release}")" = true
-          test "$(jq '.assets | length' <<<"${release}")" -eq 24
+          test "$(jq '.assets | length' <<<"${release}")" -eq ${{ needs.preflight.outputs.complete_asset_count }}
           while IFS=$'\t' read -r asset_id name size digest; do
             if [[ -z "${name}" || "${name}" == "." || "${name}" == ".." ||
               "${name}" == */* || "${name}" == *\\* ]]; then
@@ -997,7 +1135,7 @@ jobs:
           )"
           test "$(jq -r '.draft' <<<"${release}")" = true
           test "$(jq -r '.prerelease' <<<"${release}")" = true
-          test "$(jq '.assets | length' <<<"${release}")" -eq 24
+          test "$(jq '.assets | length' <<<"${release}")" -eq ${{ needs.preflight.outputs.complete_asset_count }}
           published="$(
             gh api \
               -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -1039,7 +1177,7 @@ jobs:
         run: |
           set -euo pipefail
           release=""
-          for attempt in {1..12}; do
+          for _attempt in {1..12}; do
             release="$(
               gh api \
                 -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -1054,7 +1192,7 @@ jobs:
           test "$(jq -r '.draft' <<<"${release}")" = false
           test "$(jq -r '.prerelease' <<<"${release}")" = true
           test "$(jq -r '.tag_name' <<<"${release}")" = "${RELEASE_TAG}"
-          test "$(jq '.assets | length' <<<"${release}")" -eq 24
+          test "$(jq '.assets | length' <<<"${release}")" -eq ${{ needs.preflight.outputs.complete_asset_count }}
 
           if latest="$(gh api \
             -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -1095,7 +1233,7 @@ jobs:
             --repository "${GITHUB_REPOSITORY}" \
             --release-id "${RELEASE_ID}"
 
-          for attempt in {1..12}; do
+          for _attempt in {1..12}; do
             if gh release verify "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}"; then
               verified=true
@@ -1112,14 +1250,15 @@ jobs:
       - name: Write release verification summary
         run: |
           {
-            echo "## Published unsigned canary"
+            echo "## Published canary"
             echo
             echo "- Tag: \`${{ needs.preflight.outputs.tag }}\`"
             echo "- Commit: \`${{ needs.preflight.outputs.commit }}\`"
             echo "- Release ID: \`${{ needs.create_draft.outputs.release_id }}\`"
             echo "- State: immutable prerelease, never latest"
-            echo "- Assets: 24 verified files"
-            echo "- Signing: unsigned-canary; stable gates unchanged"
+            echo "- Assets: ${{ needs.preflight.outputs.complete_asset_count }} verified files"
+            echo "- Linux signing requested: ${{ inputs.sign_linux }}"
+            echo "- Windows and macOS: unsigned-canary"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   promote_website:

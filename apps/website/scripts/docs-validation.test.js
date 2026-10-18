@@ -459,6 +459,23 @@ chaft import --passphrase-path /tmp/passphrase
     );
   });
 
+  it("accepts GnuPG subkey export selectors while rejecting passphrases", () => {
+    const root = createValidRepository();
+    const cliPath = join(root, "guides/public/reference/cli.md");
+    writeFileSync(
+      cliPath,
+      `${readFileSync(cliPath, "utf8")}
+\`\`\`sh
+gpg --export-secret-subkeys "$CHAFT_SIGNING_FINGERPRINT" > signing-subkeys.gpg
+gpg --passphrase "$SIGNING_PASSPHRASE" --export-secret-subkeys "$CHAFT_SIGNING_FINGERPRINT"
+\`\`\`
+`,
+    );
+    const messages = issueMessages(root).join("\n");
+    expect(messages).not.toContain("through --export-secret-subkeys");
+    expect(messages).toContain("secret-bearing value must not be passed directly through --passphrase");
+  });
+
   it("detects a tampered pager while accepting the computed pager", () => {
     const root = createValidRepository();
     const guides = collectDocumentationValidation({ repositoryRoot: root }).guides;

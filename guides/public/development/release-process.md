@@ -11,7 +11,7 @@ draft: false
 # Release Chaft desktop builds
 
 Chaft publishes desktop software through two deliberately separate channels:
-an explicitly unsigned `canary` prerelease for evaluation, and a future
+a `canary` prerelease for evaluation with optional Linux signing, and a future
 `stable` release that keeps the full native signing and notarization policy.
 The current website manifest is the authority for whether a particular version
 is actually available.
@@ -35,9 +35,11 @@ The repository implements these release boundaries:
    commit on clean native runners before it creates any tag or GitHub Release.
 3. Package metadata records checksums, a CycloneDX SBOM, provenance, source
    identity, and platform-specific evidence. Canary receipts state that signing
-   and notarization were not performed.
+   and notarization were not performed on unsigned targets. Linux signing
+   evidence is generated when `sign_linux=true` (the default).
 4. The publisher creates one draft, verifies its downloaded package bytes on
-   all four native targets, finalizes an exact 24-file namespace, and only
+   all four native targets, finalizes an exact 24-file unsigned or 26-file
+   Linux-signed namespace, and only
    then publishes it as an immutable prerelease that is never `latest`.
 5. A dedicated canary promotion workflow reverifies the published release and
    publishes an exact website-manifest branch. An authenticated maintainer or
@@ -53,7 +55,7 @@ The current package formats are:
 | Windows x86-64 | `.zip` | Native draft-download smoke receipt; Authenticode marked not performed |
 | macOS Intel | `.dmg` | Native x86-64 receipt; signing and notarization marked not performed |
 | macOS Apple Silicon | `.dmg` | Native arm64 receipt; signing and notarization marked not performed |
-| Linux x86-64 | `.AppImage` | Native draft-download smoke receipt; detached signing marked not performed |
+| Linux x86-64 | `.AppImage` | Native draft-download smoke receipt; OpenPGP signature verification when signing is enabled |
 
 The website and GitHub Releases page remain the source for whether a particular
 canary has completed this automation.
@@ -101,6 +103,7 @@ Run the platform-independent release contract tests too:
 tools/desktop/release-metadata-smoke.sh
 python3 tools/desktop/export-website-release-manifest-test.py
 python3 tools/desktop/canary-release-assets-test.py
+python3 tools/desktop/linux-release-signing-test.py
 python3 tools/desktop/generate-unsigned-canary-receipt-test.py
 python3 tools/desktop/linux-appimage-contract-test.py
 python3 tools/desktop/macos-dmg-smoke-test.py
@@ -151,16 +154,20 @@ insufficient to become a public release by itself: Windows and macOS inputs
 still require their native signing processes, and every final artifact must be
 verified again after signing.
 
-## Publish an unsigned canary
+## Publish a canary
 
 Run `Publish desktop canary` only from the protected default branch. Supply:
 
 - the next unused tag matching `v<major>.<minor>.<patch>-canary.<positive
   integer>`;
 - the exact current, reviewed `main` commit;
-- confirmation that the packages are intentionally unsigned canaries; and
+- `sign_linux=true` (default) to sign Linux, or explicit `false` for an unsigned Linux build;
+- confirmation that Windows/macOS are unsigned and all packages remain canaries; and
 - confirmation that immutable GitHub Releases are enabled in repository
   settings.
+
+Configure the protected signing environment and four Actions secrets as described
+in [Linux release signing](linux-release-signing.md) before enabling signing.
 
 The workflow then:
 
@@ -170,7 +177,7 @@ The workflow then:
 3. builds the Qt corresponding-source bundle and all four native packages
    before it receives write permission;
 4. smoke-tests the packages once after the GitHub Actions artifact boundary;
-5. audits the exact 18 base assets: four packages, four target checksum files,
+5. audits the exact 18 unsigned base assets (20 with Linux signature/public key): four packages, four target checksum files,
    four SBOMs, four provenance files, and two Qt source files;
 6. creates one draft prerelease through the GitHub API and records its release
    ID;
@@ -181,8 +188,8 @@ The workflow then:
    both macOS receipts record a natively inspected ad-hoc app-bundle signature
    while the workflow proves there is no Apple team identity, DMG signature,
    or notarization ticket;
-9. adds the receipts, a 22-file inventory, and an aggregate checksum file to
-   form the exact 24-file public namespace;
+9. adds the receipts, an inventory, and an aggregate checksum file to
+   form the exact 24-file unsigned or 26-file Linux-signed public namespace;
 10. redownloads and verifies the entire draft before publication;
 11. publishes it as a prerelease with `make_latest=false`; and
 12. proves the release is immutable, the tag resolves to the reviewed commit,
@@ -236,7 +243,8 @@ tag so users can identify the exact bytes they received.
 `Promote desktop canary to website` is dispatch-only and accepts one exact
 canary tag. Before it can write a manifest branch, its read-only preparation job:
 
-- requires a published, immutable prerelease containing exactly 24 safe,
+- requires a published, immutable prerelease containing exactly 24 unsigned or
+  26 Linux-signed safe,
   uniquely named assets;
 - downloads every asset by immutable asset ID and compares local byte sizes and
   SHA-256 digests with GitHub's API;

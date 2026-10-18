@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import linux_signing_policy as linux_signing
 import release_targets
 import unsigned_canary_policy as unsigned_canary
 
@@ -639,7 +640,7 @@ def build_stage_plan(
             receipt, receipt_fingerprint = load_json_object(
                 receipt_path, f"{context} verification receipt"
             )
-            if channel == "canary":
+            if channel == "canary" and not linux_signing.is_signed_linux(receipt):
                 if len(package_names) != 1:
                     fail(
                         f"{context} unsigned canary must contain exactly one package"
@@ -669,6 +670,13 @@ def build_stage_plan(
                 except unsigned_canary.UnsignedCanaryPolicyError as error:
                     fail(f"{context} unsigned-canary receipt is invalid: {error}")
             else:
+                if channel == "canary":
+                    try:
+                        linux_signing.validate_canary_receipt(
+                            receipt, expected_target=target.name
+                        )
+                    except unsigned_canary.UnsignedCanaryPolicyError as error:
+                        fail(f"{context} signed-canary receipt is invalid: {error}")
                 validate_receipt(
                     receipt,
                     target,
@@ -708,6 +716,8 @@ def build_stage_plan(
     release_evidence: tuple[Fingerprint, ...] = ()
     if channel == "canary":
         release_evidence_names = list(QT_SOURCE_FILENAMES)
+        if linux_signing.PUBLIC_KEY_FILENAME in source_files:
+            release_evidence_names.append(linux_signing.PUBLIC_KEY_FILENAME)
         if require_finalization:
             release_evidence_names.extend(CANARY_FINALIZATION_FILENAMES)
         release_evidence = tuple(

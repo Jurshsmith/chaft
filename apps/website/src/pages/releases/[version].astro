@@ -23,7 +23,7 @@ interface Props {
 
 const { release } = Astro.props;
 const isPublished = release.status === "published";
-const isUnsignedCanary = release.channel === "canary" && isPublished;
+const isPublishedCanary = release.channel === "canary" && isPublished;
 const platforms = buildDownloadPlatforms(release);
 const publicChannel = release.channel === "canary" ? "Canary" : "Stable";
 const publicStatus = isPublished ? "Published" : "Packages pending";
@@ -43,6 +43,7 @@ const releaseEvidenceLinks = release.releaseEvidence === null
       { label: "Qt source checksum", file: release.releaseEvidence.qtSourceChecksums },
       { label: "Release inventory", file: release.releaseEvidence.inventory },
       { label: "Aggregate checksums", file: release.releaseEvidence.aggregateChecksums },
+      ...(release.releaseEvidence.linuxSigningKey ? [{ label: "Linux signing key", file: release.releaseEvidence.linuxSigningKey }] : []),
     ];
 ---
 
@@ -99,7 +100,7 @@ const releaseEvidenceLinks = release.releaseEvidence === null
         </p>
       </div>
 
-      {isUnsignedCanary && <ReleaseSafetyNotice />}
+      {isPublishedCanary && <ReleaseSafetyNotice release={release} />}
 
       <div class="platform-list">
         {platforms.map((platform) => (

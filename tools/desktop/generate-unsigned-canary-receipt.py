@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import linux_signing_policy as linux_signing
 import release_targets
 import unsigned_canary_policy as policy
 
@@ -59,6 +60,7 @@ def generate_receipt(
     runner_arch: str,
     smoke_command: str,
     verified_at: str | None = None,
+    linux_signing_receipt: Path | None = None,
 ) -> dict[str, object]:
     try:
         target_contract = release_targets.resolve_target(
@@ -165,6 +167,9 @@ def generate_receipt(
         expected_commit=commit,
         expected_repository=repository,
     )
+    if linux_signing_receipt is not None:
+        native = json.loads(Path(linux_signing_receipt).read_text(encoding="utf-8"))
+        receipt = linux_signing.bind_smoke(native, receipt)
     atomic_write_json(output, receipt)
     return receipt
 
@@ -176,6 +181,7 @@ def argument_parser() -> argparse.ArgumentParser:
             "evidence. This command does not perform signing verification."
         )
     )
+    parser.add_argument("--linux-signing-receipt", type=Path)
     parser.add_argument("--target", required=True, choices=policy.TARGETS)
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -217,6 +223,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runner_arch=args.runner_arch,
             smoke_command=args.smoke_command,
             verified_at=args.verified_at,
+            linux_signing_receipt=args.linux_signing_receipt,
         )
     except policy.UnsignedCanaryPolicyError as error:
         parser.exit(2, f"unsigned-canary receipt generation failed: {error}\n")
