@@ -1,6 +1,13 @@
+---
+import { currentRelease, type ReleaseManifest } from "../data/releases";
+interface Props { release?: ReleaseManifest; }
+const { release = currentRelease } = Astro.props;
+const hasSignedLinux = release.assets.some((asset) => asset.os === "linux" && asset.signingStatus === "signed");
+---
+
 <aside class="release-safety" role="note" data-release-warning>
   <strong>Preview safety</strong>
-  <p><span>Unsigned canary.</span> Unaudited. Do not use Chaft canary builds for sensitive or production communication.</p>
+  <p><span>{hasSignedLinux ? "Canary." : "Unsigned canary."}</span> Unaudited. Do not use Chaft canary builds for sensitive or production communication.</p>
 </aside>
 
 <style>

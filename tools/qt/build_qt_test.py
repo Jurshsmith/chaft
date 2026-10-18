@@ -96,20 +96,20 @@ class ManifestContractTests(unittest.TestCase):
             self.manifest["sdkIdentities"],
             {
                 "linux-x86_64": (
-                    "qt-6.8.4-r2-linux-x86_64-gcc-11-"
-                    "3654d12c199fa2c2bd6a"
+                    "qt-6.8.4-r3-linux-x86_64-gcc-11-"
+                    "072672a6cbb0a7e323b3"
                 ),
                 "macos-arm64": (
-                    "qt-6.8.4-r2-macos-arm64-apple-clang-"
-                    "3654d12c199fa2c2bd6a"
+                    "qt-6.8.4-r3-macos-arm64-apple-clang-"
+                    "072672a6cbb0a7e323b3"
                 ),
                 "macos-x86_64": (
-                    "qt-6.8.4-r2-macos-x86_64-apple-clang-"
-                    "3654d12c199fa2c2bd6a"
+                    "qt-6.8.4-r3-macos-x86_64-apple-clang-"
+                    "072672a6cbb0a7e323b3"
                 ),
                 "windows-x86_64": (
-                    "qt-6.8.4-r2-windows-x86_64-msvc-2022-"
-                    "3654d12c199fa2c2bd6a"
+                    "qt-6.8.4-r3-windows-x86_64-msvc-2022-"
+                    "072672a6cbb0a7e323b3"
                 ),
             },
         )
@@ -251,7 +251,7 @@ class ManifestContractTests(unittest.TestCase):
             with self.subTest(module=row["name"]):
                 self.assertTrue(
                     row["url"].startswith(
-                        "https://download.qt.io/official_releases/qt/"
+                        "https://download.qt.io/archive/qt/"
                         "6.8/6.8.4/submodules/"
                     )
                 )
@@ -357,8 +357,8 @@ class ManifestContractTests(unittest.TestCase):
         )
         self.assertEqual(
             result.stdout,
-            "qt-6.8.4-r2-windows-x86_64-msvc-2022-"
-            "3654d12c199fa2c2bd6a\n",
+            "qt-6.8.4-r3-windows-x86_64-msvc-2022-"
+            "072672a6cbb0a7e323b3\n",
         )
         self.assertEqual(result.stderr, "")
 
@@ -570,7 +570,7 @@ class VerificationContractTests(unittest.TestCase):
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 2,
+            "sdkRevision": 3,
             "target": target,
             "platform": "linux",
             "architecture": "x86_64",
@@ -657,7 +657,7 @@ class VerificationContractTests(unittest.TestCase):
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 2,
+            "sdkRevision": 3,
             "target": target,
             "platform": "macos",
             "architecture": "arm64",
@@ -709,7 +709,7 @@ class VerificationContractTests(unittest.TestCase):
             "manifestSha256": qt.manifest_digest(manifest),
             "contractSha256": qt.contract_digest(manifest),
             "qtVersion": "6.8.4",
-            "sdkRevision": 2,
+            "sdkRevision": 3,
             "target": target,
             "platform": "windows",
             "architecture": "x86_64",

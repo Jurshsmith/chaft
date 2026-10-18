@@ -47,9 +47,9 @@ RECIPE_FILES = (
     ("tools/qt/probe/tst_QtSdk.qml", PROBE_DIR / "tst_QtSdk.qml"),
 )
 QT_SOURCE_PREFIX = (
-    "https://download.qt.io/official_releases/qt/6.8/6.8.4/submodules/"
+    "https://download.qt.io/archive/qt/6.8/6.8.4/submodules/"
 )
-QT_PATCH_PREFIX = "https://download.qt.io/official_releases/qt/6.8/CVE-"
+QT_PATCH_PREFIX = "https://download.qt.io/archive/qt/6.8/CVE-"
 
 
 class QtSdkError(RuntimeError):

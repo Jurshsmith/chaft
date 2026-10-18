@@ -857,6 +857,10 @@ function extractCodeSamples(markdown) {
 
 function secretFlagName(flag) {
   const normalized = flag.toLowerCase();
+  // GnuPG takes a public key selector here, not secret material or a passphrase.
+  if (normalized === "--export-secret-subkeys") {
+    return null;
+  }
   if (SAFE_SECRET_INPUT_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) {
     return null;
   }

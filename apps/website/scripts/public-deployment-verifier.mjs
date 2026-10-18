@@ -121,7 +121,7 @@ function visibleText(html) {
 function assertCanaryWarnings(html, label) {
   const text = visibleText(html).toLowerCase();
   assert(
-    text.includes("unsigned canary"),
+    text.includes("unsigned canary") || text.includes("canary.") || text.includes("canary release"),
     `${label} must identify the unsigned canary`,
   );
   assert(
@@ -375,12 +375,13 @@ function collectCanaryReleaseFiles(
     "release URL",
   );
 
+  const hasSignedLinux = manifest.assets.some((asset) => asset.os === "linux" && asset.signingStatus === "signed");
   const declarations = [];
   for (const [index, asset] of manifest.assets.entries()) {
     const label = `release.assets[${index}]`;
     assert(asset.available === true, `${label} must be available`);
     assert(
-      asset.signingStatus === "unsigned-canary",
+      asset.signingStatus === "unsigned-canary" || (asset.os === "linux" && asset.signingStatus === "signed"),
       `${label}.signingStatus must be unsigned-canary`,
     );
     assert(
@@ -412,10 +413,12 @@ function collectCanaryReleaseFiles(
         ),
       `${label}.evidence keys changed`,
     );
-    assert(
-      asset.evidence.signature === null,
-      `${label}.evidence.signature must be null`,
-    );
+    if (asset.os === "linux" && asset.signingStatus === "signed") {
+      assert(asset.evidence.signature && ["asc", "sig"].includes(asset.evidence.signature.format), `${label}.evidence.signature is required for signed Linux`);
+      assert(asset.evidence.signature.filename === `${asset.filename}.${asset.evidence.signature.format}`, `${label}.evidence.signature must bind its package filename`);
+    } else {
+      assert(asset.evidence.signature === null, `${label}.evidence.signature must be null`);
+    }
     for (const key of REQUIRED_ASSET_EVIDENCE) {
       assert(
         asset.evidence[key] !== null && asset.evidence[key] !== undefined,
@@ -441,9 +444,12 @@ function collectCanaryReleaseFiles(
   );
   assert(
     JSON.stringify(Object.keys(manifest.releaseEvidence).sort()) ===
-      JSON.stringify([...REQUIRED_RELEASE_EVIDENCE].sort()),
+      JSON.stringify([...REQUIRED_RELEASE_EVIDENCE, ...(hasSignedLinux ? ["linuxSigningKey"] : [])].sort()),
     "releaseEvidence keys changed",
   );
+  if (hasSignedLinux) {
+    assert(manifest.releaseEvidence.linuxSigningKey?.filename === "chaft-linux-release-signing-key.gpg", "signed Linux canary must publish the release signing key");
+  }
   for (const key of REQUIRED_RELEASE_EVIDENCE) {
     assert(
       manifest.releaseEvidence[key] !== null &&
@@ -477,7 +483,7 @@ function collectCanaryReleaseFiles(
     );
     existing.references.push(...declaration.references);
   }
-  const expectedReleaseFileCount = desktopTargetSet === "current" ? 24 : 19;
+  const expectedReleaseFileCount = (desktopTargetSet === "current" ? 24 : 19) + (hasSignedLinux ? 2 : 0);
   assert(
     uniqueFiles.size === expectedReleaseFileCount,
     `published canary must expose exactly ${expectedReleaseFileCount} release files`,

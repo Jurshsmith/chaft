@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 from urllib.parse import quote, urlparse
 
+import linux_signing_policy as linux_signing
 import release_targets
 import unsigned_canary_policy as unsigned_canary
 
@@ -1190,7 +1191,7 @@ def read_unsigned_canary_receipt(
 
 def validate_signing_state(platform: str, state: str, channel: str) -> None:
     if channel == "canary":
-        if state != CANARY_SIGNING_STATE:
+        if state != CANARY_SIGNING_STATE and not (platform == "linux" and state == "signed"):
             fail(
                 f"{platform} canary signing state must be "
                 f"{CANARY_SIGNING_STATE!r}"
@@ -1216,7 +1217,10 @@ def read_release_evidence(
     actual_names = {
         path.name for path in directory.iterdir() if path.is_file() and not path.is_symlink()
     }
+    signed_linux = any(item.name.endswith(".AppImage.asc") for item in expected_assets.values())
     expected_names = set(RELEASE_EVIDENCE_FILENAMES.values())
+    if signed_linux:
+        expected_names.add(linux_signing.PUBLIC_KEY_FILENAME)
     if actual_names != expected_names or any(
         path.is_dir() or path.is_symlink() for path in directory.iterdir()
     ):
@@ -1240,8 +1244,8 @@ def read_release_evidence(
     required_inventory = {
         "schemaVersion": CANARY_INVENTORY_SCHEMA,
         "channel": "canary",
-        "signingStatus": CANARY_SIGNING_STATE,
-        "warning": unsigned_canary.WARNING,
+        "signingStatus": "linux-signed-canary" if signed_linux else CANARY_SIGNING_STATE,
+        "warning": linux_signing.WARNING if signed_linux else unsigned_canary.WARNING,
         "repository": repository,
         "version": version,
         "tag": tag,
@@ -1295,9 +1299,14 @@ def read_release_evidence(
                 **target_claim,
             }
         expected_claims[target.verification_receipt_name] = {
-            "kind": "unsigned-canary-verification",
+            "kind": "linux-signature-verification" if signed_linux and target.platform == "linux" else "unsigned-canary-verification",
             **target_claim,
         }
+    if signed_linux:
+        expected_claims[release_targets.TARGET_BY_NAME["linux-x86_64"].package_name(version) + ".asc"] = {
+            "kind": "detached-signature", "target": "linux-x86_64", "platform": "linux",
+        }
+        expected_claims[linux_signing.PUBLIC_KEY_FILENAME] = {"kind": "linux-signing-key"}
     inventory_assets: dict[str, tuple[int, str]] = {}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -1346,6 +1355,10 @@ def read_release_evidence(
         evidence["qtSourceChecksums"].size_bytes,
         evidence["qtSourceChecksums"].sha256,
     )
+    if signed_linux:
+        key = evidence_file(directory / linux_signing.PUBLIC_KEY_FILENAME)
+        evidence["linuxSigningKey"] = key
+        expected_inventory_assets[key.name] = (key.size_bytes, key.sha256)
     if inventory_assets != expected_inventory_assets:
         fail("canary release inventory does not bind the exact 22 release assets")
 
@@ -1466,7 +1479,7 @@ def build_manifest(
         validate_signing_state(platform, state, channel)
         public_receipt_path = verification_receipts[target_name]
         trusted_receipt_path = trusted_verification_receipts[target_name]
-        if channel == "canary":
+        if channel == "canary" and state == "unsigned-canary":
             if public_receipt_path is None:
                 fail(
                     f"{platform} unsigned-canary publication requires a public "
@@ -1570,6 +1583,21 @@ def build_manifest(
                 )
         if public_receipt_path is not None and trusted_receipt_path is not None:
             assert publisher_identity is not None
+            if channel == "canary":
+                try:
+                    linux_signing.validate_canary_receipt(
+                        load_json_object(Path(public_receipt_path), "signed Linux canary receipt"),
+                        expected_target=target_name, expected_version=release.version,
+                        expected_tag=tag, expected_commit=release.commit,
+                        expected_repository=repository,
+                        expected_package=unsigned_canary.FileFingerprint(
+                            filename=release.artifacts[0].name,
+                            size_bytes=release.artifacts[0].size_bytes,
+                            sha256=release.artifacts[0].sha256,
+                        ),
+                    )
+                except unsigned_canary.UnsignedCanaryPolicyError as error:
+                    fail(str(error))
             public_receipt = read_verification_receipt(
                 Path(public_receipt_path),
                 release,
@@ -1697,6 +1725,9 @@ def build_manifest(
                 )
             expected_inventory_assets.update(
                 {item.name: item for item in release.metadata.values()}
+            )
+            expected_inventory_assets.update(
+                {item.name: item for item in release.signatures.values()}
             )
             receipt = receipts[target_name]
             assert receipt is not None

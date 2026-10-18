@@ -115,9 +115,9 @@ jobs:
               raise SystemExit("published canary release must have published_at")
 
           assets = release.get("assets")
-          if not isinstance(assets, list) or len(assets) != 24:
+          if not isinstance(assets, list) or len(assets) not in {24, 26}:
               count = len(assets) if isinstance(assets, list) else "non-array"
-              raise SystemExit(f"published canary must contain exactly 24 assets, found {count}")
+              raise SystemExit(f"published canary must contain exactly 24 unsigned or 26 Linux-signed assets, found {count}")
           names: set[str] = set()
           folded_names: set[str] = set()
           asset_ids: set[int] = set()
@@ -176,9 +176,11 @@ jobs:
             exit 1
           fi
 
-          echo "policy_commit=${policy_commit}" >> "${GITHUB_OUTPUT}"
-          echo "release_version=${release_version}" >> "${GITHUB_OUTPUT}"
-          echo "tag_commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "policy_commit=${policy_commit}"
+            echo "release_version=${release_version}"
+            echo "tag_commit=${tag_commit}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Download every release asset by immutable asset ID
         shell: bash
@@ -225,11 +227,11 @@ jobs:
           remote_by_id = {asset["id"]: asset for asset in release["assets"]}
           paths = list(assets_dir.iterdir())
           if (
-              len(paths) != 24
+              len(paths) != len(expected)
               or any(path.is_symlink() or not path.is_file() for path in paths)
               or {path.name for path in paths} != set(expected)
           ):
-              raise SystemExit("downloaded directory is not the exact 24-asset namespace")
+              raise SystemExit("downloaded directory is not the exact release asset namespace")
           for path in paths:
               digest = hashlib.sha256()
               size = 0
@@ -310,11 +312,13 @@ jobs:
             --assets-dir "${RUNNER_TEMP}/release-assets" \
             --output-dir "${RUNNER_TEMP}/release-staged"
 
-      - name: Export the unsigned-canary website manifest
+      - name: Export the verified canary website manifest
         shell: bash
         env:
           RELEASE_COMMIT: ${{ steps.release.outputs.tag_commit }}
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          CHAFT_LINUX_SIGNING_KEYRING_BASE64: ${{ secrets.CHAFT_LINUX_SIGNING_KEYRING_BASE64 }}
+          CHAFT_LINUX_SIGNING_FINGERPRINT: ${{ secrets.CHAFT_LINUX_SIGNING_FINGERPRINT }}
         run: |
           set -euo pipefail
           staged="${RUNNER_TEMP}/release-staged"
@@ -341,7 +345,29 @@ jobs:
           published_at="$(jq -er '.published_at | strings | select(length > 0)' \
             "${RUNNER_TEMP}/release.json")"
 
-          python3 tools/desktop/export-website-release-manifest.py \
+          linux_signing_state="unsigned-canary"
+          linux_signing_args=()
+          if [[ -f "${staged}/release-evidence/chaft-linux-release-signing-key.gpg" ]]; then
+            test -n "${CHAFT_LINUX_SIGNING_KEYRING_BASE64}"
+            test -n "${CHAFT_LINUX_SIGNING_FINGERPRINT}"
+            keyring="${RUNNER_TEMP}/chaft-linux-release-signing-key.gpg"
+            printf '%s' "${CHAFT_LINUX_SIGNING_KEYRING_BASE64}" | base64 --decode > "${keyring}"
+            cmp "${keyring}" "${staged}/release-evidence/chaft-linux-release-signing-key.gpg"
+            mkdir "${RUNNER_TEMP}/trusted-linux-receipt"
+            trusted_receipt="${RUNNER_TEMP}/trusted-linux-receipt/chaft-desktop-linux-x86_64-verification.json"
+            python3 tools/desktop/generate-platform-verification-receipt.py \
+              --target linux-x86_64 --package-dir "${staged}/linux-x86_64-package" \
+              --output "${trusted_receipt}" --version "${RELEASE_VERSION}" \
+              --tag "${RELEASE_TAG}" --commit "${RELEASE_COMMIT}" \
+              --trusted-keyring "${keyring}" \
+              --trusted-fingerprint "${CHAFT_LINUX_SIGNING_FINGERPRINT}"
+            linux_signing_state="signed"
+            linux_signing_args+=(
+              --trusted-linux-signing-fingerprint "${CHAFT_LINUX_SIGNING_FINGERPRINT}"
+              --linux-x86_64-trusted-verification-receipt "${trusted_receipt}"
+            )
+          fi
+          python3 tools/desktop/export-website-release-manifest.py "${linux_signing_args[@]}" \
             --repository "${GITHUB_REPOSITORY}" \
             --tag "${RELEASE_TAG}" \
             --source-root "${release_source}" \
@@ -367,7 +393,7 @@ jobs:
               "${receipts}/chaft-desktop-macos-arm64-verification.json" \
             --linux-x86_64-package-dir "${staged}/linux-x86_64-package" \
             --linux-x86_64-arch "${linux_x86_64_arch}" \
-            --linux-x86_64-signing-state unsigned-canary \
+            --linux-x86_64-signing-state "${linux_signing_state}" \
             --linux-x86_64-verification-receipt \
               "${receipts}/chaft-desktop-linux-x86_64-verification.json"
 

@@ -125,6 +125,7 @@ export interface ReleaseAssetEvidence {
 }
 
 export interface ReleaseLevelEvidence {
+  linuxSigningKey?: ReleaseEvidenceFile;
   qtSource: ReleaseEvidenceFile;
   qtSourceChecksums: ReleaseEvidenceFile;
   inventory: ReleaseEvidenceFile;
@@ -416,7 +417,8 @@ function parseReleaseEvidence(
     throw new Error("release.releaseEvidence must be null or an object");
   }
 
-  const expectedKeys = Object.keys(releaseEvidenceFilenames);
+  const filenamesByKey = { ...releaseEvidenceFilenames, ...(value.linuxSigningKey === undefined ? {} : { linuxSigningKey: "chaft-linux-release-signing-key.gpg" }) };
+  const expectedKeys = Object.keys(filenamesByKey);
   const actualKeys = Object.keys(value);
   if (
     actualKeys.length !== expectedKeys.length ||
@@ -428,7 +430,7 @@ function parseReleaseEvidence(
   }
 
   const parsed = Object.fromEntries(
-    Object.entries(releaseEvidenceFilenames).map(([key, expectedFilename]) => {
+    Object.entries(filenamesByKey).map(([key, expectedFilename]) => {
       const evidence = parseEvidenceFile(
         value[key],
         `release.releaseEvidence.${key}`,
@@ -642,7 +644,7 @@ function parseAsset(
       );
     }
     if (channel === "canary") {
-      if (signingStatus !== "unsigned-canary") {
+      if (signingStatus !== "unsigned-canary" && !(os === "linux" && signingStatus === "signed")) {
         throw new Error(
           `${context}.signingStatus must be unsigned-canary for a canary release`,
         );
@@ -881,6 +883,11 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     channel,
     status,
   );
+  const hasSignedLinuxCanary = channel === "canary" && assets.some((asset) => asset.os === "linux" && asset.signingStatus === "signed");
+  if (hasSignedLinuxCanary !== (releaseEvidence?.linuxSigningKey !== undefined)) {
+    throw new Error("release.releaseEvidence.linuxSigningKey is required only for signed Linux canaries");
+  }
+
 
   const release: ReleaseManifest = {
     schemaVersion: 2,

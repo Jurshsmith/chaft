@@ -1092,6 +1092,7 @@ jobs:
       - name: Test release promotion tools
         run: |
           python3 tools/desktop/canary-release-assets-test.py
+          python3 tools/desktop/linux-release-signing-test.py
           python3 tools/desktop/export-website-release-manifest-test.py
           python3 tools/desktop/generate-unsigned-canary-receipt-test.py
           python3 tools/desktop/linux-appimage-contract-test.py

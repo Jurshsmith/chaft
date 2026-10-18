@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify and finalize Chaft's exact unsigned-canary release asset namespace.
+"""Verify and finalize Chaft's exact canary release asset namespace.
 
 This command is intentionally offline. The publisher remains responsible for
 querying GitHub's release API, downloading every asset by immutable identity,
@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+import linux_signing_policy as linux_signing
 import release_targets
 import unsigned_canary_policy as unsigned_canary
 
@@ -263,8 +264,12 @@ def target_package_fingerprints(
             for item in plan.targets[target_name].package_files
             if stager.signature_description(item.name) is not None
         ]
-        if signatures:
-            fail(f"{target_name} unsigned canary must not include detached signatures")
+        if signatures and (
+            target_name != "linux-x86_64"
+            or len(signatures) != 1
+            or signatures[0].name != target.package_name(version) + ".asc"
+        ):
+            fail(f"{target_name} canary has an unsupported detached-signature set")
         if len(rows) != 1:
             fail(f"{target_name} unsigned canary must contain exactly one package")
         row = rows[0]
@@ -387,6 +392,7 @@ def verify_core_assets(
         if require_receipts
         else BASE_ASSET_COUNT
     )
+    expected_count += 2 if linux_signing.PUBLIC_KEY_FILENAME in files else 0
     if len(files) != expected_count:
         fail(
             f"release directory must contain exactly {expected_count} assets, "
@@ -398,6 +404,12 @@ def verify_core_assets(
         require_finalization=require_finalization,
     )
     packages = target_package_fingerprints(plan, version=version)
+    linux_signatures = [
+        item for item in plan.targets["linux-x86_64"].package_files
+        if stager.signature_description(item.name) is not None
+    ]
+    if bool(linux_signatures) != (linux_signing.PUBLIC_KEY_FILENAME in files):
+        fail("signed Linux canaries require both a detached signature and public key")
     bundle = files[QT_SOURCE_BUNDLE]
     checksum = files[QT_SOURCE_CHECKSUM]
     qt_verifier(bundle, checksum)
@@ -437,10 +449,10 @@ def verify_core_assets(
             target = release_targets.TARGET_BY_NAME[target_name]
             receipt_name = unsigned_canary.RECEIPT_FILENAMES[target_name]
             receipt = read_json(
-                files[receipt_name], f"{target_name} unsigned receipt"
+                files[receipt_name], f"{target_name} canary receipt"
             )
             try:
-                unsigned_canary.validate_receipt_document(
+                linux_signing.validate_canary_receipt(
                     receipt,
                     expected_target=target_name,
                     expected_platform=target.platform,
@@ -455,7 +467,19 @@ def verify_core_assets(
                     expected_repository=repository,
                 )
             except unsigned_canary.UnsignedCanaryPolicyError as error:
-                fail(f"{target_name} unsigned receipt is invalid: {error}")
+                fail(f"{target_name} canary receipt is invalid: {error}")
+            if target_name == "linux-x86_64":
+                if bool(linux_signatures) != linux_signing.is_signed_linux(receipt):
+                    fail("Linux canary receipt does not match its signing state")
+                if linux_signatures:
+                    key = receipt["verificationPolicy"]["trustedKeyring"]
+                    if key != {
+                        "filename": linux_signing.PUBLIC_KEY_FILENAME,
+                        "sha256": stager.fingerprint_file(
+                            files[linux_signing.PUBLIC_KEY_FILENAME]
+                        ).sha256,
+                    }:
+                        fail("Linux signing receipt does not bind the published public key")
             release = receipt["release"]
             asset = receipt["asset"]
             assert isinstance(release, dict) and isinstance(asset, dict)
@@ -502,6 +526,8 @@ def classify_assets(
         for item in plan.targets[target_name].package_files:
             if stager.package_description(item.name) is not None:
                 kind = "package"
+            elif stager.signature_description(item.name) is not None:
+                kind = "detached-signature"
             elif item.name == metadata["checksums"]:
                 kind = "platform-checksums"
             elif item.name == metadata["sbom"]:
@@ -528,7 +554,8 @@ def classify_assets(
                 filename=receipt.name,
                 size_bytes=receipt.size_bytes,
                 sha256=receipt.sha256,
-                kind="unsigned-canary-verification",
+                kind=("linux-signature-verification" if linux_signing.is_signed_linux(
+                    read_json(receipt.path, "canary receipt")) else "unsigned-canary-verification"),
                 target=target_name,
                 platform=target.platform,
             )
@@ -542,8 +569,11 @@ def classify_assets(
             ),
         )
     )
-    if len(result) != PREFINAL_ASSET_COUNT:
-        fail(f"pre-final canary namespace must describe {PREFINAL_ASSET_COUNT} assets")
+    if linux_signing.PUBLIC_KEY_FILENAME in files:
+        result.append(fingerprint(files[linux_signing.PUBLIC_KEY_FILENAME], kind="linux-signing-key"))
+    expected_count = PREFINAL_ASSET_COUNT + (2 if linux_signing.PUBLIC_KEY_FILENAME in files else 0)
+    if len(result) != expected_count:
+        fail(f"pre-final canary namespace must describe {expected_count} assets")
     return sorted(result, key=lambda item: item.filename)
 
 
@@ -559,8 +589,8 @@ def inventory_document(
     return {
         "schemaVersion": SCHEMA_VERSION,
         "channel": "canary",
-        "signingStatus": "unsigned-canary",
-        "warning": unsigned_canary.WARNING,
+        "signingStatus": "linux-signed-canary" if any(item.kind == "detached-signature" for item in assets) else "unsigned-canary",
+        "warning": linux_signing.WARNING if any(item.kind == "detached-signature" for item in assets) else unsigned_canary.WARNING,
         "repository": repository,
         "releaseId": release_id,
         "version": version,
@@ -694,7 +724,7 @@ def verify_complete_assets(
     if actual_inventory != expected_inventory:
         fail(
             "canary release inventory does not describe the exact "
-            f"{PREFINAL_ASSET_COUNT}-asset set"
+            f"{len(assets)}-asset set"
         )
     inventory_fingerprint = fingerprint(
         files[INVENTORY_FILENAME], kind="release-inventory"
@@ -723,10 +753,11 @@ def verify_complete_assets(
     if actual_rows != expected_rows:
         fail(
             "aggregate checksums do not bind the exact "
-            f"{PREFINAL_ASSET_COUNT + 1} preceding assets"
+            f"{len(assets) + 1} preceding assets"
         )
-    if len(files) != COMPLETE_ASSET_COUNT:
-        fail(f"complete canary namespace must contain exactly {COMPLETE_ASSET_COUNT} assets")
+    expected_count = COMPLETE_ASSET_COUNT + (2 if linux_signing.PUBLIC_KEY_FILENAME in files else 0)
+    if len(files) != expected_count:
+        fail(f"complete canary namespace must contain exactly {expected_count} assets")
 
 
 def add_identity_arguments(parser: argparse.ArgumentParser) -> None:
