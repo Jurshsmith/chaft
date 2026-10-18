@@ -1007,6 +1007,14 @@ class CiWorkflowContractTests(unittest.TestCase):
             observed[target] = f"{caller_name} / {sdk_name}"
         self.assertEqual(observed, artifact.SDK_JOB_NAMES)
 
+    def test_expensive_platform_jobs_allow_superseded_runs_to_cancel(self) -> None:
+        for job in ("contracts", "debug", "package", "smoke"):
+            with self.subTest(job=job):
+                block = job_block(self.platform, job)
+                condition = re.search(r"^    if: (.+)$", block, re.MULTILINE).group(1)
+                self.assertIn("!cancelled()", condition)
+                self.assertNotIn("always()", condition)
+
 
     def test_artifact_action_contract_is_full_only_and_digest_strict(self) -> None:
         producer = job_block(self.ci, "artifact_v7_producer")
